@@ -380,8 +380,10 @@ test('every declared change saved publishes the ready files, tears the builds do
 
   // The plan hash is the manifest hash: it fences storage and names exactly
   // the files that were published.
+  // The manifest names the look too (#4459), so a run's hash differs from a
+  // light-only run's even when the bytes match.
   const manifest = stored.artifacts
-    .map(({ storyId, viewport, side, variant, sha256 }) => ({ storyId, viewport, side, variant, sha256 }))
+    .map(({ storyId, viewport, side, variant, look, sha256 }) => ({ storyId, viewport, side, variant, look: look === 'dark' ? 'dark' : 'light', sha256 }))
     .sort((a, b) => shots.slotKey(a).localeCompare(shots.slotKey(b)));
   const manifestHash = crypto.createHash('sha256').update(contract.canonicalJson({
     mode: shots.SHOTS_MODE, intent: fixture.run.intent, manifest,
@@ -442,6 +444,44 @@ test('useful shots publish with cleanup pending when teardown leaves a runtime',
   const trace = fixture.transitions.at(-1).patch.traceSummary;
   assert.equal(trace.cleanupComplete, false);
   assert.equal(trace.cleanupVersion, null);
+});
+
+test('a run that saves both looks stores them under one manifest, and one that saves only light still publishes', async () => {
+  let stored = null;
+  const fixture = setup({
+    storeArtifacts: async (_pool, _runId, artifacts) => { stored = artifacts; },
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      saveStills(control, 'invite-suggestions');
+      const story = control.intent.stories.find((candidate) => candidate.id === 'invite-empty');
+      // invite-empty is photographed in both looks; invite-suggestions got
+      // light only, as an interrupted dark pass would leave it.
+      for (const viewport of story.viewports) {
+        for (const look of ['light', 'dark']) {
+          control.saveShot({ change: 'invite-empty', screen: viewport.name, side: 'before', look },
+            fixtures.png({ shade: look === 'dark' ? 40 : 10 }));
+          control.saveShot({ change: 'invite-empty', screen: viewport.name, side: 'after', look },
+            fixtures.png({ shade: look === 'dark' ? 220 : 200 }));
+        }
+      }
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.run.intent = twoChangeIntent();
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  const verdict = fixture.transitions.find((entry) => entry.next === 'reviewing').patch.hardVerdict;
+  assert.equal(verdict.passed, true);
+  assert.deepEqual(verdict.stories, [
+    { id: 'invite-suggestions', status: 'ready', files: 2 },
+    { id: 'invite-empty', status: 'ready', files: 4 },
+  ]);
+  const looks = stored.filter((file) => file.storyId === 'invite-empty').map((file) => file.look).sort();
+  assert.deepEqual(looks, ['dark', 'dark', 'light', 'light'], 'both looks are stored for that change');
+  assert.ok(stored.filter((file) => file.storyId === 'invite-suggestions').every((file) => file.look === 'light'));
+  // Readiness is judged on the light look, so the change with no dark shots
+  // is still ready and published.
+  assert.ok(!verdict.stories[0].reason);
 });
 
 test('one change saved and another skipped still publishes, with the skip and its reason', async () => {

@@ -119,9 +119,16 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
   assert.equal(accepted.status, 200);
   assert.equal(accepted.body.ok, true);
   assert.deepEqual({ ...accepted.body.result, progress: undefined }, {
-    saved: true, change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen',
+    saved: true, change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen', look: 'light',
     bytes: image.length, width: 5, height: 4, progress: undefined,
   });
+  // The look rides the query: saved as that look, refused when it is neither.
+  const dark = await json(await post({ ...still, side: 'before', look: 'dark' }, image));
+  assert.equal(dark.body.result.look, 'dark');
+  assert.equal([...registration.control.saved.values()][1].look, 'dark');
+  assert.equal(registration.control.saved.size, 2, 'the dark shot is its own slot');
+  const badLook = await json(await post({ ...still, side: 'after', look: 'sepia' }, image));
+  assert.deepEqual([badLook.status, badLook.body.code], [400, 'invalid_look']);
   const [stored] = registration.control.saved.values();
   assert.equal(stored.side, 'head');
   assert.ok(stored.data.equals(image), 'the stored bytes are exactly the request body');
@@ -132,7 +139,7 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
     fixtures.webm()));
   assert.equal(clip.status, 200);
   assert.equal(clip.body.result.kind, 'clip');
-  assert.equal(registration.control.saved.size, 3);
+  assert.equal(registration.control.saved.size, 4, 'the dark shot made its own slot');
 
   for (const [query, body, status, code] of [
     [{ ...still, screen: 'phone', side: 'after' }, image, 400, 'unknown_screen'],
@@ -173,7 +180,7 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
   });
   assert.equal(unauthenticated.status, 401);
 
-  assert.equal(registration.control.saved.size, 3, 'no refused request saved anything');
+  assert.equal(registration.control.saved.size, 4, 'no refused request saved anything');
   assert.equal(registration.control.lastToolFailure.operation, 'save-shot');
 });
 

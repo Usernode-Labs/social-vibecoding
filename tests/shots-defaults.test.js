@@ -65,11 +65,11 @@ test('before & after shots collection, execution, and presentation are advisory 
   });
 });
 
-test('the shots agent gets eight minutes and the run/recovery budget stays aligned', () => {
+test('the shots agent gets twelve minutes for the doubled photographing and the run budget stays aligned', () => {
   const visual = loadVisualConfig();
-  assert.equal(visual.maxAgentMs, 480_000);
+  assert.equal(visual.maxAgentMs, 720_000);
   assert.equal(visual.maxRepairAgentMs, undefined);
-  assert.equal(visual.maxRunMs, 1_440_000);
+  assert.equal(visual.maxRunMs, 1_800_000);
   const override = loadVisualConfig({ SHOTS_MAX_AGENT_MS: '300000' });
   assert.equal(override.maxAgentMs, 300_000);
 });

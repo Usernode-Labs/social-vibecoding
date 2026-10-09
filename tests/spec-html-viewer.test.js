@@ -38,6 +38,13 @@ test('the shared viewer, with the card\'s options, is the card\'s markup: two si
   assert.equal(AppView._shotsViewerHtml({ key: 7, screens: [] }), '', 'no screens, no viewer');
 });
 
+test('a spec without looks keeps the markup it always had: no switch, no wrappers', () => {
+  const html = AppView._shotsViewerHtml({ key: 'spec-dc-9-2-0', screens: screens() });
+  assert.doesNotMatch(html, /shots-look|data-shots-look/);
+  assert.match(html, /<span class="a-side"><\/span><span class="b-side"><\/span>/,
+    'the sides sit in the stage unwrapped');
+});
+
 test('a spec\'s viewer adds side by side, starts on auto, and offers close-up only where a screen has one', () => {
   const html = AppView._shotsViewerHtml({ key: 'spec-dc-9-2-0', screens: screens(), sideBySide: true, autoSide: true, zoom: true, className: 'shots-viewer-spec' });
   assert.match(html, /^<div class="shots-viewer shots-viewer-spec">/);
@@ -63,9 +70,9 @@ test('a spec\'s viewer adds side by side, starts on auto, and offers close-up on
 
 test('the viewer CSS: the card\'s rules are untouched; side by side, auto and zoom are added beside them', () => {
   const css = read('public/css/app.css');
-  assert.match(css, /\.shots-stage > \.shots-flip-side \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
+  assert.match(css, /\.shots-stage > \.shots-flip-side(, \.shots-look > \.shots-flip-side)? \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
   assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage \{ grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\);/);
-  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage > \.shots-flip-after \{ grid-area: 1 \/ 2; \}/);
+  assert.match(css, /\.shots-viewer:has\(\.shots-side-both:checked\) \.shots-stage > \.shots-flip-after(, \.shots-viewer:has\(\.shots-side-both:checked\) \.shots-look > \.shots-flip-after)? \{ grid-area: 1 \/ 2; \}/);
   // Auto: After with no room, side by side with room, per screen size.
   assert.match(css, /@container \(max-width: 419\.98px\) \{\s*\.shots-viewer:has\(\.shots-side-auto:checked\) \.shots-view\[data-shots-viewport="phone"\] \.shots-flip-before \{ visibility: hidden; \}/);
   assert.match(css, /@container \(min-width: 420px\) \{\s*\.shots-viewer:has\(\.shots-side-auto:checked\) \.shots-view\[data-shots-viewport="phone"\] \.shots-stage \{ grid-template-columns/);

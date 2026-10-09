@@ -471,7 +471,7 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
     'the run\'s own addresses come from its brief');
   const [sent] = uploads(bridge);
   assert.equal(sent.method, 'POST');
-  assert.deepEqual(sent.query, { ...shot, kind: 'screen' });
+  assert.deepEqual(sent.query, { ...shot, kind: 'screen', look: 'light' });
   assert.equal(sent.headers['content-type'], 'application/octet-stream');
   assert.ok(Buffer.from(sent.body).equals(image));
 
@@ -583,7 +583,7 @@ test('save_clip publishes the newest recording and retires every older one', asy
   const before = await clip('saved-toast', 'before');
   assert.equal(before.isError, false);
   assert.deepEqual(bridge.calls.at(-1).query,
-    { change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip' });
+    { change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip', look: 'light' });
   assert.equal(lastBody(), 'motion before');
 
   // Both were retired, so the stale stills session can never be published.
@@ -697,3 +697,38 @@ test('a shots turn samples the worker\'s memory through the proxy, which the ima
   assert.ok(asked > 0, 'the runner sets the interval');
   assert.ok(asked < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'), 'before the proxy starts');
 });
+
+test('save_shot and save_clip carry the look, and an omitted one is light', async (t) => {
+  const bridge = bridgeFixture(t);
+  const image = Buffer.from('png bytes the platform will check');
+  fs.writeFileSync(path.join(bridge.shotsDir, 'admin', 'invite-desktop-dark.png'), image);
+  stamp(bridge, 'admin', 'invite-desktop-dark.png', `${HEAD}/#invite`);
+
+  const saved = await bridge.call('save_shot', { shots: [{
+    change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'dark', file: 'invite-desktop-dark.png',
+  }] });
+  assert.equal(saved.isError, false);
+  assert.deepEqual(uploads(bridge)[0].query,
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen', look: 'dark' });
+  assert.equal(saved.value.results[0].look, 'dark', 'the answer echoes the look');
+
+  fs.writeFileSync(path.join(bridge.shotsDir, 'admin', 'invite-desktop-again.png'), image);
+  stamp(bridge, 'admin', 'invite-desktop-again.png', `${HEAD}/#invite`);
+  const omitted = await bridge.call('save_shot', { shots: [{
+    change: 'invite-suggestions', screen: 'desktop', side: 'after', file: 'invite-desktop-again.png',
+  }] });
+  assert.equal(omitted.isError, false);
+  assert.deepEqual(uploads(bridge)[1].query,
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen', look: 'light' },
+    'an omitted look defaults to light');
+
+  // A dark clip rides the same field.
+  const member = path.join(bridge.shotsDir, 'member');
+  fs.writeFileSync(path.join(member, 'toast-dark.webm'), 'dark recording');
+  boundary.recordSession(member, [`${HEAD}/#lists`]);
+  const clip = await bridge.call('save_clip',
+    { change: 'saved-toast', screen: 'desktop', side: 'after', look: 'dark' });
+  assert.equal(clip.isError, false, clip.value?.message || '');
+  assert.equal(uploads(bridge).at(-1).query.look, 'dark');
+});
+

@@ -172,7 +172,7 @@ test('every screen sits in the same fixed stage, fitted at its own shape', () =>
   assert.doesNotMatch(html, /shots-flip-narrow|max-width/);
   const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/css/app.css'), 'utf8');
   assert.match(css, /\.shots-stage \{[^}]*container-type: size;[^}]*aspect-ratio: 16 \/ 10;/);
-  assert.match(css, /\.shots-stage > \.shots-flip-side \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
+  assert.match(css, /\.shots-stage > \.shots-flip-side(, \.shots-look > \.shots-flip-side)? \{[^}]*width: min\(100cqw, calc\(100cqh \* \(var\(--shots-shape, 16 \/ 10\)\)\)\); aspect-ratio: var\(--shots-shape, 16 \/ 10\);/);
   assert.match(css, /\.shots-view \{ grid-area: 1 \/ 1;[^}]*visibility: hidden; \}/, 'the screens share one cell, so the tallest sets the height');
   // Without recorded sizes a phone screen still reads as a phone.
   const unsized = AppView.shotsHtml({ ...value, artifacts: value.artifacts.map(({ width, height, ...rest }) => rest) }, { sessionId: 42 });
@@ -307,6 +307,14 @@ test('the Workshop picture\'s element shot must be readable on both sides', () =
   assert.deepEqual(AppView._workshopVisuals(null, sized(() => ({ width: 46, height: 28 }))),
     { ...AppView._workshopVisuals(null, sized(() => ({ width: 352, height: 61 }))), before: url('3'), after: url('4') });
   assert.equal(AppView._workshopVisuals(null, sized(() => ({ width: 352, height: 61 }))).after, url('2'));
+});
+
+test('the Workshop picture reads the light stills even when the run also saved dark ones', () => {
+  const value = shots();
+  value.artifacts.push(...darkArtifacts().map((artifact) => ({ ...artifact, variant: 'focus' })));
+  const picture = AppView._workshopVisuals(null, value);
+  assert.equal(picture.before, url('1'), 'the light before crop');
+  assert.equal(picture.after, url('2'), 'the light after crop');
 });
 
 test('a privileged declared change is explicitly labelled as full admin', () => {
@@ -525,4 +533,89 @@ test('no state of the card says "Visual change preview"', () => {
       assert.doesNotMatch(html, /visual change preview/i, `${state} ${JSON.stringify(extra)}`);
     }
   }
+});
+
+// A run that photographed its states in both looks (#4459): artifacts and
+// screens carry `look: 'dark'`; anything without one is light.
+function darkArtifacts() {
+  return [
+    { id: id('a'), storyId: 'dialog', viewport: 'desktop', side: 'base', variant: 'context', media: 'png', url: url('a'), width: 1280, height: 800, look: 'dark' },
+    { id: id('b'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'context', media: 'png', url: url('b'), width: 1280, height: 800, look: 'dark' },
+  ];
+}
+
+function screenEntry(look) {
+  return { viewport: 'desktop', shot: 'dialog', stories: ['dialog'], width: 1280,
+    heightBefore: 800, heightAfter: 800, regions: [], ...(look ? { look } : {}) };
+}
+
+test('a run that photographed the dark look gains the Light/Dark switch, on the viewer\'s look to start', () => {
+  const value = shots();
+  value.screens = [screenEntry()];
+  value.artifacts.push(...darkArtifacts());
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.match(html, /<input type="radio" class="shots-look-pick shots-look-light" name="shots-42-look" id="shots-42-look-light" aria-label="Show the shots in the light look" checked>/);
+  assert.match(html, /<input type="radio" class="shots-look-pick shots-look-dark" name="shots-42-look" id="shots-42-look-dark" aria-label="Show the shots in the dark look">/);
+  assert.ok(html.indexOf('shots-42-look-light') > html.indexOf('class="shots-side-pick shots-side-after"'),
+    'the look radios follow the side ones');
+  assert.match(html, /class="shots-seg shots-seg-look"[^]*?<span class="shots-seg-label">Light<\/span>[^]*?<span class="shots-seg-label">Dark<\/span>/);
+  assert.ok(html.indexOf('data-shots-look="light"') < html.indexOf('data-shots-look="dark"'),
+    'light sits before dark in the stage');
+
+  // The viewer opens on its reader's own theme.
+  const before = global.document;
+  global.document = { documentElement: { classList: { contains: (name) => name === 'dark' } } };
+  try {
+    const dark = AppView.shotsHtml(value, { sessionId: 42 });
+    assert.match(dark, /id="shots-42-look-dark" aria-label="Show the shots in the dark look" checked>/);
+    assert.doesNotMatch(dark, /id="shots-42-look-light" aria-label="Show the shots in the light look" checked>/);
+  } finally {
+    global.document = before;
+  }
+});
+
+test('a light-only run keeps today\'s viewer markup: no switch, no wrappers', () => {
+  const value = shots();
+  value.screens = [screenEntry()];
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.doesNotMatch(html, /shots-look|data-shots-look/);
+});
+
+test('a screen with no dark pair repeats its light shots there and says so', () => {
+  const value = shots();
+  value.screens = [screenEntry()];
+  // Any dark artifact turns the switch on; a dark clip alone leaves the
+  // screen's pair light-only.
+  value.artifacts.push({ id: id('c'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'focus', media: 'png', url: url('c'), look: 'dark' });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  assert.match(html, /<span class="shots-look-note" data-shots-look-note="dark">No dark shots for this screen; shown in the light look\.<\/span>/);
+  assert.equal((html.match(new RegExp(url('4'), 'g')) || []).length, 2,
+    'the light after shot is what the dark wrapper shows');
+});
+
+test('each look is outlined from its own screens, and clips are listed per look', () => {
+  const value = shots();
+  value.claims[0].animation = 'motion';
+  value.screens = [
+    { ...screenEntry(), regions: [{ story: 'dialog', b: [0, 0, 640, 400], a: [0, 0, 640, 400] }] },
+    { ...screenEntry('dark'), regions: [{ story: 'dialog', b: [640, 0, 640, 400], a: [640, 0, 640, 400] }] },
+  ];
+  value.artifacts.push(...darkArtifacts(), ...clipArtifacts(),
+    { id: id('d'), storyId: 'dialog', viewport: 'desktop', side: 'base', variant: 'animation', media: 'webm', url: url('d'), look: 'dark' },
+    { id: id('e'), storyId: 'dialog', viewport: 'desktop', side: 'head', variant: 'animation', media: 'webm', url: url('e'), look: 'dark' });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  const stage = /<div class="shots-stage">[^]*?<\/div>\s*<figcaption/.exec(html)[0];
+  assert.equal((stage.match(/data-shots-n="1" class="shots-box"/g) || []).length, 4,
+    'both looks outline their own regions, on both sides');
+  assert.match(stage, /left:0\.000%;top:0\.000%/, 'the light look\'s outlines');
+  assert.match(stage, /left:50\.000%;top:0\.000%/, 'the dark look\'s outlines sit where its screens differ');
+
+  assert.match(html, /Before clip · desktop/);
+  assert.match(html, /After clip · desktop/);
+  assert.match(html, /Before clip · dark · desktop/);
+  assert.match(html, /After clip · dark · desktop/);
+  assert.equal((html.match(/<video /g) || []).length, 4, 'one player per side, per look');
+  assert.match(html, new RegExp(`src="${url('d')}"[^>]*poster="${url('a')}"`),
+    'the dark clip\'s poster is the dark screen shot');
+  assert.match(html, /aria-label="Before clip in the dark look/);
 });

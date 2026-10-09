@@ -9538,6 +9538,34 @@ CREATE INDEX IF NOT EXISTS idx_shot_artifacts_run
   ON shot_artifacts(run_id, story_id, viewport);
 COMMENT ON TABLE shot_artifacts IS 'staging:private';
 
+-- Every state is photographed in both looks, light and dark; runs from
+-- before the look dimension are light, which the default keeps.
+ALTER TABLE shot_artifacts
+  ADD COLUMN IF NOT EXISTS look VARCHAR(8) NOT NULL DEFAULT 'light'
+    CHECK (look IN ('light', 'dark'));
+-- One row per stored shot is now one per look too: swap the table's unique
+-- constraint for one including the look, the same way shot_runs' integrity
+-- constraint was replaced above.
+DO $$
+DECLARE old_constraint TEXT;
+BEGIN
+  FOR old_constraint IN
+    SELECT conname FROM pg_constraint
+     WHERE conrelid = 'shot_artifacts'::regclass AND contype = 'u'
+  LOOP
+    EXECUTE format('ALTER TABLE shot_artifacts DROP CONSTRAINT %I', old_constraint);
+  END LOOP;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'shot_artifacts'::regclass
+       AND conname = 'shot_artifacts_slot_key'
+  ) THEN
+    ALTER TABLE shot_artifacts
+      ADD CONSTRAINT shot_artifacts_slot_key
+      UNIQUE (run_id, story_id, viewport, side, variant, media, look);
+  END IF;
+END $$;
+
 -- A failed two-pass comparison must retain the four images needed to see
 -- which pixels changed. These never enter reviewer-visible shots.
 CREATE TABLE IF NOT EXISTS shot_diagnostic_artifacts (

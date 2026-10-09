@@ -9616,7 +9616,7 @@ const AppView = {
       const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}$/.test(String(url || ''));
       const find = (claimValue, viewportName, side, variant) => (Array.isArray(shots.artifacts) ? shots.artifacts : []).find((a) => (
         a && a.storyId === claimValue?.id && a.viewport === viewportName
-        && a.side === side && a.variant === variant && a.media === 'png' && urlOk(a.url)
+        && a.side === side && a.variant === variant && a.media === 'png' && a.look !== 'dark' && urlOk(a.url)
       ));
       // The first claim that has images: a capture-mode run can publish a
       // later claim while an earlier one is blocked. A focus crop is optional
@@ -21258,7 +21258,13 @@ const AppView = {
   // CSS (:has() over the radios), so the card still needs no script.
   //
   // A screen is { viewport, afterHtml, beforeHtml, afterChip, beforeChip,
-  // notesHtml, zoomable }. Three options the card leaves off, so its markup
+  // notesHtml, zoomable }. When a run photographed its states in both looks
+  // (#4459), the screen carries `looks`, one { look, afterHtml, beforeHtml }
+  // pair per look: the stage wraps each look's sides, a Light/Dark switch
+  // (radios read by :has(), like the rest) picks which is shown, and the
+  // viewer's own look starts checked. Screens and callers without `looks`
+  // render exactly as they always did. Three options the card leaves off,
+  // so its markup
   // is what it always was:
   //   sideBySide — a third side option: before and after at once, in the
   //                same fixed stage.
@@ -21307,6 +21313,16 @@ const AppView = {
     const both = sideBySide
       ? `<label for="${sideId('both')}" class="shots-seg-btn shots-seg-both" title="Side by side">${bothIcon}<span class="shots-seg-label">Side by side</span></label>`
       : '';
+    // The look switch (#4459): which of the two looks a screen's pair is
+    // shown in, like the side switch one pair of radios for every screen.
+    // It shows only when a screen actually has two looks; a light-only run
+    // renders none of it, exactly the markup it always had.
+    const twoLooks = list.some((screen) => Array.isArray(screen.looks) && screen.looks.length > 1);
+    const lookId = (which) => `shots-${key}-look-${which}`;
+    const preferredLook = AppView.resolvedTheme() === 'dark' ? 'dark' : 'light';
+    const lookSwitch = twoLooks
+      ? `<span class="shots-seg shots-seg-look" aria-hidden="true"><label for="${lookId('light')}" class="shots-seg-btn shots-seg-look-light" title="Light"><span class="shots-seg-label">Light</span></label><label for="${lookId('dark')}" class="shots-seg-btn shots-seg-look-dark" title="Dark"><span class="shots-seg-label">Dark</span></label></span>`
+      : '';
     const views = list.map((screen, screenIndex) => {
       const sizeSwitch = shownSizes.length > 1
         ? `<span class="shots-seg shots-seg-size" aria-hidden="true">${shownSizes.map((size) => {
@@ -21317,25 +21333,32 @@ const AppView = {
       const zoomSwitch = zooming && screen.zoomable
         ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="Close-up">${closeIcon}<span class="shots-seg-label">Close-up</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="Whole screen">${wholeIcon}<span class="shots-seg-label">Whole screen</span></label></span>`
         : '';
+      // A screen with two looks wraps each look's side pair; the stage keeps
+      // its grid either way (the wrapper lays out as its contents).
+      const stage = Array.isArray(screen.looks) && screen.looks.length > 1
+        ? screen.looks.map((look) => `<span class="shots-look" data-shots-look="${attr(look.look || 'light')}">${look.afterHtml || ''}${look.beforeHtml || ''}</span>`).join('')
+        : `${screen.afterHtml || ''}${screen.beforeHtml || ''}`;
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label>${both}</span>${lookSwitch}${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
         <div class="shots-stage">
-          ${screen.afterHtml || ''}
-          ${screen.beforeHtml || ''}
+          ${stage}
           <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="Click to see before" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="Click to see after" aria-hidden="true"></label>
           <span class="shots-flip-chip shots-flip-chip-after">${esc(screen.afterChip || 'After')}</span><span class="shots-flip-chip shots-flip-chip-before">${esc(screen.beforeChip || 'Before')}</span>
         </div>
-        <figcaption class="shots-view-notes">${screen.notesHtml || ''}</figcaption>
+        <figcaption class="shots-view-notes">${screen.notesHtml || ''}${screen.noDarkNote ? '<span class="shots-look-note" data-shots-look-note="dark">No dark shots for this screen; shown in the light look.</span>' : ''}</figcaption>
       </figure>`;
     });
     const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="Show the screen before the change"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="Show the screen after the change"${autoSide ? '' : ' checked'}>${sideBySide ? `<input type="radio" class="shots-side-pick shots-side-both" name="shots-${key}-side" id="${sideId('both')}" aria-label="Show before and after side by side">` : ''}${autoSide ? `<input type="radio" class="shots-side-pick shots-side-auto" name="shots-${key}-side" id="${sideId('auto')}" aria-label="Show side by side when there is room, otherwise after" checked>` : ''}</span>`;
+    const lookPicks = twoLooks
+      ? `<span class="shots-picks"><input type="radio" class="shots-look-pick shots-look-light" name="shots-${key}-look" id="${lookId('light')}" aria-label="Show the shots in the light look"${preferredLook === 'light' ? ' checked' : ''}><input type="radio" class="shots-look-pick shots-look-dark" name="shots-${key}-look" id="${lookId('dark')}" aria-label="Show the shots in the dark look"${preferredLook === 'dark' ? ' checked' : ''}></span>`
+      : '';
     const zoomPicks = zooming
       ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="Show a close-up of what changes" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="Show the whole screen"></span>`
       : '';
     const screenPicks = list.length > 1
       ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(`Screen ${index + 1} of ${list.length}: ${screen.viewport}`)}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
       : '';
-    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
+    return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${lookPicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },
 
   // #4455: two more readings for a change's page. `thread` is its Before
@@ -21401,10 +21424,17 @@ const AppView = {
       </section>`;
     }
 
-    const by = (storyId, viewport, side, variant, media = null) => artifacts.find((a) => (
+    // A shot comes in both looks; `look` picks which. Dark is a.look ===
+    // 'dark'; anything else, including legacy artifacts with no look, is
+    // light.
+    const by = (storyId, viewport, side, variant, media = null, look = 'light') => artifacts.find((a) => (
       a && a.storyId === storyId && a.viewport === viewport && a.side === side
-      && a.variant === variant && (!media || a.media === media) && shotsUrl(a.url)
+      && a.variant === variant && (!media || a.media === media)
+      && (look === 'dark' ? a.look === 'dark' : a.look !== 'dark') && shotsUrl(a.url)
     ));
+    // Whether the run saved any dark shots at all: only then does the card
+    // show a look switch, and old runs keep today's light-only markup.
+    const darkShown = artifacts.some((artifact) => artifact && artifact.look === 'dark');
     // One result per declared change; runs from before shots have none.
     const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
     const resultOf = (claim) => shotResults.find((entry) => entry && entry.id === claim.id);
@@ -21427,7 +21457,16 @@ const AppView = {
     // same screen share it. A run from before that was worked out gets a
     // screen per change and size, with nothing outlined.
     let screens = (Array.isArray(shots.screens) ? shots.screens : []).filter((screen) => screen
+      && screen.look !== 'dark'
       && by(screen.shot, screen.viewport, 'base', 'context') && by(screen.shot, screen.viewport, 'head', 'context'));
+    // The dark look's screens, worked out separately (services/shots-diff.js
+    // groups by look first): each look's outlines match what that look shows.
+    const darkScreens = new Map();
+    for (const screen of Array.isArray(shots.screens) ? shots.screens : []) {
+      if (screen && screen.look === 'dark' && !darkScreens.has(`${screen.viewport}|${screen.shot}`)) {
+        darkScreens.set(`${screen.viewport}|${screen.shot}`, screen);
+      }
+    }
     if (!screens.length) {
       for (const claim of claims.filter((entry) => !skipped(entry))) {
         const viewports = Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop'];
@@ -21490,20 +21529,27 @@ const AppView = {
     };
     const viewportsOf = (claim) => (Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop']);
     const clipsOf = (claim, viewports) => viewports.map((viewport) => {
-      // A motion change has a clip per side; older runs stored one paired
-      // before/after recording instead.
-      const baseClip = by(claim.id, viewport, 'base', 'animation', 'webm');
-      const headClip = by(claim.id, viewport, 'head', 'animation', 'webm');
+      // A motion change has a clip per side, and now per look; older runs
+      // stored one paired before/after recording instead. A look with no
+      // clip gets no row: the light row is the fallback, not a placeholder.
+      const clipsFor = (look) => ({
+        base: by(claim.id, viewport, 'base', 'animation', 'webm', look),
+        head: by(claim.id, viewport, 'head', 'animation', 'webm', look),
+      });
+      const light = clipsFor('light');
+      const dark = clipsFor('dark');
       const pairedClip = by(claim.id, viewport, 'paired', 'animation', 'webm');
-      const poster = (side) => { const shot = by(claim.id, viewport, side, 'context'); return shot ? shotsUrl(shot.url) : ''; };
-      const clip = (label, artifact, posterUrl) => `<figure style="flex:1 1 240px;min-width:0;margin:0">
-          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label} clip · ${esc(viewport)}</figcaption>
-          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`
+      const poster = (side, look = 'light') => { const shot = by(claim.id, viewport, side, 'context', null, look); return shot ? shotsUrl(shot.url) : ''; };
+      const clip = (label, artifact, posterUrl, look) => `<figure style="flex:1 1 240px;min-width:0;margin:0">
+          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label} clip${look === 'dark' ? ' · dark' : ''} · ${esc(viewport)}</figcaption>
+          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip${look === 'dark' ? ' in the dark look' : ''}: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`
             : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:120px">No clip</div>`}
         </figure>`;
-      if (baseClip || headClip) {
-        return `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${clip('Before', baseClip, poster('base'))}${clip('After', headClip, poster('head'))}</div>`;
-      }
+      const row = (which, look) => `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${clip('Before', which.base, poster('base', look), look)}${clip('After', which.head, poster('head', look), look)}</div>`;
+      let out = '';
+      if (light.base || light.head) out += row(light, 'light');
+      if (dark.base || dark.head) out += row(dark, 'dark');
+      if (out) return out;
       if (pairedClip) {
         const videoKind = claim.animation === 'motion' ? 'animation' : 'interaction';
         return `<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play ${videoKind}</summary><video src="${attr(shotsUrl(pairedClip.url))}" controls preload="none" muted playsinline aria-label="${videoKind === 'animation' ? 'Animation' : 'Interaction'} for ${attr(claim.claim || '')}" style="${videoStyle};margin-top:6px"></video></details>`;
@@ -21519,13 +21565,46 @@ const AppView = {
       const who = [...new Set(onScreen.map(persona))].map((name) => `a ${name}`).join(' and ') || 'a member';
       const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
       const described = onScreen.map((claim) => claim.claim || '').join(' ');
-      const drawn = { base: outlines(screen, 'base'), head: outlines(screen, 'head') };
-      const side = (which, artifact, label) => {
+      const drawnFor = (entry) => ({ base: outlines(entry, 'base'), head: outlines(entry, 'head') });
+      const lightDrawn = drawnFor(screen);
+      const side = (which, artifact, label, entry = screen, drawn = lightDrawn) => {
         const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
         if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">No shot</span>`;
-        const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
+        const shape = shapeOf(artifact, entry.width, which === 'base' ? entry.heightBefore : entry.heightAfter, narrow);
         return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}"><img src="${attr(shotsUrl(artifact.url))}" alt="${attr(`${label}: ${described}`)}" loading="lazy">${drawn[which]}</span>`;
       };
+      // The two looks. A run that saved no dark shots at all stays light-only
+      // with no switch; when it did, every screen shows both, and one without
+      // a dark pair repeats its light markup there and says so.
+      const darkEntry = darkScreens.get(`${screen.viewport}|${screen.shot}`);
+      const darkBefore = by(screen.shot, screen.viewport, 'base', 'context', null, 'dark');
+      const darkAfter = by(screen.shot, screen.viewport, 'head', 'context', null, 'dark');
+      const lightLook = {
+        look: 'light',
+        afterHtml: side('head', after, 'After'),
+        beforeHtml: side('base', before, absent ? 'Before, not there yet' : 'Before'),
+      };
+      const looks = [lightLook];
+      let darkDrawn = { base: '', head: '' };
+      let noDarkNote = false;
+      if (darkShown) {
+        if (darkBefore && darkAfter) {
+          const entry = darkEntry || {
+            viewport: screen.viewport, shot: screen.shot, stories: screen.stories,
+            width: Number(darkAfter.width), heightBefore: Number(darkBefore.height),
+            heightAfter: Number(darkAfter.height), regions: [], look: 'dark',
+          };
+          darkDrawn = drawnFor(entry);
+          looks.push({
+            look: 'dark',
+            afterHtml: side('head', darkAfter, 'After', entry, darkDrawn),
+            beforeHtml: side('base', darkBefore, absent ? 'Before, not there yet' : 'Before', entry, darkDrawn),
+          });
+        } else {
+          looks.push({ look: 'dark', afterHtml: lightLook.afterHtml, beforeHtml: lightLook.beforeHtml });
+          noDarkNote = true;
+        }
+      }
       const changes = onScreen.map((claim) => {
         const n = numberOf(claim.id);
         const flow = thread ? '' : flowOf(claim);
@@ -21533,7 +21612,7 @@ const AppView = {
             <div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${flow ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${flow}</div>` : ''}${noteOf(claim)}${clipsOf(claim, [screen.viewport])}</div></li>`;
       }).join('');
       // A dashed outline or line needs its words the first time it shows.
-      const shown = drawn.base + drawn.head;
+      const shown = lightDrawn.base + lightDrawn.head + darkDrawn.base + darkDrawn.head;
       const keys = [
         shown.includes('shots-box-other') ? '<span class="shots-key"><i class="shots-key-box"></i>Dashed outline: also changed here, but no change on this list describes it</span>' : '',
         shown.includes('shots-mark') ? '<span class="shots-key"><i class="shots-key-line"></i>Dashed line: where the change begins on a side that doesn’t have it</span>' : '',
@@ -21543,8 +21622,10 @@ const AppView = {
       const dims = width > 0 && height > 0 ? `, ${Math.round(width)} × ${Math.round(height)}` : '';
       return {
         viewport: screen.viewport,
-        afterHtml: side('head', after, 'After'),
-        beforeHtml: side('base', before, absent ? 'Before, not there yet' : 'Before'),
+        looks,
+        noDarkNote,
+        afterHtml: lightLook.afterHtml,
+        beforeHtml: lightLook.beforeHtml,
         afterChip: 'After',
         beforeChip: absent ? 'Before · not there yet' : 'Before',
         notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}${thread ? '' : `<div class="shots-view-meta">${esc(sizeName(screen.viewport))}${dims} · seen as ${esc(who)}</div>`}`,

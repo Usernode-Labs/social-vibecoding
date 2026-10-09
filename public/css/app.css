@@ -15309,6 +15309,23 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-picks { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .shots-views { display: grid; }
 .shots-view { grid-area: 1 / 1; margin: 0; min-width: 0; visibility: hidden; }
+
+/* The two looks a run's shots come in (#4459). Each look's side pair is
+   wrapped in a .shots-look that lays out as its contents, so the stage's
+   grid is unchanged; the radio the viewer's own look starts checked, and
+   :has() hides the other look's pair, the same way the side switch does. */
+.shots-look { display: contents; }
+.shots-viewer:has(.shots-look-light:checked) .shots-look[data-shots-look="dark"],
+.shots-viewer:has(.shots-look-dark:checked) .shots-look[data-shots-look="light"] { display: none; }
+.shots-viewer:has(.shots-look-light:checked) .shots-seg-look-light,
+.shots-viewer:has(.shots-look-dark:checked) .shots-seg-look-dark { background: #fff; color: #1c1c1e; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14); }
+.dark .shots-viewer:has(.shots-look-light:checked) .shots-seg-look-light,
+.dark .shots-viewer:has(.shots-look-dark:checked) .shots-seg-look-dark { background: #3a3a3c; color: #f5f5f7; }
+.shots-viewer:has(.shots-look-pick:focus-visible) .shots-seg-look { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+/* A screen without a dark pair says so, while its dark look is showing. */
+.shots-viewer:has(.shots-look-light:checked) .shots-look-note { display: none; }
+.shots-look-note { display: block; font-size: 12px; line-height: 1.4; color: #68686c; }
+.dark .shots-look-note { color: #8e8e93; }
 .shots-views-one > .shots-view,
 .shots-viewer:has(.shots-screen-pick:nth-of-type(1):checked) .shots-view:nth-of-type(1),
 .shots-viewer:has(.shots-screen-pick:nth-of-type(2):checked) .shots-view:nth-of-type(2),
@@ -15355,9 +15372,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-stage { position: relative; container-type: size; aspect-ratio: 16 / 10; display: grid; place-items: center; overflow: hidden;
   user-select: none; background: rgba(24, 24, 27, 0.04); border-block: 1px solid rgba(24, 24, 27, 0.08); }
 .dark .shots-stage { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.1); }
-.shots-stage > .shots-flip-side { grid-area: 1 / 1; position: relative; display: block;
+.shots-stage > .shots-flip-side, .shots-look > .shots-flip-side { grid-area: 1 / 1; position: relative; display: block;
   width: min(100cqw, calc(100cqh * (var(--shots-shape, 16 / 10)))); aspect-ratio: var(--shots-shape, 16 / 10); }
-.shots-stage > .shots-flip-missing { width: 100%; height: 100%; aspect-ratio: auto; display: grid; place-items: center;
+.shots-stage > .shots-flip-missing, .shots-look > .shots-flip-missing { width: 100%; height: 100%; aspect-ratio: auto; display: grid; place-items: center;
   font-size: 12px; color: rgba(113, 113, 122, 1); }
 .shots-flip-side img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .shots-viewer:has(.shots-side-after:checked) .shots-flip-before,
@@ -15426,8 +15443,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dark .spec-frame-side { background: #0b0b0c; }
 .spec-frame-side > iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none; background: transparent; }
 .shots-viewer:has(.shots-side-both:checked) .shots-stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; }
-.shots-viewer:has(.shots-side-both:checked) .shots-stage > .shots-flip-side { width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-shape, 16 / 10)))); }
-.shots-viewer:has(.shots-side-both:checked) .shots-stage > .shots-flip-after { grid-area: 1 / 2; }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage > .shots-flip-side, .shots-viewer:has(.shots-side-both:checked) .shots-look > .shots-flip-side { width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-shape, 16 / 10)))); }
+.shots-viewer:has(.shots-side-both:checked) .shots-stage > .shots-flip-after, .shots-viewer:has(.shots-side-both:checked) .shots-look > .shots-flip-after { grid-area: 1 / 2; }
 .shots-viewer:has(.shots-side-both:checked) .shots-flip-to { display: none; }
 .shots-viewer:has(.shots-side-both:checked) .shots-flip-chip-after { left: calc(50% + 16px); }
 .shots-viewer:has(.shots-side-both:checked) .shots-stage::after { content: ""; position: absolute; top: 12px; bottom: 12px; left: 50%; width: 1px; background: rgba(24, 24, 27, 0.12); }
@@ -15458,8 +15475,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 /* Auto, with room: side by side. */
 @container (min-width: 420px) {
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; }
-  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage > .shots-flip-side { width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-shape, 16 / 10)))); }
-  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage > .shots-flip-after { grid-area: 1 / 2; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage > .shots-flip-side, .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-look > .shots-flip-side { width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-shape, 16 / 10)))); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-stage > .shots-flip-after, .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-look > .shots-flip-after { grid-area: 1 / 2; }
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-flip-to { display: none; }
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-flip-chip-after { left: calc(50% + 16px); }
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="phone"] .shots-change-n { background: linear-gradient(90deg, #dc2626 50%, #16a34a 50%); }
@@ -15468,8 +15485,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 @container (min-width: 720px) {
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px; }
-  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage > .shots-flip-side { width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-shape, 16 / 10)))); }
-  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage > .shots-flip-after { grid-area: 1 / 2; }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage > .shots-flip-side, .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-look > .shots-flip-side { width: min(calc(50cqw - 6px), calc(100cqh * (var(--shots-shape, 16 / 10)))); }
+  .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-stage > .shots-flip-after, .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-look > .shots-flip-after { grid-area: 1 / 2; }
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-flip-to { display: none; }
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-flip-chip-after { left: calc(50% + 16px); }
   .shots-viewer:has(.shots-side-auto:checked) .shots-view[data-shots-viewport="desktop"] .shots-change-n { background: linear-gradient(90deg, #dc2626 50%, #16a34a 50%); }

@@ -343,6 +343,13 @@ masked with the other tokens and never enters the brief or the trace.
 
 ## What people see
 
+Every state is photographed in both looks, light and dark: the shots agent
+opens each screen once per look (`?un-theme=light`, then `?un-theme=dark`),
+and the card opens in the look its viewer is using Homeroom in, with a small
+Light/Dark switch in the toolbar to see the other one. Difference outlines
+are worked out per look. A run with light shots only shows them with no
+switch, exactly as runs before the second look did.
+
 The proposal's card shows one screen at a time in a frame that keeps its
 size. Every screen sits in the same 16:10 stage, a phone screen in the middle
 at the same zoom as a desktop one, so moving between screens never resizes the

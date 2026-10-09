@@ -239,7 +239,28 @@ const areaOf = (region) => Math.max(
 // declaration's order. It yields between screens and between element shots:
 // each step takes about a tenth of a second, and this runs in the platform's
 // own process.
+// The screens a run's card shows, grouped by look first. A file without a
+// look is light (every run before the look dimension). The per-viewport
+// comparison inside each look is unchanged; each returned screen is tagged
+// with the look it compares, so the card can outline what each look shows.
 async function screensFor(stories, files) {
+  const byLook = new Map();
+  for (const file of files || []) {
+    const look = file?.look === 'dark' ? 'dark' : 'light';
+    if (!byLook.has(look)) byLook.set(look, []);
+    byLook.get(look).push(file);
+  }
+  const screens = [];
+  for (const look of ['light', 'dark']) {
+    if (!byLook.has(look)) continue;
+    for (const screen of await screensForLook(stories, byLook.get(look))) {
+      screens.push({ ...screen, look });
+    }
+  }
+  return screens;
+}
+
+async function screensForLook(stories, files) {
   const find = (storyId, viewport, side, variant) => files.find((file) => file.storyId === storyId
     && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png');
   const cache = new Map();

@@ -104,16 +104,16 @@ test('a shot is addressed to a declared change, one of its screens, a side and a
   const target = (raw) => shots.shotTarget(intent, raw);
   // People and the agent say before/after; the stored sides stay base/head.
   assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }), {
-    storyId: 'invite-suggestions', viewport: 'desktop', side: 'base', variant: 'context', media: 'png',
+    storyId: 'invite-suggestions', viewport: 'desktop', side: 'base', variant: 'context', look: 'light', media: 'png',
   });
   assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' }), {
-    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
+    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', look: 'light', media: 'png',
   });
   assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'element' }), {
-    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'focus', media: 'png',
+    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'focus', look: 'light', media: 'png',
   });
   assert.deepEqual(target({ change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip' }), {
-    storyId: 'saved-toast', viewport: 'desktop', side: 'base', variant: 'animation', media: 'webm',
+    storyId: 'saved-toast', viewport: 'desktop', side: 'base', variant: 'animation', look: 'light', media: 'webm',
   });
 
   assert.throws(() => target({ change: 'someone-elses-change', screen: 'desktop', side: 'after' }),
@@ -166,7 +166,7 @@ test('a stored file carries its slot, type, bytes and digest', () => {
     shots.shotTarget(intent, { change: 'invite-suggestions', screen: 'desktop', side: 'after' }),
     image, shots.inspectImage(image));
   assert.deepEqual({ ...shot, data: shot.data === image }, {
-    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
+    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', look: 'light', media: 'png',
     contentType: 'image/png', data: true, width: 5, height: 2, bytes: image.length, sha256: sha256(image),
     focusRect: null, stageLabels: null,
   });
@@ -411,4 +411,61 @@ test('an element shot must fit the screen it was taken on', () => {
     refusal('element_shot_too_wide'));
   // Screen shots and clips are not element shots.
   assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile', 'screen'), size(390, 5000)));
+});
+
+test('the look is part of the slot: one shot per look, and a retake replaces only that look', () => {
+  const intent = stillIntent();
+  const light = shots.slotKey(shots.shotTarget(intent,
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'light' }));
+  const dark = shots.slotKey(shots.shotTarget(intent,
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'dark' }));
+  assert.notEqual(light, dark);
+  // Omitted is light.
+  assert.equal(shots.slotKey(shots.shotTarget(intent,
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after' })), light);
+  // Only light and dark exist.
+  assert.throws(() => shots.shotTarget(intent,
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'purple' }), refusal('invalid_look'));
+  assert.throws(() => shots.shotTarget(intent,
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'LIGHT' }), refusal('invalid_look'));
+});
+
+test('readiness stays the light look\'s rule; dark files are additive', () => {
+  const intent = stillIntent();
+  const raw = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
+  const saved = new Map();
+  // A dark pair alone is not a ready change.
+  save(saved, intent, { ...raw, look: 'dark' }, sideShot('after'));
+  save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side: 'before', look: 'dark' }, sideShot('before'));
+  let result = shots.summarize(intent, saved);
+  assert.equal(result.stories[0].status, 'skipped');
+  assert.equal(result.files.length, 0, 'a not-ready change publishes nothing, dark included');
+  // Adding the light pair makes it ready, and both looks are published.
+  save(saved, intent, raw, sideShot('after'));
+  save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side: 'before' }, sideShot('before'));
+  result = shots.summarize(intent, saved);
+  assert.equal(result.stories[0].status, 'ready');
+  assert.equal(result.files.length, 4, 'the light pair and the dark pair ride along');
+  assert.ok(result.files.every((file) => ['light', 'dark'].includes(file.look)));
+  // The manifest carries the look, so a new run's hash differs from a light-only one's.
+  const lightOnly = shots.summarize(intent, new Map([...saved].filter(([, file]) => file.look !== 'dark')));
+  assert.equal(lightOnly.stories[0].status, 'ready');
+  assert.notEqual(result.manifestHash, lightOnly.manifestHash);
+  assert.deepEqual(result.files.map((entry) => entry.look).sort(), ['dark', 'dark', 'light', 'light']);
+  assert.deepEqual(lightOnly.files.map((entry) => entry.look), ['light', 'light']);
+});
+
+test('identical screens are judged per look: identical in light but not in dark is a change', () => {
+  const intent = stillIntent();
+  const same = fixtures.png({ shade: 7 });
+  const other = fixtures.png({ shade: 240 });
+  const saved = new Map();
+  save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side: 'before' }, same);
+  save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side: 'after' }, same);
+  save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side: 'before', look: 'dark' }, same);
+  save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'dark' }, other);
+  assert.ok(shots.identicalStories(intent, saved).size === 0, 'dark differs, so the change is not unchanged');
+  // Identical in every look it has pairs for is unchanged.
+  save(saved, intent, { change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'dark' }, same);
+  assert.ok(shots.identicalStories(intent, saved).has('invite-suggestions'));
 });

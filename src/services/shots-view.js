@@ -61,11 +61,14 @@ function cleanScreens(screens, claims) {
   const int = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 20000;
   const box = (value, size) => (Array.isArray(value) && value.length === size && value.every(int)
     ? value.slice() : null);
-  return (Array.isArray(screens) ? screens : []).slice(0, 6)
+  // Both looks are compared, so a run carries up to two screens per size and
+  // side pair. An entry without a look is light (runs before the dimension).
+  return (Array.isArray(screens) ? screens : []).slice(0, 12)
     .filter((screen) => screen && typeof screen.viewport === 'string' && ids.has(screen.shot))
     .map((screen) => ({
       viewport: screen.viewport.slice(0, 32),
       shot: screen.shot,
+      look: screen.look === 'dark' ? 'dark' : 'light',
       stories: (Array.isArray(screen.stories) ? screen.stories : []).filter((id) => ids.has(id)).slice(0, 3),
       width: int(screen.width) ? screen.width : null,
       heightBefore: int(screen.heightBefore) ? screen.heightBefore : null,
@@ -89,12 +92,16 @@ function artifactUrl(slug, sessionId, artifactId) {
 
 function cleanArtifacts(items, { slug, sessionId, verified }) {
   if (!verified || !Array.isArray(items)) return [];
-  return items.slice(0, 36).filter((artifact) => {
+  // Both looks ride along when saved: up to two artifacts per slot, so the
+  // cap is twice what one look needs. An artifact without a look is light
+  // (runs before the dimension).
+  return items.slice(0, 72).filter((artifact) => {
     if (!artifact || !ARTIFACT_ID_RE.test(String(artifact.id || ''))
         || !STORY_ID_RE.test(String(artifact.storyId || ''))
         || !VIEWPORT_RE.test(String(artifact.viewport || ''))
         || !['base', 'head', 'paired'].includes(artifact.side)
         || !['focus', 'context', 'animation'].includes(artifact.variant)
+        || !(artifact.look == null || ['light', 'dark'].includes(artifact.look))
         || !Object.hasOwn(MEDIA_TYPE, artifact.media)
         || artifact.contentType !== MEDIA_TYPE[artifact.media]) return false;
     // A clip is one recording per side; older runs stored one paired
@@ -109,6 +116,7 @@ function cleanArtifacts(items, { slug, sessionId, verified }) {
     viewport: String(artifact.viewport || '').slice(0, 32),
     side: ['base', 'head', 'paired'].includes(artifact.side) ? artifact.side : null,
     variant: ['focus', 'context', 'animation'].includes(artifact.variant) ? artifact.variant : null,
+    look: artifact.look === 'dark' ? 'dark' : 'light',
     media: ['png', 'webm', 'gif'].includes(artifact.media) ? artifact.media : null,
     contentType: String(artifact.contentType || '').slice(0, 32),
     width: Number.isInteger(artifact.width) ? artifact.width : null,
@@ -230,11 +238,12 @@ async function getForSessions(pool, sessions, slug) {
               COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                   'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport,
-                  'side', a.side, 'variant', a.variant, 'media', a.media,
+                  'side', a.side, 'variant', a.variant, 'look', a.look,
+                  'media', a.media,
                   'contentType', a.content_type, 'width', a.width,
                   'height', a.height, 'bytes', a.bytes,
                   'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
-                ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
+                ) ORDER BY a.story_id, a.viewport, a.side, a.variant, (a.look = 'dark'))
                   FROM shot_artifacts a WHERE a.run_id = r.id
               ), '[]'::jsonb) AS artifact_summary,
               -- Its automatic retries, so the view can say one is coming.

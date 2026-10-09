@@ -383,6 +383,9 @@ test('schema carries private revision-scoped runs, artifacts, session pointers a
   assert.match(schema, /idx_shot_runs_current_head[\s\S]*state NOT IN \('stale', 'cancelled'\)/);
   assert.match(schema, /COMMENT ON TABLE shot_runs IS 'staging:private'/);
   assert.match(schema, /COMMENT ON TABLE shot_artifacts IS 'staging:private'/);
+  // One slot per look: the artifact's unique key names the look, so a run
+  // can hold a light and a dark shot of the same state side by side.
+  assert.match(schema, /shot_artifacts_slot_key[\s\S]*UNIQUE \(run_id, story_id, viewport, side, variant, media, look\)/);
 });
 
 // ── storeArtifacts: the fence between a run and the proposal's slot ──────
@@ -454,11 +457,11 @@ test('storeArtifacts publishes a reviewing run\'s files in one fenced transactio
 
   const [inserted] = statements.filter(({ sql }) => /^INSERT/.test(sql));
   assert.match(inserted.values[0], /^[0-9a-f]{32}$/);
-  assert.deepEqual(inserted.values.slice(1, 8),
-    [RUN_ID, 'invite-suggestions', 'desktop', 'base', 'context', 'png', 'image/png']);
-  assert.equal(inserted.values[8], files[0].data);
-  assert.equal(inserted.values[12], files[0].sha256);
-  assert.equal(inserted.values[13], null);
+  assert.deepEqual(inserted.values.slice(1, 9),
+    [RUN_ID, 'invite-suggestions', 'desktop', 'base', 'context', 'light', 'png', 'image/png']);
+  assert.equal(inserted.values[9], files[0].data);
+  assert.equal(inserted.values[13], files[0].sha256);
+  assert.equal(inserted.values[14], null);
   assert.equal(released(), 1);
 });
 

@@ -107,12 +107,21 @@ function changeFor(intent, changeId) {
   return story;
 }
 
-function slotKey({ storyId, viewport, side, variant }) {
-  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}`;
+function slotKey({ storyId, viewport, side, variant, look }) {
+  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}\u0000${look === 'dark' ? 'dark' : 'light'}`;
+}
+
+// The look a shot was taken in: light or dark. Anything saved without one is
+// light, which is what every run before the look dimension was.
+function lookOf(value) {
+  if (value == null || value === '') return 'light';
+  if (value === 'light' || value === 'dark') return value;
+  throw new ShotError('invalid_look', 'Look must be light or dark.');
 }
 
 // Where a saved file belongs: a declared change, one of its screen sizes, a
-// side, and whether it is the screen, one element, or a clip.
+// side, and whether it is the screen, one element, or a clip — in one of the
+// two looks every state is photographed in.
 function shotTarget(intent, raw = {}) {
   const story = changeFor(intent, raw.change);
   const viewport = String(raw.screen || '');
@@ -127,7 +136,8 @@ function shotTarget(intent, raw = {}) {
   if (kind.variant === 'animation' && !planContract.needsClip(story)) {
     throw new ShotError('clip_not_needed', `${story.id} is not declared as motion; save still shots for it.`);
   }
-  return { storyId: story.id, viewport, side, variant: kind.variant, media: kind.media };
+  const look = lookOf(raw.look);
+  return { storyId: story.id, viewport, side, variant: kind.variant, look, media: kind.media };
 }
 
 // Whether a skip says the after build broke ('failed') or the state could
@@ -198,16 +208,19 @@ function checkElementSize(story, target, info, screenFile = null) {
 }
 
 // The changes whose before and after screen shots are the same image on
-// every screen size, so their shots cannot show them.
+// every screen size, so their shots cannot show them. Judged within each
+// look the change has pairs for: it counts as unchanged only when every look
+// it was photographed in came out the same.
 function identicalStories(intent, saved) {
   const ids = new Set();
+  const looks = new Set([...saved.values()].map((file) => (file?.look === 'dark' ? 'dark' : 'light')));
   for (const story of intent.stories) {
-    const same = story.viewports.every((viewport) => {
-      const base = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'base', variant: 'context' }));
-      const head = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'head', variant: 'context' }));
+    const same = story.viewports.length > 0 && [...looks].every((look) => story.viewports.every((viewport) => {
+      const base = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'base', variant: 'context', look }));
+      const head = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side: 'head', variant: 'context', look }));
       return !!base && !!head && base.sha256 === head.sha256;
-    });
-    if (same && story.viewports.length) ids.add(story.id);
+    }));
+    if (same) ids.add(story.id);
   }
   return ids;
 }
@@ -250,12 +263,19 @@ function summarize(intent, saved, skipped = new Map(), {
     const missing = [];
     const files = [];
     const required = planContract.needsClip(story) ? ['context', 'animation'] : ['context'];
+    // Readiness is the light look's rule, as it has always been: a context
+    // shot per screen size and side, plus clips if the change is motion.
+    // Dark is additive — dark files are published when saved and never
+    // block readiness, so an agent that ran out of time still publishes its
+    // light shots rather than nothing.
     for (const viewport of story.viewports) {
       for (const side of ['base', 'head']) {
         for (const variant of ['context', 'focus', 'animation']) {
-          const file = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant }));
-          if (file) files.push(file);
+          const light = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant, look: 'light' }));
+          const dark = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant, look: 'dark' }));
+          if (light) files.push(light);
           else if (required.includes(variant)) missing.push(missingWords(viewport.name, side, variant));
+          if (dark) files.push(dark);
         }
       }
     }
@@ -276,7 +296,9 @@ function summarize(intent, saved, skipped = new Map(), {
   const stories = markUnchanged(results, identicalStories(intent, saved));
   const ready = stories.filter((story) => story.status === 'ready').length;
   const manifest = published
-    .map(({ storyId, viewport, side, variant, sha256: digest }) => ({ storyId, viewport, side, variant, sha256: digest }))
+    .map(({ storyId, viewport, side, variant, look, sha256: digest }) => ({
+      storyId, viewport, side, variant, look: look === 'dark' ? 'dark' : 'light', sha256: digest,
+    }))
     .sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
   return {
     stories,
@@ -313,6 +335,7 @@ module.exports = {
   inspectClip,
   shotTarget,
   slotKey,
+  lookOf,
   checkElementSize,
   identicalStories,
   markUnchanged,

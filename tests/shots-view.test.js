@@ -235,6 +235,22 @@ function kept(item) {
   return view.cleanArtifacts([item], { slug: 'demo-app', sessionId: 42, verified: true });
 }
 
+test('both looks ride along: the look is kept, defaulted to light, and the caps are doubled', () => {
+  const [light] = kept(artifact());
+  assert.equal(light.look, 'light', 'an artifact without a look is light');
+  assert.equal(kept(artifact({ look: 'dark' }))[0].look, 'dark');
+  assert.deepEqual(kept(artifact({ look: 'sepia' })), [], 'an unknown look serves nothing');
+
+  const cap = view.cleanScreens(
+    Array.from({ length: 13 }, (_, i) => ({
+      viewport: 'desktop', shot: 'dialog', look: i % 2 ? 'dark' : 'light', stories: ['dialog'],
+      width: 1200, heightBefore: 800, heightAfter: 800, regions: [],
+    })),
+    [{ id: 'dialog' }]);
+  assert.equal(cap.length, 12, 'both looks fit under the raised cap');
+  assert.deepEqual(cap.map((s) => s.look).slice(0, 2), ['light', 'dark']);
+});
+
 test('a clip is one WebM per side; a legacy paired animation still plays', () => {
   for (const side of ['base', 'head']) {
     const [clip] = kept(artifact({ side, variant: 'animation', media: 'webm', contentType: 'video/webm' }));

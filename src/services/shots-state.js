@@ -699,12 +699,13 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     let artifacts = [];
     if (next.state === 'verified') {
       const artifactResult = await client.query(
-        `SELECT id, story_id AS "storyId", viewport, side, variant, media,
+        `SELECT id, story_id AS "storyId", viewport, side, variant, look,
+                media,
                 content_type AS "contentType", width, height, bytes, sha256,
                 focus_rect AS "focusRect", stage_labels AS "stageLabels"
            FROM shot_artifacts
           WHERE run_id = $1
-          ORDER BY story_id, viewport, side, variant`,
+          ORDER BY story_id, viewport, side, variant, look = 'dark'`,
         [next.id]
       );
       artifacts = artifactResult.rows;
@@ -960,12 +961,13 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
             COALESCE((
               SELECT jsonb_agg(jsonb_build_object(
                 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport,
-                'side', a.side, 'variant', a.variant, 'media', a.media,
+                'side', a.side, 'variant', a.variant, 'look', a.look,
+                'media', a.media,
                 'contentType', a.content_type, 'width', a.width,
                 'height', a.height, 'bytes', a.bytes,
                 'sha256', a.sha256,
                 'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
-              ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
+              ) ORDER BY a.story_id, a.viewport, a.side, a.variant, (a.look = 'dark'))
                 FROM shot_artifacts a WHERE a.run_id = r.id
             ), '[]'::jsonb) AS artifact_summary,
             -- Its automatic retries, so the view can say one is coming.
@@ -1074,11 +1076,12 @@ async function storeArtifacts(pool, runId, artifacts, { headSha, planHash } = {}
     for (const artifact of artifacts) {
       await client.query(
         `INSERT INTO shot_artifacts
-           (id, run_id, story_id, viewport, side, variant, media, content_type,
+           (id, run_id, story_id, viewport, side, variant, look, media, content_type,
             data, width, height, bytes, sha256, focus_rect, stage_labels)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb)`,
         [newId(), runId, artifact.storyId, artifact.viewport,
-         artifact.side, artifact.variant, artifact.media, artifact.contentType, artifact.data,
+         artifact.side, artifact.variant, artifact.look === 'dark' ? 'dark' : 'light',
+         artifact.media, artifact.contentType, artifact.data,
          artifact.width, artifact.height, artifact.bytes, artifact.sha256,
          artifact.focusRect ? JSON.stringify(artifact.focusRect) : null,
          artifact.stageLabels ? JSON.stringify(artifact.stageLabels) : null]

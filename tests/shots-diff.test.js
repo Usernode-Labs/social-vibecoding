@@ -136,3 +136,30 @@ test('unchangedStories names the changes whose every screen shows no difference'
   assert.deepEqual([...diff.unchangedStories([])], []);
   assert.deepEqual([...diff.unchangedStories(undefined)], []);
 });
+
+test('screens are compared per look, and each carries its look', async () => {
+  const stories = [{ id: 'x', viewports: [{ name: 'desktop' }] }];
+  const look = (side, px, look) => ({ ...file('x', 'desktop', side, 'context', px), ...(look ? { look } : {}) });
+  // The light pair differs in its text; the dark pair is byte-identical,
+  // so only the light screen has regions to outline.
+  const light = [look('base', screen(200, 120, glyphs(10, 10, 10))),
+    look('head', screen(200, 120, glyphs(10, 10, 12)))];
+  const darkSame = screen(200, 120, glyphs(10, 10, 10), [24, 24, 28]);
+  const dark = [look('base', darkSame, 'dark'), look('head', darkSame, 'dark')];
+  const screens = await diff.screensFor(stories, [...light, ...dark]);
+  assert.deepEqual(screens.map((s) => [s.viewport, s.look]), [['desktop', 'light'], ['desktop', 'dark']]);
+  const [lightScreen, darkScreen] = screens;
+  assert.ok(lightScreen.regions.length > 0, 'the light pair differs');
+  assert.deepEqual(darkScreen.regions, [], 'the dark pair is compared on its own images');
+  // A file without a look is light, which is what older runs stored.
+  const legacy = await diff.screensFor(stories, light);
+  assert.deepEqual(legacy.map((s) => s.look), ['light']);
+});
+
+test('unchangedStories reads every look: a change differs when any look differs', () => {
+  const screens = [
+    { viewport: 'desktop', shot: 'a', stories: ['a'], regions: [], look: 'light' },
+    { viewport: 'desktop', shot: 'a', stories: ['a'], regions: [{ story: 'a' }], look: 'dark' },
+  ];
+  assert.deepEqual([...diff.unchangedStories(screens)], [], 'dark differs, so the change is not unchanged');
+});

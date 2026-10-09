@@ -189,6 +189,15 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(agent.TASK_PROMPT, /get_brief/);
   assert.match(agent.TASK_PROMPT, /before and an\s+after shot of every declared change/);
   assert.match(agent.TASK_PROMPT, /clip of\s+each side for motion changes/);
+  // Both looks (#4459): every state is photographed twice per screen, once
+  // per look, by the platform's un-theme parameter.
+  assert.match(prompt, /photographed twice per screen, once in each look/);
+  assert.match(prompt, /\?un-theme=light/);
+  assert.match(prompt, /\?un-theme=dark/);
+  assert.match(prompt, /keeping any query already there/);
+  assert.match(prompt, /look\s+["']light["'] or ["']dark["']/);
+  assert.match(prompt, /both pairs are still saved/);
+  assert.match(agent.TASK_PROMPT, /in both looks\s+\(light and dark\)/);
   assert.match(agent.TASK_PROMPT, /skip a change you cannot reach/);
   for (const text of [prompt, agent.TASK_PROMPT]) {
     assert.doesNotMatch(text,

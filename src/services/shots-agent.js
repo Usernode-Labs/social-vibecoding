@@ -118,6 +118,18 @@ keeping any query the path already has (for example
 "/rota?un-now=2026-10-08T18:00:00.000Z"). Do this for every change, screen
 and clip, so the two sides differ only by the change.
 
+Every state is photographed twice per screen, once in each look: open the
+start path with ?un-theme=light appended (keeping any query already there,
+so it combines with un-now and previewAt) and shoot the state in the light
+look, then open it again with ?un-theme=dark and shoot the same state in the
+dark look. The ?un-theme parameter is the platform's convention for opening
+a page in one look; the page's own theme controls change nothing you shoot.
+Element shots and clips are taken per look too. Save each shot with look
+"light" or "dark" so it is stored as the look you took it in: save_shot and
+save_clip both take it, and a shot saved without one counts as light. If a
+page looks the same in both looks, both pairs are still saved: they are
+honest, and people see that it does not change.
+
 The copies hold demo data for each persona. The brief's availableFixtures
 lists it: who it is for (persona, alsoFor), what it shows and its path. Look
 there for a state the steps need before you decide a change cannot be
@@ -158,8 +170,9 @@ reach the state: missing data, access, or an interaction you could not
 perform.`;
 
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
-after shot of every declared change on each of its screens (plus a clip of
-each side for motion changes), or skip a change you cannot reach and say why.`;
+after shot of every declared change on each of its screens, in both looks
+(light and dark) per state, plus a clip of each side for motion changes, or
+skip a change you cannot reach and say why.`;
 
 function resultThreadId(result) {
   return result?.sessionId || result?.initSessionId || null;
