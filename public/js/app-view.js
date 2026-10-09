@@ -22278,11 +22278,11 @@ const AppView = {
   // The work-state chip's SPEC. A chip whose state names a linked session
   // is a button that opens it; every other state is an inert span.
   //
-  // "Waiting for approval" (with or without "· you") is the one state that
-  // is filled rather than tinted: it is what the request is waiting on, and
-  // it stands in for the Build it now it hides (_issuePrimaryActionSpec).
-  _WORK_REVIEW_CLS: 'bg-violet-600 text-white dark:bg-violet-500 dark:text-white',
-  _WORK_REVIEW_HOVER: 'hover:bg-violet-700 dark:hover:bg-violet-600',
+  // "Waiting for approval" (with or without "· you") is drawn quietly, in
+  // the muted grey tint: it says where the request stands, and a solid
+  // filled chip made a settled state the loudest thing on the card.
+  _WORK_REVIEW_CLS: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+  _WORK_REVIEW_HOVER: 'hover:bg-zinc-500/20',
   _inProgressChipSpec(issue) {
     const st = AppView._issueWorkState(issue);
     if (!st) return null;
