@@ -52,12 +52,6 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.join(dirname, '..');
 const ROOT = path.join(FRONTEND, '..');
 
-// The bundled English catalog (src/lib/i18n/catalogs.generated.json) and the
-// hashed language packs are inputs of the bundle below. Only a mistake in the
-// English source can fail this; a translation never does. See
-// frontend/locales/README.md.
-require(path.join(ROOT, 'scripts/language-packs.js')).buildLanguagePacks(ROOT);
-
 const {
   expectedStamp, formatHtmlStamp, formatJsStamp, readJsStamp, formatBuildMeta, normalizeBuildSha,
   buildScopedAssetUrl, prefixShellAssetUrls,
@@ -88,6 +82,15 @@ const unknownArgs = process.argv.slice(2).filter((arg) => !FLAGS.includes(arg));
 if (unknownArgs.length) fail(`unknown argument ${unknownArgs.join(' ')}; this script takes ${FLAGS.join(' and ')}`);
 const keepPrerender = process.argv.includes('--keep-prerender');
 const documentOnly = process.argv.includes('--document');
+
+// The bundled English catalog (src/lib/i18n/catalogs.generated.json) and the
+// hashed language packs are inputs of the bundle below. Only a mistake in the
+// English source can fail this; a translation never does. See
+// frontend/locales/README.md. A --document run builds no bundle: the
+// --keep-prerender run before it built the packs from these same sources, in
+// the same image stage, and the stamp check below refuses a bundle that did
+// not see them.
+if (!documentOnly) require(path.join(ROOT, 'scripts/language-packs.js')).buildLanguagePacks(ROOT);
 
 function runVite(args) {
   try {
