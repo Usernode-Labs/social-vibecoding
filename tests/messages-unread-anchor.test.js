@@ -688,7 +688,8 @@ test('the group chat\'s channel and threads get it beside their scrollers, at th
 
   const shell = loadTsx('frontend/src/features/group-chat/thread-shell.tsx');
   assert.equal(shell.THREAD_FOLLOW_PX, 80);
-  assert.match(GROUP, /scroll\.scrollHeight - scroll\.scrollTop - scroll\.clientHeight < 80/, 'a thread follows within 80px');
+  assert.match(GROUP, /THREAD_FOLLOW_PX: 80,/, 'a thread follows within 80px');
+  assert.match(GROUP, /scroll\.scrollHeight - scroll\.scrollTop - scroll\.clientHeight < GroupChat\.THREAD_FOLLOW_PX/);
   const props = { withHeader: true, readOnly: false, notice: '', placeholder: 'Reply', maxLength: 4000 };
   const fill = renderComponent('frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell', { ...props, fill: true });
   assert.match(fill, /<div id="gc-thread-messages" class="py-2 space-y-0\.5"><\/div><\/div><div class="relative z-10 h-0 shrink-0" data-transcript-overlay="foot">/,
