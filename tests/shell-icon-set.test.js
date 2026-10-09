@@ -312,9 +312,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // once the router says the Communities screen is up), so nothing
     // prerenders the grid again.
     'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
-    // DescriptionIcon: the Needs-you rail's Description, client-rendered
-    // with the rest of that rail.
-    'M4 6h16M4 12h16M4 18h10',
+    // DescriptionIcon LEFT this list with comment mode (#4289 follow-up):
+    // the Suggest an improvement form's Detailed / Comment switch draws it,
+    // and the form prerenders (the switch hidden until the device turns it
+    // on), so it is in the cold document. The Needs-you rail still draws it
+    // behind state too.
     'M4 6h16M4 12h16M4 18h16',
     'M4.5 12.75l6 6 9-13.5',
     'M5 13l4 4L19 7',

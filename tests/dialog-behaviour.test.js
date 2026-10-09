@@ -454,7 +454,8 @@ test('members: the island owns the lifecycle, the controller owns the card', () 
 test('feedback: the island owns the lifecycle, the controller keeps its logic', () => {
   const src = dialog('feedback.tsx');
   const ctl = dialog('feedback-controller.js');
-  assert.match(src, /onOpen: \(opts\) => Feedback\._open\(opts \|\| \{\}\)/);
+  // #4289 follow-up: the open also reads whether to offer comment mode.
+  assert.match(src, /onOpen: \(opts\) => \{\s*setOffersComment\(formOffersComment\(\)\);\s*Feedback\._open\(opts \|\| \{\}\);\s*\}/);
   assert.match(src, /onClose: \(\) => Feedback\._reset\(\)/);
   assert.match(src, /initFeedback\(\)/);
   // The pieces with issue numbers on them, still present after the move.

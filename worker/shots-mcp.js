@@ -21,9 +21,11 @@ const token = String(process.env.SHOTS_JWT || '');
 const proxy = String(process.env.SHOTS_PROXY_SERVER || '');
 const proxyControlToken = String(process.env.SHOTS_PROXY_CONTROL_TOKEN || '');
 // Each persona's browser saves the files it is asked to (screenshots by name,
-// clips when a browser session closes) into its own directory here.
+// clips when a browser session closes) into its own directory here, and so
+// does a persona's phone browser, beside it (`member_phone`).
 const shotsDir = String(process.env.SHOTS_DIR || '');
 const PERSONA_DIRS = Object.freeze(['member', 'admin', 'full_admin', 'guest']);
+const BROWSER_DIRS = Object.freeze([...PERSONA_DIRS, ...PERSONA_DIRS.map((dir) => `${dir}_phone`)]);
 if (!/^https?:\/\//.test(platform) || !/^[0-9a-f]{32}$/.test(runId) || !token) {
   process.stderr.write('Shots MCP configuration is incomplete.\n');
   process.exit(1);
@@ -73,38 +75,54 @@ function refused(code, message) {
 }
 
 // A screenshot the browser saved under the given name. Only a plain .png
-// directly inside one persona's directory is readable: the agent names it and
-// cannot point this bridge at browser storage state or any other file.
+// directly inside one browser's directory is readable: the agent names it and
+// cannot point this bridge at browser storage state or any other file. When
+// two browsers saved the same name, the one saved last is the one meant.
 function savedScreenshot(file) {
   if (!shotsDir) throw refused('shots_not_configured', 'Saving shots is not set up for this turn.');
   const name = path.basename(String(file || ''));
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.png$/.test(name)) {
     throw refused('invalid_shot_file', 'Name the .png file browser_take_screenshot saved, e.g. "invite-desktop-after.png".');
   }
-  for (const persona of PERSONA_DIRS) {
-    const candidate = path.join(shotsDir, persona, name);
+  let found = null;
+  for (const dir of BROWSER_DIRS) {
+    const candidate = path.join(shotsDir, dir, name);
     try {
-      if (fs.lstatSync(candidate).isFile()) {
-        // The site the browser observer stamped this image with: the page it
-        // was taken on (shots-boundary.js).
-        const image = fs.readFileSync(candidate);
-        return { image, origin: boundary.screenshotOrigin(path.join(shotsDir, persona), name, image) };
+      const stat = fs.lstatSync(candidate);
+      if (stat.isFile() && (!found || stat.mtimeMs > found.mtimeMs)) {
+        found = { dir, candidate, mtimeMs: stat.mtimeMs };
       }
-    } catch { /* try the next persona's directory */ }
+    } catch { /* not in this browser's directory */ }
   }
-  throw refused('shot_file_not_found', `No saved screenshot named ${name}. Pass the same filename to browser_take_screenshot first.`);
+  if (!found) {
+    throw refused('shot_file_not_found', `No saved screenshot named ${name}. Pass the same filename to browser_take_screenshot first.`);
+  }
+  // The site the browser observer stamped this image with: the page it was
+  // taken on (shots-boundary.js).
+  const image = fs.readFileSync(found.candidate);
+  return { image, origin: boundary.screenshotOrigin(path.join(shotsDir, found.dir), name, image) };
 }
 
-// The clip the change's browser most recently finished writing: a browser
+// The directory of the browser that shoots a change's screen: the persona's
+// own, or its phone browser's when the brief's screenBrowsers names that one
+// for the screen (a phone screen).
+function browserDir(context, declared, screen) {
+  const dir = declared.persona === 'read_only_admin' ? 'admin' : declared.persona;
+  if (!PERSONA_DIRS.includes(dir)) throw refused('unknown_change', `${declared.id} has no browser of its own.`);
+  const browser = context?.screenBrowsers?.[declared.id]?.[screen];
+  return browser === `browser_${dir}_phone` ? `${dir}_phone` : dir;
+}
+
+// The clip the screen's browser most recently finished writing: a browser
 // session's recording is saved when it closes. Choosing one retires every
 // older recording in that directory (for example the session the stills were
 // taken in), so a later call can never publish one of those instead. The
 // chosen recording itself is retired once Homeroom accepts it, so a refused
 // save (a mistyped screen name) can be retried without recording again.
 const retired = new Set();
-function latestClip(persona) {
+function latestClip(browser) {
   if (!shotsDir) throw refused('shots_not_configured', 'Saving clips is not set up for this turn.');
-  const dir = path.join(shotsDir, persona === 'read_only_admin' ? 'admin' : persona);
+  const dir = path.join(shotsDir, browser);
   let names = [];
   try { names = fs.readdirSync(dir); } catch { names = []; }
   const clips = [];
@@ -148,7 +166,7 @@ const server = new McpServer(
 );
 
 server.registerTool('get_brief', {
-  description: 'Read your brief: the declared changes (with who is signed in, screen sizes, start path, steps and optional hints), the before and after addresses, which browser to use for whom, the changed files, and any deployed app slugs you may open.',
+  description: 'Read your brief: the declared changes (with who is signed in, screen sizes, start path, steps and optional hints), the before and after addresses, which browser to use for whom and for each screen (a phone screen has a phone browser of its own), the changed files, and any deployed app slugs you may open.',
   inputSchema: {},
   annotations: { ...annotations, readOnlyHint: true },
 }, async () => {
@@ -200,7 +218,7 @@ server.registerTool('save_shot', {
 });
 
 server.registerTool('save_clip', {
-  description: 'Only for a change whose intent.animation is "motion": save the clip you just recorded. The browser records each session and writes the clip when the session ends, so: browser_close, browser_resize to the screen size again, open the start path, do the steps that trigger the motion, wait for it to finish, browser_close, then call this with the change id, screen name, and side. Record the before and after sides separately.',
+  description: 'Only for a change whose intent.animation is "motion": save the clip you just recorded. The browser records each session and writes the clip when the session ends, so, in the browser the brief\'s screenBrowsers names for that screen: browser_close, browser_resize to the screen size again, open the start path, do the steps that trigger the motion, wait for it to finish, browser_close, then call this with the change id, screen name, and side. Record the before and after sides separately.',
   inputSchema: {
     change: z.string().min(1).max(96),
     screen: z.string().min(1).max(32),
@@ -215,7 +233,7 @@ server.registerTool('save_clip', {
     if (declared.intent?.animation !== 'motion') {
       throw refused('clip_not_needed', `${change} is not declared as motion; save still shots for it.`);
     }
-    const file = latestClip(declared.persona);
+    const file = latestClip(browserDir(context, declared, screen));
     // Every page the recorded session showed must be this side's address,
     // by the record written as that session closed, after its clip.
     requireOnApp(side, boundary.sessionOrigins(path.dirname(file), { notBefore: fs.statSync(file).mtimeMs }), {
@@ -258,6 +276,31 @@ server.registerTool('note_change', {
   try {
     return resultContent((await request('/note', {
       method: 'POST', body: { change, note }, timeoutMs: 30_000,
+    })).result);
+  } catch (error) { return toolError(error); }
+});
+
+server.registerTool('note_problem', {
+  description: 'Note a clear problem you saw on the after address while taking the shots that is not about the declared change itself: content cut off or running off the screen, text or controls overlapping, an error message or a broken image on screen, a layout that falls apart at the phone size. Only what any person would agree is broken, never a matter of taste, style or wording. Whether the declared change is shown or works is note_change and skip_change, not this. It is shown on the proposal under "Also noticed" and changes nothing about the shots. At most five per run; noting the same problem at the same place again updates it.',
+  inputSchema: {
+    change: z.string().min(1).max(96)
+      .describe('The declared change you were shooting when you saw it.'),
+    screen: z.string().min(1).max(32)
+      .describe('The screen (viewport name) it shows at.'),
+    problem: z.string().trim().min(1).max(300)
+      .describe('What is broken, in one short sentence a person will understand, e.g. "The results table is cut off at the right edge."'),
+    alsoBefore: z.union([z.boolean(), z.literal('unknown')]).optional()
+      .describe('true if the before address shows the same problem, false if it does not, "unknown" (the default) if you did not look.'),
+    shot: z.enum(['screen', 'element']).optional()
+      .describe('Which after shot you saved for this change and screen shows it, if one does.'),
+  },
+  annotations,
+}, async ({ change, screen, problem, alsoBefore, shot }) => {
+  try {
+    return resultContent((await request('/problem', {
+      method: 'POST',
+      body: { change, screen, problem, ...(alsoBefore != null ? { alsoBefore } : {}), ...(shot ? { shot } : {}) },
+      timeoutMs: 30_000,
     })).result);
   } catch (error) { return toolError(error); }
 });

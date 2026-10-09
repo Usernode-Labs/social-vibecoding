@@ -223,6 +223,58 @@ test('shot results are cleaned before they reach any reviewer surface', () => {
   for (const result of cleaned) assert.deepEqual(Object.keys(result).sort(), ['id', 'note', 'reason', 'status']);
 });
 
+test('problems the shots agent noticed reach the view only for the verified run on the current head', () => {
+  const state = require('../src/services/shots-state');
+  const notices = [
+    { text: 'The \\"Newest\\" sort control overlaps the Done heading.', change: 'dialog', screen: 'desktop', shot: 'screen', alsoBefore: true },
+    { text: 'The table is cut off.', change: 'dialog', screen: 'phone', shot: null, alsoBefore: false },
+  ];
+  const row = {
+    state: 'verified', base_sha: BASE, head_sha: HEAD, plan_hash: 'c'.repeat(64),
+    intent: null, trace_summary: { runs: 1 },
+    hard_verdict: { passed: true, mode: 'shots', runs: 1, stories: [{ id: 'dialog', status: 'ready', files: 2 }], notices },
+  };
+  const summary = { ...state.runSummary(row), claims: run().claims };
+  assert.deepEqual(summary.shotNotices, notices, 'the stored summary keeps them as the verdict has them');
+  const current = view.serialize(summary, session(), 'demo', HEAD);
+  assert.deepEqual(current.shotNotices, [
+    { text: 'The "Newest" sort control overlaps the Done heading.', change: 'dialog', screen: 'desktop', shot: 'screen', alsoBefore: true },
+    { text: 'The table is cut off.', change: 'dialog', screen: 'phone', shot: null, alsoBefore: false },
+  ]);
+  assert.deepEqual(current.shotResults, [{ id: 'dialog', status: 'ready', reason: null, note: null }],
+    'the results do not carry them');
+  assert.deepEqual(view.serialize(summary, session(), 'demo', OTHER).shotNotices, [], 'a superseded run shows none');
+  for (const other of ['exploring', 'reviewing', 'failed']) {
+    assert.deepEqual(view.serialize({ ...summary, state: other }, session(), 'demo', HEAD).shotNotices, [], other);
+  }
+  // Runs from before notices, and a proposal with no run yet, have none.
+  assert.deepEqual(state.runSummary({ ...row, hard_verdict: { ...row.hard_verdict, notices: undefined } }).shotNotices, []);
+  assert.deepEqual(view.serialize(run(), session(), 'demo', HEAD).shotNotices, []);
+  assert.deepEqual(view.fromSnapshot({ shots_state: 'planned', shots_detail: { required: true } }, null).shotNotices, []);
+});
+
+test('noticed problems are cleaned before they reach any reviewer surface', () => {
+  const claims = run().claims;
+  assert.deepEqual(view.cleanShotNotices(null, claims), []);
+  assert.deepEqual(view.cleanShotNotices('broken', claims), []);
+  const cleaned = view.cleanShotNotices([
+    { text: 'Too long. '.repeat(60), change: 'dialog', screen: 'desktop', shot: 'clip', alsoBefore: 'yes' },
+    { text: 'Not a change of this run.', change: 'someone-elses', screen: 'desktop' },
+    { text: 'Not a screen name.', change: 'dialog', screen: '../desktop' },
+    { text: '   ', change: 'dialog', screen: 'desktop' },
+    { text: { html: '<b>x</b>' }, change: 'dialog', screen: 'desktop' },
+    { text: 'Kept.', change: 'dialog', screen: 'phone', alsoBefore: false, extra: 'dropped' },
+  ], claims);
+  assert.deepEqual(cleaned.map((entry) => entry.text.slice(0, 9)), ['Too long.', 'Kept.']);
+  assert.equal(cleaned[0].text.length, 300);
+  assert.equal(cleaned[0].shot, null, 'only a screen or an element shot');
+  assert.equal(cleaned[0].alsoBefore, 'unknown', 'only true, false or unknown');
+  assert.equal(cleaned[1].alsoBefore, false);
+  for (const entry of cleaned) assert.deepEqual(Object.keys(entry).sort(), ['alsoBefore', 'change', 'screen', 'shot', 'text']);
+  const many = Array.from({ length: 8 }, (_, i) => ({ text: `Problem ${i}.`, change: 'dialog', screen: 'desktop' }));
+  assert.equal(view.cleanShotNotices(many, claims).length, 5);
+});
+
 function artifact(overrides = {}) {
   return {
     id: ARTIFACT, storyId: 'dialog', viewport: 'desktop', side: 'head',

@@ -4479,6 +4479,44 @@ test('get_proposal carries before/after shot results through its own output sche
   } finally { c.restore(); }
 });
 
+test('get_proposal carries the problems the shots agent noticed beside the shot results', async () => {
+  const evidence = {
+    state: 'verified', required: true, impact: 'ui', rationale: 'A sort control.',
+    claims: [{
+      id: 'board-sort', claim: 'The board has a Newest sort control.', persona: 'member',
+      viewports: ['desktop', 'phone'], steps: ['Open the board'], baseState: 'not_present', animation: 'none',
+    }],
+    baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40),
+    failureCode: null, failureReason: null, repairAvailable: false,
+    planHash: 'c'.repeat(64), verifiedReason: null,
+    shotResults: [{ id: 'board-sort', status: 'ready', reason: null, note: null }],
+    shotNotices: [
+      { text: 'The sort control overlaps the Done heading.', change: 'board-sort', screen: 'desktop', shot: 'screen', alsoBefore: true },
+      { text: 'The last column is cut off.', change: 'board-sort', screen: 'phone', shot: null, alsoBefore: 'unknown' },
+    ],
+    overriddenBy: null, overriddenAt: null, overrideReason: null,
+    artifacts: [],
+    updatedAt: '2026-10-09T10:00:00.000Z',
+  };
+  const c = connector(() => ({ session: { id: 4302, app_slug: 'recipe-box', shots: evidence } }));
+  try {
+    const result = await c.handlers.get('get_proposal')({ proposalId: 4302 });
+    assert.ok(!result.isError);
+    const parsed = validateOutput(c.specs.get('get_proposal'), result);
+    assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+    assert.deepEqual(parsed.data.shots.shotNotices, evidence.shotNotices);
+    assert.deepEqual(parsed.data.shots.shotResults, evidence.shotResults, 'the results are untouched by them');
+    const shape = z.object(c.specs.get('get_proposal').outputSchema).shape.shots.unwrap().shape;
+    // alsoBefore is true, false or "unknown"; a shot is a screen or an element shot.
+    assert.equal(shape.shotNotices.safeParse([{ ...evidence.shotNotices[0], alsoBefore: 'maybe' }]).success, false);
+    assert.equal(shape.shotNotices.safeParse([{ ...evidence.shotNotices[0], shot: 'clip' }]).success, false);
+    // A view from before notices still parses.
+    assert.equal(shape.shotNotices.safeParse(undefined).success, true);
+    assert.match(c.specs.get('get_proposal').description, /`shotNotices`: other problems it saw on the after build, advisory/);
+    assert.match(shape.shotNotices.description, /whether the before build has it too \(alsoBefore\)\. Advisory/);
+  } finally { c.restore(); }
+});
+
 test('#2137 — nextStep says the verdict is waiting on a sync with main, and where to look', () => {
   const step = tools.shapeProposal(DEFERRED_ROW, ORIGIN).nextStep;
   assert.match(step, /DEFERRED, not running/, 'a decision, not a run in flight');

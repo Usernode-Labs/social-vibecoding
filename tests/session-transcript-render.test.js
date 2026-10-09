@@ -140,10 +140,10 @@ test('attachment chips are inert: names only, no href, no <img>', () => {
   assert.match(html, /4 KB/);
 });
 
-test('spec previews render as static text with no "View full spec" link', () => {
+test('spec previews render as static text with no "View full plan" link', () => {
   const ST = load();
   const html = ST.renderHtml(payload([{
-    id: 1, role: 'system', content: 'Spec drafted', created_at: 'x',
+    id: 1, role: 'system', content: 'Plan drafted', created_at: 'x',
     metadata: { specPreview: '# Spec\n\n- item', specVersion: 2, specLines: 3 },
   }]));
   assert.match(html, /Plan v2/);
@@ -151,7 +151,7 @@ test('spec previews render as static text with no "View full spec" link', () => 
   assert.match(html, /<md># Spec/);
   // A reader isn't authorised on GET /specs/:version unless it was
   // separately group-shared, so no affordance is offered.
-  assert.doesNotMatch(html, /View full spec/);
+  assert.doesNotMatch(html, /View full plan/);
   assert.doesNotMatch(html, /data-spec-version/);
 });
 

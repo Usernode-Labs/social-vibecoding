@@ -418,6 +418,12 @@ function runSummary(row, artifactSummary = []) {
         note: story?.status === 'ready' ? (story?.note || null) : null,
       }))
       : [],
+    // What the shots agent noticed broken on the after build besides the
+    // declared changes (shots-files.notice). Advisory only: brokenOnHead and
+    // everything that gates a change read shotResults, never these. Runs
+    // from before them have none.
+    shotNotices: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.notices)
+      ? row.hard_verdict.notices : [],
     progress: progress && typeof progress.phase === 'string'
       && /^[a-z][a-z0-9_-]{0,63}$/.test(progress.phase)
       ? { phase: progress.phase, at: progress.at || null } : null,

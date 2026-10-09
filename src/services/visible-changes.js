@@ -256,13 +256,34 @@ function needsClip(story) {
   return story?.intent?.animation === 'motion';
 }
 
+// A declared screen narrower than a tablet (768 px, the narrowest common
+// tablet width) is a phone's. The shots agent shoots it in a browser that
+// presents as a phone, not in a desktop browser made narrow
+// (worker/write-shots-mcp-config.js): a page that asks what device it is on
+// (the install strip, touch-only controls) answers as a phone does.
+const PHONE_WIDTH_BELOW = 768;
+
+function phoneScreen(viewport) {
+  return Number.isFinite(viewport?.width) && viewport.width < PHONE_WIDTH_BELOW;
+}
+
+// The personas with at least one phone screen: each gets a phone browser.
+function phonePersonas(intent) {
+  const wanted = new Set((intent?.stories || [])
+    .filter((story) => (story.viewports || []).some(phoneScreen))
+    .map((story) => story.persona));
+  return PERSONAS.filter((persona) => wanted.has(persona));
+}
+
 // The size each browser records clips at, as Playwright's WIDTHxHEIGHT, or
 // null when no change is motion. A viewport smaller than the recording is
 // drawn in its top-left corner on grey, so a phone clip recorded at a
 // desktop size is mostly empty: record at the motion screens' own size (the
-// largest of them when they differ).
-function clipSize(intent) {
-  const screens = (intent?.stories || []).filter(needsClip).flatMap((story) => story.viewports || []);
+// largest of them when they differ). `phone` true or false counts only the
+// phone screens or only the others, for the browsers that shoot them.
+function clipSize(intent, { phone } = {}) {
+  const screens = (intent?.stories || []).filter(needsClip).flatMap((story) => story.viewports || [])
+    .filter((screen) => phone === undefined || phoneScreen(screen) === phone);
   if (!screens.length) return null;
   const width = Math.max(...screens.map((screen) => screen.width));
   const height = Math.max(...screens.map((screen) => screen.height));
@@ -289,5 +310,8 @@ module.exports = {
   safeParseIntent,
   canonicalJson,
   needsClip,
+  PHONE_WIDTH_BELOW,
+  phoneScreen,
+  phonePersonas,
   clipSize,
 };

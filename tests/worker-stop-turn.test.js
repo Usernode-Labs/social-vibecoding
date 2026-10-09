@@ -559,6 +559,47 @@ test('a shots turn refuses a clip size that is not WIDTHxHEIGHT before anything 
   } finally { restore(); }
 });
 
+// A persona with a phone screen gets a phone browser beside its desktop one
+// (worker/write-shots-mcp-config.js reads SHOTS_PHONE_PERSONAS).
+test('a shots turn names the personas that get a phone browser, and refuses anything else', async () => {
+  const { worker, calls, restore } = loadWorker({ journalLines: ['__USERNODE_EXIT__ 0'] });
+  const shots = (extra) => ({
+    mode: 'shots',
+    prompt: 'open the run context',
+    systemPrompt: 'Shots agent contract.',
+    branchName: 'dev/test',
+    agentBackend: 'claude_code',
+    model: 'claude-sonnet-5-5',
+    shotsRunId: '1'.repeat(32),
+    shotsOrigins: { base: 'http://base.test/', head: 'http://head.test/' },
+    shotsAuthTokens: { member: 'member', read_only_admin: 'admin', full_admin: 'full-admin' },
+    ...extra,
+  });
+  try {
+    warmSession(worker, 8309);
+    for (const bad of [
+      { shotsPhonePersonas: ['admin'] }, { shotsPhonePersonas: ['member', '../state'] },
+      { shotsPhonePersonas: 'member' }, { shotsPhonePersonas: null },
+      { shotsRecordClips: true, shotsPhoneClipSize: '390' },
+    ]) {
+      await assert.rejects(() => worker.execInWorker(8309, shots(bad)),
+        /execInWorker: shots (?:phone personas must be a list of personas|clip size must be WIDTHxHEIGHT)/,
+        JSON.stringify(bad));
+    }
+    assert.equal(calls.length, 0, 'refused before anything is dispatched');
+
+    await worker.execInWorker(8309, shots({
+      shotsRecordClips: true, shotsClipSize: '1280x800', shotsPhoneClipSize: '390x844',
+      shotsPhonePersonas: ['member', 'guest', 'member'],
+    }));
+    const dispatch = calls.find(isDispatch);
+    assert.ok(dispatch, 'a valid shots turn dispatches');
+    assert.ok(dispatch.args.includes('SHOTS_PHONE_PERSONAS=["member","guest"]'));
+    assert.ok(dispatch.args.includes('SHOTS_CLIP_SIZE=1280x800'));
+    assert.ok(dispatch.args.includes('SHOTS_PHONE_CLIP_SIZE=390x844'));
+  } finally { restore(); }
+});
+
 test('a complete resume fallback is accepted only for a resumed hosted-Claude build', async () => {
   const { worker, calls, restore } = loadWorker();
   try {

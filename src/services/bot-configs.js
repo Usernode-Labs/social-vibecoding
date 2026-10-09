@@ -726,10 +726,11 @@ async function upgradeSeedConfigs(pool) {
  */
 async function recordResult(pool, {
   botRunId, configVersionId, source, trialId = null, status = 'done', built = null, booted = null,
-  costUsd = null, activeMs = null, sha = null, capture = null, error = null, costParts = null,
+  costUsd = null, activeMs = null, sha = null, capture = null, error = null, costParts = null, otherOf = null,
 }) {
-  // What the cost was made of, stage by stage, adding up to it (stage-costs.js).
-  const breakdown = costParts ? stageCosts.breakdown(costUsd, costParts) : null;
+  // What the cost was made of, stage by stage, adding up to it, and what
+  // the remainder no stage names is, where that is known (stage-costs.js).
+  const breakdown = costParts ? stageCosts.breakdown(costUsd, costParts, { of: otherOf || [] }) : null;
   const { rows: [row] } = await pool.query(
     `INSERT INTO bot_config_results
        (bot_run_id, config_version_id, source, trial_id, status, built, booted, cost_usd, active_ms, sha, capture, error,
@@ -817,13 +818,24 @@ async function finishLive(pool, {
     const carried = Number(carriedUsd) > 0 ? Number(carriedUsd) : 0;
     const liveCost = ledger.total != null ? ledger.total + require('./bot-review').reviewerCost(review) + carried : built.costUsd;
     // Its stages, on their models (stage-costs.js): the triage's share, and
-    // the build's own parts with their tokens from the ledger; the review's
-    // read from its state when the build did not carry them (a review a
-    // restart finished).
-    const parts = await stageCosts.withLedgerTokens(pool, {
-      ...stageCosts.reviewParts(review, { buildModel: version.recipe?.models?.build || null }),
+    // the spec, build and fix turns as the session's ledger holds them, the
+    // total's own source, whether the build named them or a restart finished
+    // it and named none; the review's reviewer calls from its state. What
+    // the ledger holds that no stage takes, and a kept plan's cost, are
+    // named under the remainder.
+    const buildModel = version.recipe?.models?.build || null;
+    const { parts, unnamed } = await stageCosts.ledgerParts(pool, built.sessionId, {
+      ...stageCosts.reviewParts(review, { buildModel }),
       ...stageCosts.fromStages(built.stageCosts),
+    }, {
+      models: { spec: version.recipe?.models?.spec || null, build: buildModel, review_fixes: buildModel },
+      reviewStartedAt: review?.startedAt || null,
     });
+    const keptPlan = carried > 0 ? [{ component: 'kept_plan', usd: carried }] : [];
+    const reviewFromMs = review?.startedAt ? Date.parse(review.startedAt) : NaN;
+    const unnamedBefore = Number.isFinite(reviewFromMs)
+      ? unnamed.filter((u) => u.startedAt && Date.parse(u.startedAt) < reviewFromMs)
+      : unnamed;
     await recordResult(pool, {
       botRunId, configVersionId: version.id, source: 'live',
       built: builtOk,
@@ -834,6 +846,7 @@ async function finishLive(pool, {
       capture: finalCapture,
       error: builtOk ? null : (built.blocked ? `blocked: ${built.blocked}` : built.error || null),
       costParts: { ...triagePart(triage), ...parts },
+      otherOf: [...unnamed, ...keptPlan],
     });
     const round0 = review?.round0 || null;
     const sides = await pool.query(
@@ -848,6 +861,7 @@ async function finishLive(pool, {
       await recordResult(pool, {
         botRunId, configVersionId: s.config_version_id, source: 'round0',
         costParts: { ...triagePart(triage), ...(round0 ? firstBuild : parts) },
+        otherOf: [...(round0 ? unnamedBefore : unnamed), ...keptPlan],
         built: round0 ? true : builtOk,
         booted: round0?.capture ? round0.capture.booted === true : (round0 ? null : (finalCapture ? finalCapture.booted === true : null)),
         costUsd: add(round0 ? (ledger.before != null ? ledger.before + carried : round0.costUsd) : liveCost, triage.costUsd),

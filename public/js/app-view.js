@@ -21754,8 +21754,26 @@ const AppView = {
     const viewer = AppView._shotsViewerHtml(thread
       ? { key, screens: screenParts, sideBySide: true, autoSide: true, className: 'shots-viewer-spec dev-change-viewer', barLead: '<span class="dev-change-card-name">Before and after</span>' }
       : { key, screens: screenParts });
+    // What the shots agent noticed broken on the after build besides the
+    // declared changes (note_problem): quiet lines under a small-caps label,
+    // each saying where it shows and whether the before build has it too.
+    // They are not part of the change and decide nothing.
+    const notices = (Array.isArray(shots.shotNotices) ? shots.shotNotices : [])
+      .filter((entry) => entry && typeof entry.text === 'string' && entry.text.trim()).slice(0, 5);
+    const noticed = notices.length
+      ? `<section class="shots-noticed" data-shots-noticed="${notices.length}" aria-label="Also noticed"><h3 class="shots-noticed-head">Also noticed</h3><ul class="shots-noticed-list">${notices.map((entry) => {
+        const n = numberOf(entry.change);
+        const also = entry.alsoBefore === true ? 'true' : entry.alsoBefore === false ? 'false' : 'unknown';
+        const meta = [
+          claims.length > 1 && n > 0 ? `Change ${n}` : '',
+          sizeName(entry.screen),
+          also === 'true' ? 'Also on the before build' : also === 'false' ? 'Not on the before build' : '',
+        ].filter(Boolean).join(' · ');
+        return `<li class="shots-noticed-item" data-shots-notice="${attr(entry.change || '')}" data-also-before="${also}"><p class="shots-noticed-text">${esc(entry.text.trim())}</p><div class="shots-noticed-meta">${esc(meta)}</div></li>`;
+      }).join('')}</ul></section>`
+      : '';
     if (thread) {
-      return `<section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body">${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}</section>`;
+      return `<section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body">${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}</section>`;
     }
     // Ready shots can be taken again too: after better steps or hints, or to
     // outline a run from before outlines were worked out. The route lets only
@@ -21763,7 +21781,7 @@ const AppView = {
     const retake = Number.isInteger(sessionId) && sessionId > 0
       ? `<button type="button" data-shots-retake="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">Take the shots again</button>`
       : '';
-    return `<section data-shots="1" data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3"><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">Taken on the exact before and after builds of this proposal. ${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}
+    return `<section data-shots="1" data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3"><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">Taken on the exact before and after builds of this proposal. ${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}
       <div class="flex flex-wrap items-start justify-between gap-3"><details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">Shot details</summary>
         <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span>${shotResults.length ? '<span>taken by the shots agent</span>' : ''}</div>
       </details>${retake}</div></section>`;
