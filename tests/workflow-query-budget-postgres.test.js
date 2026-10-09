@@ -3,13 +3,18 @@
 // How many queries a governance vote costs on the workflow machine path.
 // Every query is a round trip the voter waits for (the production database
 // is tens of milliseconds away), so this counts every query any connection
-// sends while the vote route runs, with a counter on pg.Client.prototype.query,
-// and fails above a budget. The critical path today is 12: the route's own
+// sends while the vote route runs and the work it sets off finishes, with a
+// counter on pg.Client.prototype.query, and fails above a budget. The
+// critical path of a vote that does not decide is 13 today: the route's own
 // checks (3), the append, the pipeline's opening batch with its pick, the
 // governance facts (3: the locked row, then its votes in a fresh statement,
-// then the electorate), the vote write, the finishing statement, COMMIT and
-// the outcome read. The budget leaves room for what runs beside it (the
-// post-commit notifiers, the slot looking for its next event).
+// then the electorate), the vote write, the statement that publishes its
+// pushes, the finishing statement, COMMIT and the outcome read. Three more
+// run beside it: the on-the-spot challenge scoring's rule lookup, and the
+// slot looking for its next event (its opening batch, then ROLLBACK). Those
+// are counted in full (counted() waits for them), so the count is the same on
+// every machine, and each budget is exactly today's count: one more query in
+// or beside a vote fails it.
 //
 // Over budget? The test prints every query it counted; docs/workflows.md
 // ("Round trips") says where they usually come from.
@@ -21,7 +26,7 @@ const fs = require('node:fs');
 const pg = require('pg');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
-const BUDGET = { nonDeciding: 15, deciding: 20 };
+const BUDGET = { nonDeciding: 16, deciding: 19 };
 
 function handlerFor(router, method, path) {
   for (const layer of router.stack) {
@@ -43,16 +48,39 @@ async function call(handler, req) {
   });
 }
 
-// Run fn, counting the queries every pg client sends meanwhile.
+// Run fn, counting the queries every pg client sends meanwhile, and then on
+// until the work fn set off has finished: every counted query has answered
+// and nothing has been sent for QUIET_MS. The vote's route answers as soon as
+// it reads the outcome, while the work beside it (the scoring lookup, the
+// slot looking for its next event) may still be going. Stopping at the answer
+// counted however much of that happened to land first: 15 on a quick machine
+// and 16 on a busy one, against a budget of 15, so a busy CI run failed at
+// random. Counting it all gives the same count on every machine.
+const QUIET_MS = 250;
+const QUIET_LIMIT_MS = 5000;
 async function counted(fn) {
   const original = pg.Client.prototype.query;
   const seen = [];
+  let pending = 0;
+  let lastActivity = Date.now();
   pg.Client.prototype.query = function query(q, ...rest) {
     seen.push(String(typeof q === 'string' ? q : q?.text).replace(/\s+/g, ' ').trim().slice(0, 100));
-    return original.call(this, q, ...rest);
+    lastActivity = Date.now();
+    const sent = original.call(this, q, ...rest);
+    if (sent && typeof sent.then === 'function') {
+      pending += 1;
+      const settled = () => { pending -= 1; lastActivity = Date.now(); };
+      sent.then(settled, settled);
+    }
+    return sent;
   };
   try {
-    return { result: await fn(), seen };
+    const result = await fn();
+    const limit = Date.now() + QUIET_LIMIT_MS;
+    while ((pending > 0 || Date.now() - lastActivity < QUIET_MS) && Date.now() < limit) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return { result, seen };
   } finally {
     pg.Client.prototype.query = original;
   }
