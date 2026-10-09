@@ -366,7 +366,8 @@ export interface ChecksProgress {
 export interface RowTag {
   label: string;
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
-  glyph?: 'eye';
+  /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486). */
+  glyph?: 'eye' | 'lock';
   title?: string;
   progress?: ChecksProgress;
 }
@@ -395,6 +396,11 @@ export interface RowBrief {
   stage: 'request' | 'worked' | 'vote' | 'live';
   /** When it was made (epoch ms; 0 when unknown). */
   at: number;
+  /**
+   * The card's own age, as its meta line says it ("11h ago"), for the row's
+   * line in words (#4486). '' when the card names no time.
+   */
+  ago: string;
   tags: RowTag[];
   /** One part per Yes it needs; `ask` when this viewer's vote is wanted. */
   vote: { yes: number; need: number; ask: boolean } | null;
