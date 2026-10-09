@@ -94,7 +94,14 @@ function GateCard({ which, g, action, id }: { which: 'votes' | 'testing'; g: Cha
         </div>
       </div>
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
-      {g.note.length || (g.details && id) ? (
+      {g.noteDetail ? (
+        <details className="dev-change-gate-note" data-change-gate-explanation="">
+          <summary className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500" title={g.noteDetail}>
+            {g.note.join(' ')}
+          </summary>
+          <p className="mt-2">{g.noteDetail}</p>
+        </details>
+      ) : g.note.length || (g.details && id) ? (
         <p className="dev-change-gate-note">
           {g.note.join(' ')}
           {g.details && id ? <>{g.note.length ? ' ' : ''}<button type="button" className="dev-change-gate-link" onClick={open}>See what failed</button></> : null}

@@ -555,6 +555,8 @@ export interface ChangeGateView {
   label: string;
   /** The one line under the card, as its sentences. */
   note: string[];
+  /** Why this status is shown, disclosed beside the note when available. */
+  noteDetail?: string;
   /** Testing only: its re-run, or a retry of the preview. */
   actions?: ActionSpec[];
   /** Testing only: a "See what failed" door into Details. */
