@@ -127,13 +127,19 @@ export function placeBeside(pin: Point, size: Size, viewport: Size, gap = 14, ma
 /**
  * Where the page's picture sits on the screen: the whole viewport shrunk
  * until it clears `margin` on every side, keeping the screen's shape,
- * centred.
+ * centred. `top` is a band kept clear above it all the way across (the
+ * view's header lives there), so the picture is smaller still and never
+ * runs under the header.
  */
-export function insetFrame(viewport: Size, margin: number): { x: number; y: number; scale: number } {
+export function insetFrame(viewport: Size, margin: number, top = 0): { x: number; y: number; scale: number } {
   const w = Math.max(1, viewport.width);
   const h = Math.max(1, viewport.height);
-  const scale = Math.min((w - 2 * margin) / w, (h - 2 * margin) / h);
-  return { x: (w - w * scale) / 2, y: (h - h * scale) / 2, scale: Math.max(0, scale) };
+  const scale = Math.min((w - 2 * margin) / w, (h - 2 * margin - top) / h);
+  return {
+    x: (w - w * scale) / 2,
+    y: top + (h - top - h * scale) / 2,
+    scale: Math.max(0, scale),
+  };
 }
 
 /** A point of the page to where it sits on the inset picture. */

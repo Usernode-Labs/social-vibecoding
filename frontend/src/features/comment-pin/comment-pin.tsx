@@ -19,11 +19,13 @@
  * scrolls, with the wheel or a finger, and the pins move with what they
  * were put on; a tap is a comment, as a click is.
  *
- * The bar sits at the foot each time comment mode opens, until the person
- * drags its handle somewhere else (only for this visit). Resting the pointer
- * on it moves it out of the way, so what is under it can be commented on.
- * The first time comment mode opens on a device, a short note above the bar
- * says how it works, and that the Form switch goes back to the form.
+ * Over the inset picture the bar is that view's header: the picture leaves
+ * a band for it at the top and it sits there, the picture's own width, so
+ * nothing floats over the page. When the picture could not be taken, the
+ * bar sits at the foot each time comment mode opens, until the person drags
+ * its handle somewhere else (only for this visit). The first time comment
+ * mode opens on a device, a short note says how it works, and that the Form
+ * switch goes back to the form.
  *
  * ── The box ───────────────────────────────────────────────────────────
  *
@@ -93,6 +95,8 @@ const BAR_SPACE = 76;
 /** How far the inset picture keeps from the screen's edges. */
 const INSET_MARGIN = 24;
 const INSET_MARGIN_PHONE = 12;
+/** The band kept clear above the picture for the mode's header (the bar). */
+const HEADER_BAND = 60;
 /** Whether this screen is a phone: the same narrow-touch test the shell's
  *  keyboard handling uses. A narrow desktop window keeps the desktop flow. */
 function isPhone(): boolean {
@@ -468,11 +472,13 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (viewShotUrl.current) URL.revokeObjectURL(viewShotUrl.current);
   }, []);
 
-  // Whether the page is shown as the inset picture, and where it sits. A
-  // failed picture keeps the mode over the live page, untransformed.
+  // Whether the page is shown as the inset picture, and where it sits. The
+  // picture leaves a band at the top for the mode's header, so the bar is
+  // part of the view instead of floating over the page. A failed picture
+  // keeps the mode over the live page, untransformed, bar at the foot.
   const phone = isPhone();
   const inset = viewShot && viewShot.state !== 'failed'
-    ? insetFrame({ width: window.innerWidth, height: window.innerHeight }, phone ? INSET_MARGIN_PHONE : INSET_MARGIN)
+    ? insetFrame({ width: window.innerWidth, height: window.innerHeight }, phone ? INSET_MARGIN_PHONE : INSET_MARGIN, HEADER_BAND)
     : null;
 
   // Images the person added are object URLs until the mode closes.
@@ -845,11 +851,15 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   // ── The bar ─────────────────────────────────────────────────────────
   //
-  // At the foot, centred, each time comment mode opens, until the person
-  // drags its handle; then where they put it, for this visit only (a
-  // double-click on the handle puts it back). It never moves out of the way
-  // on its own: what is under it is reached by dragging the handle, which
-  // wears the four-arrow move glyph and cursor.
+  // Over the inset picture the bar is that view's header: it sits in the
+  // band the picture leaves at the top, the picture's own width, and does
+  // not float, so there is no handle to drag it by. Over the live page (a
+  // picture that could not be taken) it is as it always was: at the foot,
+  // centred, each time comment mode opens, until the person drags its
+  // handle; then where they put it, for this visit only (a double-click on
+  // the handle puts it back). It never moves out of the way on its own:
+  // what is under it is reached by dragging the handle, which wears the
+  // four-arrow move glyph and cursor.
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
@@ -874,24 +884,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (!drag.current) return;
     drag.current = null;
   };
-  // Where the bar rests when the person has not dragged it: on the picture's
-  // bottom edge, centred, when the page is a picture — on the screenshot
-  // rather than the page under it — and at the foot as before when it is not.
-  const barDefault = inset && barSize.width
-    ? {
-      left: Math.round(Math.max(8, Math.min(window.innerWidth - barSize.width - 8, (window.innerWidth - barSize.width) / 2))),
-      top: Math.round(Math.max(8, inset.y + window.innerHeight * inset.scale - barSize.height)),
-    }
-    : null;
-  const barPlace = barAt
+  // Where a dragged bar was let go, on the live page.
+  const barPlace = barAt && !inset
     ? {
       left: Math.round(Math.max(8, Math.min(window.innerWidth - barSize.width - 8, barAt.x * window.innerWidth - barSize.width / 2))),
       top: Math.round(Math.max(8, Math.min(window.innerHeight - barSize.height - 8, barAt.y * window.innerHeight - barSize.height / 2))),
     }
-    : barDefault;
+    : null;
 
-  // The box and an open marker's card sit beside their pins, clear of the bar at the foot.
-  const viewport = () => ({ width: window.innerWidth, height: Math.max(200, window.innerHeight - (barAt ? 0 : BAR_SPACE)) });
+  // The box and an open marker's card sit beside their pins: clear of the
+  // header at the top over the picture, clear of the bar at the foot over
+  // the live page.
+  const viewport = () => ({ width: window.innerWidth, height: Math.max(200, window.innerHeight - (inset || barAt ? 0 : BAR_SPACE)) });
   const boxComment = draft ? activeComment(draft) || draft.comments[draft.comments.length - 1] || null : null;
   // Where the box and card go, in screen coordinates: the anchor reads the
   // live element in page coordinates, so it follows scrolls, and the inset
@@ -916,11 +920,17 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const besidePin = (p: Point, size: { width: number; height: number }): Point => {
     const vp = viewport();
     const fits = p.x + 24 + size.width <= vp.width - 8 || p.x - 24 - size.width >= 8;
-    if (fits) return placeBeside({ x: p.x + 10, y: p.y - 30 }, size, vp, 14);
-    const x = Math.max(8, Math.min(vp.width - 8 - size.width, p.x - size.width / 2));
-    const below = p.y + 10;
-    const y = below + size.height <= vp.height - 8 ? below : Math.max(8, p.y - 40 - size.height);
-    return { x, y };
+    let at: Point;
+    if (fits) {
+      at = placeBeside({ x: p.x + 10, y: p.y - 30 }, size, vp, 14);
+    } else {
+      const x = Math.max(8, Math.min(vp.width - 8 - size.width, p.x - size.width / 2));
+      const below = p.y + 10;
+      const y = below + size.height <= vp.height - 8 ? below : Math.max(8, p.y - 40 - size.height);
+      at = { x, y };
+    }
+    // The header owns the top of the view: the box and a card never slide under it.
+    return inset ? { x: at.x, y: Math.max(at.y, HEADER_BAND + 8) } : at;
   };
   useLayoutEffect(() => {
     const box = boxRef.current;
@@ -1528,12 +1538,15 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         <div
           role="dialog"
           aria-label="How comment mode works"
-          className="absolute bottom-[76px] left-1/2 flex w-[340px] max-w-[calc(100vw-24px)] -translate-x-1/2 flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
+          className={[
+            'absolute left-1/2 flex w-[340px] max-w-[calc(100vw-24px)] -translate-x-1/2 flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10',
+            inset ? 'top-[68px]' : 'bottom-[76px]',
+          ].join(' ')}
         >
           <p className="text-[15px] font-[650] leading-snug text-zinc-900 dark:text-white">How comment mode works</p>
           <ul className="flex flex-col gap-1 text-[13px] text-zinc-600 dark:text-zinc-300">
             <li>Tap anything on the page to leave a comment right there, then press Post.</li>
-            <li>Drag the handle on the left to move the bar.</li>
+            {!inset ? <li>Drag the handle on the left to move the bar.</li> : null}
             <li>Prefer the form? Tap Form to switch back at any time.</li>
           </ul>
           <div className="flex justify-end">
@@ -1542,35 +1555,51 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         </div>
       ) : null}
 
+      {/* Over the picture the bar is the view's header: same width as the
+          picture, in the band above it, nothing floating over the page and
+          no handle to drag it by. Over the live page it is the floating bar
+          it always was. */}
       <div
         ref={barRef}
         tabIndex={-1}
         role="toolbar"
         aria-label="Comment mode"
         className={[
-          'absolute flex max-w-[calc(100vw-24px)] items-center gap-2 whitespace-nowrap rounded-full bg-white py-1.5 pl-1.5 pr-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.22)] outline-none ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10 sm:gap-2.5',
-          barPlace ? '' : 'bottom-4 left-1/2 -translate-x-1/2',
+          'absolute flex max-w-[calc(100vw-24px)] items-center gap-2 whitespace-nowrap rounded-full bg-white py-1.5 pl-1.5 pr-1.5 outline-none ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10 sm:gap-2.5',
+          inset
+            ? 'rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.18)]'
+            : 'shadow-[0_8px_30px_rgba(0,0,0,0.22)]',
+          !inset && !barPlace ? 'bottom-4 left-1/2 -translate-x-1/2' : '',
         ].filter(Boolean).join(' ')}
-        style={barPlace ? { left: barPlace.left, top: barPlace.top } : undefined}
+        style={inset
+          ? {
+            left: inset.x,
+            top: Math.max(6, Math.round((HEADER_BAND - barSize.height) / 2)),
+            width: window.innerWidth * inset.scale,
+          }
+          : barPlace ? { left: barPlace.left, top: barPlace.top } : undefined}
       >
-        <button
-          type="button"
-          aria-label="Move the bar: drag it anywhere, double-click to put it back"
-          title="Drag to move the bar anywhere. Double-click to put it back at the bottom."
-          onPointerDown={onGripDown}
-          onPointerMove={onGripMove}
-          onPointerUp={onGripUp}
-          onPointerCancel={onGripUp}
-          onDoubleClick={() => { setBarAt(null); }}
-          className="grid h-8 w-6 shrink-0 cursor-move touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-        >
-          <ArrowsMoveIcon className="h-4 w-4" />
-        </button>
+        {!inset ? (
+          <button
+            type="button"
+            aria-label="Move the bar: drag it anywhere, double-click to put it back"
+            title="Drag to move the bar anywhere. Double-click to put it back at the bottom."
+            onPointerDown={onGripDown}
+            onPointerMove={onGripMove}
+            onPointerUp={onGripUp}
+            onPointerCancel={onGripUp}
+            onDoubleClick={() => { setBarAt(null); }}
+            className="grid h-8 w-6 shrink-0 cursor-move touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+          >
+            <ArrowsMoveIcon className="h-4 w-4" />
+          </button>
+        ) : null}
         {confirm ? (
           <>
             <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
               {confirm === 'discard' ? 'Discard this request? Nothing in it is posted yet.' : "Discard the comments you haven't posted?"}
             </span>
+            {inset ? <span className="min-w-0 flex-1" /> : null}
             <button
               type="button"
               onClick={() => { setConfirm(null); textRef.current?.focus(); }}
@@ -1597,6 +1626,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 {`${postedCount} posted`}
               </span>
             ) : null}
+            {inset ? <span className="min-w-0 flex-1" /> : null}
             <span className="inline-flex shrink-0 gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label="How to suggest it">
               <button
                 type="button"

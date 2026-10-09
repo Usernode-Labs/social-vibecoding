@@ -82,6 +82,12 @@ test('the inset picture keeps its margin, keeps the screen\'s shape, and maps po
   assert.equal(picture.insetFrame({ width: 0, height: 0 }, 24).scale, 0);
   // A zero scale reads as one on the way back, so a point survives it.
   assert.deepEqual(picture.toPage({ x: 5, y: 5 }, { x: 0, y: 0, scale: 0 }), { x: 5, y: 5 });
+  // A band kept clear above (the view's header) insets the picture further,
+  // and the bottom margin is still kept exactly.
+  const headed = picture.insetFrame({ width: 1280, height: 800 }, 24, 60);
+  assert.ok(Math.abs(headed.scale - (800 - 48 - 60) / 800) < 1e-9, 'the band is room the picture does not take');
+  assert.ok(headed.y >= 60, 'the picture starts below the header band');
+  assert.ok(Math.abs(headed.y + 800 * headed.scale - (800 - 24)) < 1e-9, 'the bottom margin is kept');
 });
 
 test('the close-up opens on the pin at zoom 2, and holds its zoom and pan to the picture', () => {
@@ -106,10 +112,18 @@ test('the close-up opens on the pin at zoom 2, and holds its zoom and pan to the
   assert.deepEqual(panned.pan, { x: -320, y: 0 });
 });
 
-test('the reworked mode: the bar on the picture, the phone sheet, and the close-up', () => {
+test('the reworked mode: the bar as the view\'s header, the phone sheet, and the close-up', () => {
   const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
-  // The bar rests on the picture's bottom edge, centred, until dragged.
-  assert.match(src, /inset\.y \+ window\.innerHeight \* inset\.scale - barSize\.height/);
+  // The bar is the view's header, not a floating bar: the picture leaves a
+  // band at the top for it and takes the picture's own width, so nothing
+  // rides on the page. The old rest-on-the-picture's-bottom-edge default is
+  // gone with it.
+  assert.match(src, /const HEADER_BAND = 60;/);
+  assert.match(src, /INSET_MARGIN, HEADER_BAND\)/);
+  assert.doesNotMatch(src, /inset\.y \+ window\.innerHeight \* inset\.scale - barSize\.height/);
+  // The handle that drags the bar belongs to the live-page fallback alone.
+  assert.match(src, /"Move the bar: drag it anywhere, double-click to put it back"/);
+  assert.match(src, /\{!inset \? \(\s*<button\s+type="button"\s+aria-label="Move the bar/);
   // Taking a new picture says so in the bar, and taps wait while it draws.
   assert.match(src, /viewShot\?\.state === 'drawing' \? 'Taking a screenshot…'/);
   assert.match(src, /if \(viewShot\?\.state === 'drawing'\) return;/);
