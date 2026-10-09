@@ -401,6 +401,7 @@ test('a bot build on GLM 5.3 Flash runs in Claude Code, and OpenRouter receives 
   assert.equal(env.AGENT_MODEL, GLM);
   assert.equal(env.MODEL, GLM);
   assert.equal(env.AGENT_MODEL_SUPPORTS_IMAGES, '1');
+  assert.equal(env.AGENT_MODEL_CONTEXT_WINDOW, '200000', 'the catalog\'s window, for the window Claude Code compacts at');
   assert.equal(env.SYSTEM_PROMPT_FILE, '');
   assert.equal(env.INLOOP_BROWSER, '1');
   assert.equal(env.INLOOP_PORT, '3100');

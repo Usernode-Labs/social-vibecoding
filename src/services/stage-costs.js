@@ -24,8 +24,33 @@
 // the total holds that no part names (a turn a restart threw away and its
 // next claim did again, a spec written before a restart) is `other`, so the
 // parts always add up to the total.
+//
+// A live build's spec, build and fix parts are read off its session's
+// ledger (ledgerParts), where the total is read too: a turn the build named
+// keeps its stage, and any other turn takes the stage its component names.
+// A build a restart finished names none of its turns, and before this read
+// its whole cost was `other` (63% of the later changes' average). What the
+// ledger holds that no stage names is listed under `other.of` by component,
+// so the remainder says what it is.
 
 const STAGES = Object.freeze(['triage', 'spec', 'build', 'review_reviewer', 'review_fixes']);
+
+// The stage of a build session's turn its build did not name, by the
+// component it was dispatched under (agent_turns.metadata
+// .telemetry_component: homeroom-bot-live.js runSpecTurn, buildTurnRunner,
+// and the attempt loop's own names when a dispatch gave none). A build
+// session runs one scout turn, its spec; the rest are the build runner's.
+const COMPONENT_STAGES = Object.freeze({
+  homeroom_bot_spec: 'spec',
+  coding_agent_scout: 'spec',
+  homeroom_bot_build: 'build',
+  homeroom_bot_build_nudge: 'build',
+  coding_agent_build: 'build',
+});
+// What a turn whose component nothing names, or that has none, is listed as.
+const UNNAMED = 'unnamed';
+const COMPONENT_RE = /^[a-z0-9_]{1,64}$/;
+const MAX_OTHER_OF = 8;
 const MODEL_RE = /^[\w./:@+-]{1,160}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_TURN_IDS = 20;
@@ -107,6 +132,96 @@ async function withLedgerTokens(pool, parts) {
   return out;
 }
 
+/**
+ * A build session's parts as its turn ledger holds them, beside `parts`, what
+ * the build knew of itself (fromStages, reviewParts). A turn a part names by
+ * id stays that part's; any other priced turn takes the stage its component
+ * names (COMPONENT_STAGES), a build-runner turn that started at or after
+ * `reviewStartedAt` being one of the review's fixes. Each stage the ledger
+ * holds becomes its ledger sum and tokens, on the part's model (else
+ * `models[stage]`, else the turn's); a stage it holds none of (the
+ * reviewer's calls, a triage read elsewhere) is kept as given. The turns
+ * no stage takes come back in `unnamed` ({ component, usd, startedAt }),
+ * for `other.of` (byComponent). With no session or an unreadable ledger,
+ * the parts come back as given, with their tokens. Never throws.
+ */
+async function ledgerParts(pool, sessionId, parts = {}, { models = {}, reviewStartedAt = null } = {}) {
+  const given = { ...(parts || {}) };
+  if (!pool || !sessionId) return { parts: await withLedgerTokens(pool, given), unnamed: [] };
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT COALESCE(logical_turn_id, id)::text AS id,
+              MAX(metadata->>'telemetry_component') AS component,
+              MAX(requested_model) AS model,
+              MIN(started_at) AS started_at,
+              COALESCE(SUM(estimated_cost_usd), 0)::float8 AS cost,
+              COUNT(estimated_cost_usd)::int AS priced,
+              COALESCE(SUM(input_tokens), 0)::bigint AS input,
+              COALESCE(SUM(output_tokens), 0)::bigint AS output
+         FROM agent_turns WHERE session_id = $1
+        GROUP BY 1`,
+      [Number(sessionId)],
+    ));
+  } catch {
+    return { parts: await withLedgerTokens(pool, given), unnamed: [] };
+  }
+  const named = new Map();
+  for (const [stage, p] of Object.entries(given)) {
+    for (const id of (Array.isArray(p?.turnIds) ? p.turnIds : [])) named.set(id, stage);
+  }
+  const reviewFrom = reviewStartedAt ? Date.parse(reviewStartedAt) : NaN;
+  const held = {};
+  const unnamed = [];
+  for (const r of rows || []) {
+    if (!(Number(r.priced) > 0)) continue;
+    const startedMs = r.started_at ? new Date(r.started_at).getTime() : NaN;
+    let stage = named.get(String(r.id)) || COMPONENT_STAGES[r.component] || null;
+    if (stage === 'build' && !named.has(String(r.id)) && Number.isFinite(reviewFrom) && startedMs >= reviewFrom) stage = 'review_fixes';
+    if (!stage) {
+      unnamed.push({
+        component: COMPONENT_RE.test(String(r.component || '')) ? r.component : UNNAMED,
+        usd: usd(r.cost),
+        startedAt: Number.isFinite(startedMs) ? new Date(startedMs).toISOString() : null,
+      });
+      continue;
+    }
+    const h = held[stage] || (held[stage] = { usd: 0, inputTokens: 0, outputTokens: 0, turnIds: [], model: null });
+    h.usd += Number(r.cost) || 0;
+    h.inputTokens += Number(r.input) || 0;
+    h.outputTokens += Number(r.output) || 0;
+    h.turnIds.push(String(r.id));
+    h.model = h.model || modelOf(r.model);
+  }
+  const out = { ...given };
+  for (const [stage, h] of Object.entries(held)) {
+    const was = given[stage] || {};
+    const p = part({
+      usd: h.usd, model: was.model || models[stage] || h.model,
+      inputTokens: h.inputTokens, outputTokens: h.outputTokens, turnIds: h.turnIds, screens: was.screens || null,
+    });
+    if (p) out[stage] = p;
+  }
+  return { parts: out, unnamed };
+}
+
+/**
+ * What the turns no stage took come to, by component, largest first
+ * ({ component, usd }), for `other.of`. Pure.
+ */
+function byComponent(unnamed) {
+  const sums = new Map();
+  for (const u of Array.isArray(unnamed) ? unnamed : []) {
+    if (num(u?.usd) == null || !(Number(u.usd) > 0)) continue;
+    const c = COMPONENT_RE.test(String(u.component || '')) ? u.component : UNNAMED;
+    sums.set(c, (sums.get(c) || 0) + Number(u.usd));
+  }
+  return [...sums.entries()]
+    .map(([component, v]) => ({ component, usd: usd(v) }))
+    .sort((a, b) => b.usd - a.usd || a.component.localeCompare(b.component))
+    .slice(0, MAX_OTHER_OF);
+}
+
 /** What a session's ledger holds: { usd, inputTokens, outputTokens, model }, or null with nothing priced. Never throws. */
 async function sessionPart(pool, sessionId, model = null) {
   if (!pool || !sessionId) return null;
@@ -130,10 +245,12 @@ async function sessionPart(pool, sessionId, model = null) {
  * screens? }], other: { usd } }, in STAGES order, with `other` what the
  * total holds that no part names. With no total, the parts' sum is the
  * total. A total smaller than its parts (one recorded before a part was)
- * says so in `note` rather than showing a negative remainder. Null with no
- * part. Pure.
+ * says so in `note` rather than showing a negative remainder. `of` names
+ * what the remainder is made of where that is known (byComponent: the
+ * ledger's turns no stage took, a kept plan's cost), as `other.of`. Null
+ * with no part. Pure.
  */
-function breakdown(totalUsd, parts) {
+function breakdown(totalUsd, parts, { of = [] } = {}) {
   const stages = [];
   let sum = 0;
   for (const stage of STAGES) {
@@ -150,6 +267,8 @@ function breakdown(totalUsd, parts) {
   const total = num(totalUsd) == null ? sum : Number(totalUsd);
   const rest = usd(total - sum);
   const out = { totalUsd: usd(total), stages, other: { usd: rest > 0 ? rest : 0 } };
+  const named = rest > 0 ? byComponent(of) : [];
+  if (named.length) out.other.of = named;
   if (rest < -0.000001) out.note = `the parts come to $${usd(sum)}, more than the recorded total`;
   return out;
 }
@@ -157,8 +276,11 @@ function breakdown(totalUsd, parts) {
 /**
  * Per-stage averages over breakdowns (one per result), beside the average
  * total they add up to: { n, totalUsd, stages: { [stage]: { usd, models } },
- * otherUsd }. A stage a result did not have counts as nothing spent on it.
- * Null with none. Pure.
+ * otherUsd, otherOf }. A stage a result did not have counts as nothing spent
+ * on it. `otherOf` averages what the remainders name (`other.of`), by
+ * component, the same way; a result recorded before they were named adds
+ * nothing to it, so it can come to less than `otherUsd`. Null with none.
+ * Pure.
  */
 function averages(list) {
   const done = (Array.isArray(list) ? list : []).filter((b) => b && Array.isArray(b.stages) && num(b.totalUsd) != null);
@@ -173,11 +295,14 @@ function averages(list) {
       models: [...new Set(seen.map((x) => x.model).filter(Boolean))].slice(0, 6),
     };
   }
+  const otherOf = byComponent(done.flatMap((b) => (Array.isArray(b.other?.of) ? b.other.of : [])))
+    .map((o) => ({ component: o.component, usd: usd(o.usd / n) }));
   return {
     n,
     totalUsd: usd(done.reduce((s, b) => s + Number(b.totalUsd), 0) / n),
     stages,
     otherUsd: usd(done.reduce((s, b) => s + (num(b.other?.usd) || 0), 0) / n),
+    ...(otherOf.length ? { otherOf } : {}),
   };
 }
 
@@ -187,6 +312,8 @@ module.exports = {
   reviewParts,
   fromStages,
   withLedgerTokens,
+  ledgerParts,
+  byComponent,
   sessionPart,
   breakdown,
   averages,
