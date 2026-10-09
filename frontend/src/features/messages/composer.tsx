@@ -3,6 +3,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Chan
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
+import { waitingFor } from './waiting-for';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
 import { mirrorsReplies, postedNote } from './bot-question';
 import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
@@ -475,14 +476,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // for. Every later send used to come back "Not sent · Retry", and the
   // Retry could never work.
   const awaiting = !inThread && !!active.awaitingAcceptance;
-  // The peer when it has a username, else the first invited member, as before
-  // the flag was read: whose name it is decides whose flag applies.
-  const waitingUser = awaiting
-    ? (active.peer?.username ? active.peer : active.members.find((member) => member.status === 'invited')) || null
-    : null;
-  const waitingOn = waitingUser?.username || '';
-  // The person's username did not come with the row: the two lines say so in their own words.
-  const waitingUnknown = !!waitingOn && !!waitingUser?.unnamed;
+  const { name: waitingOn, unknown: waitingUnknown } = awaiting ? waitingFor(active) : { name: '', unknown: false };
   if (awaiting && (!active.canSend || snap.messages.length > 0)) {
     return (
       <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">

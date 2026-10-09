@@ -35,11 +35,13 @@ interface PendingSend {
 }
 
 /**
- * Somebody typing, as the line above the box shows them. Kept by user id, so
- * two people are two entries whatever they are called, and `unnamed` (the
- * name is the stand-in for a member with no username) leaves with the entry.
+ * A name on the typing line. The line shows each name once, as it always has:
+ * two people shown by the same word are one entry, and that word leaves when
+ * either of them stops (see `typingHolders`). `unnamed` says the word is only
+ * the stand-in for a member with no username; it is worked out from who is
+ * typing under the word now, so it leaves with that person.
  */
-export interface Typist { userId: number; name: string; unnamed: boolean }
+export interface Typist { name: string; unnamed: boolean }
 
 interface InternalState extends MessagesSnapshot {
   typing: Record<number, Typist[]>;
@@ -129,7 +131,14 @@ const typingExpiry = new Map<string, number>();
  * key) until that read publishes, and never longer than TYPING_HOLD_MS.
  */
 const landing = new Map<number, number>();
-const heldTyping = new Map<string, { conversationId: number; userId: number }>();
+const heldTyping = new Map<string, { conversationId: number; shown: string }>();
+/**
+ * Who is typing under each shown word: `conversationId:word` to user id to
+ * whether that person has no username. The word is the stand-in only while
+ * everybody typing under it is nameless; one real account makes it a name.
+ * Emptied when the word leaves the line, so nothing outlives the person.
+ */
+const typingHolders = new Map<string, Map<number, boolean>>();
 const TYPING_HOLD_MS = 5000;
 let pendingShare: SharedObjectReference | null | undefined;
 /**
@@ -2238,36 +2247,44 @@ export function handleEvent(raw: ConversationEvent): void {
       const botPeer = state.active?.id === conversationId && state.active.peer?.bot && state.active.peer.id === userId
         ? state.active.peer.displayName || '' : '';
       if (!userId || userId === currentUser().id || !username) break;
-      const current = (state.typing[conversationId] || []).filter((entry) => entry.userId !== userId);
-      const wasTyping = current.length !== (state.typing[conversationId] || []).length;
+      const current = state.typing[conversationId] || [];
       const expiryKey = `${conversationId}:${userId}`;
       const existingExpiry = typingExpiry.get(expiryKey);
       if (existingExpiry && typeof window !== 'undefined') window.clearTimeout(existingExpiry);
       typingExpiry.delete(expiryKey);
       heldTyping.delete(expiryKey);
-      // A member whose username did not come with the row types under a
-      // stand-in; the entry says so, and the line has its own wording for it.
-      const shown: Typist = { userId, name: botPeer || username, unnamed: !botPeer && !!typist?.unnamed };
+      const shown = botPeer || username;
+      const isShown = current.some((entry) => entry.name === shown);
       // #4220: a stop while the message it typed is still being read keeps
       // the line until that read publishes (releaseHeldTyping), or the cap.
-      if (event.typing === false && landing.get(conversationId) && wasTyping && typeof window !== 'undefined') {
-        heldTyping.set(expiryKey, { conversationId, userId });
+      if (event.typing === false && landing.get(conversationId) && isShown && typeof window !== 'undefined') {
+        heldTyping.set(expiryKey, { conversationId, shown });
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
           heldTyping.delete(expiryKey);
-          dropTyping(conversationId, userId);
+          dropTyping(conversationId, shown);
         }, TYPING_HOLD_MS));
         break;
       }
-      // A renewal keeps the typist's place in the line.
-      const next = event.typing === false ? current
-        : wasTyping ? (state.typing[conversationId] || []).map((entry) => (entry.userId === userId ? shown : entry))
-          : [...current, shown];
+      const holdersKey = `${conversationId}:${shown}`;
+      let next: Typist[];
+      if (event.typing === false) {
+        // The word leaves the line, and with it everybody typing under it.
+        typingHolders.delete(holdersKey);
+        next = current.filter((entry) => entry.name !== shown);
+      } else {
+        const holders = typingHolders.get(holdersKey) || new Map<number, boolean>();
+        holders.set(userId, !botPeer && !!typist?.unnamed);
+        typingHolders.set(holdersKey, holders);
+        // The stand-in only while every holder is nameless: a real account under the same word is named.
+        const entry: Typist = { name: shown, unnamed: [...holders.values()].every(Boolean) };
+        next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
+      }
       publish({ typing: { ...state.typing, [conversationId]: next } });
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
-          dropTyping(conversationId, userId);
+          dropTyping(conversationId, shown);
         }, 6000));
       }
       break;
@@ -2275,10 +2292,11 @@ export function handleEvent(raw: ConversationEvent): void {
   }
 }
 
-function dropTyping(conversationId: number, userId: number): void {
+function dropTyping(conversationId: number, shown: string): void {
   const now = state.typing[conversationId] || [];
-  const next = now.filter((entry) => entry.userId !== userId);
+  const next = now.filter((entry) => entry.name !== shown);
   if (next.length === now.length) return;
+  typingHolders.delete(`${conversationId}:${shown}`);
   publish({ typing: { ...state.typing, [conversationId]: next } });
 }
 
@@ -2290,11 +2308,11 @@ function releaseHeldTyping(conversationId: number): void {
     const timer = typingExpiry.get(key);
     if (timer && typeof window !== 'undefined') window.clearTimeout(timer);
     typingExpiry.delete(key);
-    dropTyping(conversationId, held.userId);
+    dropTyping(conversationId, held.shown);
   }
 }
 
-/** Who is typing in a conversation, in the order they started. */
+/** The names on a conversation's typing line, in the order they came. */
 export function typingUsers(conversationId: number): Typist[] {
   return state.typing[conversationId] || [];
 }
