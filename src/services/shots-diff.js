@@ -233,7 +233,9 @@ const areaOf = (region) => Math.max(
 );
 
 // The screens a run's card shows. Changes on one screen size whose before
-// screens are the same image share one screen, with an area for each; the
+// screens are the same image in every appearance share one screen, with an
+// area for each. Use one grouping across modes so their claim identities and
+// representative shots stay the same when one mode has extra differences. The
 // first change's after screen is the one shown, since the agent may have
 // hovered something different for each. `stories` are the ready ones, in the
 // declaration's order. It yields between screens and between element shots:
@@ -263,9 +265,14 @@ async function screensFor(stories, files) {
       const base = find(story.id, viewport, 'base', 'context', colorScheme);
       const head = find(story.id, viewport, 'head', 'context', colorScheme);
       if (!base || !head) continue;
-      const group = groups.find((entry) => entry.baseSha === base.sha256);
+      const appearanceKey = JSON.stringify(modes.map((mode) => {
+        const before = find(story.id, viewport, 'base', 'context', mode);
+        const after = find(story.id, viewport, 'head', 'context', mode);
+        return before && after ? before.sha256 : null;
+      }));
+      const group = groups.find((entry) => entry.appearanceKey === appearanceKey);
       if (group) group.stories.push(story);
-      else groups.push({ baseSha: base.sha256, stories: [story], base, head });
+      else groups.push({ appearanceKey, stories: [story], base, head });
     }
     for (const group of groups) {
       await new Promise((resolve) => setImmediate(resolve));
