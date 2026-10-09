@@ -5971,11 +5971,16 @@ const AppView = {
     // returns it to the owner of an underway change only.
     const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
     if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
+    // #4479: when the plan stands in for a summary that does not exist yet,
+    // the page shows it where the line points — a fold under the line, not
+    // only in Details. A change that has a summary keeps the page as it is.
+    const hadSummary = !!body.summaryHtml;
     body.summaryHtml ||= specStandIn
-      ? '<p>No short summary has been added yet. The plan this change is built from is under Details.</p>'
+      ? '<p>No short summary has been added yet. The plan this change is built from is below.</p>'
       : body.proposalBody
         ? '<p>No short summary has been added yet. The current description is under Details.</p>'
         : '<p>No change summary has been added yet.</p>';
+    body.planFold = specStandIn && !hadSummary;
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.workspace = mine && item.source !== 'imported' ? item.id : null;

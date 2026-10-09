@@ -685,6 +685,13 @@ export interface TopicBody {
    * follow keeps the disclosure from collapsing under the reader.
    */
   proposalBody?: { id: number | null; open: boolean; html: string } | null;
+  /**
+   * #4479: on a change page, `proposalBody` is the change's plan standing in
+   * for a summary that does not exist yet — draw it as a "Plan" fold under
+   * the summary line (change-head.tsx), where the line says it is, not only
+   * in Details. False when the page is unchanged: a summary is shown.
+   */
+  planFold?: boolean;
   details?: ProposalDetails | null;
   /** A change page's hero, and its steps (drawn in Details, B10b). Set with `changeId`. */
   hero?: HeroView | null;

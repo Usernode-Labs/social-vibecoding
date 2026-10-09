@@ -587,7 +587,8 @@ test('buttons only for whoever can clear the step: Sync with main is the author�
 
 test('before review the page is the same shape: not up for a vote yet, and the steps it will take', () => {
   const av = context();
-  const mine = { ...PR, user_id: 42, status: 'active', pr_number: null, pr_url: null, mergeRequirements: undefined, shared_at: null, spec_md: '# Spec' };
+  const mine = { ...PR, user_id: 42, status: 'active', pr_number: null, pr_url: null, mergeRequirements: undefined, shared_at: null,
+    spec_md: '# Spec', pr_summary_md: null, pr_body: null };
   const { v, html, page } = render(av, mine, 'session');
   assert.equal(v.body.hero.kind, 'Change');
   assert.equal(v.body.hero.ref, null);
@@ -612,6 +613,17 @@ test('before review the page is the same shape: not up for a vote yet, and the s
   // The one Submit for review is the Votes card's button; the step does not repeat it.
   assert.equal((html.match(/>Submit for review</g) || []).length, 1);
   assert.match(page.slice(page.indexOf('data-change-gate="votes"')), /^[^]*?data-act="runChangeAction">Submit for review</);
+  // #4479: with no summary, the plan itself is a fold right under the line
+  // that says it is below — the same fold "How it’s built" uses, closed to
+  // begin with, with the spec inside.
+  assert.equal((page.match(/data-topic-part="plan"/g) || []).length, 1);
+  assert.ok(page.indexOf('data-request-words') < page.indexOf('data-topic-part="plan"'), 'the fold follows the summary line');
+  assert.ok(page.indexOf('data-topic-part="plan"') < page.indexOf('data-change-gate="votes"'), 'and sits before the gates');
+  assert.match(page, /<details class="dev-topic-details dev-topic-hero-more" data-topic-part="plan"><summary class="dev-topic-details-summary">Plan<\/summary>/);
+  assert.match(page, /data-topic-part="plan"><summary class="dev-topic-details-summary">Plan<\/summary>[^]*?# Spec[^]*?<\/details>/);
+  // With a summary the page is as it was: the plan stays in Details alone.
+  const summarised = render(av, { ...mine, pr_summary_md: 'Previews wait for sign-in.' }, 'session');
+  assert.ok(!summarised.page.includes('data-topic-part="plan"'), 'no Plan fold once there is a summary');
   // The Build door is a ⋯ row.
   const menu = av._cardMenuItems(v.card.rail.menuKey).map((a) => a.label);
   assert.ok(menu.includes('Continue building'));

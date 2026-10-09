@@ -181,19 +181,23 @@ test('before review the author reads the spec under About this change (#2371)', 
   const own = av._topicViewFor('session', draft);
   assert.ok(own.body.proposalBody, 'the spec stands in for the technical details');
   assert.match(own.body.proposalBody.html, /Authenticate previews/);
-  assert.match(own.body.summaryHtml, /plan this change is built from is under Details/);
+  assert.match(own.body.summaryHtml, /plan this change is built from is below/);
+  assert.equal(own.body.planFold, true, 'the plan is a fold on the page while there is no summary');
 
   // A real PR body wins, and a summary is never replaced.
   const withBody = av._topicViewFor('session', { ...draft, pr_body: 'The PR body', pr_summary_md: 'Previews wait for sign-in.' });
   assert.match(withBody.body.proposalBody.html, /The PR body/);
   assert.doesNotMatch(withBody.body.summaryHtml, /spec this change/);
+  assert.equal(withBody.body.planFold, false, 'a real description is Details\' own, not a page fold');
 
   // Nobody else's change, and nothing once it is up for review.
   const readerView = context({ id: 99 })._topicViewFor('session', { ...draft, shared_at: '2026-09-11' });
   assert.equal(readerView.body.proposalBody, null);
   assert.doesNotMatch(readerView.body.summaryHtml, /spec this change/);
+  assert.equal(readerView.body.planFold, false);
   const promoted = av._topicViewFor('proposal', { ...draft, status: 'promoted' });
   assert.doesNotMatch(promoted.body.summaryHtml || '', /spec this change/);
+  assert.equal(promoted.body.planFold, false);
 });
 
 test('readers cannot promote, sync, or open the private workspace', () => {

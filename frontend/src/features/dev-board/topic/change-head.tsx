@@ -128,6 +128,31 @@ function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactN
   );
 }
 
+/**
+ * #4479: the change's plan standing in for a summary that does not exist
+ * yet, as a fold under the line that says it is below — a copy of
+ * `SummaryMore`'s fold. The open flag lives in app-view.js
+ * (`_proposalBodyOpen`), the same set the Details sheet reads, so a repaint
+ * does not shut it.
+ */
+function PlanFold({ b }: { b: NonNullable<TopicBody['proposalBody']> }): ReactNode {
+  return (
+    <details
+      className="dev-topic-details dev-topic-hero-more"
+      data-topic-part="plan"
+      open={b.open}
+      onToggle={(e) => {
+        const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+        if (av && typeof av._setProposalBodyOpen === 'function') av._setProposalBodyOpen(b.id, e.currentTarget.open);
+      }}
+    >
+      <summary className="dev-topic-details-summary">Plan</summary>
+      {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+      <Html className="dev-issue-body dev-topic-details-body" html={b.html} />
+    </details>
+  );
+}
+
 export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved }: {
   id: number | null;
   card: DevCardModel;
@@ -176,6 +201,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           </h1>
           <RequestWords html={body.summaryHtml || ''} />
           {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
+          {body.planFold && body.proposalBody ? <PlanFold b={body.proposalBody} /> : null}
           {body.summaryStale && body.summaryHtml
             ? <p className="dev-change-stale" role="note">Written for an earlier version of this change.</p>
             : null}

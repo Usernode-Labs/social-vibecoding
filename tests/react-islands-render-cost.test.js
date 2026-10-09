@@ -136,7 +136,7 @@ test('the topic head draws its markup blocks through Html, which keeps the { __h
   assert.equal((src.match(/<Html /g) || []).length, 9, 'the nine blocks: summaries, the summary’s folded rest, bodies, details, shot details, testing and the tile host');
   const change = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.doesNotMatch(change, /dangerouslySetInnerHTML=\{\{/, 'nor in the change page’s root post');
-  assert.equal((change.match(/<Html /g) || []).length, 2, 'the verified shots and the capture tiles');
+  assert.equal((change.match(/<Html /g) || []).length, 3, 'the verified shots, the capture tiles, and #4479’s Plan fold');
   assert.match(src, /<Html className="usn-visuals-body" html=\{tiles\.tilesHtml\} \/>/);
 
   const lib = read('frontend/src/lib/html.tsx');
