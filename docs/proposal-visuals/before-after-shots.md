@@ -294,6 +294,22 @@ Within a run, a shots agent whose process died under it (`exitCause`
 `shots-agent-diagnostics.md`) is dispatched once more on the same copies,
 when at least a minute of its budget is left; what it saved stays saved.
 
+While the copies are built, a brief failure that says nothing about the
+proposal is tried again on the spot instead of failing the run: cloning the
+repository three times with a pause (`cloneWithRetry`), and the database
+steps three times with a short pause (`src/services/db-retry.js`). A
+fixture or demo-state write, or the run's own state change, that loses a
+deadlock or a serialization conflict (40P01, 40001) is rolled back and run
+again; the demo states are never run again once their COMMIT was sent. A
+copy or drop of a disposable database that Postgres refuses because a
+session is still connected ("is being accessed by other users", 55006) cuts
+that session off and tries again, and those databases are dropped
+`WITH (FORCE)`. Only the run's two copies, its frozen copy source
+(`_evsrc_`) and the shared staging template (`_stgtmpl`, `_stgtmpl_next`)
+qualify: `db-manager.isDisposableDb` refuses every other name, an app's own
+database included. A failure that outlasts the retries fails the run with
+its own message, as before.
+
 A run that a platform restart interrupted is retried automatically, up to
 twice per commit: a sweep every 30 seconds starts the same commit again once
 the run has been marked interrupted for 30 seconds. Until then the card says

@@ -7,6 +7,7 @@
 // revisions; people decide whether those shots show the change.
 
 const crypto = require('crypto');
+const dbRetry = require('./db-retry');
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
 
@@ -632,12 +633,18 @@ function assertTransitionPayload(row, next, patch) {
   if (next === 'cancelled' || next === 'stale') patch.completedAt = patch.completedAt || new Date();
 }
 
-async function transitionRun(pool, runId, nextState, rawPatch = {}) {
+// The transition locks the run, then its proposal (FOR UPDATE OF r, s), while
+// createRun and markStaleForHead lock the proposal first: two of them on one
+// proposal at once can deadlock, and Postgres rolls one back (40P01). The
+// transition re-reads and re-checks everything under its lock, so a rolled-
+// back one is run again, a bounded number of times, from a fresh copy of
+// the patch.
+async function transitionRun(pool, runId, nextState, rawPatch = {}, { retry = {} } = {}) {
   if (!/^[0-9a-f]{32}$/.test(String(runId || ''))) {
     throw new ShotsStateError('invalid_shots_run', 'Invalid before & after shots run id.', 400);
   }
-  const patch = { ...rawPatch };
-  const next = await withTransaction(pool, async (client) => {
+  const next = await dbRetry.withDbRetry(() => withTransaction(pool, async (client) => {
+    const patch = { ...rawPatch };
     const selected = await client.query(
       `SELECT r.*, s.shots_run_id AS current_run_id
          FROM shot_runs r
@@ -732,7 +739,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
       );
     }
     return next;
-  });
+  }), { label: 'Shots run transition', ...retry });
   if (TERMINAL_STATES.has(next?.state)) noteSettled(pool, next.session_id);
   return next;
 }
