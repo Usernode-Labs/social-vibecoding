@@ -19,9 +19,11 @@
  * scrolls, with the wheel or a finger, and the pins move with what they
  * were put on; a tap is a comment, as a click is.
  *
- * The bar sits at the foot until the person drags its handle somewhere
- * else (kept on the device). Resting the pointer on it moves it out of the
- * way, so what is under it can be commented on.
+ * The bar sits at the foot each time comment mode opens, until the person
+ * drags its handle somewhere else (only for this visit). Resting the pointer
+ * on it moves it out of the way, so what is under it can be commented on.
+ * The first time comment mode opens on a device, a short note above the bar
+ * says how it works, and that the Form switch goes back to the form.
  *
  * ── The box ───────────────────────────────────────────────────────────
  *
@@ -309,23 +311,21 @@ function titleToSend(d: Draft): string {
   return '';
 }
 
-/** Where the person moved the bar, as fractions of the window, kept on the device; null: the foot, centred. */
-const BAR_KEY = 'usernode:comment-bar';
+/** Whether comment mode's how-it-works note was shown on this device (#4541). */
+const INTRO_KEY = 'usernode:comment-intro-seen';
 
-function savedBarAt(): Point | null {
+function introSeen(): boolean {
   try {
-    const v = JSON.parse(window.localStorage.getItem(BAR_KEY) || 'null') as Point | null;
-    return v && Number.isFinite(v.x) && Number.isFinite(v.y) ? v : null;
+    return window.localStorage.getItem(INTRO_KEY) != null;
   } catch {
-    return null;
+    return false;
   }
 }
 
-function saveBarAt(p: Point | null): void {
+function markIntroSeen(): void {
   try {
-    if (p) window.localStorage.setItem(BAR_KEY, JSON.stringify({ x: p.x, y: p.y }));
-    else window.localStorage.removeItem(BAR_KEY);
-  } catch { /* private mode: it goes back to the foot next time */ }
+    window.localStorage.setItem(INTRO_KEY, '1');
+  } catch { /* private mode: the note shows again next time */ }
 }
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
@@ -344,7 +344,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const [budget, setBudget] = useState<Budget>(kudosBudget);
   const [boxAt, setBoxAt] = useState<Point>({ x: -9999, y: -9999 });
   const [cardAt, setCardAt] = useState<Point>({ x: -9999, y: -9999 });
-  const [barAt, setBarAt] = useState<Point | null>(savedBarAt);
+  const [barAt, setBarAt] = useState<Point | null>(null);
   const [barSize, setBarSize] = useState({ width: 0, height: 0 });
   const boxRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -358,8 +358,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const touch = useRef<{ id: number; start: Point; last: Point; moved: boolean; scroller: Element | null } | null>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  const barAtRef = useRef(barAt);
-  barAtRef.current = barAt;
+  const [intro, setIntro] = useState(() => !introSeen());
 
   const update = useCallback((key: number, patch: Partial<Draft> | ((d: Draft) => Partial<Draft>)) => {
     setDraft((d) => (d && d.key === key ? { ...d, ...(typeof patch === 'function' ? patch(d) : patch) } : d));
@@ -368,6 +367,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // The bar has the keyboard from the start, so Esc and C reach the shell
   // even when the app's frame had it.
   useEffect(() => { barRef.current?.focus({ preventScroll: true }); }, []);
+  // The note counts as seen as soon as it appears (#4541).
+  useEffect(() => { if (intro) markIntroSeen(); }, []);
   useEffect(() => { void refreshKudosBudget().then(() => setBudget(kudosBudget())); }, []);
 
   // The pins move with the page: any scroll, or a new window size, redraws,
@@ -443,6 +444,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     const screen = routeOf();
     const pin = { x: p.x / Math.max(1, window.innerWidth), y: p.y / Math.max(1, window.innerHeight) };
     setConfirm(null);
+    setIntro(false);
     if (draft) {
       if (draft.sending) return;
       const current = activeComment(draft);
@@ -748,10 +750,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   // ── The bar ─────────────────────────────────────────────────────────
   //
-  // At the foot, centred, until the person drags its handle; then where they
-  // put it, kept on the device (a double-click on the handle puts it back).
-  // It never moves out of the way on its own: what is under it is reached by
-  // dragging the handle, which wears the four-arrow move glyph and cursor.
+  // At the foot, centred, each time comment mode opens, until the person
+  // drags its handle; then where they put it, for this visit only (a
+  // double-click on the handle puts it back). It never moves out of the way
+  // on its own: what is under it is reached by dragging the handle, which
+  // wears the four-arrow move glyph and cursor.
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
@@ -761,6 +764,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   });
   const onGripDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
     e.preventDefault();
+    setIntro(false);
     const r = barRef.current?.getBoundingClientRect();
     if (!r) return;
     drag.current = { dx: e.clientX - (r.left + r.width / 2), dy: e.clientY - (r.top + r.height / 2) };
@@ -774,7 +778,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const onGripUp = () => {
     if (!drag.current) return;
     drag.current = null;
-    saveBarAt(barAtRef.current);
   };
   const barPlace = barAt
     ? {
@@ -881,7 +884,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const postedCount = posted.length;
   const hint = draft
     ? (draft.active == null ? 'Click where the next comment goes' : 'Enter posts it. Esc discards it.')
-    : carry ? 'Click where your words belong' : postedCount ? 'Click to leave another' : 'Click anything to comment on it';
+    : carry ? 'Click where your words belong' : postedCount ? 'Click to leave another' : 'Tap anywhere to suggest an improvement';
 
   const first = draft ? draft.comments[0] : null;
   const target: Target | null = draft ? (app ? (draft.chosen ?? (first?.inApp ? 'app' : 'platform')) : 'platform') : null;
@@ -1339,6 +1342,27 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         </div>
       ) : null}
 
+      {/* The first-use note (#4541): how comment mode works, shown once per
+          device, above the bar's starting place. It takes no focus, and
+          closes on "Got it", the first pin, or a drag of the bar. */}
+      {intro && !confirm ? (
+        <div
+          role="dialog"
+          aria-label="How comment mode works"
+          className="absolute bottom-[76px] left-1/2 flex w-[340px] max-w-[calc(100vw-24px)] -translate-x-1/2 flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
+        >
+          <p className="text-[15px] font-[650] leading-snug text-zinc-900 dark:text-white">How comment mode works</p>
+          <ul className="flex flex-col gap-1 text-[13px] text-zinc-600 dark:text-zinc-300">
+            <li>Tap anything on the page to leave a comment right there, then press Post.</li>
+            <li>Drag the handle on the left to move the bar.</li>
+            <li>Prefer the form? Tap Form to switch back at any time.</li>
+          </ul>
+          <div className="flex justify-end">
+            <Button variant="pillAccent" size="sm" ink="solid" onClick={() => setIntro(false)}>Got it</Button>
+          </div>
+        </div>
+      ) : null}
+
       <div
         ref={barRef}
         tabIndex={-1}
@@ -1358,7 +1382,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           onPointerMove={onGripMove}
           onPointerUp={onGripUp}
           onPointerCancel={onGripUp}
-          onDoubleClick={() => { setBarAt(null); saveBarAt(null); }}
+          onDoubleClick={() => { setBarAt(null); }}
           className="grid h-8 w-6 shrink-0 cursor-move touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
         >
           <ArrowsMoveIcon className="h-4 w-4" />
@@ -1387,9 +1411,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           <>
             <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300">
               <ChatIcon className="h-[18px] w-[18px]" />
-              <span className="hidden sm:inline">Comment mode</span>
             </span>
-            <span className="hidden min-w-0 truncate text-[13px] text-zinc-500 md:inline dark:text-zinc-400">{hint}</span>
+            <span className="hidden min-w-0 truncate text-sm font-bold text-violet-700 sm:inline dark:text-violet-300">{hint}</span>
             {postedCount ? (
               <span className="hidden shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-bold tabular-nums text-zinc-600 md:inline dark:bg-zinc-800 dark:text-zinc-300">
                 {`${postedCount} posted`}
