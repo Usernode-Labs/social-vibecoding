@@ -159,6 +159,7 @@ function loadCoordinator({
   }
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox);
   return {

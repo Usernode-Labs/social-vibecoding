@@ -1738,7 +1738,8 @@ test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
     APP_SRC.indexOf('navigateToBrowse(slug) {'),
     APP_SRC.indexOf('_exitBrowse() {')
   );
-  assert.match(nav, /setHeaderTitle\('All apps'\)/);
+  assert.match(nav, /setHeaderTitle\(PlatformI18n\.t\('shell:title\.allApps'\)\)/);
+  assert.equal(message('shell:title.allApps'), 'All apps');
   assert.match(nav, /App\._inBrowse = true/);
   assert.match(nav, /Browse\.open\(slug \|\| null, \{ chrome: false \}\)/);
   assert.match(nav, /App\._showOnlyScreen\('browse-screen'\)/);

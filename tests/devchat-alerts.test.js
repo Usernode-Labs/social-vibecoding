@@ -138,6 +138,7 @@ function makeEnv({
   sandbox.Notification.permission = permission;
   sandbox.Notification.requestPermission = () => { calls.permissionRequests += 1; return Promise.resolve(permission); };
 
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInNewContext(DEV_ALERTS_SRC, sandbox);
   return { DevAlerts: sandbox.window.DevAlerts, calls, store, sandbox };
 }

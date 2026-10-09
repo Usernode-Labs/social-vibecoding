@@ -52,6 +52,7 @@ async function loadCredit() {
   if (!g.CreditOptions) {
     const sandbox = { module: { exports: {} }, window: {}, console };
     sandbox.globalThis = sandbox;
+    sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
     vm.createContext(sandbox);
     vm.runInContext(CREDIT_OPTIONS_SRC, sandbox);
     g.CreditOptions = sandbox.module.exports;
@@ -283,5 +284,7 @@ test('the window wording is derived from capWindow, never retyped per state', ()
   // where it is absent.
   assert.match(CREDIT_OPTIONS_SRC, /var weekly = s\.capWindow === 'weekly';/);
   assert.match(CREDIT_OPTIONS_SRC, /RT\.resetWhen\(weekly \? 'weekly' : 'daily'/);
-  assert.match(CREDIT_OPTIONS_SRC, /weekly\s*\n?\s*\? 'Free credits reset ' \+ resetLabel/);
+  assert.match(CREDIT_OPTIONS_SRC, /if \(weekly\) \{\s+return left\s+\? t\('session:credits\.reset\.whenWithTimeLeft', \{ when: resetLabel, timeLeft: left \}\)\s+: t\('session:credits\.reset\.when', \{ when: resetLabel \}\);/);
+  assert.equal(message('session:credits.reset.when', { when: 'Monday 00:00 UTC' }), 'Free credits reset Monday 00:00 UTC.');
+  assert.equal(message('session:credits.reset.atBoundary', { boundary: 'midnight UTC' }), 'Free credits reset at midnight UTC.');
 });

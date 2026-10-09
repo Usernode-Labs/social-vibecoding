@@ -72,6 +72,7 @@ function makeDevChat() {
   sandbox.DevFlowSelect = { wizardHtml: () => '<div data-flow-wizard="1"></div>' };
   sandbox.App = { user: { externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
   sandbox.PlatformUI = { toast: () => {}, hasKit: () => false, menu: () => Promise.resolve(null) };
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(BUILD_VENUES_SRC, sandbox);
   vm.runInContext(LAUNCHPAD_SRC, sandbox);

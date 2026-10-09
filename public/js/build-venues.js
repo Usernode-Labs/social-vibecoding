@@ -67,9 +67,15 @@
     connector: '#settings/connectors',
   };
 
+  // Every word a person reads comes from the language catalog
+  // (session.json). The tables below are evaluated before the language
+  // runtime exists, so `label`, `blurb` and `cta` are getters: each reads its
+  // message when a caller asks, in the language of that moment.
+  function t(id, values) { return PlatformI18n.t(id, values); }
+
   var GROUPS = [
-    { id: 'in-chat', label: 'In this chat' },
-    { id: 'elsewhere', label: 'Somewhere else' },
+    { id: 'in-chat', get label() { return t('session:venue.group.inChat'); } },
+    { id: 'elsewhere', get label() { return t('session:venue.group.elsewhere'); } },
   ];
 
   function escapeHtml(value) {
@@ -99,7 +105,7 @@
   var VENUES = [
     {
       id: 'usernode-openrouter',
-      label: 'Homeroom · OpenRouter',
+      get label() { return t('session:venue.usernodeOpenrouter.label'); },
       group: 'in-chat',
       mechanism: { kind: 'backend', backend: 'codex_openrouter' },
       // The OpenRouter backend is a flagged, allowlisted beta and needs a
@@ -108,23 +114,23 @@
       requires: 'openrouterAvailable',
       defaultable: true,
       chat: true,
-      blurb: 'The preferred in-chat option: use included credits or your own OpenRouter key, and pick any available model.',
-      cta: 'Use OpenRouter',
+      get blurb() { return t('session:venue.usernodeOpenrouter.blurb'); },
+      get cta() { return t('session:venue.usernodeOpenrouter.cta'); },
     },
     {
       id: 'usernode-claude',
-      label: 'Homeroom · Claude',
+      get label() { return t('session:venue.usernodeClaude.label'); },
       group: 'in-chat',
       mechanism: { kind: 'backend', backend: 'claude_code' },
       requires: null,
       defaultable: true,
       chat: true,
-      blurb: 'Homeroom runs the turns right here, on your daily Claude credits, or your own Anthropic key once they run out.',
-      cta: 'Use Claude',
+      get blurb() { return t('session:venue.usernodeClaude.blurb'); },
+      get cta() { return t('session:venue.usernodeClaude.cta'); },
     },
     {
       id: 'local',
-      label: 'Your computer · Homeroom session',
+      get label() { return t('session:venue.local.label'); },
       group: 'in-chat',
       mechanism: { kind: 'lease', hash: SETTINGS_HASHES.localTool },
       // TWO flags, both required (#1281). The deployment has to offer the
@@ -134,34 +140,34 @@
       requires: ['cliAuthEnabled', 'sessionBridgeEnabled'],
       defaultable: true,
       chat: true,
-      blurb: 'The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.',
-      cta: 'Set up the Homeroom CLI',
+      get blurb() { return t('session:venue.local.blurb'); },
+      get cta() { return t('session:venue.local.cta'); },
     },
     {
       id: 'web-claude-code',
-      label: 'Claude Code on the web',
+      get label() { return t('session:venue.webClaudeCode.label'); },
       group: 'elsewhere',
       mechanism: { kind: 'flow', flow: 'claude-code', hash: SETTINGS_HASHES.connector },
       requires: 'externalFlowsAvailable',
       defaultable: true,
       chat: false,
-      blurb: 'Homeroom writes the work order; Claude Code on the web builds it on your own Claude plan and pushes to your fork. Homeroom opens the pull request and imports it as a proposal. No credits, no API key.',
-      cta: 'Use Claude Code',
+      get blurb() { return t('session:venue.webClaudeCode.blurb'); },
+      get cta() { return t('session:venue.webClaudeCode.cta'); },
     },
     {
       id: 'web-codex',
-      label: 'Codex on the web',
+      get label() { return t('session:venue.webCodex.label'); },
       group: 'elsewhere',
       mechanism: { kind: 'flow', flow: 'codex', hash: SETTINGS_HASHES.connector },
       requires: 'externalFlowsAvailable',
       defaultable: true,
       chat: false,
-      blurb: 'The same hand-off for Codex on the web and the ChatGPT plan you already pay for. Homeroom guides you through linking GitHub, forking and submitting.',
-      cta: 'Use Codex',
+      get blurb() { return t('session:venue.webCodex.blurb'); },
+      get cta() { return t('session:venue.webCodex.cta'); },
     },
     {
       id: 'own-tools-pr',
-      label: 'Your computer · your own tools',
+      get label() { return t('session:venue.ownToolsPr.label'); },
       group: 'elsewhere',
       mechanism: { kind: 'import', hash: SETTINGS_HASHES.localTool },
       // Importing writes to the app's branches, so it is collaborator-only
@@ -170,8 +176,8 @@
       // Both exceptions, stated once. See the header.
       defaultable: false,
       chat: false,
-      blurb: 'Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in with “Import Feature from a PR”.',
-      cta: 'How importing a PR works',
+      get blurb() { return t('session:venue.ownToolsPr.blurb'); },
+      get cta() { return t('session:venue.ownToolsPr.cta'); },
     },
   ];
 
@@ -228,11 +234,14 @@
     var v = venue(s.current || currentVenue(s));
     if (!v || s.source !== 'cli_handoff' || s.localAgent
         || (s.buildVenue && venue(s.buildVenue))) return v;
+    // Codex and Claude Code are product names and are not translated.
     var label = s.externalAgent === 'codex' ? 'Codex'
-      : s.externalAgent === 'claude-code' ? 'Claude Code' : 'External agent';
+      : s.externalAgent === 'claude-code' ? 'Claude Code' : t('session:venue.handoff.externalAgent');
     return Object.assign({}, v, {
       label: label,
-      blurb: 'Authored with ' + label + ' on your computer.',
+      blurb: s.externalAgent === 'codex' ? t('session:venue.handoff.authoredWithCodex')
+        : s.externalAgent === 'claude-code' ? t('session:venue.handoff.authoredWithClaudeCode')
+          : t('session:venue.handoff.authoredWithExternalAgent'),
     });
   }
 
@@ -295,10 +304,12 @@
     return 'new';
   }
 
-  function webVerb(kind) {
-    if (kind === 'session') return 'Continue this session with ';
-    if (kind === 'proposal') return 'Continue this proposal with ';
-    return 'Start new work with ';
+  // The whole row label for a web hand-off: the verb and the venue's own
+  // name in one message, so a language can put the name where it belongs.
+  function webRowLabel(kind, venueLabel) {
+    if (kind === 'session') return t('session:venue.rowLabel.continueSession', { venue: venueLabel });
+    if (kind === 'proposal') return t('session:venue.rowLabel.continueProposal', { venue: venueLabel });
+    return t('session:venue.rowLabel.startNew', { venue: venueLabel });
   }
 
   // The consequence sentence behind the verb. `paused` changes ONLY this
@@ -308,20 +319,13 @@
   function webNote(kind, paused) {
     if (kind === 'session') {
       return paused
-        ? 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch, '
-          + 'the code lands on this session\'s branch, and its preview and checks catch up when you reopen the '
-          + 'session. The agent\'s own conversation happens there, not in this transcript.'
-        : 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch, '
-          + 'the code lands here, and its preview and checks rebuild. The agent\'s own conversation happens there, '
-          + 'not in this transcript.';
+        ? t('session:venue.webNote.sessionPaused')
+        : t('session:venue.webNote.session');
     }
     if (kind === 'proposal') {
-      return 'It starts from this proposal\'s latest commit and pushes back onto the same proposal, submitting '
-        + 'clears the votes it has already collected and re-runs its checks. The agent\'s own conversation happens '
-        + 'there, not in this transcript.';
+      return t('session:venue.webNote.proposal');
     }
-    return 'Homeroom prepares a task for the web agent; what it builds comes back as its own proposal, not as more '
-      + 'turns in this session.';
+    return t('session:venue.webNote.newWork');
   }
 
   // What picking this venue does to THIS chat, in one clause. The
@@ -333,17 +337,17 @@
     var s = state || {};
     if (id === 'own-tools-pr') {
       if (mode === 'switch') {
-        return 'Starts separate work. This chat stays where it is, and what you import comes back as its own proposal. It can’t be your default.';
+        return t('session:venue.consequence.ownToolsSwitch');
       }
       if (mode === 'blocked') {
-        return 'Costs no credits: you build it yourself and import the pull request. There is no Homeroom chat for this one, and it can’t be your default.';
+        return t('session:venue.consequence.ownToolsBlocked');
       }
-      return 'No Homeroom chat for this one. You build it, then import the pull request. It can’t be your default.';
+      return t('session:venue.consequence.ownToolsStart');
     }
     if (v.group === 'in-chat') {
       return mode === 'switch'
-        ? 'Keeps this chat, this branch and this proposal. Only where the turns run changes.'
-        : 'The work happens in this chat.';
+        ? t('session:venue.consequence.inChatSwitch')
+        : t('session:venue.consequence.inChatStart');
     }
     // Web hand-off: what it does depends on where this session is, which
     // is the whole of #1071.
@@ -364,9 +368,9 @@
     // "continue this proposal with Codex" are different promises, and the
     // label is the only place a phone user sees the difference.
     if (v.group === 'elsewhere' && v.mechanism.kind === 'flow') {
-      return webVerb(webTargetKind(state || {})) + v.label;
+      return webRowLabel(webTargetKind(state || {}), v.label);
     }
-    return 'Move to ' + v.label;
+    return t('session:venue.rowLabel.moveTo', { venue: v.label });
   }
 
   // The offered rows, filtered and in group order. `state`:
@@ -409,7 +413,7 @@
         id: v.id,
         group: v.group,
         label: rowLabel(v.id, mode, s),
-        title: v.blurb + ' ' + because,
+        title: t('session:venue.rowTitle.joined', { blurb: v.blurb, consequence: because }),
         blurb: v.blurb,
         consequence: because,
         cta: v.cta,
@@ -426,8 +430,7 @@
       };
       if (mode === 'blocked' && v.id === 'usernode-claude') {
         out.unavailable = true;
-        out.reason = s.blockedReason
-          || 'Today’s AI credits are spent. They reset ' + dailyResetWhen() + '.';
+        out.reason = s.blockedReason || creditsSpentReason();
       }
       return out;
     });
@@ -489,7 +492,7 @@
   function chipHtml(venueId) {
     var v = venue(venueId);
     if (!v) return '';
-    return '<span class="dc-venue-chip" title="' + escapeHtml(v.label + ': ' + v.blurb) + '">'
+    return '<span class="dc-venue-chip" title="' + escapeHtml(t('session:venue.chip.title', { venue: v.label, blurb: v.blurb })) + '">'
       + escapeHtml(v.label) + '</span>';
   }
 
@@ -503,16 +506,24 @@
   var FALLBACK_NOTES = {
     // #2568 retired `not_in_beta` with the gradual-rollout allowlist: there
     // is no limited beta to be outside of any more.
-    flag_off: 'Your default is Homeroom · OpenRouter, but this deployment has it turned off, so this session is building in Homeroom · Claude.',
-    model_unavailable: 'Your default is Homeroom · OpenRouter but no model is set for it, so this session is building in Homeroom · Claude. Pick a model in Settings and the next one will use it.',
-    no_credential: 'Your default is Homeroom · OpenRouter but your OpenRouter key is missing or no longer valid, so this session is building in Homeroom · Claude. Re-save the key in Settings.',
+    flag_off: 'session:venue.fallback.flagOff',
+    model_unavailable: 'session:venue.fallback.modelUnavailable',
+    no_credential: 'session:venue.fallback.noCredential',
   };
 
   // #3230: the daily reset in the viewer's own clock ("at 8:00 PM"), from
   // the bundle's window.ResetTime, or the UTC boundary where it is absent.
   function dailyResetWhen() {
     var RT = typeof window !== 'undefined' && window.ResetTime;
-    return RT ? RT.resetWhen('daily') : 'at midnight UTC';
+    return RT ? RT.resetWhen('daily') : null;
+  }
+
+  // Why the platform-billed venue is struck through in 'blocked' mode.
+  function creditsSpentReason() {
+    var when = dailyResetWhen();
+    return when
+      ? t('session:venue.blocked.creditsSpent', { when: when })
+      : t('session:venue.blocked.creditsSpentUtc');
   }
 
   // hasOwnProperty, not a bare lookup: `reason` arrives on the 201 body, so
@@ -521,7 +532,7 @@
   // note. Same rule as venue() above.
   function fallbackNote(reason) {
     return Object.prototype.hasOwnProperty.call(FALLBACK_NOTES, reason)
-      ? FALLBACK_NOTES[reason]
+      ? t(FALLBACK_NOTES[reason])
       : '';
   }
 
@@ -566,30 +577,30 @@
   var CHOICES = [
     {
       id: 'on-platform',
-      label: 'On-Platform',
+      get label() { return t('session:venue.choice.onPlatform.label'); },
       icon: 'home',
       venue: null,
       matches: ['usernode-claude', 'usernode-openrouter'],
       requires: null,
-      blurb: 'Homeroom runs the turns right here, in this chat, on your daily AI credits or your own key once they run out.',
+      get blurb() { return t('session:venue.choice.onPlatform.blurb'); },
     },
     {
       id: 'web-agent',
-      label: 'Claude or Codex WebUI',
+      get label() { return t('session:venue.choice.webAgent.label'); },
       icon: 'globe',
       venue: 'web-claude-code',
       matches: ['web-claude-code', 'web-codex'],
       requires: 'externalFlowsAvailable',
-      blurb: 'Homeroom writes the work order and Claude Code or Codex builds it on the plan you already pay for, then pushes back here. You pick which of the two on the next screen.',
+      get blurb() { return t('session:venue.choice.webAgent.blurb'); },
     },
     {
       id: 'own-tools',
-      label: 'Your Own Developer Tooling',
+      get label() { return t('session:venue.choice.ownTools.label'); },
       icon: 'terminal',
       venue: 'own-tools-pr',
       matches: ['own-tools-pr'],
       requires: 'canCollaborate',
-      blurb: 'Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in.',
+      get blurb() { return t('session:venue.choice.ownTools.blurb'); },
     },
     {
       // Last on purpose, and absent unless the deployment offers the CLI
@@ -597,12 +608,12 @@
       // installed before it can do anything, so it is the rare answer
       // rather than a peer of the other three.
       id: 'cli-bridge',
-      label: 'Local CLI Bridge',
+      get label() { return t('session:venue.choice.cliBridge.label'); },
       icon: 'link',
       venue: 'local',
       matches: ['local'],
       requires: ['cliAuthEnabled', 'sessionBridgeEnabled'],
-      blurb: 'The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.',
+      get blurb() { return t('session:venue.choice.cliBridge.blurb'); },
     },
   ];
 
@@ -650,7 +661,7 @@
         label: c.label,
         icon: c.icon,
         venue: c.venue,
-        title: c.blurb + ' ' + because,
+        title: t('session:venue.rowTitle.joined', { blurb: c.blurb, consequence: because }),
         blurb: c.blurb,
         consequence: because,
         current: current === c.id,
@@ -659,8 +670,7 @@
       };
       if (mode === 'blocked' && c.id === 'on-platform') {
         out.unavailable = true;
-        out.reason = s.blockedReason
-          || 'Today’s AI credits are spent. They reset ' + dailyResetWhen() + '.';
+        out.reason = s.blockedReason || creditsSpentReason();
       }
       return out;
     });
@@ -699,7 +709,8 @@
         // Never BOTH: "On-Platform ✓ (unavailable)" tells you that you are
         // here and that you cannot be, in one breath. When a row is
         // refusing you, that is the only thing it has to say.
-        label: row.label + (row.unavailable ? ' (unavailable)' : (row.current ? ' ✓' : '')),
+        label: row.unavailable ? t('session:venue.sheet.rowUnavailable', { choice: row.label })
+          : (row.current ? t('session:venue.sheet.rowCurrent', { choice: row.label }) : row.label),
         // #1348: the kit draws the glyph from its own set, in the row's own
         // colour. A name it does not know draws nothing rather than
         // throwing, so a row is never worse than it was without one.
@@ -717,7 +728,7 @@
 
     return kit.menu({
       anchorEl: o.anchorEl || undefined,
-      title: 'Where do you want to work on this?',
+      title: t('session:venue.sheet.title'),
       items: actions,
     });
   }
@@ -740,7 +751,7 @@
     consequence: consequence,
     rowLabel: rowLabel,
     webTargetKind: webTargetKind,
-    webVerb: webVerb,
+    webRowLabel: webRowLabel,
     webNote: webNote,
     noteHtml: noteHtml,
     chipHtml: chipHtml,

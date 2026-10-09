@@ -293,7 +293,11 @@ test('the router: three addresses no username can have, one screen, the bar name
   const app = read('public/js/app.js');
   assert.match(app, /PROFILE_WORK: \{\s*proposals: 'changes',\s*'your-changes': 'changes',\s*'your-requests': 'requests',\s*'your-votes': 'votes',\s*\},/);
   assert.match(app, /if \(parts\[0\] === 'profile' && App\.PROFILE_WORK\[parts\[1\]\]\) \{[\s\S]{0,600}?App\.navigateToProfileProposals\(App\.PROFILE_WORK\[parts\[1\]\]\);/);
-  assert.match(app, /App\.setHeaderTitle\(App\.PROFILE_WORK_TITLES\[view\]\);/);
+  // The table holds the three titles' message ids, read when the bar is named.
+  assert.match(app, /App\.setHeaderTitle\(PlatformI18n\.t\(App\.PROFILE_WORK_TITLES\[view\]\)\);/);
+  assert.match(app, /PROFILE_WORK_TITLES: \{\s*changes: 'shell:title\.yourChanges', requests: 'shell:title\.yourRequests', votes: 'shell:title\.yourVotes',\s*\},/);
+  assert.deepEqual(['shell:title.yourChanges', 'shell:title.yourRequests', 'shell:title.yourVotes'].map((id) => message(id)),
+    ['Your changes', 'Your requests', 'Your votes']);
   assert.match(app, /window\.UsernodeReact\?\.profileProposals\?\.open\?\.\(view\);/);
   // The dialog's "See your requests" lands on the view.
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const SEE_MINE_ROUTE = '#profile\/your-requests';/);

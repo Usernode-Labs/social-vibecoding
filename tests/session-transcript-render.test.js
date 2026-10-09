@@ -37,6 +37,7 @@ function load({ withDevChat = true } = {}) {
     sandbox.DevChat = { renderMarkdown: (t) => `<md>${t}</md>` };
   }
   sandbox.relTime = () => '5 minutes ago';
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(SRC, sandbox);
   return sandbox.SessionTranscript;

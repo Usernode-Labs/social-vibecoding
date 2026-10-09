@@ -425,7 +425,8 @@ test('somebody an invite is bringing in is asked to join it once, and not what t
   // Unless the project's page took the link (#3700): its Join settles it.
   assert.match(app, /\} finally \{\s+if \(!deferred\) settle\(joinedHere\);\s+(?:\/\/[^\n]*\n\s*)*if \(held\) App\._endWelcomeHold\(\);\s+\}\s+\},/);
   assert.match(app, /if \(standing\.mine === 'joined' && standing\.slug\) \{\s+joinedHere = true;/);
-  assert.match(app, /toast\(DEAD\[result\.reason\] \|\| 'Could not join\. Try again\.', true\); return; \}\s+joinedHere = true;/);
+  assert.match(app, /toast\(PlatformI18n\.t\(DEAD\[result\.reason\] \|\| 'shell:invite\.couldNotJoin'\), true\); return; \}\s+joinedHere = true;/);
+  assert.equal(message('shell:invite.couldNotJoin'), 'Could not join. Try again.');
   // Join pressed on the link's page, then a password sign-in: no second ask.
   assert.match(app, /pressed = sessionStorage\.getItem\('usernode:invite-join'\) === `\/invite\/\$\{token\}`;\s+sessionStorage\.removeItem\('usernode:invite-join'\);/);
   assert.match(app, /const ok = pressed \? true : window\.ConfirmModal \? await ConfirmModal\.show\(\{/);
@@ -614,6 +615,7 @@ function followHarness({ fromLanding = true, landed = null, pressed = false, sta
       welcome(info) { events.push(`welcome:${info.slug}`); return true; },
     },
   };
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   const App = vm.runInNewContext(`({ ${methods} })`, sandbox);
   Object.assign(App, {
     INVITE_LANDING_KEY: 'usernode:invite-landing',

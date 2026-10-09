@@ -661,7 +661,8 @@ test('#communities is a route of its own, and #workshop still lands there', () =
     'restoreFromHash resolves both, so an old bookmark and a cold boot land here');
   assert.match(appJs, /navigateToWorkshop\(\) \{/);
   assert.match(appJs, /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
-  assert.match(appJs, /App\.setHeaderTitle\('Communities'\)/);
+  assert.match(appJs, /App\.setHeaderTitle\(PlatformI18n\.t\('shell:title\.communities'\)\)/);
+  assert.equal(message('shell:title.communities'), 'Communities');
   // THE DOOR IS A TAB (#2718), the middle one of five since the rename: the
   // screen is Communities to the people who use it, and keeps its key.
   const html = read('public/index.html');

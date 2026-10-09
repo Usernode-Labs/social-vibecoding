@@ -81,11 +81,13 @@
     const atts = msg && msg.metadata && msg.metadata.attachments;
     if (!Array.isArray(atts) || !atts.length) return '';
     const items = atts.map((a) => {
-      const name = esc((a && a.filename) || 'file');
+      const filename = (a && a.filename) || PlatformI18n.t('session:transcript.attachment.unnamed');
+      const name = esc(filename);
       const size = humanSize(a && a.sizeBytes);
       const icon = a && a.kind === 'image' ? '🖼' : '📎';
-      return '<span class="dc-msg-att-chip st-att-chip" title="' + name
-        + ' (attachments aren\'t shared, only their names)"><span aria-hidden="true">' + icon + '</span>'
+      return '<span class="dc-msg-att-chip st-att-chip" title="'
+        + PlatformI18n.htmlText('session:transcript.attachment.title', { filename: filename })
+        + '"><span aria-hidden="true">' + icon + '</span>'
         + '<span class="dc-attach-name">' + name + '</span>'
         + (size ? '<span class="dc-attach-size">' + esc(size) + '</span>' : '')
         + '</span>';
@@ -103,8 +105,10 @@
     if (!lines.length && !summary) return '';
 
     const label = lines.length && summary
-      ? 'Agent activity (' + lines.length + ' steps) and summary'
-      : (lines.length ? 'Agent activity (' + lines.length + ' steps)' : 'Agent summary');
+      ? PlatformI18n.t('session:transcript.activity.stepsAndSummary', { count: lines.length })
+      : (lines.length
+        ? PlatformI18n.t('session:transcript.activity.steps', { count: lines.length })
+        : PlatformI18n.t('session:transcript.activity.summary'));
 
     let body = '';
     if (lines.length) {
@@ -130,10 +134,20 @@
   function specPreviewHtml(msg) {
     const meta = (msg && msg.metadata) || {};
     if (typeof meta.specPreview !== 'string' || !meta.specPreview.trim()) return '';
-    const version = meta.specVersion != null ? 'Spec v' + meta.specVersion : 'Spec drafted';
-    const lines = meta.specLines != null ? ' · ' + meta.specLines + ' lines' : '';
+    // Four whole headings: with or without a version, with or without a
+    // line count. A count the server sent as something other than a number
+    // keeps its own text.
+    const count = Number(meta.specLines);
+    const lines = meta.specLines != null ? { count: Number.isFinite(count) ? count : 0, lines: meta.specLines } : null;
+    const head = meta.specVersion != null
+      ? (lines
+        ? PlatformI18n.t('session:transcript.spec.versionLines', { version: meta.specVersion, count: lines.count, lines: lines.lines })
+        : PlatformI18n.t('session:transcript.spec.version', { version: meta.specVersion }))
+      : (lines
+        ? PlatformI18n.t('session:transcript.spec.draftedLines', { count: lines.count, lines: lines.lines })
+        : PlatformI18n.t('session:transcript.spec.drafted'));
     return '<div class="st-spec-card">'
-      + '<div class="st-spec-head">' + esc(version + lines) + '</div>'
+      + '<div class="st-spec-head">' + esc(head) + '</div>'
       + '<div class="st-spec-snippet">' + md(meta.specPreview) + '</div>'
       + '</div>';
   }
@@ -160,8 +174,10 @@
     const openrouter = meta.agentBackend === 'codex_openrouter'
       || /^(?:Codex|OpenRouter)\b/i.test(text);
     return {
-      text: 'Coding agent is running' + text.slice(m[0].length),
-      caption: openrouter ? 'Homeroom \u00b7 OpenRouter' : 'Homeroom \u00b7 Claude',
+      text: PlatformI18n.t('session:transcript.agentRunning', { tail: text.slice(m[0].length) }),
+      caption: openrouter
+        ? PlatformI18n.t('session:venue.usernodeOpenrouter.label')
+        : PlatformI18n.t('session:venue.usernodeClaude.label'),
     };
   }
 
@@ -186,7 +202,9 @@
 
   function convoRowHtml(msg, ownerName) {
     const isUser = msg.role === 'user';
-    const who = isUser ? (ownerName || 'them') : 'AI';
+    const who = isUser
+      ? (ownerName || PlatformI18n.t('session:transcript.author.unknown'))
+      : PlatformI18n.t('session:transcript.author.ai');
     const cls = isUser ? 'dc-msg-user' : 'dc-msg-assistant';
     const when = relStampSafe(msg.created_at);
     return '<div class="dc-msg ' + cls + ' st-msg">'
@@ -207,16 +225,15 @@
     const data = payload || {};
     const session = data.session || {};
     const messages = Array.isArray(data.messages) ? data.messages : [];
-    const ownerName = session.username || 'them';
+    const ownerName = session.username || PlatformI18n.t('session:transcript.author.unknown');
 
     if (!messages.length) {
-      return '<div class="st-empty">This chat has no messages yet.</div>';
+      return '<div class="st-empty">' + PlatformI18n.htmlText('session:transcript.empty') + '</div>';
     }
 
     let html = '';
     if (data.truncated) {
-      html += '<div class="st-truncated">Showing the most recent part of a long chat.'
-        + ' earlier messages aren\'t included.</div>';
+      html += '<div class="st-truncated">' + PlatformI18n.htmlText('session:transcript.truncated') + '</div>';
     }
     html += '<div class="st-timeline">';
     for (const msg of messages) {
@@ -242,10 +259,18 @@
     const count = Number(s.message_count);
     const n = Number.isFinite(count) && count > 0 ? count : null;
     if (opts && opts.expanded) {
-      return 'Agent session by ' + (s.username || 'them')
-        + (n ? ' · ' + n + ' message' + (n === 1 ? '' : 's') : '');
+      if (s.username) {
+        return n
+          ? PlatformI18n.t('session:transcript.header.byAuthorMessages', { author: s.username, count: n })
+          : PlatformI18n.t('session:transcript.header.byAuthor', { author: s.username });
+      }
+      return n
+        ? PlatformI18n.t('session:transcript.header.byUnknownMessages', { count: n })
+        : PlatformI18n.t('session:transcript.header.byUnknown');
     }
-    return n ? 'Read the agent session (' + n + ' messages)' : 'Read the agent session';
+    return n
+      ? PlatformI18n.t('session:transcript.header.readMessages', { count: n })
+      : PlatformI18n.t('session:transcript.header.read');
   }
 
   window.SessionTranscript = { renderHtml, headerText, _esc: esc };

@@ -588,7 +588,8 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
     'an in-screen navigation is handed to the module, not re-mounted');
   assert.match(head, /App\._showOnlyScreen\('settings-screen'\)/,
     'reveals #settings-screen (and hides every sibling root) through the shared primitive');
-  assert.match(head, /App\.setHeaderTitle\('Settings'\)/, 'sets the header title');
+  assert.match(head, /App\.setHeaderTitle\(PlatformI18n\.t\('shell:title\.settings'\)\)/, 'sets the header title');
+  assert.equal(message('shell:title.settings'), 'Settings');
   assert.match(head, /App\._inSettings = true;/, 'records that we are on the screen');
   assert.match(head, /Settings\.open\(section, \{ chrome: false \}\)/,
     'hands the section to the module, holding its header write for the transition');

@@ -183,7 +183,7 @@
     //  - Browser: a Web Notification, only when permission is granted.
     systemNotify(info) {
       if (!DevAlerts.enabled() || !info) return;
-      const title = info.title || 'Agent session';
+      const title = info.title || PlatformI18n.t('shell:alerts.notification.fallbackTitle');
       const body = info.body || '';
       if (DevAlerts._isNative()) {
         // The canonical notification already has an FCM delivery. Avoid a
@@ -252,11 +252,11 @@
         credentials: 'same-origin',
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Could not queue the test push. Please try again.');
+      if (!response.ok) throw new Error(result.error || PlatformI18n.t('shell:alerts.test.queueFailed'));
       const info = {
         kind: 'test_alert',
-        title: 'Homeroom test alert',
-        body: 'This is a test of your agent session sound and alerts.',
+        title: PlatformI18n.t('shell:alerts.test.title'),
+        body: PlatformI18n.t('shell:alerts.test.body'),
       };
       setTimeout(() => {
         // A native background test is delivered by the server, even when

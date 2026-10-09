@@ -34,7 +34,8 @@ function realTitles() {
   const start = appJs.indexOf('  LEADERBOARD_TITLES: {');
   const end = appJs.indexOf('  _routeLeaderboard(', start);
   assert.ok(start > 0 && end > start, 'LEADERBOARD_TITLES and _leaderboardTitle located');
-  return vm.runInNewContext(`(function(){ const App = { ${appJs.slice(start, end)} }; return App; })()`);
+  return vm.runInNewContext(`(function(){ const App = { ${appJs.slice(start, end)} }; return App; })()`,
+    { PlatformI18n: englishPlatformI18n() });
 }
 
 /** The real Leaderboard module, run as a script against a small DOM. */

@@ -82,7 +82,8 @@ test('why checks were skipped is one sentence, the same fallback the panel and t
   for (const none of [null, undefined, '', '   ']) assert.equal(skippedChecksReason(none), fallback);
   assert.ok(skippedChecksReason('x'.repeat(1000)).length < 360, 'capped as the panel caps it');
   // The panel's note and the status pill's tooltip carry the same fallback.
-  assert.ok(read('public/js/merge-status.js').includes(`'${fallback}'`), 'merge-status.js 6b');
+  assert.ok(read('public/js/merge-status.js').includes("t('session:merge.title.checksSkipped')"), 'merge-status.js 6b');
+  assert.equal(require('./lib/platform-i18n').message('session:merge.title.checksSkipped'), fallback, 'merge-status.js 6b, in the catalog');
   const appView = read('public/js/app-view.js');
   assert.ok(appView.includes(": 'there was nothing to test';")
     && appView.includes('`Checks were skipped: ${reason}. It can still go live.`'), 'AppView._checksStatusNotes');

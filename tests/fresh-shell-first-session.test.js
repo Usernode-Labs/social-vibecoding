@@ -152,6 +152,7 @@ function harness({
     },
   };
   ctx.window = { AuthScreens: { _current: route } };
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
 
   const App = Object.assign({

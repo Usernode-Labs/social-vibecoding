@@ -963,7 +963,9 @@ test('the page is a level of the screen: the platform header is its nav bar', ()
     // pane asks App for that name rather than knowing it — a stub that
     // answered `undefined` would have this test passing on the fallback while
     // the screen said the wrong word.
-    _leaderboardTitle: (sub) => LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard',
+    // The table holds message ids; the name is its English catalog text.
+    _leaderboardTitle: (sub) => (LEADERBOARD_TITLES[sub || 'challenges']
+      ? message(LEADERBOARD_TITLES[sub || 'challenges']) : 'Leaderboard'),
   };
   sandbox.window.Leaderboard = { isOpen: () => true, section: 'challenges' };
   pane._openIdx(0);

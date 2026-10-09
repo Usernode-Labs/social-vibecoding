@@ -202,6 +202,7 @@ function follow({ standing, pressed = false, confirm = true, redeem = null, coun
     firstSession: { welcome() { return false; } },
     ...(island ? { invitePreview: { open(info) { previews.push(info); events.push(`preview:${info.name}`); return true; } } } : {}),
   };
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   const App = vm.runInNewContext(`({ ${methods} })`, sandbox);
   Object.assign(App, {
     _markNavigationVia() {},

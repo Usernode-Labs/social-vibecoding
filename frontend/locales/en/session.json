@@ -1,0 +1,1278 @@
+{
+  "merge.measured.justNow": {
+    "text": "measured just now",
+    "description": "End of a tooltip on a proposal's status badge, after a sentence and a middle dot: says the figure in that sentence was measured within the last minute. Lower case, no full stop."
+  },
+  "merge.measured.minuteAgo": {
+    "text": "measured a minute ago",
+    "description": "End of a tooltip on a proposal's status badge, after a sentence and a middle dot: the figure in that sentence was measured about one minute ago. Lower case, no full stop."
+  },
+  "merge.measured.minutesAgo_one": {
+    "text": "measured {{count}} minute ago",
+    "description": "End of a tooltip on a proposal's status badge, after a sentence and a middle dot: how long ago the figure in that sentence was measured. {{count}} is a number of minutes. Lower case, no full stop."
+  },
+  "merge.measured.minutesAgo_other": {
+    "text": "measured {{count}} minutes ago",
+    "description": "End of a tooltip on a proposal's status badge, after a sentence and a middle dot: how long ago the figure in that sentence was measured. {{count}} is a number of minutes. Lower case, no full stop."
+  },
+  "merge.measured.hourAgo": {
+    "text": "measured an hour ago",
+    "description": "End of a tooltip on a proposal's status badge, after a sentence and a middle dot: the figure in that sentence was measured about one hour ago. Lower case, no full stop."
+  },
+  "merge.measured.hoursAgo_one": {
+    "text": "measured {{count}} hour ago",
+    "description": "End of a tooltip on a proposal's status badge, after a sentence and a middle dot: how long ago the figure in that sentence was measured. {{count}} is a number of hours. Lower case, no full stop."
+  },
+  "merge.measured.hoursAgo_other": {
+    "text": "measured {{count}} hours ago",
+    "description": "End of a tooltip on a proposal's status badge, after a sentence and a middle dot: how long ago the figure in that sentence was measured. {{count}} is a number of hours. Lower case, no full stop."
+  },
+  "merge.measured.joined": {
+    "text": "{{statement}} · {{measured}}",
+    "description": "Tooltip on a proposal's status badge: joins a whole explanation with how old its measurement is. {{statement}} is one or two complete sentences ending in a full stop; {{measured}} is a phrase such as \"measured a minute ago\". Only the separator between them is translated here."
+  },
+  "explicitApproval.sentence.admins": {
+    "text": "Changes to who runs this app need a Yes from another member.",
+    "description": "Explains, on a proposal's vote panel and status tooltip, why this proposal cannot pass on its author's vote alone: it changes the list of the app's admins. \"Yes\" is the name of the approving vote and keeps its capital."
+  },
+  "explicitApproval.sentence.governance": {
+    "text": "Changes to how changes are approved need a Yes from another member.",
+    "description": "Explains, on a proposal's vote panel and status tooltip, why this proposal cannot pass on its author's vote alone: it changes the app's approval rule (how many votes a change needs). \"Yes\" is the name of the approving vote and keeps its capital."
+  },
+  "explicitApproval.sentence.visibility": {
+    "text": "Changes to who can see this app need a Yes from another member.",
+    "description": "Explains, on a proposal's vote panel and status tooltip, why this proposal cannot pass on its author's vote alone: it changes whether the app is public or private. \"Yes\" is the name of the approving vote and keeps its capital."
+  },
+  "explicitApproval.sentence.platformEnv": {
+    "text": "Changes to this app’s platform settings need a Yes from another member.",
+    "description": "Explains, on a proposal's vote panel and status tooltip, why this proposal cannot pass on its author's vote alone: it changes settings the platform applies to the app. \"Yes\" is the name of the approving vote and keeps its capital."
+  },
+  "explicitApproval.sentence.secrets": {
+    "text": "Changes to this app’s keys need a Yes from another member.",
+    "description": "Explains, on a proposal's vote panel and status tooltip, why this proposal cannot pass on its author's vote alone: it changes the app's secret keys (API keys and passwords the app uses). \"Yes\" is the name of the approving vote and keeps its capital."
+  },
+  "explicitApproval.sentence.other": {
+    "text": "This change needs a Yes from another member.",
+    "description": "Explains, on a proposal's vote panel and status tooltip, that this proposal cannot pass on its author's vote alone, when the reason is not one Homeroom can name. \"change\" is a noun: the proposed change. \"Yes\" is the name of the approving vote and keeps its capital."
+  },
+  "explicitApproval.line.admins": {
+    "text": "It changes who runs this app",
+    "description": "Short line beside the \"needs another member's Yes\" marker on a proposal: what the proposal changes, here the list of the app's admins. \"It\" is the proposal; \"changes\" is a verb. No full stop."
+  },
+  "explicitApproval.line.governance": {
+    "text": "It changes how changes are approved",
+    "description": "Short line beside the \"needs another member's Yes\" marker on a proposal: what the proposal changes, here the app's approval rule. \"It\" is the proposal; the first \"changes\" is a verb, the second a noun (proposed changes). No full stop."
+  },
+  "explicitApproval.line.visibility": {
+    "text": "It changes who can see this app",
+    "description": "Short line beside the \"needs another member's Yes\" marker on a proposal: what the proposal changes, here whether the app is public or private. \"It\" is the proposal; \"changes\" is a verb. No full stop."
+  },
+  "explicitApproval.line.platformEnv": {
+    "text": "It changes this app’s platform settings",
+    "description": "Short line beside the \"needs another member's Yes\" marker on a proposal: what the proposal changes, here settings the platform applies to the app. \"It\" is the proposal; \"changes\" is a verb. No full stop."
+  },
+  "explicitApproval.line.secrets": {
+    "text": "It changes this app’s keys",
+    "description": "Short line beside the \"needs another member's Yes\" marker on a proposal: what the proposal changes, here the app's secret keys (API keys and passwords). \"It\" is the proposal; \"changes\" is a verb. No full stop."
+  },
+  "explicitApproval.line.other": {
+    "text": "It changes a protected setting",
+    "description": "Short line beside the \"needs another member's Yes\" marker on a proposal, when Homeroom cannot name which setting the proposal changes. \"It\" is the proposal; \"changes\" is a verb. No full stop."
+  },
+  "merge.status.integrating": {
+    "text": "Bringing up to date…",
+    "description": "Status badge on a proposal (a proposed change to an app): the platform is merging the app's latest code into the proposal right now. Shown with a spinner."
+  },
+  "merge.title.integrating": {
+    "text": "The platform is merging main into this proposal to resolve a conflict. The result is previewed and checked, and it merges on its own once the vote passes.",
+    "description": "Tooltip on the \"Bringing up to date…\" status badge of a proposal. \"main\" is the name of the app's main code branch and stays as it is."
+  },
+  "merge.status.waitingOnBudget": {
+    "text": "Waiting on shared budget",
+    "description": "Status badge on a proposal: it must be merged with the app's latest code, but the platform's shared daily AI budget is used up, so that work waits."
+  },
+  "merge.title.waitingOnBudget": {
+    "text": "This proposal needs merging with main, but the platform’s shared token budget is spent for today. It resumes after the midnight UTC reset.",
+    "description": "Tooltip on the \"Waiting on shared budget\" status badge of a proposal. \"main\" is the name of the app's main code branch and stays as it is; tokens are units of AI usage."
+  },
+  "merge.status.goingLive": {
+    "text": "Going live…",
+    "description": "Status badge on a proposal that has been merged while the live app is still being updated to run it. Shown with a spinner."
+  },
+  "merge.title.goingLive": {
+    "text": "This change is merged. Production is being updated to run it.",
+    "description": "Tooltip on the \"Going live…\" status badge of a proposal. \"change\" is a noun: the proposed change. Production is the live app people use."
+  },
+  "merge.status.merged": {
+    "text": "Merged",
+    "description": "Status badge on a proposal that is finished: its change is now part of the app. Shown after a check mark."
+  },
+  "merge.status.merging": {
+    "text": "Merging…",
+    "description": "Status badge on a proposal whose change is being merged into the app right now. Shown with a spinner."
+  },
+  "merge.title.merging": {
+    "text": "This change is being merged into the app and production is rebuilding.",
+    "description": "Tooltip on the \"Merging…\" status badge of a proposal. \"change\" is a noun: the proposed change. Production is the live app people use."
+  },
+  "merge.status.resolving": {
+    "text": "Resolving conflicts automatically…",
+    "description": "Status badge on a proposal: the platform is reconciling it with the app's latest code by itself. Shown with a spinner."
+  },
+  "merge.title.resolving": {
+    "text": "Reconciling conflicts with main automatically, then retrying the merge.",
+    "description": "Tooltip on the \"Resolving conflicts automatically…\" status badge of a proposal. \"main\" is the name of the app's main code branch and stays as it is."
+  },
+  "merge.status.conflictFailed": {
+    "text": "Conflict resolution failed",
+    "description": "Status badge on a proposal, shown after a warning sign: the platform tried to reconcile it with the app's latest code and could not."
+  },
+  "merge.title.conflictFailed": {
+    "text": "The last automatic conflict resolution failed. The owner needs to resolve manually.",
+    "description": "Tooltip on the \"Conflict resolution failed\" status badge of a proposal. The owner is the person who made the proposal."
+  },
+  "merge.status.mergeConflict": {
+    "text": "Merge failed: conflict",
+    "description": "Status badge on a proposal, shown after a warning sign: merging it was tried and failed because it conflicts with the app's latest code."
+  },
+  "merge.title.mergeConflict": {
+    "text": "Going live was attempted but this change conflicts with main. The change’s creator needs to bring it up to date from their agent session (\"Sync with main\").",
+    "description": "Tooltip on the \"Merge failed: conflict\" status badge of a proposal. \"change\" is a noun: the proposed change. \"main\" is the app's main code branch and stays as it is; \"Sync with main\" is the name of a button in the agent session."
+  },
+  "merge.status.conflictsWithMain": {
+    "text": "Conflicts with main",
+    "description": "Status badge on a proposal, shown after a warning sign: it can no longer be merged as it stands because the app's main code has changed. \"Conflicts\" is a verb (this proposal conflicts); \"main\" is the main code branch and stays as it is."
+  },
+  "merge.status.conflictsWithMainFiles_one": {
+    "text": "Conflicts with main · {{count}}",
+    "description": "Status badge on a proposal, shown after a warning sign: it conflicts with the app's main code. {{count}} is the number of files in conflict, shown bare after a middle dot. \"Conflicts\" is a verb; \"main\" stays as it is."
+  },
+  "merge.status.conflictsWithMainFiles_other": {
+    "text": "Conflicts with main · {{count}}",
+    "description": "Status badge on a proposal, shown after a warning sign: it conflicts with the app's main code. {{count}} is the number of files in conflict, shown bare after a middle dot. \"Conflicts\" is a verb; \"main\" stays as it is."
+  },
+  "merge.title.conflictUnresolvable": {
+    "text": "Main has moved on and this proposal no longer merges on its own. The platform tried to resolve it and could not. The change’s creator needs to bring it up to date from their agent session (\"Sync with main\").",
+    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal, when the platform's own attempt to fix the conflict failed. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button in the agent session."
+  },
+  "merge.title.conflictForkHead": {
+    "text": "Main has moved on and this proposal no longer merges on its own. Its branch lives on the creator’s own fork, which the platform cannot write to, so only the creator can bring it up to date.",
+    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal whose code lives in its creator's own copy (fork) of the repository. \"Main\" is the app's main code branch."
+  },
+  "merge.title.conflictAwaitingApproval": {
+    "text": "Main has moved on and this proposal no longer merges on its own. The platform resolves it once the vote passes. The creator can bring it up to date sooner from their agent session (\"Sync with main\").",
+    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal that is still being voted on. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button in the agent session."
+  },
+  "merge.title.conflictAutomatic": {
+    "text": "Main has moved on and this proposal no longer merges on its own. The platform resolves it automatically. The creator can also bring it up to date from their agent session (\"Sync with main\").",
+    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal, in the ordinary case where the platform will fix the conflict itself. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button in the agent session."
+  },
+  "merge.status.previewFailed": {
+    "text": "Preview won't boot",
+    "description": "Status badge on a proposal, shown after a warning sign: the test copy of the app built from this proposal (its preview) failed to start."
+  },
+  "merge.title.previewFailedReason": {
+    "text": "The preview failed to start, so it can’t be tested. It can’t go live until it starts. Reason: {{reason}}",
+    "description": "Tooltip on the \"Preview won't boot\" status badge of a proposal. {{reason}} is the error the server recorded, in English, shown as it is."
+  },
+  "merge.title.previewFailed": {
+    "text": "The preview failed to start, so it couldn’t be tested. It can’t go live until it starts.",
+    "description": "Tooltip on the \"Preview won't boot\" status badge of a proposal, when no error detail was recorded. The preview is the test copy of the app built from the proposal."
+  },
+  "merge.status.checksWillRetry": {
+    "text": "Checks will run again",
+    "description": "Status badge on a proposal, with a spinner: its automated checks (tests) were interrupted and will be run again without anyone acting."
+  },
+  "merge.title.checksWillRetryDetail": {
+    "text": "{{detail}} Merge is blocked until they pass.",
+    "description": "Tooltip on the \"Checks will run again\" status badge of a proposal. {{detail}} is a complete sentence from the server saying why the checks are being run again; \"they\" are the checks."
+  },
+  "merge.title.checksWillRetry": {
+    "text": "Merge is blocked until they pass.",
+    "description": "Tooltip on the \"Checks will run again\" status badge of a proposal, when the server gave no detail. \"they\" are the proposal's automated checks."
+  },
+  "merge.status.checksError": {
+    "text": "Checks couldn't run",
+    "description": "Status badge on a proposal, shown after a warning sign: its automated checks (tests) ended without a result."
+  },
+  "merge.title.checksErrorReason": {
+    "text": "The automated check run ended before it produced a verdict. Merge is blocked. Reason: {{reason}}",
+    "description": "Tooltip on the \"Checks couldn't run\" status badge of a proposal. {{reason}} is the error the server recorded, in English, shown as it is."
+  },
+  "merge.title.checksError": {
+    "text": "The automated check run ended before it produced a verdict. The preview may still be available; merge is blocked until checks complete.",
+    "description": "Tooltip on the \"Checks couldn't run\" status badge of a proposal, when no error detail was recorded. The preview is the test copy of the app built from the proposal."
+  },
+  "merge.status.checksFailing": {
+    "text": "Checks failing",
+    "description": "Status badge on a proposal, shown after a warning sign: its automated checks (tests) are not passing."
+  },
+  "merge.status.checksFailingCount_one": {
+    "text": "Checks failing · {{count}}",
+    "description": "Status badge on a proposal, shown after a warning sign: its automated checks are not passing. {{count}} is how many checks fail, shown bare after a middle dot."
+  },
+  "merge.status.checksFailingCount_other": {
+    "text": "Checks failing · {{count}}",
+    "description": "Status badge on a proposal, shown after a warning sign: its automated checks are not passing. {{count}} is how many checks fail, shown bare after a middle dot."
+  },
+  "merge.title.checksFailing": {
+    "text": "Checks are not passing on the preview. It can’t go live until they pass.",
+    "description": "Tooltip on the \"Checks failing\" status badge of a proposal. The preview is the test copy of the app built from the proposal; \"It\" is the proposal."
+  },
+  "merge.status.checksDeferred": {
+    "text": "Checks deferred",
+    "description": "Status badge on a proposal: its automated checks (tests) have been put off, because the proposal conflicts with the app's latest code."
+  },
+  "merge.title.checksDeferred": {
+    "text": "This proposal conflicts with main, so its preview was built but its tests were not run: they would judge a tree that cannot merge. They run automatically once it merges cleanly.",
+    "description": "Tooltip on the \"Checks deferred\" status badge of a proposal. \"main\" is the app's main code branch and stays as it is; \"a tree\" is the proposal's set of code files."
+  },
+  "merge.status.checksQueued": {
+    "text": "Checks waiting",
+    "description": "Status badge on a proposal, with a spinner: its automated checks (tests) are waiting in a queue to start, position unknown."
+  },
+  "merge.status.checksQueuedNext": {
+    "text": "Checks waiting · next",
+    "description": "Status badge on a proposal, with a spinner: its automated checks are waiting in a queue and are the next to start."
+  },
+  "merge.status.checksQueuedAhead_one": {
+    "text": "Checks waiting · {{count}} ahead",
+    "description": "Status badge on a proposal, with a spinner: its automated checks are waiting in a queue. {{count}} is how many other proposals' checks run before these."
+  },
+  "merge.status.checksQueuedAhead_other": {
+    "text": "Checks waiting · {{count}} ahead",
+    "description": "Status badge on a proposal, with a spinner: its automated checks are waiting in a queue. {{count}} is how many other proposals' checks run before these."
+  },
+  "merge.title.checksQueued": {
+    "text": "The preview is up, and its checks are waiting for a slot: Homeroom runs a few proposals’ checks at a time. They start on their own. It can’t go live until they pass.",
+    "description": "Tooltip on the \"Checks waiting\" status badge of a proposal. The preview is the test copy of the app built from the proposal. Homeroom is the product's name."
+  },
+  "merge.status.checksRunning": {
+    "text": "Checks running…",
+    "description": "Status badge on a proposal, with a spinner: its automated checks (tests) are running and started less than a minute ago."
+  },
+  "merge.status.checksRunningFor_one": {
+    "text": "Checks running · {{count}} min",
+    "description": "Status badge on a proposal, with a spinner: its automated checks are running. {{count}} is how many minutes they have been running; \"min\" abbreviates minutes."
+  },
+  "merge.status.checksRunningFor_other": {
+    "text": "Checks running · {{count}} min",
+    "description": "Status badge on a proposal, with a spinner: its automated checks are running. {{count}} is how many minutes they have been running; \"min\" abbreviates minutes."
+  },
+  "merge.title.checksRunning": {
+    "text": "Still testing the preview. It can’t go live until the checks pass.",
+    "description": "Tooltip on the \"Checks running\" status badge of a proposal. The preview is the test copy of the app built from the proposal; \"It\" is the proposal."
+  },
+  "merge.status.checksStarting": {
+    "text": "Checks starting…",
+    "description": "Status badge on a proposal, with a spinner: its preview is still being built and its automated checks have not begun."
+  },
+  "merge.title.checksStarting": {
+    "text": "The preview is being prepared and testing is about to start. It can’t go live until the checks pass.",
+    "description": "Tooltip on the \"Checks starting…\" status badge of a proposal. The preview is the test copy of the app built from the proposal; \"It\" is the proposal."
+  },
+  "merge.status.checksSkipped": {
+    "text": "Checks skipped",
+    "description": "Status badge on a proposal: its automated checks were not run because there was nothing to test. This does not block it."
+  },
+  "merge.title.checksSkippedReason": {
+    "text": "Checks were skipped: {{reason}}. It can still go live.",
+    "description": "Tooltip on the \"Checks skipped\" status badge of a proposal. {{reason}} is the server's reason, in English, a clause without a full stop. \"It\" is the proposal."
+  },
+  "merge.title.checksSkipped": {
+    "text": "Checks were skipped: there was nothing to test. It can still go live.",
+    "description": "Tooltip on the \"Checks skipped\" status badge of a proposal, when the server recorded no reason. \"It\" is the proposal."
+  },
+  "merge.status.behind": {
+    "text": "Behind main",
+    "description": "Status badge on a proposal: the app's main code has changed since the proposal was made, though it still merges. \"main\" is the main code branch and stays as it is."
+  },
+  "merge.status.behindCount_one": {
+    "text": "Behind main · {{count}}",
+    "description": "Status badge on a proposal: the app's main code has changed since the proposal was made. {{count}} is how many commits main has gained, shown bare after a middle dot. \"main\" stays as it is."
+  },
+  "merge.status.behindCount_other": {
+    "text": "Behind main · {{count}}",
+    "description": "Status badge on a proposal: the app's main code has changed since the proposal was made. {{count}} is how many commits main has gained, shown bare after a middle dot. \"main\" stays as it is."
+  },
+  "merge.title.behind": {
+    "text": "Main has moved on since this was proposed, but this still merges cleanly. Nothing needs syncing: it merges as it stands once the vote passes.",
+    "description": "Tooltip on the \"Behind main\" status badge of a proposal. \"Main\" is the app's main code branch; \"this\" is the proposal."
+  },
+  "merge.status.awaitingAdmin": {
+    "text": "Awaiting admin approval",
+    "description": "Status badge on a proposal that has enough votes but, because the app is locked, still needs an admin to vote Yes."
+  },
+  "merge.title.awaitingAdmin": {
+    "text": "App is locked, so it also needs at least one admin yes before it merges.",
+    "description": "Tooltip on the \"Awaiting admin approval\" status badge of a proposal. \"it\" is the proposal; \"admin yes\" is a Yes vote from one of the app's admins."
+  },
+  "merge.status.awaitingMember": {
+    "text": "Needs another member’s Yes",
+    "description": "Status badge on a proposal that has enough votes, but none from a member other than its author, which this kind of change requires. \"Yes\" is the name of the approving vote and keeps its capital."
+  },
+  "merge.status.mainPaused": {
+    "text": "Approved, going live is paused",
+    "description": "Status badge on a proposal that passed its vote and checks, while the app has stopped accepting merges because its own tests are failing."
+  },
+  "merge.title.mainPausedNote": {
+    "text": "Approved and checks passed, but {{reason}}. Nothing about this change is wrong; it goes live once the app is healthy again or an admin resumes.",
+    "description": "Tooltip on the \"Approved, going live is paused\" status badge of a proposal. {{reason}} is the server's clause, in English, saying why the app's merges are paused; it starts lower case and has no full stop. \"change\" is a noun: the proposed change."
+  },
+  "merge.title.mainPaused": {
+    "text": "Approved and checks passed, but main’s unit suite is failing and going live is paused for this app. Nothing about this change is wrong; it goes live once the app is healthy again or an admin resumes.",
+    "description": "Tooltip on the \"Approved, going live is paused\" status badge of a proposal, when the server gave no reason of its own. \"main\" is the app's main code branch; its unit suite is its set of automated tests. \"change\" is a noun: the proposed change."
+  },
+  "merge.status.ready": {
+    "text": "Approved, going live shortly",
+    "description": "Status badge on a proposal that passed its vote and its checks and is queued to be merged into the app."
+  },
+  "merge.title.ready": {
+    "text": "Approved and checks passed. It goes live shortly.",
+    "description": "Tooltip on the \"Approved, going live shortly\" status badge of a proposal. \"It\" is the proposal."
+  },
+  "merge.status.waitingForYourApproval": {
+    "text": "Waiting for your approval",
+    "description": "Status badge on a proposal in a project that only the viewer belongs to: their own Yes vote is the one it needs."
+  },
+  "merge.status.waitingForApproval": {
+    "text": "Waiting for approval",
+    "description": "Status badge on a proposal that has been put up for a vote and does not have enough Yes votes yet."
+  },
+  "merge.title.explicitApprovalNoTimer": {
+    "text": "{{requirement}} It won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold.",
+    "description": "Tooltip on the \"Waiting for approval\" status badge of a proposal that changes a protected setting. {{requirement}} is a complete sentence, already translated, such as \"Changes to who runs this app need a Yes from another member.\" \"It\" is the proposal; \"Yes\" is the name of the approving vote."
+  },
+  "merge.status.checksPassed": {
+    "text": "Checks passed",
+    "description": "Status badge, after a check mark, on a change still being drafted (not yet put up for a vote) whose automated checks all passed."
+  },
+  "merge.title.checksPassed": {
+    "text": "Checks passed on the preview. It is ready to send for approval.",
+    "description": "Tooltip on the \"Checks passed\" status badge of a draft change. The preview is the test copy of the app built from it; \"It\" is the change."
+  },
+  "merge.status.draft": {
+    "text": "Draft",
+    "description": "Status badge on a change that is still being built and has not been put up for a vote. A noun."
+  },
+  "merge.pill.statusWithTally": {
+    "text": "{{status}} · {{yes}}/{{required}}",
+    "description": "Status pill in the header of an agent session whose change is up for a vote. {{status}} is the whole status phrase, already translated (\"Waiting for approval\"); {{yes}} is the number of Yes votes so far and {{required}} the number needed, shown as a fraction."
+  },
+  "merge.pill.advisoryVotes_one": {
+    "text": "{{count}} advisory vote from non-approvers. They don’t count toward merging",
+    "description": "Tooltip on the small \"+N\" beside a proposal's vote tally, on an app where only invited approvers' votes count. {{count}} is the number of Yes votes cast by people who are not approvers. No full stop at the end."
+  },
+  "merge.pill.advisoryVotes_other": {
+    "text": "{{count}} advisory votes from non-approvers. They don’t count toward merging",
+    "description": "Tooltip on the small \"+N\" beside a proposal's vote tally, on an app where only invited approvers' votes count. {{count}} is the number of Yes votes cast by people who are not approvers. No full stop at the end."
+  },
+  "venue.group.inChat": {
+    "text": "In this chat",
+    "description": "Heading over the places a change can be built that keep the work inside the current agent-session chat."
+  },
+  "venue.group.elsewhere": {
+    "text": "Somewhere else",
+    "description": "Heading over the places a change can be built outside the current agent-session chat (another tool or website)."
+  },
+  "venue.usernodeOpenrouter.label": {
+    "text": "Homeroom · OpenRouter",
+    "description": "Name of one place a change can be built: Homeroom's own servers, using AI models through the OpenRouter service. Homeroom and OpenRouter are product names; keep the middle dot."
+  },
+  "venue.usernodeOpenrouter.blurb": {
+    "text": "The preferred in-chat option: use included credits or your own OpenRouter key, and pick any available model.",
+    "description": "Explains the \"Homeroom · OpenRouter\" way of building a change, in menus and tooltips where a person chooses where to build. OpenRouter is a product name; a key is an API key."
+  },
+  "venue.usernodeOpenrouter.cta": {
+    "text": "Use OpenRouter",
+    "description": "Button that chooses to build the change on Homeroom through OpenRouter. OpenRouter is a product name."
+  },
+  "venue.usernodeClaude.label": {
+    "text": "Homeroom · Claude",
+    "description": "Name of one place a change can be built: Homeroom's own servers, using the Claude AI model. Homeroom and Claude are product names; keep the middle dot."
+  },
+  "venue.usernodeClaude.blurb": {
+    "text": "Homeroom runs the turns right here, on your daily Claude credits, or your own Anthropic key once they run out.",
+    "description": "Explains the \"Homeroom · Claude\" way of building a change, in menus and tooltips where a person chooses where to build. A turn is one request to the coding agent and its reply. Claude and Anthropic are names; a key is an API key."
+  },
+  "venue.usernodeClaude.cta": {
+    "text": "Use Claude",
+    "description": "Button that chooses to build the change on Homeroom with the Claude AI model. Claude is a product name."
+  },
+  "venue.local.label": {
+    "text": "Your computer · Homeroom session",
+    "description": "Name of one place a change can be built: the person's own computer, running the turns of this same Homeroom agent session. Homeroom is the product's name; keep the middle dot."
+  },
+  "venue.local.blurb": {
+    "text": "The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.",
+    "description": "Explains the \"Your computer · Homeroom session\" way of building a change. The Homeroom CLI is Homeroom's command-line program; a turn is one request to the coding agent and its reply; Claude is a product name."
+  },
+  "venue.local.cta": {
+    "text": "Set up the Homeroom CLI",
+    "description": "Button that opens the instructions for installing Homeroom's command-line program, to build the change on the person's own computer."
+  },
+  "venue.webClaudeCode.label": {
+    "text": "Claude Code on the web",
+    "description": "Name of one place a change can be built: Anthropic's Claude Code website. Claude Code is a product name."
+  },
+  "venue.webClaudeCode.blurb": {
+    "text": "Homeroom writes the work order; Claude Code on the web builds it on your own Claude plan and pushes to your fork. Homeroom opens the pull request and imports it as a proposal. No credits, no API key.",
+    "description": "Explains the \"Claude Code on the web\" way of building a change. A fork is the person's own copy of the app's code repository on GitHub; Claude Code and Homeroom are product names."
+  },
+  "venue.webClaudeCode.cta": {
+    "text": "Use Claude Code",
+    "description": "Button that chooses to hand the change to Claude Code on the web. Claude Code is a product name."
+  },
+  "venue.webCodex.label": {
+    "text": "Codex on the web",
+    "description": "Name of one place a change can be built: OpenAI's Codex website. Codex is a product name."
+  },
+  "venue.webCodex.blurb": {
+    "text": "The same hand-off for Codex on the web and the ChatGPT plan you already pay for. Homeroom guides you through linking GitHub, forking and submitting.",
+    "description": "Explains the \"Codex on the web\" way of building a change, listed right after \"Claude Code on the web\", which works the same way. Codex, ChatGPT, GitHub and Homeroom are product names."
+  },
+  "venue.webCodex.cta": {
+    "text": "Use Codex",
+    "description": "Button that chooses to hand the change to Codex on the web. Codex is a product name."
+  },
+  "venue.ownToolsPr.label": {
+    "text": "Your computer · your own tools",
+    "description": "Name of one place a change can be built: the person's own computer with whatever developer tools they like, outside Homeroom. Keep the middle dot."
+  },
+  "venue.ownToolsPr.blurb": {
+    "text": "Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in with “Import Feature from a PR”.",
+    "description": "Explains the \"Your computer · your own tools\" way of building a change. \"Build\" is a verb. Cursor, Zed and vim are names of code editors; “Import Feature from a PR” is the name of a menu item; PR means a GitHub pull request."
+  },
+  "venue.ownToolsPr.cta": {
+    "text": "How importing a PR works",
+    "description": "Button that opens the explanation of how to bring a GitHub pull request (PR) into Homeroom as a proposal."
+  },
+  "venue.handoff.externalAgent": {
+    "text": "External agent",
+    "description": "Names what wrote a proposal that came from a person's own computer when Homeroom does not know which coding tool it was. Shown where the tool's name (Codex, Claude Code) would be."
+  },
+  "venue.handoff.authoredWithCodex": {
+    "text": "Authored with Codex on your computer.",
+    "description": "Tooltip on the label that says where a session was built, for a proposal the viewer wrote on their own computer with the Codex coding tool. Codex is a product name."
+  },
+  "venue.handoff.authoredWithClaudeCode": {
+    "text": "Authored with Claude Code on your computer.",
+    "description": "Tooltip on the label that says where a session was built, for a proposal the viewer wrote on their own computer with the Claude Code coding tool. Claude Code is a product name."
+  },
+  "venue.handoff.authoredWithExternalAgent": {
+    "text": "Authored with External agent on your computer.",
+    "description": "Tooltip on the label that says where a session was built, for a proposal the viewer wrote on their own computer with a coding tool Homeroom cannot name."
+  },
+  "venue.rowLabel.continueSession": {
+    "text": "Continue this session with {{venue}}",
+    "description": "Menu row in a session already under way: hands the rest of this agent session's work to a web coding agent. {{venue}} is that place's name, such as \"Claude Code on the web\"."
+  },
+  "venue.rowLabel.continueProposal": {
+    "text": "Continue this proposal with {{venue}}",
+    "description": "Menu row in a session whose change is already up for a vote: hands further work on that proposal to a web coding agent. {{venue}} is that place's name, such as \"Codex on the web\"."
+  },
+  "venue.rowLabel.startNew": {
+    "text": "Start new work with {{venue}}",
+    "description": "Menu row in a session that can no longer be continued: starts a separate piece of work with a web coding agent. {{venue}} is that place's name, such as \"Codex on the web\"."
+  },
+  "venue.rowLabel.moveTo": {
+    "text": "Move to {{venue}}",
+    "description": "Menu row in a session already under way: moves where the session's work is built to another place. {{venue}} is that place's name, such as \"Homeroom · Claude\"."
+  },
+  "venue.webNote.sessionPaused": {
+    "text": "It starts from this session's latest commit and pushes its work back onto this session's own branch, the code lands on this session's branch, and its preview and checks catch up when you reopen the session. The agent's own conversation happens there, not in this transcript.",
+    "description": "Tooltip on a menu row that hands a paused agent session to a web coding agent: what will happen. \"It\" is the web agent; \"there\" is the web agent's own site; a commit and a branch are Git terms."
+  },
+  "venue.webNote.session": {
+    "text": "It starts from this session's latest commit and pushes its work back onto this session's own branch, the code lands here, and its preview and checks rebuild. The agent's own conversation happens there, not in this transcript.",
+    "description": "Tooltip on a menu row that hands an active agent session to a web coding agent: what will happen. \"It\" is the web agent; \"there\" is the web agent's own site; a commit and a branch are Git terms."
+  },
+  "venue.webNote.proposal": {
+    "text": "It starts from this proposal's latest commit and pushes back onto the same proposal, submitting clears the votes it has already collected and re-runs its checks. The agent's own conversation happens there, not in this transcript.",
+    "description": "Tooltip on a menu row that hands a proposal already up for a vote to a web coding agent: what will happen. \"It\" is the web agent; \"there\" is the web agent's own site."
+  },
+  "venue.webNote.newWork": {
+    "text": "Homeroom prepares a task for the web agent; what it builds comes back as its own proposal, not as more turns in this session.",
+    "description": "Tooltip on a menu row that starts separate work with a web coding agent. A turn is one request to the coding agent and its reply. Homeroom is the product's name."
+  },
+  "venue.consequence.ownToolsSwitch": {
+    "text": "Starts separate work. This chat stays where it is, and what you import comes back as its own proposal. It can’t be your default.",
+    "description": "Tooltip, in a session already under way, on the row for building with your own tools: what choosing it does. \"default\" is the saved default place to build."
+  },
+  "venue.consequence.ownToolsBlocked": {
+    "text": "Costs no credits: you build it yourself and import the pull request. There is no Homeroom chat for this one, and it can’t be your default.",
+    "description": "Tooltip on the row for building with your own tools, shown after the person ran out of AI credits. \"default\" is the saved default place to build."
+  },
+  "venue.consequence.ownToolsStart": {
+    "text": "No Homeroom chat for this one. You build it, then import the pull request. It can’t be your default.",
+    "description": "Tooltip on the row for building with your own tools, in a session with nothing in it yet. \"default\" is the saved default place to build."
+  },
+  "venue.consequence.inChatSwitch": {
+    "text": "Keeps this chat, this branch and this proposal. Only where the turns run changes.",
+    "description": "Tooltip, in a session already under way, on a row that moves the session to another place that still works inside this chat. A turn is one request to the coding agent and its reply."
+  },
+  "venue.consequence.inChatStart": {
+    "text": "The work happens in this chat.",
+    "description": "Tooltip on a row for a place to build that works inside the current agent-session chat, when the session has not started yet."
+  },
+  "venue.rowTitle.joined": {
+    "text": "{{blurb}} {{consequence}}",
+    "description": "Tooltip on a row of the menu that chooses where to build, and the explanation under a row of the out-of-credits card: two explanations one after the other. {{blurb}} is one or more whole sentences describing the place; {{consequence}} is one or more whole sentences saying what choosing it does. Only what separates them is translated here."
+  },
+  "venue.blocked.creditsSpent": {
+    "text": "Today’s AI credits are spent. They reset {{when}}.",
+    "description": "Reason shown on the struck-through \"build on Homeroom\" row after the daily AI credits ran out. {{when}} is a short phrase giving the time of the reset in the person's own clock, such as \"at 8:00 PM\"."
+  },
+  "venue.blocked.creditsSpentUtc": {
+    "text": "Today’s AI credits are spent. They reset at midnight UTC.",
+    "description": "Reason shown on the struck-through \"build on Homeroom\" row after the daily AI credits ran out, when the person's local reset time cannot be worked out. UTC is the time standard."
+  },
+  "venue.chip.title": {
+    "text": "{{venue}}: {{blurb}}",
+    "description": "Tooltip on the small chip that names where a session is built. {{venue}} is the place's name, such as \"Homeroom · Claude\"; {{blurb}} is the sentence or sentences that describe it."
+  },
+  "venue.fallback.flagOff": {
+    "text": "Your default is Homeroom · OpenRouter, but this deployment has it turned off, so this session is building in Homeroom · Claude.",
+    "description": "Note above the composer of a new agent session: the person's saved default place to build could not be used, and why. \"Homeroom · OpenRouter\" and \"Homeroom · Claude\" are the names of two places to build; a deployment is this installation of Homeroom."
+  },
+  "venue.fallback.modelUnavailable": {
+    "text": "Your default is Homeroom · OpenRouter but no model is set for it, so this session is building in Homeroom · Claude. Pick a model in Settings and the next one will use it.",
+    "description": "Note above the composer of a new agent session: the person's saved default place to build could not be used because no AI model is chosen for it. \"Homeroom · OpenRouter\" and \"Homeroom · Claude\" are the names of two places to build; \"the next one\" is the next session."
+  },
+  "venue.fallback.noCredential": {
+    "text": "Your default is Homeroom · OpenRouter but your OpenRouter key is missing or no longer valid, so this session is building in Homeroom · Claude. Re-save the key in Settings.",
+    "description": "Note above the composer of a new agent session: the person's saved default place to build could not be used because their OpenRouter API key is missing or invalid. \"Homeroom · OpenRouter\" and \"Homeroom · Claude\" are the names of two places to build."
+  },
+  "venue.choice.onPlatform.label": {
+    "text": "On-Platform",
+    "description": "Row in the \"Where do you want to work on this?\" sheet: build the change on Homeroom itself, inside this chat."
+  },
+  "venue.choice.onPlatform.blurb": {
+    "text": "Homeroom runs the turns right here, in this chat, on your daily AI credits or your own key once they run out.",
+    "description": "Tooltip on the \"On-Platform\" row of the sheet that chooses where to build a change. A turn is one request to the coding agent and its reply; a key is an API key."
+  },
+  "venue.choice.webAgent.label": {
+    "text": "Claude or Codex WebUI",
+    "description": "Row in the \"Where do you want to work on this?\" sheet: hand the change to the Claude Code or Codex website. Claude and Codex are product names; WebUI means the tool's web interface."
+  },
+  "venue.choice.webAgent.blurb": {
+    "text": "Homeroom writes the work order and Claude Code or Codex builds it on the plan you already pay for, then pushes back here. You pick which of the two on the next screen.",
+    "description": "Tooltip on the \"Claude or Codex WebUI\" row of the sheet that chooses where to build a change. Claude Code and Codex are product names; the plan is the person's paid subscription to one of them."
+  },
+  "venue.choice.ownTools.label": {
+    "text": "Your Own Developer Tooling",
+    "description": "Row in the \"Where do you want to work on this?\" sheet: build the change yourself with your own developer tools, outside Homeroom."
+  },
+  "venue.choice.ownTools.blurb": {
+    "text": "Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in.",
+    "description": "Tooltip on the \"Your Own Developer Tooling\" row of the sheet that chooses where to build a change. \"Build\" is a verb. Cursor, Zed and vim are names of code editors."
+  },
+  "venue.choice.cliBridge.label": {
+    "text": "Local CLI Bridge",
+    "description": "Row in the \"Where do you want to work on this?\" sheet: run this session's work on the person's own computer through Homeroom's command-line program (CLI)."
+  },
+  "venue.choice.cliBridge.blurb": {
+    "text": "The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.",
+    "description": "Tooltip on the \"Local CLI Bridge\" row of the sheet that chooses where to build a change. The Homeroom CLI is Homeroom's command-line program; a turn is one request to the coding agent and its reply."
+  },
+  "venue.sheet.rowUnavailable": {
+    "text": "{{choice}} (unavailable)",
+    "description": "Row label in the sheet that chooses where to build a change, for a row that cannot be used right now. {{choice}} is the row's own name, such as \"On-Platform\"."
+  },
+  "venue.sheet.rowCurrent": {
+    "text": "{{choice}} ✓",
+    "description": "Row label in the sheet that chooses where to build a change, for the row the session is already using. {{choice}} is the row's own name, such as \"On-Platform\"; keep the check mark."
+  },
+  "venue.sheet.title": {
+    "text": "Where do you want to work on this?",
+    "description": "Title of the sheet that lets a person choose where a change is built: on Homeroom, on a web coding agent, with their own tools, or on their own computer. \"this\" is the change."
+  },
+  "flow.agent.generic": {
+    "text": "your coding agent",
+    "description": "Stands where the name of a coding tool (Claude Code, Codex) would be, when Homeroom does not know which tool it is. Lower case because it is used as a name inside a label."
+  },
+  "flow.unavailable.noRepository": {
+    "text": "This app has no GitHub repository yet, so it can only be built here on Homeroom.",
+    "description": "Shown on the hand-off card when work on this app cannot be handed to an outside coding agent because the app's code is not on GitHub. Homeroom is the product's name."
+  },
+  "flow.unavailable.platform": {
+    "text": "Handing work to Claude Code or Codex is unavailable on this deployment right now.",
+    "description": "Shown on the hand-off card when this installation of Homeroom cannot hand work to an outside coding agent. Claude Code and Codex are product names."
+  },
+  "flow.unavailable.generic": {
+    "text": "This flow is unavailable right now.",
+    "description": "Shown on the hand-off card when handing work to an outside coding agent is unavailable and no reason is known. \"flow\" is the sequence of steps on the card."
+  },
+  "flow.github.title": {
+    "text": "Link your GitHub account",
+    "description": "Title of the first step on the card that walks a person through handing a change to an outside coding agent."
+  },
+  "flow.github.linkedAs": {
+    "text": "Linked as {{login}}.",
+    "description": "Detail under the \"Link your GitHub account\" step once it is done. {{login}} is the person's GitHub user name."
+  },
+  "flow.github.linked": {
+    "text": "Linked as your GitHub account.",
+    "description": "Detail under the \"Link your GitHub account\" step once it is done, when the GitHub user name is not known."
+  },
+  "flow.github.detail": {
+    "text": "Identity only. Homeroom asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.",
+    "description": "Detail under the \"Link your GitHub account\" step before it is done: reassures the person about what linking gives Homeroom. A token is an access credential."
+  },
+  "flow.github.link": {
+    "text": "Link GitHub",
+    "description": "Button on the \"Link your GitHub account\" step: opens GitHub so the person can connect their GitHub account to Homeroom. \"Link\" is a verb."
+  },
+  "flow.fork.title": {
+    "text": "Fork the app repository",
+    "description": "Title of the second step on the hand-off card. \"Fork\" is a verb: make your own copy of the app's code repository on GitHub."
+  },
+  "flow.fork.checking": {
+    "text": "Your agent needs somewhere to push. Homeroom checks GitHub for your fork of this app.",
+    "description": "Detail under the \"Fork the app repository\" step before Homeroom has looked. A fork is the person's own copy of the app's code repository; to push is to upload code to it."
+  },
+  "flow.fork.found": {
+    "text": "Found {{repository}}.",
+    "description": "Detail under the \"Fork the app repository\" step once the person's fork was found. {{repository}} is its GitHub name, written owner/name."
+  },
+  "flow.fork.nameConflict": {
+    "text": "You already own a repository called {{existing}} that is not a fork of this app, so fork it as {{forkName}} instead.",
+    "description": "Detail under the \"Fork the app repository\" step when the usual fork name is taken. {{existing}} is the name of the repository the person already has; {{forkName}} is the name to give the fork instead."
+  },
+  "flow.fork.unknown": {
+    "text": "Homeroom could not read GitHub just now, so it cannot tell whether you have a fork. Carry on and check again in a moment.",
+    "description": "Detail under the \"Fork the app repository\" step when GitHub could not be reached. A fork is the person's own copy of the app's code repository."
+  },
+  "flow.fork.none": {
+    "text": "No fork yet. Fork the app on GitHub, then come back and check again.",
+    "description": "Detail under the \"Fork the app repository\" step when the person has no fork. The first \"fork\" is a noun (their own copy of the repository), the second a verb."
+  },
+  "flow.fork.open": {
+    "text": "Fork on GitHub",
+    "description": "Button on the \"Fork the app repository\" step: opens the GitHub page where the person makes their own copy of the repository. \"Fork\" is a verb."
+  },
+  "flow.fork.checkAgain": {
+    "text": "Check again",
+    "description": "Button on the \"Fork the app repository\" step: asks Homeroom to look on GitHub again for the person's fork."
+  },
+  "flow.handoff.title": {
+    "text": "Hand it to {{agent}}",
+    "description": "Title of the last step on the hand-off card. \"it\" is the change to be built; {{agent}} is the coding tool's product name, Claude Code or Codex."
+  },
+  "flow.handoff.titleGeneric": {
+    "text": "Hand it to your coding agent",
+    "description": "Title of the last step on the hand-off card, when the coding tool is not one Homeroom can name. \"it\" is the change to be built."
+  },
+  "flow.connect.title": {
+    "text": "Connect Homeroom",
+    "description": "Title of the last step on the hand-off card while Homeroom is not yet connected to the person's Claude or ChatGPT account. \"Connect\" is a verb."
+  },
+  "flow.connect.detail": {
+    "text": "Homeroom hands {{agent}} a short set of instructions; {{agent}} asks what you want to build and takes it from there: writing the work order, reading this app's rules, pushing the branch and opening the proposal. It needs the connector in the {{product}} account it runs as to do any of that.",
+    "description": "Detail under the \"Connect Homeroom\" step. {{agent}} is the coding tool's product name (Claude Code or Codex); {{product}} is the chat product whose account it uses (Claude or ChatGPT). The connector is the Homeroom add-on installed in that account."
+  },
+  "flow.connect.detailGeneric": {
+    "text": "Homeroom hands your coding agent a short set of instructions; your coding agent asks what you want to build and takes it from there: writing the work order, reading this app's rules, pushing the branch and opening the proposal. It needs the connector in the {{product}} account it runs as to do any of that.",
+    "description": "Detail under the \"Connect Homeroom\" step, when the coding tool is not one Homeroom can name. {{product}} is the chat product whose account it uses (Claude or ChatGPT). The connector is the Homeroom add-on installed in that account."
+  },
+  "flow.connect.action": {
+    "text": "Connect Homeroom",
+    "description": "Button on the \"Connect Homeroom\" step: opens the instructions for adding the Homeroom connector to the person's Claude or ChatGPT account. \"Connect\" is a verb."
+  },
+  "flow.connect.checkAgain": {
+    "text": "Check again",
+    "description": "Button on the \"Connect Homeroom\" step: asks Homeroom to look again for a connected Claude or ChatGPT account."
+  },
+  "flow.handoff.detail": {
+    "text": "Copy the instructions and paste them into {{agent}}. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish.",
+    "description": "Detail under the \"Hand it to …\" step, for new work. {{agent}} is the coding tool's product name (Claude Code or Codex); \"It\" is that tool."
+  },
+  "flow.handoff.detailGeneric": {
+    "text": "Copy the instructions and paste them into your coding agent. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish.",
+    "description": "Detail under the \"Hand it to your coding agent\" step, for new work, when the coding tool is not one Homeroom can name. \"It\" is that tool."
+  },
+  "flow.handoff.detailSession": {
+    "text": "Copy the instructions and paste them into {{agent}}. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish. The instructions name the session this continues, so the work lands as an update to it rather than as a second copy.",
+    "description": "Detail under the \"Hand it to …\" step, when the work continues an existing agent session. {{agent}} is the coding tool's product name (Claude Code or Codex); \"It\" is that tool."
+  },
+  "flow.handoff.detailSessionGeneric": {
+    "text": "Copy the instructions and paste them into your coding agent. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish. The instructions name the session this continues, so the work lands as an update to it rather than as a second copy.",
+    "description": "Detail under the \"Hand it to your coding agent\" step, when the work continues an existing agent session and the coding tool is not one Homeroom can name. \"It\" is that tool."
+  },
+  "flow.handoff.detailProposal": {
+    "text": "Copy the instructions and paste them into {{agent}}. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish. The instructions name the proposal this continues, so the work lands as an update to it rather than as a second copy.",
+    "description": "Detail under the \"Hand it to …\" step, when the work continues a proposal already up for a vote. {{agent}} is the coding tool's product name (Claude Code or Codex); \"It\" is that tool."
+  },
+  "flow.handoff.detailProposalGeneric": {
+    "text": "Copy the instructions and paste them into your coding agent. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish. The instructions name the proposal this continues, so the work lands as an update to it rather than as a second copy.",
+    "description": "Detail under the \"Hand it to your coding agent\" step, when the work continues a proposal already up for a vote and the coding tool is not one Homeroom can name. \"It\" is that tool."
+  },
+  "flow.handoff.copy": {
+    "text": "Copy instructions",
+    "description": "Button on the \"Hand it to …\" step: copies the instructions for the coding agent to the clipboard. \"Copy\" is a verb."
+  },
+  "flow.handoff.open": {
+    "text": "Open {{agent}}",
+    "description": "Button on the \"Hand it to …\" step: opens the coding tool's website in a new tab. \"Open\" is a verb; {{agent}} is the tool's product name, Claude Code or Codex."
+  },
+  "flow.handoff.openGeneric": {
+    "text": "Open your coding agent",
+    "description": "Button on the \"Hand it to your coding agent\" step: opens the coding tool's website in a new tab. \"Open\" is a verb."
+  },
+  "flow.vendor.groupLabel": {
+    "text": "Which agent builds this",
+    "description": "Accessible name of the pair of buttons (Claude, ChatGPT) at the top of the hand-off card that choose which coding agent builds the change. \"this\" is the change."
+  },
+  "flow.lead.buildingWith": {
+    "text": "Building with {{agent}}",
+    "description": "Heading of the hand-off card. {{agent}} is the coding tool's product name, Claude Code or Codex."
+  },
+  "flow.lead.buildingWithGeneric": {
+    "text": "Building with your coding agent",
+    "description": "Heading of the hand-off card, when the coding tool is not one Homeroom can name."
+  },
+  "flow.status.checking": {
+    "text": "Checking where you are…",
+    "description": "Shown on the hand-off card while Homeroom loads which of the card's steps the person has already finished."
+  },
+  "flow.cancel.buildHere": {
+    "text": "Build here instead",
+    "description": "Button on the hand-off card when handing off is unavailable: goes back to building the change on Homeroom itself. \"Build\" is a verb."
+  },
+  "flow.brief.placeholder": {
+    "text": "What should it build?",
+    "description": "Placeholder in the text box on the hand-off card where a person describes the change. \"it\" is the coding agent; \"build\" is a verb."
+  },
+  "flow.instructions.summary": {
+    "text": "Instructions",
+    "description": "Label of the collapsed section on the hand-off card that holds the full text to paste into the coding agent. A noun."
+  },
+  "flow.connectors.hint_one": {
+    "text": "You already have {{count}} Claude / ChatGPT connector connected. You can also just ask it to pick this task up. A connector belongs to the {{product}} account it was added in, so pasting into a different account needs its own: <0>show the steps</0>.",
+    "description": "Hint at the bottom of the hand-off card. {{count}} is how many Homeroom connectors the person has added to Claude or ChatGPT accounts; {{product}} is Claude or ChatGPT. \"it\" is the coding agent. <0>…</0> is a button that shows how to add a connector."
+  },
+  "flow.connectors.hint_other": {
+    "text": "You already have {{count}} Claude / ChatGPT connectors connected. You can also just ask it to pick this task up. A connector belongs to the {{product}} account it was added in, so pasting into a different account needs its own: <0>show the steps</0>.",
+    "description": "Hint at the bottom of the hand-off card. {{count}} is how many Homeroom connectors the person has added to Claude or ChatGPT accounts; {{product}} is Claude or ChatGPT. \"it\" is the coding agent. <0>…</0> is a button that shows how to add a connector."
+  },
+  "flow.cancel.buildOnPlatform": {
+    "text": "Build on the Homeroom platform instead",
+    "description": "Button at the foot of the hand-off card: leaves the hand-off and builds the change on Homeroom itself. \"Build\" is a verb."
+  },
+  "credits.resetIn.underMinute": {
+    "text": "under a minute",
+    "description": "How long until the free AI credits reset, when it is less than a minute. Goes into the sentence \"Free credits reset …, about {{timeLeft}} from now.\" as {{timeLeft}}, so it is lower case with no full stop."
+  },
+  "credits.resetIn.minutes_one": {
+    "text": "{{count}}m",
+    "description": "How long until the free AI credits reset, in minutes, abbreviated: \"45m\". {{count}} is the number of minutes; \"m\" abbreviates minutes. Goes into the sentence \"Free credits reset …, about {{timeLeft}} from now.\""
+  },
+  "credits.resetIn.minutes_other": {
+    "text": "{{count}}m",
+    "description": "How long until the free AI credits reset, in minutes, abbreviated: \"45m\". {{count}} is the number of minutes; \"m\" abbreviates minutes. Goes into the sentence \"Free credits reset …, about {{timeLeft}} from now.\""
+  },
+  "credits.resetIn.hours_one": {
+    "text": "{{count}}h",
+    "description": "How long until the free AI credits reset, in whole hours, abbreviated: \"3h\". {{count}} is the number of hours; \"h\" abbreviates hours. Goes into the sentence \"Free credits reset …, about {{timeLeft}} from now.\""
+  },
+  "credits.resetIn.hours_other": {
+    "text": "{{count}}h",
+    "description": "How long until the free AI credits reset, in whole hours, abbreviated: \"3h\". {{count}} is the number of hours; \"h\" abbreviates hours. Goes into the sentence \"Free credits reset …, about {{timeLeft}} from now.\""
+  },
+  "credits.resetIn.hoursMinutes": {
+    "text": "{{hours}}h {{minutes}}m",
+    "description": "How long until the free AI credits reset, in hours and minutes, abbreviated: \"3h 20m\". {{hours}} and {{minutes}} are numbers; \"h\" and \"m\" abbreviate hours and minutes. Goes into the sentence \"Free credits reset …, about {{timeLeft}} from now.\""
+  },
+  "credits.reset.locked": {
+    "text": "Connect GitHub or X to unlock $10.00/day of Homeroom credits.",
+    "description": "Shown where the reset time of the free AI credits would be, for an account that has no credits until it links a GitHub or X account. GitHub and X are product names; $10.00/day is ten US dollars a day."
+  },
+  "credits.reset.unavailable": {
+    "text": "Credit eligibility is temporarily unavailable.",
+    "description": "Shown where the reset time of the free AI credits would be, when Homeroom could not work out whether this account gets credits."
+  },
+  "credits.reset.when": {
+    "text": "Free credits reset {{when}}.",
+    "description": "Says when the free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. {{when}} is a moment in the person's own clock, with its own preposition where it needs one: \"Sunday at 8:00 PM\" or \"at 9:00 AM\"."
+  },
+  "credits.reset.whenWithTimeLeft": {
+    "text": "Free credits reset {{when}}, about {{timeLeft}} from now.",
+    "description": "Says when the free AI credits are given back and how far off that is. \"reset\" is a verb. {{when}} is a moment in the person's own clock, with its own preposition where it needs one (\"Sunday at 8:00 PM\", \"at 9:00 AM\"); {{timeLeft}} is a short duration such as \"3h 20m\" or \"under a minute\"."
+  },
+  "credits.reset.atBoundary": {
+    "text": "Free credits reset at {{boundary}}.",
+    "description": "Says when the daily free AI credits are given back, when the person's local time cannot be worked out. \"reset\" is a verb. {{boundary}} is the server's name for the moment, in English, such as \"midnight UTC\"."
+  },
+  "credits.reset.atBoundaryWithTimeLeft": {
+    "text": "Free credits reset at {{boundary}}, about {{timeLeft}} from now.",
+    "description": "Says when the daily free AI credits are given back and how far off that is, when the person's local time cannot be worked out. \"reset\" is a verb. {{boundary}} is the server's name for the moment, in English, such as \"midnight UTC\"; {{timeLeft}} is a short duration such as \"3h 20m\"."
+  },
+  "credits.meter.locked": {
+    "text": "verify account · unlock $10/day",
+    "description": "Text of the AI-credit meter for an account that gets no credits until it is verified: an instruction and what it gives, separated by a middle dot. Lower case; $10/day is ten US dollars a day."
+  },
+  "credits.meter.unavailable": {
+    "text": "credits temporarily unavailable",
+    "description": "Text of the AI-credit meter when Homeroom could not work out whether this account gets credits. Lower case, no full stop."
+  },
+  "credits.meter.sharedBudgetSpent": {
+    "text": "shared budget spent",
+    "description": "Shown on the AI-credit meter after the spent/limit figures when the platform's budget shared by everyone is used up for the day. Lower case, no full stop."
+  },
+  "credits.meter.noneLeft": {
+    "text": "none left",
+    "description": "Shown on the AI-credit meter after the spent/limit figures when the person has used all of their free AI credits. Lower case, no full stop."
+  },
+  "credits.meter.amountLeft": {
+    "text": "{{amount}} left",
+    "description": "Shown on the AI-credit meter after the spent/limit figures: how much of the free AI credits remains. {{amount}} is a sum of money such as \"$36.40\"."
+  },
+  "credits.meter.ownKeySpend": {
+    "text": "your key {{amount}}",
+    "description": "Shown on the AI-credit meter: how much has been spent through the person's own API key rather than the free credits. {{amount}} is a sum of money such as \"$2.10\". Lower case."
+  },
+  "credits.low.thisWeek": {
+    "text": "Running low on free AI credits: {{remaining}} of {{limit}} left this week.",
+    "description": "Warning above the agent-session composer before the weekly free AI credits run out. {{remaining}} and {{limit}} are sums of money such as \"$4.00\" and \"$50.00\"."
+  },
+  "credits.low.today": {
+    "text": "Running low on free AI credits: {{remaining}} of {{limit}} left today.",
+    "description": "Warning above the agent-session composer before the daily free AI credits run out. {{remaining}} and {{limit}} are sums of money such as \"$4.00\" and \"$50.00\"."
+  },
+  "credits.apiKey.savedKeyFailed.title": {
+    "text": "Your saved key couldn't be used",
+    "description": "Title of a row on the out-of-credits card, for a person who has saved their own Anthropic API key but Homeroom could not use it."
+  },
+  "credits.apiKey.savedKeyFailed.blurb": {
+    "text": "Homeroom has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. Your weekly allowance is bypassed entirely while a working key is on file.",
+    "description": "Explanation under \"Your saved key couldn't be used\" on the out-of-credits card. \"Settings → API key\" is the path to a Settings section and keeps its arrow; a turn is one request to the coding agent and its reply; the allowance is the free AI credits."
+  },
+  "credits.apiKey.savedKeyFailed.cta": {
+    "text": "Check API key",
+    "description": "Button on the out-of-credits card and banner: opens Settings at the API key section, for a person whose saved key could not be used. \"Check\" is a verb."
+  },
+  "credits.apiKey.useOwn.title": {
+    "text": "Use your own Anthropic API key",
+    "description": "Title of a row on the out-of-credits card: one way to keep building is to pay through your own Anthropic account. Anthropic is a company name."
+  },
+  "credits.apiKey.useOwn.blurb": {
+    "text": "Paste a key in Settings → API key and Homeroom keeps working exactly as it does now, billed to your Anthropic account instead of your weekly allowance.",
+    "description": "Explanation under \"Use your own Anthropic API key\" on the out-of-credits card. \"Settings → API key\" is the path to a Settings section and keeps its arrow; the allowance is the free AI credits."
+  },
+  "credits.apiKey.useOwn.cta": {
+    "text": "Add API key",
+    "description": "Button on the out-of-credits card and banner: opens Settings at the API key section so the person can save their own key."
+  },
+  "credits.verify.line": {
+    "text": "Verify your account to get more: add your phone number, or link GitHub and X.",
+    "description": "Line on the out-of-credits card and banner for an account that is not verified: says how to get more free AI credits. GitHub and X are product names; \"link\" is a verb."
+  },
+  "credits.verify.title": {
+    "text": "Verify your account",
+    "description": "Title of a row in the list of ways to keep building after the AI credits ran out, for an account that is not verified."
+  },
+  "credits.verify.cta": {
+    "text": "Verify my account",
+    "description": "Button on the out-of-credits card and banner: opens the sheet where the person verifies their account with a phone number."
+  },
+  "credits.connector.title": {
+    "text": "Use your Claude.ai or ChatGPT subscription",
+    "description": "Title of a row on the out-of-credits card: one way to keep building is the paid Claude.ai or ChatGPT plan the person already has. Claude.ai and ChatGPT are product names."
+  },
+  "credits.connector.blurb": {
+    "text": "Connect Homeroom to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.",
+    "description": "Explanation under \"Use your Claude.ai or ChatGPT subscription\" on the out-of-credits card. Claude, ChatGPT, Claude Code and Codex are product names."
+  },
+  "credits.connector.cta": {
+    "text": "Connect Claude or ChatGPT",
+    "description": "Button on the out-of-credits card: opens Settings at the section where Homeroom is connected to Claude or ChatGPT. \"Connect\" is a verb."
+  },
+  "credits.intro.none": {
+    "text": "No ways to keep building right now:",
+    "description": "Line on the out-of-credits card above an empty list of ways to carry on. \"building\" is working on the change. Ends with a colon."
+  },
+  "credits.intro.one": {
+    "text": "One way to keep building right now:",
+    "description": "Line on the out-of-credits card above a list of exactly one way to carry on working on the change. The number is spelled out. Ends with a colon."
+  },
+  "credits.intro.two": {
+    "text": "Two ways to keep building right now:",
+    "description": "Line on the out-of-credits card above a list of exactly two ways to carry on working on the change. The number is spelled out. Ends with a colon."
+  },
+  "credits.intro.three": {
+    "text": "Three ways to keep building right now:",
+    "description": "Line on the out-of-credits card above a list of exactly three ways to carry on working on the change. The number is spelled out. Ends with a colon."
+  },
+  "credits.intro.four": {
+    "text": "Four ways to keep building right now:",
+    "description": "Line on the out-of-credits card above a list of exactly four ways to carry on working on the change. The number is spelled out. Ends with a colon."
+  },
+  "credits.intro.five": {
+    "text": "Five ways to keep building right now:",
+    "description": "Line on the out-of-credits card above a list of exactly five ways to carry on working on the change. The number is spelled out. Ends with a colon."
+  },
+  "credits.intro.six": {
+    "text": "Six ways to keep building right now:",
+    "description": "Line on the out-of-credits card above a list of exactly six ways to carry on working on the change. The number is spelled out. Ends with a colon."
+  },
+  "credits.intro.seven": {
+    "text": "Seven ways to keep building right now:",
+    "description": "Line on the out-of-credits card above a list of exactly seven ways to carry on working on the change. The number is spelled out. Ends with a colon."
+  },
+  "credits.intro.eight": {
+    "text": "Eight ways to keep building right now:",
+    "description": "Line on the out-of-credits card above a list of exactly eight ways to carry on working on the change. The number is spelled out. Ends with a colon."
+  },
+  "credits.intro.nine": {
+    "text": "Nine ways to keep building right now:",
+    "description": "Line on the out-of-credits card above a list of exactly nine ways to carry on working on the change. The number is spelled out. Ends with a colon."
+  },
+  "credits.intro.counted_one": {
+    "text": "{{count}} way to keep building right now:",
+    "description": "Line on the out-of-credits card above the list of ways to carry on working on the change, when there are more than nine. {{count}} is how many, as a figure. Ends with a colon."
+  },
+  "credits.intro.counted_other": {
+    "text": "{{count}} ways to keep building right now:",
+    "description": "Line on the out-of-credits card above the list of ways to carry on working on the change, when there are more than nine. {{count}} is how many, as a figure. Ends with a colon."
+  },
+  "credits.lead.outToday": {
+    "text": "You're out of today's free AI credits.",
+    "description": "First line of the out-of-credits card and banner in an agent session, when the free AI credits are counted per day."
+  },
+  "credits.lead.outThisWeek": {
+    "text": "You're out of this week's free AI credits.",
+    "description": "First line of the out-of-credits card and banner in an agent session, when the free AI credits are counted per week."
+  },
+  "credits.lead.sharedBudgetOut": {
+    "text": "The platform's shared daily AI budget is used up.",
+    "description": "First line of the out-of-credits card and banner in an agent session, when it is the budget shared by everyone on Homeroom, not the person's own credits, that ran out for the day."
+  },
+  "credits.developer.summary": {
+    "text": "Are you a developer?",
+    "description": "Label of the collapsed section on the out-of-credits card that holds the ways to keep building that need a terminal."
+  },
+  "credits.developer.hint": {
+    "text": "Build it with the tools on your own computer instead.",
+    "description": "Line inside the \"Are you a developer?\" section of the out-of-credits card. \"Build\" is a verb; \"it\" is the change."
+  },
+  "credits.banner.changeSessionType": {
+    "text": "Change session type",
+    "description": "Button on the out-of-credits banner above an agent session: opens the sheet that chooses where the change is built. \"Change\" is a verb; the session type is where the work runs (on Homeroom, on a web agent, on your computer)."
+  },
+  "buildLog.stage.clone": {
+    "text": "Cloning the repository",
+    "description": "Names the step of deploying an app that failed, after \"Failed step:\" in the \"Build log\" panel, which shows why an app's last deploy failed: copying the app's code repository."
+  },
+  "buildLog.stage.build": {
+    "text": "Building the Docker image",
+    "description": "Names the step of deploying an app that failed, after \"Failed step:\" in the \"Build log\" panel, which shows why an app's last deploy failed: building the app's container image. \"Building\" is a verb; Docker is a product name."
+  },
+  "buildLog.stage.start": {
+    "text": "Starting the container",
+    "description": "Names the step of deploying an app that failed, after \"Failed step:\" in the \"Build log\" panel, which shows why an app's last deploy failed: starting the app's container."
+  },
+  "buildLog.stage.healthcheck": {
+    "text": "Waiting for the health check",
+    "description": "Names the step of deploying an app that failed, after \"Failed step:\" in the \"Build log\" panel, which shows why an app's last deploy failed: waiting for the started app to answer that it is healthy."
+  },
+  "buildLog.stage.timeout": {
+    "text": "Timed out",
+    "description": "Stands where the failed step would be named, after \"Failed step:\" in the \"Build log\" panel, which shows why an app's last deploy failed, when the deploy took too long."
+  },
+  "buildLog.stage.other": {
+    "text": "Deploying",
+    "description": "Names the step that failed, after \"Failed step:\" in the \"Build log\" panel, which shows why an app's last deploy failed, when the exact step is not known: deploying the app in general."
+  },
+  "buildLog.empty": {
+    "text": "No build failure detail is recorded for this app. Failures that happened before this feature shipped weren't captured. Retry the deploy to record a fresh log.",
+    "description": "Shown in the \"Build log\" panel of an app whose deploy failed when Homeroom kept no detail of the failure. \"build\" is a noun (the build of the app); \"Retry\" is a verb."
+  },
+  "buildLog.meta.failedStep": {
+    "text": "<0>Failed step:</0> {{step}}",
+    "description": "Line in the \"Build log\" panel, which shows why an app's last deploy failed. <0>…</0> is the emphasised label; {{step}} names the step, for example \"Building the Docker image\"."
+  },
+  "buildLog.meta.whenRelative": {
+    "text": "<0>When:</0> {{relative}} ({{date}})",
+    "description": "Line in the \"Build log\" panel, which shows why an app's last deploy failed: when the failure happened. <0>…</0> is the emphasised label; {{relative}} is a short age such as \"5m ago\" and {{date}} the full date and time."
+  },
+  "buildLog.meta.when": {
+    "text": "<0>When:</0> {{date}}",
+    "description": "Line in the \"Build log\" panel, which shows why an app's last deploy failed: when the failure happened. <0>…</0> is the emphasised label; {{date}} is the full date and time."
+  },
+  "buildLog.meta.commit": {
+    "text": "<0>Commit:</0> <1>{{sha}}</1>",
+    "description": "Line in the \"Build log\" panel, which shows why an app's last deploy failed: which commit (version of the code) was being deployed. \"Commit\" is a noun. <0>…</0> is the emphasised label; <1>…</1> sets the identifier in a code font; {{sha}} is the commit's short identifier."
+  },
+  "buildLog.noLog": {
+    "text": "No log output was captured for this failure.",
+    "description": "Shown in the \"Build log\" panel of a failed deploy when the failure has a reason but no log text was saved."
+  },
+  "buildLog.title": {
+    "text": "Build log",
+    "description": "Title of the panel that shows why an app's last deploy failed. \"Build\" is a noun: the log of the build."
+  },
+  "buildLog.copy": {
+    "text": "Copy log",
+    "description": "Button in the \"Build log\" panel: copies the failure's details and log text to the clipboard. \"Copy\" is a verb."
+  },
+  "buildLog.copied": {
+    "text": "Copied!",
+    "description": "Replaces the \"Copy log\" button's label for a moment after the build log was copied to the clipboard."
+  },
+  "buildLog.copyFailed": {
+    "text": "Copy failed",
+    "description": "Replaces the \"Copy log\" button's label for a moment when the build log could not be copied to the clipboard."
+  },
+  "buildLog.retry": {
+    "text": "Retry deploy",
+    "description": "Button in the \"Build log\" panel, for the app's creator or an admin: deploys the app again. \"Retry\" is a verb; \"deploy\" is a noun here."
+  },
+  "buildLog.retrying": {
+    "text": "Retrying…",
+    "description": "Replaces the \"Retry deploy\" button's label while the request to deploy the app again is being sent."
+  },
+  "buildLog.retryFailed": {
+    "text": "Retry failed (HTTP {{status}})",
+    "description": "Toast shown when the request to deploy an app again was refused and the server gave no message. {{status}} is the HTTP status number, such as 500."
+  },
+  "buildLog.ago.justNow": {
+    "text": "just now",
+    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel, when it was under a minute ago. Lower case."
+  },
+  "buildLog.ago.minutes_one": {
+    "text": "{{count}}m ago",
+    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of minutes; \"m\" abbreviates minutes."
+  },
+  "buildLog.ago.minutes_other": {
+    "text": "{{count}}m ago",
+    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of minutes; \"m\" abbreviates minutes."
+  },
+  "buildLog.ago.hours_one": {
+    "text": "{{count}}h ago",
+    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "buildLog.ago.hours_other": {
+    "text": "{{count}}h ago",
+    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "buildLog.ago.days_one": {
+    "text": "{{count}}d ago",
+    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "buildLog.ago.days_other": {
+    "text": "{{count}}d ago",
+    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "buildLog.ago.months_one": {
+    "text": "{{count}}mo ago",
+    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of months; \"mo\" abbreviates months."
+  },
+  "buildLog.ago.months_other": {
+    "text": "{{count}}mo ago",
+    "description": "How long ago an app's deploy failed, in the \"When:\" line of the \"Build log\" panel. {{count}} is a number of months; \"mo\" abbreviates months."
+  },
+  "transcript.attachment.unnamed": {
+    "text": "file",
+    "description": "Stands in for the name of a file attached to a message in a shared agent-session transcript, when the file has no name. A noun, lower case."
+  },
+  "transcript.attachment.title": {
+    "text": "{{filename}} (attachments aren't shared, only their names)",
+    "description": "Tooltip on a file chip under a message in a shared agent-session transcript: readers see the file's name but cannot open it. {{filename}} is the attached file's name."
+  },
+  "transcript.activity.stepsAndSummary_one": {
+    "text": "Agent activity ({{count}} steps) and summary",
+    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's progress log and its own summary of the turn. {{count}} is the number of log lines."
+  },
+  "transcript.activity.stepsAndSummary_other": {
+    "text": "Agent activity ({{count}} steps) and summary",
+    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's progress log and its own summary of the turn. {{count}} is the number of log lines."
+  },
+  "transcript.activity.steps_one": {
+    "text": "Agent activity ({{count}} steps)",
+    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's progress log. {{count}} is the number of log lines."
+  },
+  "transcript.activity.steps_other": {
+    "text": "Agent activity ({{count}} steps)",
+    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's progress log. {{count}} is the number of log lines."
+  },
+  "transcript.activity.summary": {
+    "text": "Agent summary",
+    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's own summary of what it did in a turn."
+  },
+  "transcript.spec.version": {
+    "text": "Spec v{{version}}",
+    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of the change's spec (its written specification). {{version}} is the spec's version number; \"v\" abbreviates version."
+  },
+  "transcript.spec.versionLines_one": {
+    "text": "Spec v{{version}} · {{lines}} lines",
+    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of the change's spec. {{version}} is the spec's version number; {{lines}} is how many lines the whole spec has ({{count}} is the same number, for choosing the plural)."
+  },
+  "transcript.spec.versionLines_other": {
+    "text": "Spec v{{version}} · {{lines}} lines",
+    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of the change's spec. {{version}} is the spec's version number; {{lines}} is how many lines the whole spec has ({{count}} is the same number, for choosing the plural)."
+  },
+  "transcript.spec.drafted": {
+    "text": "Spec drafted",
+    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of a spec (written specification) the agent has just drafted, when its version number is not known."
+  },
+  "transcript.spec.draftedLines_one": {
+    "text": "Spec drafted · {{lines}} lines",
+    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of a spec the agent has just drafted. {{lines}} is how many lines the whole spec has ({{count}} is the same number, for choosing the plural)."
+  },
+  "transcript.spec.draftedLines_other": {
+    "text": "Spec drafted · {{lines}} lines",
+    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of a spec the agent has just drafted. {{lines}} is how many lines the whole spec has ({{count}} is the same number, for choosing the plural)."
+  },
+  "transcript.agentRunning": {
+    "text": "Coding agent is running{{tail}}",
+    "description": "Status line in a shared agent-session transcript for a turn the coding agent ran. {{tail}} is whatever punctuation followed the server's own sentence, usually three dots or nothing; keep it directly after the last word."
+  },
+  "transcript.author.unknown": {
+    "text": "them",
+    "description": "Stands where the name of the person who owns a shared agent-session transcript would be, over their messages, when the name is not known. Lower case."
+  },
+  "transcript.author.ai": {
+    "text": "AI",
+    "description": "Label over the coding assistant's messages in a shared agent-session transcript."
+  },
+  "transcript.empty": {
+    "text": "This chat has no messages yet.",
+    "description": "Shown in place of a shared agent-session transcript that has no messages."
+  },
+  "transcript.truncated": {
+    "text": "Showing the most recent part of a long chat. earlier messages aren't included.",
+    "description": "Note at the top of a shared agent-session transcript that was too long to show whole. The second sentence begins lower case in English as written."
+  },
+  "transcript.header.byAuthor": {
+    "text": "Agent session by {{author}}",
+    "description": "Heading of an opened shared transcript on a proposal's page. {{author}} is the user name of the person whose agent session it is."
+  },
+  "transcript.header.byAuthorMessages_one": {
+    "text": "Agent session by {{author}} · {{count}} message",
+    "description": "Heading of an opened shared transcript on a proposal's page. {{author}} is the user name of the person whose agent session it is; {{count}} is how many messages it holds."
+  },
+  "transcript.header.byAuthorMessages_other": {
+    "text": "Agent session by {{author}} · {{count}} messages",
+    "description": "Heading of an opened shared transcript on a proposal's page. {{author}} is the user name of the person whose agent session it is; {{count}} is how many messages it holds."
+  },
+  "transcript.header.byUnknown": {
+    "text": "Agent session by them",
+    "description": "Heading of an opened shared transcript on a proposal's page, when the name of the person whose agent session it is is not known. \"them\" is that person."
+  },
+  "transcript.header.byUnknownMessages_one": {
+    "text": "Agent session by them · {{count}} message",
+    "description": "Heading of an opened shared transcript on a proposal's page, when the name of the person whose agent session it is is not known. {{count}} is how many messages it holds."
+  },
+  "transcript.header.byUnknownMessages_other": {
+    "text": "Agent session by them · {{count}} messages",
+    "description": "Heading of an opened shared transcript on a proposal's page, when the name of the person whose agent session it is is not known. {{count}} is how many messages it holds."
+  },
+  "transcript.header.read": {
+    "text": "Read the agent session",
+    "description": "Label of the control on a proposal's page that opens the shared transcript of the agent session behind it. \"Read\" is a verb (imperative)."
+  },
+  "transcript.header.readMessages_one": {
+    "text": "Read the agent session ({{count}} messages)",
+    "description": "Label of the control on a proposal's page that opens the shared transcript of the agent session behind it. \"Read\" is a verb (imperative); {{count}} is how many messages it holds."
+  },
+  "transcript.header.readMessages_other": {
+    "text": "Read the agent session ({{count}} messages)",
+    "description": "Label of the control on a proposal's page that opens the shared transcript of the agent session behind it. \"Read\" is a verb (imperative); {{count}} is how many messages it holds."
+  },
+  "localRun.cloneComment": {
+    "text": "# clone this app’s repository, then cd into it",
+    "description": "First line of the commands on the \"Run this session on your computer\" card, when the app's repository address is not known: a shell comment telling the person what to do. Keep the leading \"#\" and the command name \"cd\"."
+  },
+  "localRun.leadNoBranch": {
+    "text": "This session stays right here: same transcript, same proposal. Nothing has run in it yet, so it has no branch on GitHub. Homeroom creates one when the first turn pushes. The turns run through Claude Code on your machine, on your own Claude plan, and each one asks in your terminal before it starts.",
+    "description": "Opening paragraph of the \"Run this session on your computer\" card, for an agent session in which nothing has run yet. A turn is one request to the coding agent and its reply; a branch is a Git branch; Claude Code, Claude, GitHub and Homeroom are names."
+  },
+  "localRun.lead": {
+    "text": "This session stays right here: same transcript, same branch, same proposal. Its turns just run through Claude Code on your machine, on your own Claude plan, and each one asks in your terminal before it starts.",
+    "description": "Opening paragraph of the \"Run this session on your computer\" card. A turn is one request to the coding agent and its reply; a branch is a Git branch; Claude Code and Claude are product names."
+  },
+  "localRun.title": {
+    "text": "Run this session on your computer",
+    "description": "Title of the card that gives the commands for running an agent session's work on the person's own computer. \"Run\" is a verb."
+  },
+  "localRun.footnote": {
+    "text": "Homeroom still opens the pull request, builds the preview and runs the checks. Hand the turns back to Homeroom at any time from the composer’s “Run on” selector.",
+    "description": "Paragraph under the commands on the \"Run this session on your computer\" card. A turn is one request to the coding agent and its reply; “Run on” is the name of a selector beside the message box."
+  },
+  "localRun.copy": {
+    "text": "Copy commands",
+    "description": "Button on the \"Run this session on your computer\" card: copies the shell commands shown above it to the clipboard. \"Copy\" is a verb."
+  },
+  "localRun.copied": {
+    "text": "Copied!",
+    "description": "Replaces the \"Copy commands\" button's label for a moment after the commands were copied to the clipboard."
+  },
+  "localRun.copyFailed": {
+    "text": "Copy failed",
+    "description": "Replaces the \"Copy commands\" button's label for a moment when the commands could not be copied to the clipboard."
+  },
+  "progress.elapsed.seconds": {
+    "text": "{{seconds}}s",
+    "description": "How long the coding agent's current run has taken, under a minute: \"42s\". {{seconds}} is a number; \"s\" abbreviates seconds."
+  },
+  "progress.elapsed.minutesSeconds": {
+    "text": "{{minutes}}m {{seconds}}s",
+    "description": "How long the coding agent's current run has taken, under an hour: \"3m 05s\". {{minutes}} is a number and {{seconds}} a two-digit number; \"m\" and \"s\" abbreviate minutes and seconds."
+  },
+  "progress.elapsed.hoursMinutes": {
+    "text": "{{hours}}h {{minutes}}m",
+    "description": "How long the coding agent's current run has taken, an hour or more: \"1h 12m\". {{hours}} is a number and {{minutes}} a two-digit number; \"h\" and \"m\" abbreviate hours and minutes."
+  },
+  "progress.countdown.underMinute": {
+    "text": "· under a minute left",
+    "description": "Follows the estimated length of the coding agent's run in the agent-session chat, after a space: the run should finish within a minute. Keep the leading middle dot, which separates it from the estimate."
+  },
+  "progress.countdown.about": {
+    "text": "· ~{{time}} left",
+    "description": "Follows the estimated length of the coding agent's run in the agent-session chat, after a space: roughly how long is left. {{time}} is a duration such as \"3m 00s\"; \"~\" means about. Keep the leading middle dot, which separates it from the estimate."
+  },
+  "progress.cohort.longerThanMost": {
+    "text": "running longer than most, about 1 in 5 runs do",
+    "description": "Small note beside the progress of a coding agent's run that has passed ten minutes. Lower case, no full stop. \"runs\" is a noun: runs of the coding agent."
+  },
+  "progress.cohort.longOne": {
+    "text": "this is a long one, some runs go 30 min+",
+    "description": "Small note beside the progress of a coding agent's run that has passed thirty minutes. Lower case, no full stop. \"one\" and \"runs\" are runs of the coding agent; \"30 min+\" means thirty minutes or more."
+  },
+  "progress.phase.claudeWorking": {
+    "text": "Claude is working",
+    "description": "Stage shown on the progress card of an agent session while the Claude coding agent is writing the change. Claude is a product name."
+  },
+  "progress.phase.agentWorking": {
+    "text": "Coding agent is working",
+    "description": "Stage shown on the progress card of an agent session while a coding agent other than Claude is writing the change."
+  },
+  "progress.phase.syncingWithMain": {
+    "text": "Syncing with main",
+    "description": "Stage shown on the progress card of an agent session while the session's code is being brought up to date with the app's main branch. \"main\" is the branch's name and stays as it is."
+  },
+  "progress.phase.syncingBranch": {
+    "text": "Syncing branch",
+    "description": "Stage shown on the progress card of an agent session while the session's own Git branch is being refreshed."
+  },
+  "progress.phase.committing": {
+    "text": "Committing",
+    "description": "Stage shown on the progress card of an agent session while the agent's changes are being saved as a Git commit."
+  },
+  "progress.phase.pushing": {
+    "text": "Pushing",
+    "description": "Stage shown on the progress card of an agent session while the commit is being uploaded (pushed) to GitHub."
+  },
+  "progress.phase.finished": {
+    "text": "Finished",
+    "description": "Final stage shown on the progress card of an agent session when the coding agent's run completed."
+  },
+  "progress.phase.pushFailed": {
+    "text": "Push failed",
+    "description": "Final stage shown on the progress card of an agent session when uploading (pushing) the commit to GitHub failed. \"Push\" is a noun."
+  },
+  "progress.phase.interrupted": {
+    "text": "Interrupted",
+    "description": "Final stage shown on the progress card of an agent session when the coding agent's run was cut off before it finished."
+  }
+}

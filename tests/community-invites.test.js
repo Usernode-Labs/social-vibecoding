@@ -197,7 +197,9 @@ test('the shell: signed out it is the landing, remembered for after sign-in; sig
   assert.match(app, /const inviteToken = rawHash \? null : App\._inviteTokenFromPath\(location\.pathname\);/);
   assert.match(app, /AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
   assert.match(app, /if \(App\.user\.hasPlatformAccess !== false\) \{\s+App\._followInvite\(inviteToken\);/);
-  assert.match(app, /confirmLabel: 'Join',\s+cancelLabel: 'Not now',/);
+  assert.match(app, /confirmLabel: PlatformI18n\.t\('shell:invite\.confirm\.join'\),\s+cancelLabel: PlatformI18n\.t\('shell:invite\.confirm\.notNow'\),/);
+  assert.equal(message('shell:invite.confirm.join'), 'Join');
+  assert.equal(message('shell:invite.confirm.notNow'), 'Not now');
   const screens = read('public/js/auth-screens.js');
   assert.match(screens, /if \(\/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(value\)\) return value;/, 'a deep link back to it');
   assert.match(screens, /if \(invite\) AuthScreens\._waitingInvite = invite\[1\];/, 'kept for the waiting room');
@@ -343,7 +345,10 @@ test(`the preview reads like the page: who made it, their note, the project's pi
   assert.match(routes.previewTags({ ...live, building: true, project: { ...live.project, name: 'Run Tracker' }, communityName: 'Sunday Run Club' }, null),
     /og:title" content="Maya is making this for Sunday Run Club"/);
   // The signed-in confirm says the same.
-  assert.match(read('public/js/app.js'), /\? `\$\{standing\.inviterName\} \$\{standing\.building \? 'is making' : 'made'\} it and invited you\.`/);
+  // Each wording is a whole message of its own (shell.json).
+  assert.match(read('public/js/app.js'), /\? \(standing\.building\s+\? PlatformI18n\.t\('shell:invite\.from\.isMaking', \{ inviter: standing\.inviterName \}\)\s+: PlatformI18n\.t\('shell:invite\.from\.made', \{ inviter: standing\.inviterName \}\)\)/);
+  assert.equal(message('shell:invite.from.isMaking', { inviter: 'Maya' }), 'Maya is making it and invited you.');
+  assert.equal(message('shell:invite.from.made', { inviter: 'Maya' }), 'Maya made it and invited you.');
 });
 
 test('the picture is served only through a live link, and only an after-shot of a merged change', () => {

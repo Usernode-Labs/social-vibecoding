@@ -66,6 +66,11 @@
     connector: '#settings/connectors',
   };
 
+  // The words come from the language catalog (session.json), read when a
+  // caller asks and never when this file is evaluated: the runtime that
+  // defines PlatformI18n loads after it.
+  function t(id, values) { return PlatformI18n.t(id, values); }
+
   function escapeHtml(value) {
     return String(value == null ? '' : value)
       .replace(/&/g, '&amp;')
@@ -97,11 +102,13 @@
     var ms = at - (nowMs == null ? Date.now() : nowMs);
     if (ms <= 0) return null;
     var mins = Math.floor(ms / 60000);
-    if (mins < 1) return 'under a minute';
+    if (mins < 1) return t('session:credits.resetIn.underMinute');
     var hours = Math.floor(mins / 60);
-    if (!hours) return mins + 'm';
+    if (!hours) return t('session:credits.resetIn.minutes', { count: mins });
     var rem = mins % 60;
-    return hours + 'h' + (rem ? ' ' + rem + 'm' : '');
+    return rem
+      ? t('session:credits.resetIn.hoursMinutes', { hours: hours, minutes: rem })
+      : t('session:credits.resetIn.hours', { count: hours });
   }
 
   // The one sentence every surface uses to answer "when do I get them
@@ -120,30 +127,33 @@
   function resetSentence(state, nowMs) {
     var s = state || {};
     if (s.level === 'locked') {
-      return 'Connect GitHub or X to unlock $10.00/day of Homeroom credits.';
+      return t('session:credits.reset.locked');
     }
     if (s.level === 'unavailable') {
-      return 'Credit eligibility is temporarily unavailable.';
+      return t('session:credits.reset.unavailable');
     }
     var weekly = s.capWindow === 'weekly';
     var RT = resetTime();
     var at = s.resetsAt ? new Date(s.resetsAt) : null;
     if (at && !Number.isFinite(at.getTime())) at = null;
-    var parts;
+    var left = at ? resetIn(s.resetsAt, nowMs) : null;
     if (RT) {
-      parts = 'Free credits reset ' + RT.resetWhen(weekly ? 'weekly' : 'daily',
+      var when = RT.resetWhen(weekly ? 'weekly' : 'daily',
         { at: at, now: nowMs == null ? undefined : nowMs });
-    } else {
-      var resetLabel = s.resetLabel || 'midnight UTC';
-      parts = weekly
-        ? 'Free credits reset ' + resetLabel
-        : 'Free credits reset at ' + resetLabel;
+      return left
+        ? t('session:credits.reset.whenWithTimeLeft', { when: when, timeLeft: left })
+        : t('session:credits.reset.when', { when: when });
     }
-    if (at) {
-      var left = resetIn(s.resetsAt, nowMs);
-      if (left) parts += ', about ' + left + ' from now';
+    // The server's own name for the boundary, as it states it.
+    var resetLabel = s.resetLabel || 'midnight UTC';
+    if (weekly) {
+      return left
+        ? t('session:credits.reset.whenWithTimeLeft', { when: resetLabel, timeLeft: left })
+        : t('session:credits.reset.when', { when: resetLabel });
     }
-    return parts + '.';
+    return left
+      ? t('session:credits.reset.atBoundaryWithTimeLeft', { boundary: resetLabel, timeLeft: left })
+      : t('session:credits.reset.atBoundary', { boundary: resetLabel });
   }
 
   // The exact UTC instant of that reset, for the `title` of whatever
@@ -250,10 +260,10 @@
   function meterParts(state) {
     var s = state || {};
     if (s.level === 'locked') {
-      return [{ key: 'locked', text: 'verify account · unlock $10/day' }];
+      return [{ key: 'locked', text: t('session:credits.meter.locked') }];
     }
     if (s.level === 'unavailable') {
-      return [{ key: 'unavailable', text: 'credits temporarily unavailable' }];
+      return [{ key: 'unavailable', text: t('session:credits.meter.unavailable') }];
     }
     var spent = money(s.spentCents);
     var limit = money(s.limitCents);
@@ -262,12 +272,15 @@
     // halves, and neither should be re-deriving the formatting.
     var parts = [{ key: 'pair', text: spent + '/' + limit, spent: spent, limit: limit }];
     if (s.level === 'exhausted') {
-      parts.push({ key: 'remaining', text: s.globalOut ? 'shared budget spent' : 'none left' });
+      parts.push({
+        key: 'remaining',
+        text: s.globalOut ? t('session:credits.meter.sharedBudgetSpent') : t('session:credits.meter.noneLeft'),
+      });
     } else if (s.level === 'ok' || s.level === 'low') {
-      parts.push({ key: 'remaining', text: money(s.remainingCents) + ' left' });
+      parts.push({ key: 'remaining', text: t('session:credits.meter.amountLeft', { amount: money(s.remainingCents) }) });
     }
     if (s.byokCents > 0) {
-      parts.push({ key: 'byok', text: 'your key ' + money(s.byokCents) });
+      parts.push({ key: 'byok', text: t('session:credits.meter.ownKeySpend', { amount: money(s.byokCents) }) });
     }
     return parts;
   }
@@ -288,9 +301,10 @@
   // it, rather than announcing a failure that hasn't happened.
   function lowLead(state) {
     var s = state || {};
-    var when = s.capWindow === 'weekly' ? 'this week' : 'today';
-    return 'Running low on free AI credits: ' + money(s.remainingCents)
-      + ' of ' + money(s.limitCents) + ' left ' + when + '.';
+    var amounts = { remaining: money(s.remainingCents), limit: money(s.limitCents) };
+    return s.capWindow === 'weekly'
+      ? t('session:credits.low.thisWeek', amounts)
+      : t('session:credits.low.today', amounts);
   }
 
   // ── Who each route is for (#1281) ──────────────────────────────────
@@ -353,12 +367,12 @@
     return {
       id: 'api-key',
       title: hasApiKey
-        ? "Your saved key couldn't be used"
-        : 'Use your own Anthropic API key',
+        ? t('session:credits.apiKey.savedKeyFailed.title')
+        : t('session:credits.apiKey.useOwn.title'),
       blurb: hasApiKey
-        ? 'Homeroom has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. Your weekly allowance is bypassed entirely while a working key is on file.'
-        : 'Paste a key in Settings → API key and Homeroom keeps working exactly as it does now, billed to your Anthropic account instead of your weekly allowance.',
-      cta: hasApiKey ? 'Check API key' : 'Add API key',
+        ? t('session:credits.apiKey.savedKeyFailed.blurb')
+        : t('session:credits.apiKey.useOwn.blurb'),
+      cta: hasApiKey ? t('session:credits.apiKey.savedKeyFailed.cta') : t('session:credits.apiKey.useOwn.cta'),
       hash: SETTINGS_HASHES.apiKey,
       developer: false,
     };
@@ -368,14 +382,14 @@
   // the same sheet a public vote opens (phone first, then GitHub and X in
   // Settings: frontend/src/features/auth/verify-identity.tsx). wire() opens
   // it in place; the hash is the fallback where the sheet is not loaded.
-  var VERIFY_LINE = 'Verify your account to get more: add your phone number, or link GitHub and X.';
+  function verifyLine() { return t('session:credits.verify.line'); }
 
   function verifyOption() {
     return {
       id: 'verify-account',
-      title: 'Verify your account',
-      blurb: VERIFY_LINE,
-      cta: 'Verify my account',
+      title: t('session:credits.verify.title'),
+      blurb: verifyLine(),
+      cta: t('session:credits.verify.cta'),
       hash: '#settings/linked-accounts',
       verify: true,
       developer: false,
@@ -419,7 +433,9 @@
       return {
         id: row.id,
         title: row.label,
-        blurb: row.blurb + ' ' + row.consequence,
+        // The venue's own description followed by what choosing it does:
+        // the row's `title`, which build-venues.js composes as one message.
+        blurb: row.title,
         cta: row.cta,
         flow: row.mechanism.flow || null,
         hash: row.mechanism.hash || SETTINGS_HASHES.localTool,
@@ -442,9 +458,9 @@
     if (!s.externalFlowsAvailable) {
       out.push({
         id: 'connector',
-        title: 'Use your Claude.ai or ChatGPT subscription',
-        blurb: 'Connect Homeroom to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.',
-        cta: 'Connect Claude or ChatGPT',
+        title: t('session:credits.connector.title'),
+        blurb: t('session:credits.connector.blurb'),
+        cta: t('session:credits.connector.cta'),
         hash: SETTINGS_HASHES.connector,
         developer: false,
       });
@@ -459,13 +475,24 @@
   // deployment (#1049) and now with the venue gating too, so it is spelled
   // from the list rather than frozen into the string. The ceiling is the
   // six venues plus the API key and the connector row.
-  var NUMERALS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+  // Each spelled count is a whole message of its own; past nine the count
+  // is a figure.
+  var INTROS = [
+    'session:credits.intro.none',
+    'session:credits.intro.one',
+    'session:credits.intro.two',
+    'session:credits.intro.three',
+    'session:credits.intro.four',
+    'session:credits.intro.five',
+    'session:credits.intro.six',
+    'session:credits.intro.seven',
+    'session:credits.intro.eight',
+    'session:credits.intro.nine',
+  ];
 
   function introFor(list) {
     var n = list.length;
-    var word = NUMERALS[n] || String(n);
-    return word.charAt(0).toUpperCase() + word.slice(1)
-      + (n === 1 ? ' way' : ' ways') + ' to keep building right now:';
+    return INTROS[n] ? t(INTROS[n]) : t('session:credits.intro.counted', { count: n });
   }
 
   // Lead sentence. `globalOut` means the PLATFORM's shared daily budget is
@@ -478,13 +505,13 @@
     var s = state || {};
     if (s.verificationRequired) {
       return s.capWindow === 'daily'
-        ? "You're out of today's free AI credits."
-        : "You're out of this week's free AI credits.";
+        ? t('session:credits.lead.outToday')
+        : t('session:credits.lead.outThisWeek');
     }
-    if (s.globalOut) return "The platform's shared daily AI budget is used up.";
+    if (s.globalOut) return t('session:credits.lead.sharedBudgetOut');
     return s.capWindow === 'daily'
-      ? "You're out of today's free AI credits."
-      : "You're out of this week's free AI credits.";
+      ? t('session:credits.lead.outToday')
+      : t('session:credits.lead.outThisWeek');
   }
 
   function optionRowHtml(opt) {
@@ -521,9 +548,9 @@
     if (!list || !list.length) return '';
     return ''
       + '<details class="dc-credits-dev" data-credits-dev="1">'
-      + '<summary class="dc-credits-dev-summary">Are you a developer?</summary>'
+      + '<summary class="dc-credits-dev-summary">' + PlatformI18n.htmlText('session:credits.developer.summary') + '</summary>'
       + '<div class="dc-credits-dev-hint">'
-      + 'Build it with the tools on your own computer instead.'
+      + PlatformI18n.htmlText('session:credits.developer.hint')
       + '</div>'
       + optionsHtml(list)
       + '</details>';
@@ -554,7 +581,7 @@
       // An unverified account: the line says how to get more, and its
       // button opens the verify sheet (wire()).
       + (verify
-        ? '<div class="dc-credits-card-detail" data-credits-verify-line="1">' + escapeHtml(VERIFY_LINE) + '</div>'
+        ? '<div class="dc-credits-card-detail" data-credits-verify-line="1">' + escapeHtml(verifyLine()) + '</div>'
           + '<div class="dc-credits-verify"><button type="button" class="dc-pr-btn dc-credits-go" data-credits-verify="1"'
           + ' data-credits-hash="' + escapeHtml(verify.hash) + '">' + escapeHtml(verify.cta) + '</button></div>'
         : s.error
@@ -593,7 +620,7 @@
       s.verificationRequired ? verifyOption() : apiKeyOption(s),
       {
         id: 'venue',
-        cta: 'Change session type',
+        cta: t('session:credits.banner.changeSessionType'),
         // No hash: this one opens the sheet in place. The fallback exists
         // because wire() falls through to a hash for surfaces that handle
         // nothing, and Settings is where a venue is otherwise changed.
@@ -679,7 +706,8 @@
     lowLead: lowLead,
     apiKeyOption: apiKeyOption,
     verifyOption: verifyOption,
-    VERIFY_LINE: VERIFY_LINE,
+    // Read when asked, in the language of that moment.
+    get VERIFY_LINE() { return verifyLine(); },
     options: options,
     partition: partition,
     introFor: introFor,
