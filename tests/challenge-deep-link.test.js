@@ -759,8 +759,8 @@ test('card and page descriptors carry the illustration tone only when it is tone
   pane._detailChallenge = null;
 });
 
-// The progress over the grid (ITERATION 03): "N/M done in <event>", scoped to
-// the selected event once the bar's list has it.
+// The progress over the grid (ITERATION 03): "N/M done in this event", scoped
+// to the selected event once the bar's list has it.
 test('the grid opens on its progress: the tally, scoped to the selected event', () => {
   const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._renderGrid();
@@ -768,8 +768,9 @@ test('the grid opens on its progress: the tally, scoped to the selected event', 
     'no event known yet: the bare tally');
   context.selectedEvent = () => ({ id: 900500, name: 'Season 2' });
   pane._renderGrid();
-  // QA 2026-09-24 Q17: an event's tally says it is an event's.
-  assert.equal(store.get().grid.progress.caption, 'done in this event · Season 2');
+  // QA 2026-09-24 Q17: an event's tally says it is an event's. It does not
+  // name it (issue #4528): production's event name is the season's.
+  assert.equal(store.get().grid.progress.caption, 'done in this event');
   context.selectedEvent = () => ({ id: 900500, name: '  ' });
   pane._renderGrid();
   assert.equal(store.get().grid.progress.caption, 'done', 'a blank name is left out');

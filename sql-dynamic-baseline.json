@@ -817,7 +817,7 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "a60f601501345e76ab84",
+      "fingerprint": "aaa0033cbfbd7442abc1",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
     },
@@ -1097,7 +1097,7 @@
     {
       "source": "src/services/homeroom-bot-progress.js",
       "kind": "structural-template",
-      "fingerprint": "70b2e1a76ca67c4838db",
+      "fingerprint": "eee0d0058ae8c27e0b96",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
     },

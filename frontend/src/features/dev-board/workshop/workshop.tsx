@@ -70,10 +70,10 @@ import { Improve } from '../../improve/improve-controller.js';
 import { improveStore } from '../../improve/improve-store.js';
 import { swatchFor } from '../../messages/format';
 import { devWorkshopStore } from '../card/cards-store';
-import { DevKanban } from '../card/dev-kanban';
+import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
-import { CardRowView, callAppView, openHref } from '../card/fold';
+import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
 import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
@@ -99,6 +99,8 @@ import { ProjectPlaces } from './project-places';
 import { clearPlace, publishPlace, registerPlaceOpener } from './place-store';
 import { SinceSummaryCard } from './since-summary-card';
 import { PlanPage } from './plan-page';
+import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
+import { TouchesPicture, readTouches, type Touches } from './touches';
 import { PageBack } from './page-back';
 import { readAskStream } from './ask-stream';
 import { WorkList, type CardRow as WorkCardRow, type TopicRef } from './work-row';
@@ -218,15 +220,20 @@ function relTime(ms: number): string {
   return agoStamp(ms).text;
 }
 
+/**
+ * One stage lane of a By category group: the group's items at that stage, as
+ * the board's rows (#4486, ./work-row.tsx, variant `board`) under the lane's
+ * stage label. No tile, since the label says the stage, and no category chip,
+ * since the group is the category. A tap on a row opens its page, beside the
+ * list on a wide window; nothing unfolds in place any more.
+ */
 function Lane({
-  lane, slug, canPost, openKey, onToggle, themeId,
+  lane, slug, openKey, onOpen,
 }: {
   lane: WorkshopTheme['lanes'][number];
   slug: string;
-  canPost: boolean;
   openKey: string | null;
-  onToggle: (key: string) => void;
-  themeId: string;
+  onOpen: (event: ReactMouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
 }): ReactNode {
   // "Shipped this week" is the one lane that is a RECORD rather than a
   // question — nothing in it needs anybody — so a theme opens on the work
@@ -237,6 +244,7 @@ function Lane({
   const [laneOpen, setLaneOpen] = useState(!collapsible);
   if (!lane.rows.length && !lane.more) return null;
   const total = lane.rows.length + lane.more;
+  const rows = lane.rows.filter((row): row is WorkCardRow => row.t === 'card' && !!row.brief);
   return (
     <div className={`dev-ws-lane dev-ws-lane-${lane.key}`} data-ws-lane={lane.key}>
       {collapsible ? (
@@ -255,16 +263,9 @@ function Lane({
       ) : (
         <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}</h4>
       )}
-      {!laneOpen ? null : lane.rows.map((row) => (row.t === 'card' ? (
-        <CardRowView
-          key={row.key}
-          row={row}
-          slug={slug}
-          canPost={canPost}
-          open={openKey === row.key}
-          onToggle={() => onToggle(row.key)}
-        />
-      ) : null))}
+      {laneOpen && rows.length ? (
+        <WorkList rows={rows} slug={slug} openKey={openKey} onOpen={onOpen} variant="board" category={false} />
+      ) : null}
       {laneOpen && lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
     </div>
   );
@@ -301,15 +302,15 @@ function Faces({ people }: { people: string[] }): ReactNode {
 }
 
 function ThemeCard({
-  theme, slug, canPost, open, onToggle, openKey, onToggleRow, onChannel,
+  theme, slug, open, onToggle, openKey, onOpen, onChannel,
 }: {
   theme: WorkshopTheme;
   slug: string;
-  canPost: boolean;
   open: boolean;
   onToggle: () => void;
+  /** `kind:id` of the item open in the panel beside the list. */
   openKey: string | null;
-  onToggleRow: (key: string) => void;
+  onOpen: (event: ReactMouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
   /** #4417: open a topic's channel on this page. */
   onChannel?: (place: TabKey) => void;
 }): ReactNode {
@@ -425,10 +426,8 @@ function ThemeCard({
               key={lane.key}
               lane={lane}
               slug={slug}
-              canPost={canPost}
               openKey={openKey}
-              onToggle={onToggleRow}
-              themeId={theme.id}
+              onOpen={onOpen}
             />
           ))}
           {/* The whole theme on the Board, at the bottom of the theme rather
@@ -1753,6 +1752,11 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   // A run that worked out its screens IS the summary: the picture takes the
   // paragraph's room, and the words are one tap away in Description.
   const shots = !!(row.visuals && row.visuals.screens && row.visuals.screens.length);
+  // #4490: without shots, the change's picture, in order: its author's
+  // diagram (or a group decision's, from its own facts), a legacy capture
+  // pair, then "What it touches". A Mermaid diagram that cannot be drawn
+  // falls back to "What it touches".
+  const picture = usePicture(row, shots);
   // THE HEAD TAKES THE FULL WIDTH WHEN IT ENDS ABOVE THE RAIL. The rail sits
   // at the item's foot on a phone, so on most screens the by-line, title and
   // summary are nowhere near it, and keeping its lane free only wrapped them
@@ -1825,15 +1829,19 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
           has. Same route the Board's rows open. */}
       <h2 className="dev-ws-item-title" ref={titleRef}>{href ? <a href={href}>{title}</a> : title}</h2>
       {shots ? null : summary ? (
-        <p className="dev-ws-item-summary" ref={summaryRef}>{summary}</p>
+        <p className={picture.kind === 'diagram' || picture.kind === 'touches' ? 'dev-ws-item-summary dev-ws-item-summary-short' : 'dev-ws-item-summary'} ref={summaryRef}>{summary}</p>
       ) : (
         <p className="dev-ws-item-summary dev-ws-item-nosummary" ref={summaryRef}>
           {isVote ? 'No plain-language summary was written for this change.' : 'This request has no description.'}
         </p>
       )}
       {shots && row.visuals ? <ShotsPicture v={row.visuals} near={near} wide={wide} />
-        : row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} />
-          : <div className="dev-ws-item-spacer" aria-hidden="true" />}
+        : picture.kind === 'diagram' ? (
+          <Diagram d={picture.d} source={picture.source} onOpen={onDescribe} onFail={picture.fail} defer={!near} className="dev-ws-media-diagram" />
+        )
+          : row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} />
+            : picture.kind === 'touches' ? <TouchesPicture t={picture.t} nothingVisible={!!row.nothingVisible} onOpen={onDescribe} />
+              : <div className="dev-ws-item-spacer" aria-hidden="true" />}
       <div className="dev-ws-item-caption">
         {facts.length ? (
           <button type="button" className="dev-ws-item-facts" data-ws-facts="" aria-haspopup="dialog" onClick={onDescribe}>
@@ -1849,6 +1857,32 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
     </section>
   );
 });
+
+type Picture =
+  | { kind: 'diagram'; d: DiagramRecord; source: DiagramSource; fail: () => void }
+  | { kind: 'touches'; t: Touches }
+  | { kind: 'none' };
+
+/**
+ * #4490: which picture a row shows when it has no shots. The author's
+ * diagram first (or a group decision's, drawn from its facts), then "What it
+ * touches"; a Mermaid diagram that failed to draw drops to the second. The
+ * legacy capture pair sits between the two in NeedsItem itself.
+ */
+function usePicture(row: QueueRow, shots: boolean): Picture {
+  const [failed, setFailed] = useState(false);
+  const authored = useMemo(() => readDiagram(row.diagram), [row.diagram]);
+  const decided = useMemo(
+    () => (authored ? null : decisionDiagram(row.decision as DecisionFacts | null, row.app ? row.app.name : null)),
+    [authored, row.decision, row.app],
+  );
+  const touches = useMemo(() => readTouches(row.touches), [row.touches]);
+  const fail = useCallback(() => setFailed(true), []);
+  if (shots) return { kind: 'none' };
+  const d = authored || decided;
+  if (d && !failed) return { kind: 'diagram', d, source: authored ? 'author' : 'decision', fail };
+  return touches ? { kind: 'touches', t: touches } : { kind: 'none' };
+}
 
 /**
  * The scroll position the end card is keyed under (see `curKeyRef` in
@@ -1866,14 +1900,27 @@ function wantsEnd(): boolean {
   try { return new URLSearchParams(window.location.search).get('shot') === 'needs-end'; } catch { return false; }
 }
 /**
- * `?shot=needs-approve` (#4313): open the feed on its first item that asks
- * for your approval (a project that is just yours), with its vote sheet up,
- * so a declared check can read the sheet's line ("Waiting for your
- * approval."). Read at mount, like `?shot=needs-end`.
+ * The `?shot=` an item is opened on, read at mount like `?shot=needs-end`.
+ * `needs-approve` (#4313): the first item that asks for your approval (a
+ * project that is just yours), with its vote sheet up, so a declared check
+ * can read the sheet's line ("Waiting for your approval."). And (#4490)
+ * `needs-diagram` / `needs-touches`, the first item whose picture is its
+ * author's diagram or "What it touches", for the declared check and the
+ * before & after shots of those pictures. Read at mount.
  */
-function wantsApprove(): boolean {
-  if (typeof window === 'undefined' || typeof window.location === 'undefined') return false;
-  try { return new URLSearchParams(window.location.search).get('shot') === 'needs-approve'; } catch { return false; }
+function shotTarget(): 'approve' | 'diagram' | 'touches' | null {
+  if (typeof window === 'undefined' || typeof window.location === 'undefined') return null;
+  try {
+    const shot = new URLSearchParams(window.location.search).get('shot');
+    return shot === 'needs-approve' ? 'approve' : shot === 'needs-diagram' ? 'diagram' : shot === 'needs-touches' ? 'touches' : null;
+  } catch { return null; }
+}
+/** Whether a row is the one a `?shot=` target opens on. */
+function shotMatches(target: 'approve' | 'diagram' | 'touches', r: QueueRow): boolean {
+  if (target === 'approve') return approves(r);
+  if (r.visuals && r.visuals.screens && r.visuals.screens.length) return false;
+  const drawn = !!readDiagram(r.diagram);
+  return target === 'diagram' ? drawn : !drawn && !!readTouches(r.touches);
 }
 
 /** "3 proposals", "1 proposal": a count with its noun. */
@@ -2241,7 +2288,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   const endScrollRef = useRef<boolean>(endOnOpen);
   // Still owed the `?shot=needs-approve` open (the effect below): true until
   // a row that approves has landed and the scroller has a height.
-  const approveOpenRef = useRef<boolean>(!endOnOpen && wantsApprove());
+  const approveOpenRef = useRef<'approve' | 'diagram' | 'touches' | null>(endOnOpen ? null : shotTarget());
   const moreRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLElement>(null);
@@ -2374,16 +2421,19 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
    */
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!approveOpenRef.current || !el || !el.clientHeight) return;
-    const idx = items.findIndex((r) => approves(r));
+    const target = approveOpenRef.current;
+    if (!target || !el || !el.clientHeight) return;
+    const idx = items.findIndex((r) => shotMatches(target, r));
     if (idx < 0) return;
-    approveOpenRef.current = false;
+    approveOpenRef.current = null;
     curKeyRef.current = items[idx].key;
     setAt(idx);
     el.style.scrollBehavior = 'auto';
     el.scrollTop = idx * el.clientHeight;
     el.style.scrollBehavior = '';
     setLeaving(null);
+    // #4490: the picture targets open on the item alone, no sheet over it.
+    if (target !== 'approve') return;
     setSheet('vote');
     setVoteSide('yes');
     setVoteLine('');
@@ -3303,8 +3353,11 @@ const WIDE_QUERY = '(min-width: 700px)';
 /**
  * #4457: where a Workshop row opens its page in a panel beside the list
  * rather than as the page: room for the list and a 560px panel beside it.
+ * #4417: 116px later than it was. The chrome beside the page grew from the
+ * 224px rail to the 76px strip and the 264px places column, so this keeps
+ * the list the 292px it had at the old 1180px.
  */
-const SIDE_QUERY = '(min-width: 1180px)';
+const SIDE_QUERY = '(min-width: 1296px)';
 /**
  * #4417: from here the project's places are the section column beside the
  * strip (../../nav/section-column.tsx); under it, the tray behind the bar.
@@ -3924,12 +3977,32 @@ export function DevWorkshop(): ReactNode {
   };
   const closeSide = useCallback(() => setSideItem(null), []);
   const sideKey = sideItem ? `${sideItem.kind}:${sideItem.id}` : null;
-  // The panel goes with the tab, the project and the wide window; a week's
-  // page goes with the tab and the project.
+  // The panel goes with a change of tab (it opens from the Workshop tab's
+  // lists and, #4486, from All items), the project and the wide window; a
+  // week's page goes with the tab and the project.
   useEffect(() => {
-    if (tab !== 'workshop' || !sideWide) setSideItem(null);
+    setSideItem(null);
     if (tab !== 'workshop') setOpenWeek(null);
-  }, [tab, sideWide]);
+  }, [tab]);
+  useEffect(() => {
+    if (!sideWide) setSideItem(null);
+  }, [sideWide]);
+  // #4486: ON ALL ITEMS THE BOARD KEEPS ITS PLACE beside the panel. With the
+  // panel open its columns are 316px and it scrolls sideways (app.css), so
+  // the column the row was tapped in is brought beside the panel, by the
+  // least scroll that shows it whole, and the strip over it follows.
+  useLayoutEffect(() => {
+    if (tab !== 'all' || !sideKey) return;
+    const board = hostRef.current ? hostRef.current.querySelector<HTMLElement>('#dev-kanban') : null;
+    const row = board ? board.querySelector<HTMLElement>(`[data-ws-open="${sideKey}"]`) : null;
+    const col = row ? row.closest<HTMLElement>('.dev-kanban-col') : null;
+    if (!board || !col) return;
+    const b = board.getBoundingClientRect();
+    const c = col.getBoundingClientRect();
+    if (c.right > b.right) board.scrollLeft += Math.ceil(c.right - b.right);
+    else if (c.left < b.left) board.scrollLeft -= Math.ceil(b.left - c.left);
+    syncStrip(board);
+  }, [tab, sideKey, group]);
   useEffect(() => {
     setSideItem(null);
     setOpenWeek(null);
@@ -4122,17 +4195,6 @@ export function DevWorkshop(): ReactNode {
       />
     </PlacesTray>
   ) : null;
-  const pageBar = tab === 'all' ? (
-    <div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
-      <div className="dev-ws-tabtrack">
-        <PageBack
-          label="Workshop"
-          title={pageTitle(tab)}
-          onBack={() => openTab(pageParent(tab))}
-        />
-      </div>
-    </div>
-  ) : null;
 
   // The Workshop page's since list, filed by week. A first visit has no
   // baseline and so nothing new, but the weeks and their lines are still
@@ -4144,8 +4206,11 @@ export function DevWorkshop(): ReactNode {
   const weekUp = openWeek ? weeks.find((w) => sinceWeekStateKey(w) === openWeek) || null : null;
   // Own ongoing work is already in Your work. Once it merges, its outcome
   // belongs in catch-up too: it no longer appears in that ongoing list.
+  // #4538: so is a bot change built from the viewer's request — Your work
+  // has it while it is in flight, and the bot remains its maker either way.
   const sinceRows = (v.since ? v.since.rows : [])
-    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && (!r.brief.mine || r.brief.stage === 'live'));
+    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief
+      && (!(r.brief.mine || r.brief.requested) || r.brief.stage === 'live'));
   const openWeekPage = (key: string) => {
     setOpenWeek(key);
     scrollToHead(hostRef.current);
@@ -4167,10 +4232,9 @@ export function DevWorkshop(): ReactNode {
       // #4457: an item's page is open in the panel beside the list, and the
       // list makes room for it (app.css). An attribute, not a class: the
       // host's classes are written by useWorkshopHostState.
-      data-ws-side-open={sideItem && tab === 'workshop' ? '' : undefined}
+      data-ws-side-open={sideItem && (tab === 'workshop' || tab === 'all') ? '' : undefined}
     >
       {band}
-      {pageBar}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
@@ -4476,7 +4540,6 @@ export function DevWorkshop(): ReactNode {
               rows={v.mine.rows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST)
                 .filter((r): r is WorkCardRow => r.t === 'card')}
               slug={slug}
-              inMine
               openKey={sideKey}
               onOpen={openItem}
             />
@@ -4577,8 +4640,8 @@ export function DevWorkshop(): ReactNode {
       </>
       ) : null}
 
-      {/* ── The item's page, beside the list (#4457) ── ./side-panel.tsx */}
-      {tab === 'workshop' && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
+      {/* ── The item's page, beside the list (#4457) or the board (#4486) ── ./side-panel.tsx */}
+      {(tab === 'workshop' || tab === 'all') && sideItem ? <TopicSidePanel item={sideItem} onClose={closeSide} /> : null}
 
       {tab === 'needs' ? (
         <NeedsFeed
@@ -4629,26 +4692,43 @@ export function DevWorkshop(): ReactNode {
               with the switch also gives the head a title bar — the two-state
               choice, then the tools for whichever state you picked. */}
           <div className="dev-ws-pane-head">
-            {/* THE GROUPING LEADS THE HEAD, at every width (#852). It sat
-                beside the tab pill on a wide window, as an ear on the pane's
-                top-right corner; with the tabs in the header there is no pill
-                to sit beside, so it is the head's first row everywhere, as it
-                always was on a phone.
+            {/* #4486: ONE ROW, the page's own bar: the way back and the
+                page's name ("All items", no "Workshop" eyebrow: the lit
+                Workshop tab above says where it hangs), the grouping, then
+                the search and the filters. It wraps on a narrow window and
+                on a phone (app.css `.dev-ws-allbar`). It used to be three:
+                a back bar over the pane, which scrolled away, then the
+                grouping, then the tools. The back bar is in the pinned head
+                now, so the page's name stays on screen too.
 
-                NO TITLE LINE HERE. The back bar above names the page, "All
-                items", so an eyebrow would be the same words twice. */}
-            <GroupStrip group={group} />
-            {/* The search and the filters. NOT the ⋯: that is the hub's, in
-                its hero, so the row draws none of its own. */}
-            <DevActionsRow
-              illustrationApp={actions.illustrationApp}
-              canManageIllustration={actions.canManageIllustration}
-              selfHosted={actions.selfHosted}
-              readOnly={actions.readOnly}
-              canCollaborate={actions.canCollaborate}
-              showsMembers={actions.showsMembers}
-              withPlus={false}
-            />
+                THE GROUPING STILL LEADS THE TOOLS IN THE DOCUMENT (#852):
+                it decides what the search searches. The row lays the search
+                out first (app.css), as the board was reviewed (#4486). */}
+            <div className="dev-ws-allbar" data-ws-allbar="">
+              <PageBack
+                label="Workshop"
+                title={pageTitle(tab)}
+                onBack={() => openTab(pageParent(tab))}
+                eyebrow={false}
+              />
+              <GroupStrip group={group} />
+              {/* The search and the filters. NOT the ⋯: that is the hub's, in
+                  its hero, so the row draws none of its own. */}
+              <DevActionsRow
+                illustrationApp={actions.illustrationApp}
+                canManageIllustration={actions.canManageIllustration}
+                selfHosted={actions.selfHosted}
+                readOnly={actions.readOnly}
+                canCollaborate={actions.canCollaborate}
+                showsMembers={actions.showsMembers}
+                withPlus={false}
+              />
+            </div>
+            {/* #4486: BY STAGE, THE PIPELINE PINS WITH THE ROW. The board's
+                column heads, as steps (../card/dev-kanban.tsx StageStrip),
+                so the column names stay on screen down a long column; on a
+                phone they are the tabs. */}
+            {group === 'stage' ? <StageStrip /> : null}
           </div>
           {/* The pane's face is painted by its two PARTS, not by the pane —
               see app.css. A fill on the pane with a second one on the sticky
@@ -4658,7 +4738,7 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-pane-body">
           {group === 'stage' ? (
             <div className="dev-ws-board" data-ws-stage="">
-              <DevKanban />
+              <DevKanban openKey={sideKey} onOpen={openItem} />
             </div>
           ) : !themes.length ? (
             /* The rows' place, under the controls that emptied it. `filtered`
@@ -4704,11 +4784,10 @@ export function DevWorkshop(): ReactNode {
                 <ThemeCard
                   theme={t}
                   slug={slug}
-                  canPost={canPost}
                   open={isOpen(t.id)}
                   onToggle={() => toggleTheme(t.id)}
-                  openKey={openRows[t.id] || null}
-                  onToggleRow={(key) => toggleRow(t.id, key)}
+                  openKey={sideKey}
+                  onOpen={openItem}
                   onChannel={openTab}
                 />
               </Fragment>

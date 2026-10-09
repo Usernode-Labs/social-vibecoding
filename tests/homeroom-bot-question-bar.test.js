@@ -243,57 +243,13 @@ test('live: a blocked build is said on the issue like a question, to whoever fil
 
 // ── Comparing old against new ────────────────────────────────────────────
 
-test('re-triage queues the latest question of each issue, on shadow apps only', async () => {
-  // Every app but a paused one is live (live.liveScope), so outside a
-  // staging copy only a paused app's questions are the shadow's.
-  const poolFor = (seen) => ({
-    async query(sql, params) {
-      const s = String(sql);
-      seen.push({ s, params });
-      if (/FROM platform_settings/.test(s)) {
-        return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }, { key: bot.KEY_PAUSED_APPS, value: '["pulse-2f06de"]' }] };
-      }
-      if (/SELECT DISTINCT ON \(r\.app_id, r\.issue_number\)/.test(s)) {
-        return {
-          rows: [
-            { app_id: 1, issue_number: 3250, verdict: 'question', slug: 'usernode-2d5619' },
-            { app_id: 1, issue_number: 3251, verdict: 'ready', slug: 'usernode-2d5619' },
-            { app_id: 2, issue_number: 24, verdict: 'question', slug: 'rss-reader-4113da' },
-            { app_id: 3, issue_number: 13, verdict: 'question', slug: 'pulse-2f06de' },
-          ],
-        };
-      }
-      return { rows: [] };
-    },
-  });
-  const env = process.env.USERNODE_ENV;
-  const setEnv = (v) => { if (v === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = v; };
-  let seen = [];
-  let out;
-  try {
-    setEnv(undefined);
-    out = await bot.retriageQuestions(poolFor(seen), { actorId: 5 });
-    assert.deepEqual(out, { ok: true, queued: 1, live: 2 }, 'the platform and rss-reader are live; pulse is paused');
-    assert.deepEqual(seen.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s)).params, [[3], [13], 5]);
-    // A staging copy acts on nothing: every question is the shadow's.
-    setEnv('staging');
-    seen = [];
-    out = await bot.retriageQuestions(poolFor(seen), { actorId: 5 });
-  } finally {
-    setEnv(env);
-  }
-  assert.deepEqual(out, { ok: true, queued: 3, live: 0 });
-  const ins = seen.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
-  assert.deepEqual(ins.params, [[1, 2, 3], [3250, 24, 13], 5]);
-  assert.match(ins.s, /SELECT app_id, issue_number, 0, 'retriage', \$3/, 'priority 0: a refresh keeps it until it runs');
-  const latest = seen.find((q) => /SELECT DISTINCT ON/.test(q.s)).s;
-  assert.match(latest, /ORDER BY r\.app_id, r\.issue_number, r\.id DESC/, 'the latest verdict per issue');
-  assert.match(latest, /r\.verdict IN \('question', 'ready', 'person', 'empty'\)/, 'a later failed run does not hide it');
-
-  const src = read('src/routes/admin.js');
-  assert.match(src, /router\.post\('\/api\/admin\/homeroom-bot\/retriage-questions', requireAdminWrite, drainGuard,/);
+test('re-triaging every question is gone with the shadow apps it worked on; the dashboard still shows the bar', () => {
+  // It only ever queued questions on apps the bot did not act on, and every
+  // app but a paused one is live now, so the button and its route went.
+  assert.equal(bot.retriageQuestions, undefined);
+  assert.doesNotMatch(read('src/routes/admin.js'), /retriage-questions/);
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /id="admin-homeroom-bot-retriage"/);
+  assert.doesNotMatch(tsx, /id="admin-homeroom-bot-retriage"|retriage-questions/);
   assert.match(tsx, /data-question-blocker/);
   assert.match(tsx, /data-demoted-question/);
 });

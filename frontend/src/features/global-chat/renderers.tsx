@@ -364,7 +364,7 @@ function directItemActions(
 function itemClassicPath(result: GlobalChatResult, item: JsonObject) {
   const base = result.classicPath;
   if (!base) return null;
-  const exactTopic = /\/dev\/(?:issues|proposals|sessions)\/[A-Za-z0-9%-]+$/.test(base)
+  const exactTopic = /\/dev\/(?:issues|proposals|changes|sessions)\/[A-Za-z0-9%-]+$/.test(base)
     || /\/dev\/chat$/.test(base)
     || /^#messages\/[1-9]\d*$/.test(base);
   if (exactTopic) return base;
@@ -407,6 +407,9 @@ function itemClassicPath(result: GlobalChatResult, item: JsonObject) {
       return `#app/${segment(slug)}/dev/governance/${segment(governanceId)}`;
     }
     const proposalId = first(item, ['proposalId', 'proposal_id', 'id', 'sessionId', 'session_id'], 80);
+    // #4367: a change with a pull request is addressed by its number.
+    const prNumber = first(item, ['prNumber', 'pr_number'], 80);
+    if (proposalId && /^[1-9]\d*$/.test(prNumber)) return `#app/${segment(slug)}/dev/changes/${prNumber}`;
     if (proposalId) return `#app/${segment(slug)}/dev/proposals/${segment(proposalId)}`;
   }
   if (result.renderer === 'session' && slug) {

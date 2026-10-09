@@ -535,81 +535,16 @@ test('the claim deals the free slots to apps in turns, oldest first, skipping pa
   assert.match(sql, /WHERE r\.id = picked\.id AND r\.build_at IS NULL/, 'the UPDATE is the claim');
 });
 
-// ── The backfill: every open ready request, once ────────────────────────
+// ── The backfill is gone with the shadow apps it built for ──────────────
 
-function backfillPool(rows, settings = { shadowBuilds: 'on', platform: 'off', paused: '[]' }) {
-  const seen = [];
-  return {
-    seen,
-    async query(sql, params) {
-      const s = String(sql);
-      seen.push({ s, params });
-      if (/FROM platform_settings/.test(s)) {
-        return {
-          rows: [
-            { key: 'homeroom_bot_mode', value: 'shadow' },
-            { key: bot.KEY_SHADOW_BUILDS, value: settings.shadowBuilds },
-            { key: bot.KEY_SHADOW_BUILD_PLATFORM, value: settings.platform },
-            { key: bot.KEY_PAUSED_APPS, value: settings.paused },
-          ],
-        };
-      }
-      if (/SELECT DISTINCT ON \(r\.app_id, r\.issue_number\)/.test(s)) return { rows };
-      if (/UPDATE homeroom_bot_runs SET build_queued_at = NOW\(\), build_error = NULL\s+WHERE id = ANY/.test(s)) {
-        return { rows: params[0].map((id) => ({ id, app_id: rows.find((r) => r.id === id).app_id })) };
-      }
-      return { rows: [] };
-    },
-  };
-}
-
-const latest = (id, over = {}) => ({
-  id, app_id: 9, issue_number: id, verdict: 'ready', build_queued_at: null, build_ok: null, build_error: null,
-  slug: 'todo', repo_url: APP.repo_url, ...over,
-});
-
-test('the backfill queues each issue whose LATEST verdict is ready and has no build, and says what it left out', async () => {
-  const rows = () => [
-    latest(1),
-    latest(2, { app_id: 10, slug: 'notes' }),
-    latest(3, { verdict: 'question' }),
-    latest(4, { build_ok: true }),
-    latest(5, { build_queued_at: '2026-09-28T00:00:00Z' }),
-    latest(6, { build_error: 'skipped: the issue is no longer open' }),
-    latest(7, { slug: 'usernode-2d5619', repo_url: PLATFORM.repo_url, app_id: 1 }),
-    latest(8, { slug: 'paused-one', app_id: 11 }),
-    // Ready while shadow builds were off: triage said so on the run, and it
-    // is built now as one with no note would be.
-    latest(9, { build_error: 'skipped: shadow builds are off' }),
-  ];
-  const settings = { shadowBuilds: 'on', platform: 'off', paused: '["paused-one"]' };
-  // Outside a staging copy every app but a paused one is live: nothing is
-  // queued, and it says so.
-  const livePool = backfillPool(rows(), settings);
-  assert.deepEqual(await outsideStaging(() => bot.queueShadowBackfill(livePool, {})),
-    { ok: true, queued: 0, apps: 0, left: { live: 4, platform: 0, paused: 1 } });
-  assert.equal(livePool.seen.some((q) => /WHERE id = ANY\(\$1::int\[\]\)/.test(q.s)), false);
-  const pool = backfillPool(rows(), settings);
-  const out = await bot.queueShadowBackfill(pool, {});
-  assert.deepEqual(out, { ok: true, queued: 3, apps: 2, left: { live: 0, platform: 1, paused: 1 } });
-  const upd = pool.seen.find((q) => /WHERE id = ANY\(\$1::int\[\]\)/.test(q.s));
-  assert.deepEqual(upd.params, [[1, 2, 9]]);
-  assert.match(upd.s, /AND build_queued_at IS NULL AND build_ok IS NULL/, 'a race with triage cannot queue one twice');
-  assert.match(upd.s, /SET build_queued_at = NOW\(\), build_error = NULL/, 'and the note that it was not built goes');
+test('there is no backfill any more: every app but a paused one is live', () => {
+  assert.equal(bot.queueShadowBackfill, undefined);
+  assert.doesNotMatch(read('src/routes/admin.js'), /shadow-builds\/backfill/);
+  // A run triage noted it could not build because of a setting is still
+  // told apart from a skip the lane made itself (runQueuedBuild).
   assert.equal(bot.skippedAtTriage("skipped: the platform's own repository is left out"), true);
   assert.equal(bot.skippedAtTriage('skipped: the issue is no longer open'), false, 'the lane\'s own skip stays skipped');
   assert.equal(bot.skippedAtTriage(null), false);
-  const sql = pool.seen.find((q) => /SELECT DISTINCT ON \(r\.app_id, r\.issue_number\)/.test(q.s)).s;
-  assert.match(sql, /ORDER BY r\.app_id, r\.issue_number, r\.id DESC/, 'the latest verdict per issue');
-  assert.match(sql, /r\.verdict IN \('question', 'ready', 'person', 'empty'\)/, 'a later failed run does not hide a ready verdict');
-});
-
-test('the backfill refuses while shadow builds are off', async () => {
-  const pool = backfillPool([latest(1)], { shadowBuilds: 'off', platform: 'off', paused: '[]' });
-  const out = await bot.queueShadowBackfill(pool, {});
-  assert.equal(out.ok, false);
-  assert.equal(out.status, 409);
-  assert.equal(pool.seen.some((q) => /SELECT DISTINCT ON/.test(q.s)), false);
 });
 
 // ── Seeing it: the export and the dashboard ─────────────────────────────
@@ -627,20 +562,19 @@ test('the export carries the branch, with a compare address to open, after every
   assert.equal(bot.exportRow({ id: 2, repo_url: 'https://github.com/o/r' })[header.indexOf('build_url')], '', 'no branch, no address');
 });
 
-test('the dashboard has the switch, the slots, the platform box, the lane line and the backfill', () => {
+test('the dashboard keeps the two settings that still do something, and the runs keep their shadow history', () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  assert.match(tsx, /id="admin-homeroom-bot-shadow-builds"/);
-  assert.match(tsx, /onChange=\{\(e\) => setField\('shadowBuilds', e\.target\.value === 'on'\)\}/);
-  assert.match(tsx, /id="admin-homeroom-bot-build-concurrency"/);
+  // No shadow apps, so no switch, no backfill and no lane line for them.
+  assert.doesNotMatch(tsx, /id="admin-homeroom-bot-shadow-builds"|admin-homeroom-bot-shadow-backfill|admin-homeroom-bot-build-lane|shadow-builds\/backfill/);
+  assert.doesNotMatch(tsx, /setField\('shadowBuilds'/);
+  // What the benchmark and a later change's side builds wait behind
+  // (isLiveLaneSaturated), and whether side builds include the platform's
+  // own repository (laterSideSkipReason), say so.
+  assert.match(tsx, /id="admin-homeroom-bot-side-builds"/);
+  assert.match(tsx, /<NumberField id="admin-homeroom-bot-build-concurrency" label="Live builds before side builds wait"/);
   assert.match(tsx, /onChange=\{\(v\) => setField\('buildConcurrency', v\)\}/);
-  // #3710: the backfill acts on what is SAVED: it waits until shadow builds are on and saved.
-  assert.match(tsx, /disabled=\{busy !== '' \|\| !saved\.shadowBuilds \|\| dirty\.includes\('shadowBuilds'\)\}/);
-  assert.match(tsx, /id="admin-homeroom-bot-shadow-build-platform"/);
-  assert.match(tsx, /id="admin-homeroom-bot-build-lane"/);
-  assert.match(tsx, /id="admin-homeroom-bot-shadow-backfill"/);
-  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/shadow-builds\/backfill', 'POST'/);
-  assert.match(tsx, /id="admin-homeroom-bot-shadow-builds-note"/);
-  assert.doesNotMatch(tsx, /shadowBuildsPerDay/);
+  assert.match(tsx, /id="admin-homeroom-bot-shadow-build-platform"[\s\S]{0,400}<span>Make side builds on Homeroom&apos;s own repository too<\/span>/);
+  assert.match(tsx, /id="admin-homeroom-bot-side-builds-note"/);
   const fn = tsx.slice(tsx.indexOf('function ShadowBuild('), tsx.indexOf('function VerdictBody('));
   assert.match(fn, /data-shadow-build="queued"/);
   assert.match(fn, /data-shadow-build="building"/);
@@ -649,12 +583,6 @@ test('the dashboard has the switch, the slots, the platform box, the lane line a
   assert.match(fn, /\{run\.buildUrl \? <p className=\{`\$\{AdminUI\.muted\} break-all select-all`\}>\{run\.buildUrl\}<\/p>/);
   assert.doesNotMatch(fn, /href=/, 'an address built from an app\'s repo_url is text to copy');
   assert.match(tsx, /<ShadowBuild run=\{run\} \/>/);
-});
-
-test('the backfill route is admin-write only and hands off to the service', () => {
-  const src = read('src/routes/admin.js');
-  assert.match(src, /router\.post\('\/api\/admin\/homeroom-bot\/shadow-builds\/backfill', requireAdminWrite, drainGuard,/);
-  assert.match(src, /homeroomBot\.queueShadowBackfill\(pool, config\)/);
 });
 
 // #3654: the benchmark yields only to live builds, the ones a person is

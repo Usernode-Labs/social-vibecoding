@@ -30,16 +30,23 @@ const appChat = require('../src/services/app-chat');
 test('"Replies to you" gates a thread reply the way it gates a quote reply', () => {
   assert.equal(prefs.categoryForKind('thread_reply'), 'thread_replies');
   assert.equal(prefs.categoryForKind('reply'), 'thread_replies');
+  // #4535: a request discussion's reply rides the same switch.
+  assert.equal(prefs.categoryForKind('issue_thread_reply'), 'thread_replies');
   assert.equal(prefs.isKindEnabled('thread_reply', {}), true, 'on by default');
   assert.equal(prefs.isKindEnabled('thread_reply', { appOverrides: { thread_replies: false } }), false);
   assert.equal(prefs.isKindEnabled('thread_reply', { accountOverrides: { thread_replies: false } }), false);
+  assert.equal(prefs.isKindEnabled('issue_thread_reply', {}), true, 'on by default');
+  assert.equal(prefs.isKindEnabled('issue_thread_reply', { appOverrides: { thread_replies: false } }), false);
   // A gated kind must be push-eligible, or the switch could be on for a
   // notification that never reaches the phone.
   assert.equal(pushPrefs.KIND_TO_CATEGORY.get('thread_reply'), 'direct_interactions');
+  assert.equal(pushPrefs.KIND_TO_CATEGORY.get('issue_thread_reply'), 'direct_interactions');
 });
 
 test('posting in the app clears a thread reply and it lights the unread dot', () => {
   assert.ok(notifications.ACTION_COMPLETIONS.message_sent.kinds.includes('thread_reply'));
+  // #4535: a request discussion's reply clears the same way.
+  assert.ok(notifications.ACTION_COMPLETIONS.message_sent.kinds.includes('issue_thread_reply'));
   for (const kind of ['mention', 'reply', 'reaction']) {
     assert.ok(notifications.ACTION_COMPLETIONS.message_sent.kinds.includes(kind), kind);
   }

@@ -1438,7 +1438,9 @@ async function handleMessage(pool, client, msg) {
 
       // #2387: everyone who already got a more specific row for this message
       // (quoted → 'reply', @named → 'mention'). A reply-thread participant in
-      // this set gets that row, not a second 'thread_reply' one.
+      // this set gets that row, not a second 'thread_reply' one, and a
+      // request-discussion participant not a second 'issue_thread_reply'
+      // one either (#4535).
       const directlyNotified = new Set();
 
       // #15: reply notification — ping the author of the quoted message
@@ -1572,6 +1574,27 @@ async function handleMessage(pool, client, msg) {
           await Promise.all(threadRows.map((row) => notifications.hydrateAndPush(pool, row)));
         } catch (err) {
           log.warn('ws', 'thread reply notify failed', { err: err.message });
+        }
+      }
+
+      // #4535: a message in a request's discussion thread pings the
+      // request's filer and the people who posted there before
+      // ('issue_thread_reply'), the same fan-out as a reply thread above
+      // minus the sender and anybody this message already reached with a
+      // mention or a quote — a mention wins. Proposal and governance
+      // threads are left as they are.
+      if (thread && thread.type === 'issue') {
+        try {
+          const issueRows = await notifications.createIssueThreadNotifications(pool, {
+            appId: client.appId,
+            messageId: rows[0].id,
+            issueNumber: thread.ref,
+            senderId: client.user.id,
+            excludeUserIds: [...directlyNotified],
+          });
+          await Promise.all(issueRows.map((row) => notifications.hydrateAndPush(pool, row)));
+        } catch (err) {
+          log.warn('ws', 'issue thread notify failed', { err: err.message });
         }
       }
 

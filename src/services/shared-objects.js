@@ -219,12 +219,16 @@ async function hydrateOne(pool, user, ref) {
       if (!rows.length) return unavailable(ref);
       const row = rows[0];
       return {
-        ...base, sessionId: row.id, title: row.session_title || row.pr_title || `Change #${row.id}`,
+        ...base, sessionId: row.id, ...(row.pr_number ? { prNumber: row.pr_number } : {}),
+        title: row.session_title || row.pr_title || `Change #${row.id}`,
         // B4: where the change is, in words, not its raw status; and no
         // "by homeroom_bot" under one the bot built for somebody.
         state: changeStateWords(row.status, { yours: row.mine === true && Number(row.members) === 1 }),
         author: row.is_synthetic ? null : row.username,
-        href: `#app/${encodeURIComponent(app.slug)}/dev/proposals/${row.id}`,
+        // #4367: a change with a pull request is addressed by its number.
+        href: row.pr_number
+          ? `#app/${encodeURIComponent(app.slug)}/dev/changes/${row.pr_number}`
+          : `#app/${encodeURIComponent(app.slug)}/dev/proposals/${row.id}`,
       };
     }
     if (ref.object_type === 'governance_proposal') {
@@ -354,11 +358,26 @@ function normalizeLink(raw) {
   const slug = raw.app_slug ?? raw.appSlug;
   if (typeof slug !== 'string' || !LINK_SLUG.test(slug)) return null;
   let ref = null;
+  // #4367: a change's link may name it by its pull request's number instead.
+  const pr = type === 'proposal' ? strictId(raw.pr_number ?? raw.prNumber) : null;
   if (type === 'issue') ref = strictId(raw.issue_number ?? raw.issueNumber);
   if (type === 'proposal') ref = strictId(raw.session_id ?? raw.sessionId);
   if (type === 'governance') ref = strictId(raw.proposal_id ?? raw.proposalId);
-  if (['issue', 'proposal', 'governance'].includes(type) && !ref) return null;
-  return { type, slug, ref };
+  if (['issue', 'proposal', 'governance'].includes(type) && !ref && !pr) return null;
+  return pr && !ref ? { type, slug, ref, pr } : { type, slug, ref };
+}
+
+// The session a change's pull request number names on an app, or null. The
+// card's own read then applies the visibility rule, as for a session id.
+async function sessionForPr(pool, user, slug, pr) {
+  const app = await resolveApp(pool, user, { appId: null, appSlug: slug });
+  if (!app) return null;
+  const { rows } = await pool.query(
+    `SELECT id FROM chat_sessions WHERE app_id = $1 AND pr_number = $2
+      ORDER BY (status IN ('promoted', 'merging', 'merged')) DESC, id DESC LIMIT 1`,
+    [app.id, pr]
+  );
+  return rows[0] ? rows[0].id : null;
 }
 
 async function hydrateLink(pool, user, raw) {
@@ -377,6 +396,14 @@ async function hydrateLink(pool, user, raw) {
     } catch (_) {
       return { type: link.type, available: false };
     }
+  }
+  if (link.pr) {
+    try {
+      link.ref = await sessionForPr(pool, user, link.slug, link.pr);
+    } catch (_) {
+      link.ref = null;
+    }
+    if (!link.ref) return { type: link.type, available: false };
   }
   return hydrateOne(pool, user, {
     object_type: TYPE_ALIASES.get(link.type),

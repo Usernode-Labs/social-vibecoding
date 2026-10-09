@@ -564,7 +564,7 @@ test('the shared card and the router wire the Messages origin (#3103)', () => {
     'the origin is the conversation address on screen, or the inbox');
   assert.match(fn, /\/dev\\\/sessions\\\/\/\.test\(href\)\) w\.Improve\?\.enterSessionFrom\?\.\(origin\)/,
     'a shared spec opens a session, whose arrow reads sessionOrigin');
-  assert.match(fn, /\(\?:issues\|proposals\|governance\)\\\/\/\.test\(href\)\) w\.Improve\?\.enterTopicFrom\?\.\(origin\)/,
+  assert.match(fn, /\(\?:issues\|proposals\|changes\|governance\)\\\/\/\.test\(href\)\) w\.Improve\?\.enterTopicFrom\?\.\(origin\)/,
     'an issue, proposal or governance card opens a topic, whose chip reads topicOrigin');
   assert.match(APP_JS, /if \(revealId !== 'app-view'\) window\.Improve\?\.clearTopicOrigin\?\.\(\);/,
     'App._showOnlyScreen ends the origin with the app-view visit');

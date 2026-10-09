@@ -117,8 +117,9 @@ function takeOfferRead(userId, now = Date.now(), budget = offerReads) {
 const STATUSES = new Set(['reading', 'building', 'ready', 'live', 'fixing', 'waiting_first_version']);
 
 // Fix in place: a link to one of a project's changes, in either spelling the
-// router reads (`/app/<slug>/dev/proposals/12`, `#app/<slug>/dev/proposals/12`).
-const PROPOSAL_LINK_RE = /(?:^|[/#])app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/proposals\/([1-9]\d{0,9})(?!\d)/gi;
+// router reads (`/app/<slug>/dev/proposals/12`, `#app/<slug>/dev/proposals/12`),
+// or by its pull request's number (`/app/<slug>/dev/changes/34`, #4367).
+const PROPOSAL_LINK_RE = /(?:^|[/#])app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/(proposals|changes)\/([1-9]\d{0,9})(?!\d)/gi;
 const FIRST_VERSION_RE = /\bfirst\s+version\b/i;
 // The most of the bot's pending changes the read is offered.
 const MAX_OFFERED_CHANGES = 5;
@@ -762,7 +763,7 @@ async function pendingChanges(pool, { appId, botId }) {
   if (!botId) return [];
   const { rows } = await pool.query(
     `SELECT * FROM (
-       SELECT DISTINCT ON (cs.linked_issues[1]) cs.id, cs.linked_issues[1] AS issue_number,
+       SELECT DISTINCT ON (cs.linked_issues[1]) cs.id, cs.pr_number, cs.linked_issues[1] AS issue_number,
               COALESCE(cs.session_title, cs.pr_title, q.issue_title) AS title,
               (COALESCE(q.first_version, FALSE) OR fv.app_id IS NOT NULL) AS first_version
          FROM chat_sessions cs
@@ -778,6 +779,7 @@ async function pendingChanges(pool, { appId, botId }) {
   );
   return rows.map((r) => ({
     id: Number(r.id), issueNumber: Number(r.issue_number), title: r.title || null, firstVersion: !!r.first_version,
+    prNumber: r.pr_number == null ? null : Number(r.pr_number),
   }));
 }
 
@@ -824,7 +826,9 @@ function pickChange({ words, changes = [], slug = null, quoted = null }) {
   const byId = (id) => changes.find((c) => c.id === Number(id)) || null;
   for (const m of String(words || '').matchAll(PROPOSAL_LINK_RE)) {
     if (slug && m[1].toLowerCase() !== String(slug).toLowerCase()) continue;
-    const hit = byId(m[2]);
+    const hit = m[2] === 'changes'
+      ? changes.find((c) => c.prNumber != null && c.prNumber === Number(m[3])) || null
+      : byId(m[3]);
     if (hit) return { change: hit, why: 'link' };
   }
   for (const id of quoted?.sessionIds || []) {

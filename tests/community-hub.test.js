@@ -86,10 +86,12 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   // Discussion), and a topic's channel by its own.
   assert.deepEqual(['needs', 'workshop', 'all', 'discussion', 'c:onboarding'].map(pageTitle),
     ['Needs you', 'Workshop', 'All items', '#general', '#onboarding']);
-  // The place bar on every page; All items adds its way back under it.
-  assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
-  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
-  assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
+  // The place bar on every page; All items adds its way back under it, the
+  // first thing in its pinned head's one row (#4486), with no eyebrow, and
+  // back is the Workshop place.
+  assert.ok(!/pageBar/.test(LANDER), 'no back bar of its own');
+  assert.match(LANDER, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}\s+eyebrow=\{false\}/);
+  assert.match(LANDER, /\{band\}\s*\{tray\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
   // can do, the fortnight), the first version while Homeroom bot builds it
   // (tests/hub-just-you.test.js), what landed since your last visit, Needs

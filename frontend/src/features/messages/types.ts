@@ -367,6 +367,8 @@ export type ObjectCardType = SharedObjectType | 'hub' | 'discussion';
 export interface SharedObjectCard extends Omit<SharedObjectReference, 'type'> {
   type: ObjectCardType;
   available: boolean;
+  /** A change's pull request number, when it has one (#4367). */
+  prNumber?: number;
   title?: string | null;
   subtitle?: string | null;
   state?: string | null;

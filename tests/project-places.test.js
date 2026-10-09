@@ -139,7 +139,10 @@ test('the page draws the bar where the tabs were, and the tray only while it is 
   const WS = read(`${DIR}/workshop.tsx`);
   assert.match(WS, /const band = \(\s*<PlaceBar/);
   assert.match(WS, /const tray = trayOpen \? \(\s*<PlacesTray/);
-  assert.match(WS, /\{band\}\s*\{pageBar\}\s*\{tray\}/);
+  // #4486: All items' way back is in its pinned head, so nothing sits
+  // between the bar and the tray (which renders nothing in place).
+  assert.match(WS, /\{band\}\s*\{tray\}/);
+  assert.doesNotMatch(WS, /pageBar/);
   // A press on a place in the tray closes it as a navigating close, then
   // moves the page; the tray shuts when the place changes under it.
   assert.match(WS, /const choosePlace = \(key: TabKey\) => \{\s*trayNav\.current = true;\s*setTrayOpen\(false\);/);

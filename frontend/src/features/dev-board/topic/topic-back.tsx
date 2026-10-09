@@ -83,7 +83,7 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
 }
 
 /** One chip: the destination's name behind the chevron. */
-function TopicChip({ href, label }: { href: string; label: 'Messages' | 'Workshop' }): ReactNode {
+function TopicChip({ href, label }: { href: string; label: 'Messages' | 'Workshop' | 'All items' }): ReactNode {
   return (
     <a
       className="dev-topic-back un-touch-target"
@@ -103,7 +103,11 @@ export function TopicBack(): ReactNode {
   if (!href) return null;
   // #3103: a card opened from a Messages conversation goes back to it, and
   // says so; everywhere else the chip is the Workshop's.
-  const back = <TopicChip href={href} label={topicBackLabel(href)} />;
+  // #4486: "‹ All items" when the Workshop reopens on All items, the page
+  // the item was opened from.
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  const workshopTab = av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
+  const back = <TopicChip href={href} label={topicBackLabel(href, workshopTab)} />;
   // #3691: and offers its project's Workshop beside that, styled the same.
   const workshop = topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin });
   if (!workshop) return back;

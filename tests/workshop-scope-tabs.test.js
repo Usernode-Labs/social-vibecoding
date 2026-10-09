@@ -300,7 +300,9 @@ test('#852: a project page leads with its tabs, and All items with its way back 
   // #3583: the page also says whose it is (`data-ws-slug`), which AppView
   // reads when it saves the list's offset on the way out.
   assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band="" data-place-bar="workshop">/);
-  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band="" data-place-bar="all">[\s\S]*?<\/h2><\/div><\/div><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
+  // #4486: All items' way back is the first thing in its pinned head, one
+  // row with the search and the grouping, under the place bar (#4417).
+  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band="" data-place-bar="all">[\s\S]*?<\/h2><\/div><\/div><div class="dev-ws-tabbody"><section class="dev-ws-pane" data-ws-pane=""><div class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead=""><button type="button" class="dev-ws-page-back un-touch-target" data-ws-page-back=""/);
   const ws = read(WORKSHOP_PATH);
   assert.doesNotMatch(ws, /AppWorkshopScope|useScopeInline|scopeFitsInline|data-ws-scope-inline|SCOPE_INLINE_/);
   const css = read('public/css/app.css');

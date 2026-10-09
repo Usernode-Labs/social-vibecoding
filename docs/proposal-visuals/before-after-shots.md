@@ -126,6 +126,18 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   changes with no shots (7 of 24 in about 125 merged proposals). These are
   warnings too: the declaration is recorded either way. `submit_work`'s
   answer does not carry them.
+- Nothing on the copies answers with a model: they have no model key, so
+  the Homeroom bot only says it cannot reach its model there, and an app's
+  own AI features get no answer. `dataNote` says so on every declaration,
+  and a change whose words make a step wait for a reply ("ask the Homeroom
+  bot to…", "DM the bot", "the bot replies") is warned whatever its
+  `hints.setup` says and whatever states are ready-made: neither makes a
+  model answer. Start such a change from a ready-made state or a seeded
+  message that already holds the reply. The Homeroom bot's own builds are
+  told the same when asked to declare (`homeroom-bot-live.js`
+  `BUILD_VISIBLE_CHANGES_LINES`). The bot's offer to close a request
+  (PR 4536) was declared as asking the bot, and its shots ended on "I can't
+  reach my model".
 - On an app built on Homeroom, no persona is the app's creator or one of
   its admins (see "Roles in an app built on Homeroom" below). The same
   response warns about a change declared there for `read_only_admin` or
@@ -197,7 +209,13 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    - for the member: in the same chat with the Homeroom bot, the answered
      plan for a new project's first version, and under it the bot's thanks
      with the project's card and its build line (Building it). The project
-     has no first-version record, so no Home tile turns a build line for it.
+     has no first-version record, so no Home tile turns a build line for it;
+   - for the member: last in the same chat, their message saying request
+     #900001 (a staging mock) is done and the bot's offer quoting it to open
+     a vote on closing it, with Propose to close and Keep it open, waiting
+     for an answer. Its action row is real, so a tap goes the bot's own way,
+     but it cannot open the vote: GitHub does not have the mock, and the bot
+     answers that it couldn't propose closing it just now.
 
    Each state goes into both copies or neither. A state the base or head
    revision cannot hold is left out of the run, as is one that fails to
@@ -308,7 +326,12 @@ that session off and tries again, and those databases are dropped
 (`_evsrc_`) and the shared staging template (`_stgtmpl`, `_stgtmpl_next`)
 qualify: `db-manager.isDisposableDb` refuses every other name, an app's own
 database included. A failure that outlasts the retries fails the run with
-its own message, as before.
+its own message, as before. A psql step's message keeps Postgres's own
+error after the command; one cut off at its time limit (30 seconds, 90 for
+the frozen copy source) says "No answer from Postgres within N seconds…"
+and that the statement may still be running, where it used to end at the
+command with nothing said (`db-manager.psqlFailure`). A password in the
+statement is masked.
 
 A run that a platform restart interrupted is retried automatically, up to
 twice per commit: a sweep every 30 seconds starts the same commit again once
@@ -685,6 +708,58 @@ merged proposal 900108 on the Screenshot gallery's demo app
 (`src/db/migrate.js` `seedStagingShotsNoticed`), at
 `/#app/staging-demo-gallery-app/dev/proposals/900108` and first in
 `#admin/gallery`.
+
+## A diagram, when there are no shots (#4490)
+
+A Needs-you card shows one picture under its summary, the first of these
+that exists:
+
+1. **Before & after shots**, when the change has verified ones. Shots
+   always come first: a diagram never replaces them on the card.
+2. **A diagram of the change**, when its author sent one, or a group
+   decision's, drawn from its own facts (a rename's old name → new name, a
+   closed request and its reason, a secret's key, never its value).
+3. A legacy capture pair, as before.
+4. **What it touches**: which parts of the project the change's files touch
+   (Screens, Server, Database, Tests, Docs, Other) and how much, plus
+   "Nothing on screen changes" when the author declared `impact: "none"`.
+   Computed from the files at the proposal's head
+   (`src/services/proposal-touches.js`), cached per head, no model call.
+5. The empty space, when GitHub could not list the files.
+
+The Communities → Needs you feed draws the same card, shots included.
+
+**The record** (`src/services/diagram.js`, shared with #4098's
+explanations) is data, never markup: `rename` (from, to, places, note),
+`flow` (before and after steps), `changes` (rows added / changed /
+removed) and `numbers` (before/after figures), every text 1-60 characters.
+A fifth kind, `mermaid`, takes Mermaid source and is accepted only when the
+same submission's visible changes say `impact: "none"`: a change people can
+see has shots, and one of the four kinds says the rest in words anyone can
+read. The server refuses directives, `click`, `href`, `callback`, `url(`
+and `<`/`>` outside arrows.
+
+**Who sends it**: an external agent passes `diagram` to `submit_work` (an
+invalid one fails the call with `invalid_diagram`); a hosted build calls
+`declare_diagram` beside `declare_visible_changes`
+(`POST /api/internal/sessions/:id/diagram`). The Homeroom bot does not draw
+one on an author's behalf. The pull request carries it as text under the
+summary (a ```` ```mermaid ```` block for Mermaid, which GitHub draws).
+
+**Drawing it** (`frontend/src/lib/diagram/`): the four kinds are React text
+in the shell's tokens. Mermaid is vendored (`public/vendor/`, provenance in
+its README), loaded on demand when a card near the reader or a change's page
+holds one, never precached, and run with `securityLevel: "strict"`,
+`htmlLabels: false` and a fatal-only log; its SVG passes DOMPurify before it
+is inserted, and over 30 nodes or edges counts as a failure. A Mermaid
+diagram that cannot be drawn falls back to "What it touches" on the card,
+and to "The author's diagram could not be drawn" with its text on the page.
+
+On staging, `?demo=1` holds a rename, a "What it touches" and a Mermaid
+change in Homeroom's own Needs you, and a "What changes", a "What it
+touches" and a group-decision rename in Communities → Needs you.
+`?shot=needs-diagram` and `?shot=needs-touches` open either feed on the
+first card showing that picture.
 
 ## A change of the Homeroom bot's
 

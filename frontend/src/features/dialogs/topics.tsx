@@ -39,6 +39,7 @@ import { IconTile } from '@/components/ui/icon-tile';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
+import { changeHref } from '../../lib/change-href';
 import { reloadCommunity, useCommunity, type PlaceChannel } from '../dev-board/workshop/community-card';
 import { channelsOf, liveTopics } from '../dev-board/workshop/places';
 import { useDialog } from './use-dialog';
@@ -384,10 +385,10 @@ export function TopicsDialog() {
                         <ListRow
                           key={p.session_id}
                           as="a"
-                          href={`#app/${encodeURIComponent(slug)}/dev/sessions/${p.session_id}`}
+                          href={changeHref(slug, p.session_id, p.pr_number)}
                           onClick={leave}
                           title={p.title || 'Topic change'}
-                          subtitle={p.pr_number ? `PR #${p.pr_number}` : undefined}
+                          subtitle={p.pr_number ? `Change #${p.pr_number}` : undefined}
                         />
                       ))}
                     </GroupedList>

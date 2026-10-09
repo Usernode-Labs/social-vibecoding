@@ -14,6 +14,7 @@
  *   app/<slug>/workshop            the app's Workshop (also board, activity,
  *                                  a bare dev)
  *   app/<slug>/dev/proposals/<id>  a proposal (governance/<id> too)
+ *   app/<slug>/dev/changes/<N>     a proposal by its pull request's number
  *   app/<slug>/dev/issues/<n>      an issue
  *   app/<slug>/dev/sessions/<id>   a change — `new` is the unsent one
  *   app/<slug>/dev/shared/<id>     a change's shared page
@@ -157,7 +158,7 @@ export function panelPage(route: string): PanelPage | null {
     if (sec === 'issues' && NUMERIC.test(id)) {
       return { kind: 'issue', slug, key: `${base}/dev/issues/${id}` };
     }
-    if ((sec === 'proposals' || sec === 'governance') && NUMERIC.test(id)) {
+    if ((sec === 'proposals' || sec === 'changes' || sec === 'governance') && NUMERIC.test(id)) {
       return { kind: 'proposal', slug, key: `${base}/dev/${sec}/${id}` };
     }
     // dev, dev/issues, dev/proposals, dev/sessions (no id): the card list.

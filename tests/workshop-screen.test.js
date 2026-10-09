@@ -44,6 +44,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const route = require('../src/routes/workshop-overview');
+const { botRequestedBySql } = require('../src/services/bot-requested-by');
 const appJs = read('public/js/app.js');
 const appViewJs = read('public/js/app-view.js');
 const sheetTsx = read('frontend/src/features/app-context/app-context-sheet.tsx');
@@ -64,6 +65,21 @@ test('"working" is the viewer\'s own work, in the lander\'s three shapes', () =>
   // returns 'promoted' AND 'merging', so a proposal mid-merge is still the
   // author's work in flight rather than vanishing off their row.
   assert.match(sql, /my_proposals AS \([\s\S]*?cs\.status IN \('promoted', 'merging'\)/);
+  // #4538: a change Homeroom bot built from a request made for the viewer is
+  // in that viewer's working count too, by the shared bot-request predicate
+  // on $1 — the same one /promoted selects `requested_by_me` with, so the
+  // Communities row and the strip it mirrors cannot disagree. OWED is
+  // untouched: the bot is not the viewer, and the viewer still votes on it.
+  assert.match(read('src/routes/workshop-overview.js'),
+    /OR \$\{botRequestedBySql\('cs', '\$1'\)\}/,
+    'the working predicate reads the shared fragment, spelled once');
+  assert.match(route.MY_PROPOSALS_WHERE, /cs\.status IN \('promoted', 'merging'\)/);
+  assert.ok(route.MY_PROPOSALS_WHERE.includes(botRequestedBySql('cs', '$1')),
+    'the predicate is the shared fragment, not a second copy of the rule');
+  assert.doesNotMatch(
+    /const OWED_PROPOSALS_WHERE = `([\s\S]*?)`;/.exec(read('src/routes/workshop-overview.js'))[1],
+    /botRequestedBySql/,
+    'a bot change still counts as a vote owed (the bot is not the viewer)');
   // #2227's case: a governance proposal you opened is your work too.
   assert.match(sql, /my_governance AS \([\s\S]*?i\.status = 'open'[\s\S]*?i\.created_by = \$1/);
   // Summed, not unioned — the three statuses are disjoint, so nothing is
@@ -165,8 +181,9 @@ test('every hand-written copy of the governance kinds still agrees with the cons
 test('every predicate names the viewer, and the route refuses one it has not got', async () => {
   const sql = route.COUNTS_SQL;
   // Five populations, each gated on $1. Without this the anonymous case is
-  // not a smaller answer, it is the whole platform's.
-  assert.equal((sql.match(/\$1/g) || []).length, 8,
+  // not a smaller answer, it is the whole platform's. #4538 added a ninth:
+  // MY_PROPOSALS_WHERE's bot-request predicate, also on $1.
+  assert.equal((sql.match(/\$1/g) || []).length, 9,
     'the viewer appears in every CTE predicate and in the collaborator join');
 
   // The refusal itself, driven rather than grepped: `getPool` is called once
@@ -1061,4 +1078,49 @@ test('the Topics dialog: handles from names, and each row says its channel and i
   assert.equal(topicRowLine({ ...t, state: 'archived' }), '#onboarding · archived');
   assert.equal(topicRowLine({ ...t, handle: 'signup', state: 'merged', merged_into: 'onboarding' }, [t]),
     '#signup · merged into #onboarding');
+});
+
+// ── #4486: All items, a project Workshop's page ───────────────────────
+//
+// Not this screen, but the page its rows lead to: the project's All items,
+// whose rows open the item's page in the panel the Workshop tab uses, and
+// whose one-row head and pipeline stay on screen down a long column.
+
+const workshopTsx = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+const kanbanTsx = read('frontend/src/features/dev-board/card/dev-kanban.tsx');
+const appCss = read('public/css/app.css');
+
+test('#4486: a row on All items opens its page beside the board on a wide window, and a tab change closes it', () => {
+  // The same panel, from the same handler: a plain click on a wide window,
+  // anything else the row's own link (a phone: the page takes the screen).
+  assert.match(workshopTsx, /if \(!sideWide\) return;\s*event\.preventDefault\(\);\s*setSideItem/);
+  assert.match(workshopTsx, /<DevKanban openKey=\{sideKey\} onOpen=\{openItem\} \/>/, 'the board’s rows');
+  assert.match(workshopTsx, /<WorkList rows=\{rows\} slug=\{slug\} openKey=\{openKey\} onOpen=\{onOpen\} variant="board" category=\{false\} \/>/,
+    'and By category’s');
+  assert.match(workshopTsx, /\{\(tab === 'workshop' \|\| tab === 'all'\) && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/);
+  assert.match(workshopTsx, /data-ws-side-open=\{sideItem && \(tab === 'workshop' \|\| tab === 'all'\) \? '' : undefined\}/);
+  // It closes whenever the tab changes, and when the window narrows.
+  assert.match(workshopTsx, /useEffect\(\(\) => \{\s*setSideItem\(null\);\s*if \(tab !== 'workshop'\) setOpenWeek\(null\);\s*\}, \[tab\]\);/);
+  assert.match(workshopTsx, /useEffect\(\(\) => \{\s*if \(!sideWide\) setSideItem\(null\);\s*\}, \[sideWide\]\);/);
+  // The board keeps its place beside it: 316px columns, scrolling sideways,
+  // the tapped column brought beside the panel and the strip following.
+  assert.match(appCss, /#dev-workshop\.dev-ws-has-board:has\(> \.dev-ws\[data-ws-side-open\]\) \{ max-width: calc\(100% - 616px\); \}/);
+  assert.match(appCss, /\.dev-ws\[data-ws-side-open\] :is\(#dev-kanban, \.dev-kanban-stages\) \{ grid-template-columns: repeat\(4, 316px\); \}/);
+  assert.match(workshopTsx, /if \(c\.right > b\.right\) board\.scrollLeft \+= Math\.ceil\(c\.right - b\.right\);\s*else if \(c\.left < b\.left\) board\.scrollLeft -= Math\.ceil\(b\.left - c\.left\);\s*syncStrip\(board\);/);
+});
+
+test('#4486: the one-row head and the pipeline pin together under the project’s tabs', () => {
+  // Both live in the pane head, which is what pins (position: sticky, under
+  // the tabs at the measured offset), so the column names stay on screen.
+  const head = workshopTsx.slice(workshopTsx.indexOf('<div className="dev-ws-pane-head">'), workshopTsx.indexOf('<div className="dev-ws-pane-body">'));
+  assert.match(head, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack[\s\S]*?eyebrow=\{false\}[\s\S]*?<GroupStrip group=\{group\} \/>[\s\S]*?<DevActionsRow/);
+  assert.match(head, /\{group === 'stage' \? <StageStrip \/> : null\}/);
+  assert.match(appCss, /\.dev-ws-pane-head \{\s*position: sticky; top: 0; z-index: 20;/);
+  assert.match(appCss, /#dev-workshop \.dev-ws-pane-head \{\s*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\);/);
+  // Pinned, on By stage, the row and the steps take the sheet's colour.
+  assert.match(appCss, /#dev-workshop\.dev-ws-has-board \.dev-ws\[data-ws-head-pinned\] \.dev-ws-pane-head \{\s*background-color: var\(--dc-sheet-solid\);/);
+  // The strip cannot share a sideways scroller with the board (that box
+  // would be what it pinned to), so it follows the board's scroll instead.
+  assert.match(kanbanTsx, /export function syncStrip\(board: HTMLElement \| null\): void \{/);
+  assert.match(appCss, /\.dev-kanban-stages \{[^}]*overflow: hidden;/);
 });

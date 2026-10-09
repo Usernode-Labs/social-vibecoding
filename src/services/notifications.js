@@ -19,6 +19,10 @@
 // historical render-only kind now that successful issuance is routine.
 // #2387 adds 'thread_reply': a reply in an app-chat reply thread you started
 // or replied in (chat_message_id is the reply; its thread_ref the root).
+// #4535 adds 'issue_thread_reply': a message in a request's discussion
+// thread, to the request's filer and everybody who posted there before
+// (chat_message_id is the message; thread_ref the issue number, which
+// `detail` also carries).
 // #3952 adds 'issue_mention': somebody named you with @ in a request they
 // filed (`detail` is its number, like 'issue_opened'). #4271: it stands in
 // for 'issue_opened' when you would get both (notifyIssueFiled).
@@ -356,6 +360,92 @@ async function createThreadReplyNotifications(pool, {
       )
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     [ids, appId, replyMessageId, senderId]
+  );
+  return rows;
+}
+
+// #4535: a message in a request's discussion thread (chat_messages
+// thread_type 'issue', thread_ref = the GitHub issue number). Addressed to
+// the request's filer and everybody who posted there before, minus:
+//   * the sender;
+//   * `excludeUserIds` — the people this same message already reached with a
+//     more specific row (a 'mention', or a 'reply' for a quote). One row per
+//     person per message, and the specific one wins, exactly as for a
+//     'thread_reply' above;
+//   * anybody blocked either way, and on a collab-private app anybody who is
+//     no longer a member (filterToCollaborators, as for mentions);
+//   * anybody who switched this app's "Replies to you" category off
+//     (notification-preferences.js `thread_replies`), which gates this kind
+//     alongside `reply` and `thread_reply`.
+// The filer is whoever the platform has on record: `issues.created_by`,
+// `homeroom_bot_requesters` (the bot filed it for them) or `feedback_reports`
+// (the feedback pin). A request opened directly on GitHub has no filer on
+// record, so only its earlier posters are notified — the body's Source line
+// is deliberately not parsed, which would need a GitHub fetch on every send.
+// Earlier posters are read from live (non-deleted) `message` rows only, so
+// deleting your own posts steps you out of the thread, and the bot's system
+// lines and status rows never make anyone a participant; a UNION with the
+// users join also keeps the synthetic accounts themselves out.
+async function createIssueThreadNotifications(pool, {
+  appId, messageId, issueNumber, senderId, excludeUserIds = [],
+}) {
+  if (!appId || !messageId || !issueNumber) return [];
+  // Match an app's repo owner/repo out of its repo_url, the way
+  // homeroom-bot-mayor.js does; null when there is none to parse, in which
+  // case the feedback_reports branch narrows to app_id alone.
+  const { rows: appRows } = await pool.query(
+    'SELECT repo_url FROM apps WHERE id = $1',
+    [appId]
+  );
+  const m = String(appRows[0]?.repo_url || '')
+    .match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  const owner = m ? m[1] : null;
+  const repo = m ? m[2] : null;
+
+  const { rows: candidates } = await pool.query(
+    `SELECT i.created_by AS user_id
+       FROM issues i
+      WHERE i.app_id = $1 AND i.github_issue_number = $2 AND i.created_by IS NOT NULL
+     UNION
+     SELECT r.user_id
+       FROM homeroom_bot_requesters r
+      WHERE r.app_id = $1 AND r.issue_number = $2
+     UNION
+     SELECT f.user_id
+       FROM feedback_reports f
+      WHERE f.issue_number = $2 AND (f.app_id = $1 OR ($3::text IS NOT NULL
+        AND LOWER(f.issue_owner) = LOWER($3) AND LOWER(f.issue_repo) = LOWER($4)))
+     UNION
+     SELECT earlier.user_id
+       FROM chat_messages earlier
+       JOIN users u ON u.id = earlier.user_id AND u.is_synthetic = FALSE
+      WHERE earlier.app_id = $1 AND earlier.thread_type = 'issue'
+        AND earlier.thread_ref = $2 AND earlier.id < $5
+        AND earlier.msg_type = 'message'
+        AND earlier.user_id IS NOT NULL AND earlier.deleted_at IS NULL`,
+    [appId, Number(issueNumber), owner, repo, messageId]
+  );
+  const skip = new Set([senderId, ...excludeUserIds].map(Number));
+  let ids = [...new Set(candidates.map((r) => Number(r.user_id)))]
+    .filter((id) => Number.isInteger(id) && !skip.has(id));
+  if (!ids.length) return [];
+  ids = await filterToCollaborators(pool, appId, ids);
+  if (!ids.length) return [];
+  ids = await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: ids, appId, categoryKey: 'thread_replies',
+  });
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, detail)
+     SELECT recipient, $2, $3, $4, 'issue_thread_reply', $5::text
+       FROM UNNEST($1::int[]) AS recipient
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE (blocked.blocker_id = recipient AND blocked.blocked_user_id = $4)
+            OR (blocked.blocker_id = $4 AND blocked.blocked_user_id = recipient)
+      )
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, detail, created_at`,
+    [ids, appId, messageId, senderId, String(Number(issueNumber))]
   );
   return rows;
 }
@@ -1561,7 +1651,12 @@ const ACTION_COMPLETIONS = {
   vote_cast: { kinds: ['pr_proposed', 'stale_pr', 'revision_recheck', 'change_ready'], scope: 'session_id' },
   // #2387: 'thread_reply' is a chat-actionable kind like the other three —
   // posting in the app clears it, and it lights the message's unread dot.
-  message_sent: { kinds: ['mention', 'reply', 'reaction', 'thread_reply'], scope: 'app_id' },
+  // #4535: 'issue_thread_reply' joins it — posting in a request's
+  // discussion reads it, so its rows clear the same way.
+  message_sent: {
+    kinds: ['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply'],
+    scope: 'app_id',
+  },
   // #161: opening a dev session is the canonical "user saw it" signal —
   // it resolves that session's completion notification even when the
   // user navigated there on their own. Triggered in GET /api/sessions/:id.
@@ -2012,6 +2107,7 @@ module.exports = {
   createMentionNotifications,
   createReplyNotification,
   createThreadReplyNotifications,
+  createIssueThreadNotifications,
   createReactionNotification,
   createStalePrNotification,
   createIssueOpenedNotifications,

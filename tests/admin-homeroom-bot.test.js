@@ -544,9 +544,10 @@ test('every app is Live or Paused, paused first, and the rest behind a toggle (#
 
 test('how much the bot works on at once is set here, and what runs now is listed (#3624 stage 2)', async () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
-  for (const id of ['admin-homeroom-bot-live-at-once', 'admin-homeroom-bot-per-person', 'admin-homeroom-bot-concurrency']) {
+  for (const id of ['admin-homeroom-bot-live-at-once', 'admin-homeroom-bot-per-person']) {
     assert.ok(tsx.includes(`id="${id}"`), id);
   }
+  assert.ok(!tsx.includes('id="admin-homeroom-bot-concurrency"'), 'no Shadow apps at once: no app is a shadow app');
   assert.match(tsx, /onChange=\{\(v\) => setField\('liveAtOnce', v\)\}/);
   assert.match(tsx, /onChange=\{\(v\) => setField\('perPerson', v\)\}/);
   assert.match(tsx, /onChange=\{\(e\) => setField\('dmChat', e\.target\.checked\)\}/);
@@ -566,11 +567,28 @@ test('how much the bot works on at once is set here, and what runs now is listed
   assert.equal(savedForm({ settings: { mode: 'shadow' }, bot: null }).liveAtOnce, '12', 'the server\'s defaults when unset');
   assert.equal(savedForm({ settings: { mode: 'shadow' }, bot: null }).perPerson, '3');
   const html = renderToHtml(createElement(WorkingNow, { items: [
-    { appSlug: 'todo', appName: 'Todo', issueNumber: 12, since: '2026-10-02T10:00:00Z', lane: 'live', person: 'ada' },
-    { appSlug: 'notes', appName: 'Notes', issueNumber: 3, since: '2026-10-02T10:05:00Z', lane: 'background', person: null },
+    { appSlug: 'todo', appName: 'Todo', issueNumber: 12, since: '2026-10-02T10:00:00Z', lane: 'live', kind: 'read', person: 'ada' },
+    { appSlug: 'notes', appName: 'Notes', issueNumber: 3, since: '2026-10-02T10:05:00Z', lane: 'background', kind: 'read', person: null },
+    { appSlug: 'todo', appName: 'Todo', issueNumber: 9, since: '2026-10-02T09:40:00Z', lane: 'live', kind: 'build', person: 'ada' },
   ] }));
-  assert.match(html, /data-working="todo#12"[^>]*><span class="badge-success">live<\/span><span>Todo #12<\/span><span class="muted">for @ada<\/span>/);
+  assert.match(html, /data-working="todo#12"[^>]*><span class="badge-success">reading<\/span><span>Todo #12<\/span><span class="muted">for @ada<\/span>/);
   assert.match(html, /data-working="notes#3"[^>]*><span class="badge-default">background<\/span><span>Notes #3<\/span><span class="muted">since /);
+  assert.match(html, /data-working="todo#9"[^>]*><span class="badge-success">building<\/span><span>Todo #9<\/span><span class="muted">for @ada<\/span>/);
+
+  // Running now and Waiting in the queue count builds too, and say which is
+  // which: builds run from their runs, not the queue, and were counted in
+  // neither (0 running while six builds ran).
+  const { workingFor, waitingFor } = loadBotSection();
+  const item = (kind) => ({ appSlug: 'a', appName: 'A', issueNumber: 1, since: '', lane: 'live', kind, person: null });
+  assert.equal(workingFor([item('read'), item('build'), item('build'), item('build')]), '1 reading, 3 building');
+  assert.equal(workingFor([item('build'), item('build')]), '2 building', 'a zero says nothing');
+  assert.equal(workingFor([{ ...item(), kind: undefined }]), '1 reading', 'a row without a kind is a read');
+  assert.equal(waitingFor(4, 2), '4 to read, 2 to build');
+  assert.equal(waitingFor(0, 0), '');
+  assert.match(tsx, /tile\('Waiting in the queue',\s*payload \? String\(payload\.queue\.depth \+ \(payload\.queue\.buildsWaiting \|\| 0\)\) : '–', 'admin-homeroom-bot-tile-queue',/);
+  const botSrc = read('src/services/homeroom-bot.js');
+  assert.match(botSrc, /queue: \{ depth: depthRows\[0\]\?\.depth \|\| 0, items: queueRows, buildsWaiting: builds\.waiting \}/);
+  assert.match(botSrc, /workingNow: \[\.\.\.await workingNow\(pool, settings\), \.\.\.builds\.building\]/);
   assert.match(renderToHtml(createElement(WorkingNow, { items: [] })), /id="admin-homeroom-bot-working-none"[^>]*>Nothing is running right now\./);
 
   who = FULL_ADMIN;

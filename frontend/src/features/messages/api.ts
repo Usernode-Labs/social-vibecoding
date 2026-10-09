@@ -313,6 +313,7 @@ function normalizeObject(input: unknown): SharedObjectCard {
     appSlug: text(pick(ref, 'appSlug', 'app_slug')) || undefined,
     issueNumber: strictId(pick(ref, 'issueNumber', 'issue_number')) || undefined,
     sessionId: strictId(pick(ref, 'sessionId', 'session_id')) || undefined,
+    prNumber: strictId(pick(ref, 'prNumber', 'pr_number')) || undefined,
     proposalId: strictId(pick(ref, 'proposalId', 'proposal_id', 'governanceId', 'governance_id')) || undefined,
     version: strictId(pick(ref, 'version', 'specVersion', 'spec_version')) || undefined,
     available: pick(row, 'available') !== false && !bool(pick(row, 'unavailable')),
@@ -718,12 +719,13 @@ export async function listAppItems(slug: string, type: 'issue' | 'proposal' | 'g
  * unavailable one for a page they cannot see. Only the parsed page goes up
  * (./homeroom-links.ts), never the link itself.
  */
-export async function resolveLinkCards(links: ReadonlyArray<Pick<HomeroomLink, 'type' | 'appSlug' | 'issueNumber' | 'sessionId' | 'proposalId'>>): Promise<SharedObjectCard[]> {
+export async function resolveLinkCards(links: ReadonlyArray<Pick<HomeroomLink, 'type' | 'appSlug' | 'issueNumber' | 'sessionId' | 'proposalId'> & { prNumber?: number }>): Promise<SharedObjectCard[]> {
   const refs = links.map((link) => ({
     type: link.type,
     app_slug: link.appSlug,
     ...(link.issueNumber ? { issue_number: link.issueNumber } : {}),
     ...(link.sessionId ? { session_id: link.sessionId } : {}),
+    ...(link.prNumber ? { pr_number: link.prNumber } : {}),
     ...(link.proposalId ? { proposal_id: link.proposalId } : {}),
   }));
   const data = record(await request<unknown>('/api/link-cards', { method: 'POST', body: JSON.stringify({ refs }) }));

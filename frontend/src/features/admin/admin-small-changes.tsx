@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { changeHref } from '../../lib/change-href';
 
 // Small changes (#admin/small-changes).
 //
@@ -200,10 +201,10 @@ export function SmallChangesView({ payload, verdict, onVerdict }: {
                 <td className={`${AdminUI.td} whitespace-nowrap`}>{when(tag.createdAt)}</td>
                 <td className={AdminUI.td}>
                   {tag.app ? (
-                    // Built from the row's own slug and session id, never from a URL the API handed over.
+                    // Built from the row's own slug, session id and PR number, never from a URL the API handed over.
                     <a
                       className={AdminUI.btn.link}
-                      href={`#app/${encodeURIComponent(tag.app.slug)}/dev/proposals/${Number(tag.sessionId)}`}
+                      href={changeHref(tag.app.slug, tag.sessionId, tag.prNumber)}
                     >{tag.prNumber != null ? `#${tag.prNumber} ` : ''}{tag.title || 'Untitled change'}</a>
                   ) : (tag.title || 'Untitled change')}
                   <div className={`${AdminUI.muted} text-xs`}>

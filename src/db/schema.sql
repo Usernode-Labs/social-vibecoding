@@ -2612,6 +2612,9 @@ END $$;
 -- #2387 adds 'thread_reply': somebody replied in an app-chat reply thread
 -- you started or replied in; chat_message_id is the new reply, whose
 -- thread_ref is the thread's root message.
+-- #4535 adds 'issue_thread_reply': somebody posted in a request's
+-- discussion thread you filed or posted in; chat_message_id is the new
+-- message, thread_ref the request's number and `detail` that number too.
 -- #3181 adds 'session_stalled': a dev-session turn ended without finishing
 -- (an error, a timeout, a lost worker, or a system pause mid-turn);
 -- session_id points to the session, like 'session_done'.
@@ -5401,6 +5404,9 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   -- #2387: a reply in an app-chat reply thread you started or joined. A
   -- direct interaction like a reply to your message, so the same category.
   ('thread_reply', 'direct_interactions', TRUE),
+  -- #4535: a message in a request's discussion you filed or posted in.
+  -- A reply in the same sense, so the same category beside thread_reply.
+  ('issue_thread_reply', 'direct_interactions', TRUE),
   -- #2386: a friend request and its acceptance are one person reaching you
   -- directly, which is what this category already promises.
   ('friend_request', 'direct_interactions', TRUE),
@@ -5475,7 +5481,8 @@ ON CONFLICT (kind) DO UPDATE
       default_enabled = EXCLUDED.default_enabled;
 DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
-   'mention', 'issue_mention', 'reply', 'thread_reply', 'collab_invite', 'collab_invite_accepted',
+   'mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply',
+   'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
    'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',
@@ -10312,8 +10319,9 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_no_change JSONB;
 COMMENT ON COLUMN homeroom_bot_runs.build_no_change IS 'staging:private';
 
 -- A live build waiting its turn: a live 'ready' verdict is built after the
--- turn that read it ends, one build per project at a time, so reading the
--- project's next request never waits for a build. Set when the verdict is
+-- turn that read it ends, up to three builds per project at a time
+-- (homeroom-bot.js BUILDS_PER_PROJECT), so reading the project's next
+-- request never waits for a build. Set when the verdict is
 -- recorded, cleared once the build's session exists (homeroom-bot.js
 -- buildLive). The shadow lane's build_queued_at/build_at stay its own.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS live_build_waiting_at TIMESTAMPTZ;
@@ -10833,7 +10841,7 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
   error           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at      TIMESTAMPTZ,
-  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request')),
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request')),
   CONSTRAINT homeroom_bot_dm_actions_status_check
     CHECK (status IN ('open', 'done', 'declined', 'failed'))
 );
@@ -10847,6 +10855,8 @@ COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 -- from a project's board to Homeroom's own (Move it to Homeroom / Keep it
 -- here). `app_id` is the project it is on and `source_issue_number` the
 -- request there; `issue_number` is the request it became on Homeroom's.
+-- #4525: `close_request`, an offer to open a vote on closing request
+-- `source_issue_number` of `app_id` (Propose to close / Keep it open).
 ALTER TABLE homeroom_bot_dm_actions
   ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
 ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS source_issue_number INTEGER;
@@ -10854,7 +10864,7 @@ DO $$
 BEGIN
   ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_kind_check;
   ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_kind_check
-    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request'));
+    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'close_request'));
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
@@ -13324,3 +13334,16 @@ BEGIN
       CHECK (hostname ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$');
   END IF;
 END $$;
+
+-- #4490: a picture on every Needs-you card. `pr_diagram` is the change's
+-- diagram as its author (submit_work `diagram`, a hosted build's
+-- declare_diagram) sent it, validated by services/diagram.js: one of four
+-- fixed kinds, or Mermaid source on a change declared as having nothing to
+-- see. Data, never markup; Homeroom draws it. `pr_diagram_source` says who
+-- supplied it ('author'). `pr_touches` is "What it touches", derived from the
+-- files at `pr_touches_sha` by services/proposal-touches.js and refreshed when
+-- the head moves.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram_source TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches JSONB;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches_sha TEXT;

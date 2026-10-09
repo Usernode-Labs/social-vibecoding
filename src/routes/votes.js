@@ -27,12 +27,15 @@ const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
 const visibleChangesContract = require('../services/visible-changes');
+const diagramContract = require('../services/diagram');
+const proposalTouches = require('../services/proposal-touches');
 const shotsState = require('../services/shots-state');
 const shotsView = require('../services/shots-view');
 const summaryFreshness = require('../services/summary-freshness');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+const { botRequestedBySql } = require('../services/bot-requested-by');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -1169,6 +1172,58 @@ function stagingMockProposals(viewer) {
       priority: { top: 'high', count: 4, myValue: null },
       assignee: { top: 'maya-builder', count: 2, myValue: null },
       category: { top: 'staging demo onboarding', count: 3, myValue: null },
+    },
+    // #4490: the picture a change shows when it has no before & after
+    // shots, reviewable on staging via ?demo=1 (Needs you, and the change's
+    // own page). The first carries its author's diagram, a rename; the second
+    // none, so it shows "What it touches", drawn from its files, and says
+    // nothing on screen changes. Newest of the mocks, so they lead the feed.
+    {
+      ...mk(9000490, 900490,
+        '[Mock] Diagram test: rename "spec" to "plan" everywhere people read it',
+        0.2, 1, 0, 0, { required: 3, windowEndsAt: null }),
+      pr_summary_md: 'Everywhere you used to see "spec" in the app, such as chat cards, buttons, requests, '
+        + 'notifications, sharing and Settings, it now says "plan".',
+      diagram: {
+        version: 1, kind: 'rename', from: 'spec', to: 'plan',
+        places: ['Chat cards', 'Buttons', 'Requests', 'Notifications', 'Sharing', 'Settings'],
+        note: 'Only the words change. Layout and behaviour stay the same.',
+      },
+      diagram_source: 'author',
+    },
+    {
+      ...mk(9000491, 900491,
+        '[Mock] What-it-touches test: retry brief database hiccups while shots copies are set up',
+        0.3, 1, 0, 0, { required: 3, windowEndsAt: null }),
+      pr_summary_md: 'Before & after shots no longer fail when the database blinks for a moment while '
+        + 'their copies are being made.',
+      shots_detail: { intent: { version: 1, impact: 'none', rationale: 'A retry inside the shots set-up; nothing on screen changes.', stories: [] } },
+      touches: {
+        version: 1,
+        files: 3,
+        areas: [
+          { key: 'screens', label: 'Screens', files: 0, lines: 0 },
+          { key: 'server', label: 'Server', files: 2, lines: 64 },
+          { key: 'database', label: 'Database', files: 0, lines: 0 },
+          { key: 'tests', label: 'Tests', files: 1, lines: 38 },
+          { key: 'docs', label: 'Docs', files: 0, lines: 0 },
+          { key: 'other', label: 'Other', files: 0, lines: 0 },
+        ],
+      },
+    },
+    // #4490: a change nobody sees, drawn from its author's Mermaid text.
+    {
+      ...mk(9000492, 900492,
+        '[Mock] Mermaid test: retry a copy that hiccups before the shots are taken',
+        0.4, 0, 0, 0, { required: 3, windowEndsAt: null }),
+      pr_summary_md: 'A shots copy that fails for a moment is tried again up to three times before the run gives up.',
+      shots_detail: { intent: { version: 1, impact: 'none', rationale: 'A retry inside the shots set-up; nothing on screen changes.', stories: [] } },
+      diagram: {
+        version: 1,
+        kind: 'mermaid',
+        source: 'flowchart TD\n  A[Copy database] --> B{Hiccup?}\n  B -- no --> C[Take shots]\n  B -- yes --> D[Retry up to 3 times]\n  D --> B\n  D -- still failing --> E[Report failure]',
+      },
+      diagram_source: 'author',
     },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
@@ -4189,7 +4244,7 @@ function voteRoutes(config) {
   router.get('/api/apps/:slug/promoted', async (req, res) => {
     try {
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, locked`
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, locked, repo_url`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
       const appRows = [gatedApp];
@@ -4204,6 +4259,9 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
            cs.shots_state, cs.shots_run_id,
            cs.shots_detail, cs.shots_updated_at,
+           -- #4490: the card's picture when it has no shots: the author's
+           -- diagram, and "What it touches" for the head it was read at.
+           cs.pr_diagram, cs.pr_diagram_source, cs.pr_touches, cs.pr_touches_sha,
            -- #2779: the agent session the change was started from. Only its
            -- id, as mergedRowSelect carries it for a merged row: the
            -- conversation itself answers to its owner alone. This list was
@@ -4300,6 +4358,11 @@ function voteRoutes(config) {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- #4538: this change was built by Homeroom bot from a request
+           -- made for the viewer, so their Workshop lists it in Your work.
+           -- The bot stays the row's author; this only says whose ask it
+           -- was (the shared fragment, services/bot-requested-by.js).
+           COALESCE(${botRequestedBySql('cs', '$2')}, FALSE) AS requested_by_me,
            -- Test accounts (D1): the viewer is a test account and a real
            -- person made this app, so their vote is recorded and shown but
            -- not counted. The vote picker says so in one line.
@@ -4400,6 +4463,21 @@ function voteRoutes(config) {
         ? await shotsView.getForSessions(pool, rows, req.params.slug)
         : new Map();
       for (const row of rows) row.shots = shotsBySession.get(Number(row.id)) || null;
+
+      // #4490: the picture a card falls back to. The diagram is the
+      // author's, validated again on the way out; "What it touches" is
+      // shown only for the head it was read at, and a moved head is read
+      // again in the background for the next view.
+      proposalTouches.scheduleRefresh(pool, rows.map((row) => ({
+        id: row.id, repo_url: gatedApp.repo_url, pr_touches_sha: row.pr_touches_sha, head: visualHeadForSession(row),
+      })));
+      for (const row of rows) {
+        row.diagram = diagramContract.storedDiagram(row.pr_diagram);
+        row.diagram_source = row.diagram ? (row.pr_diagram_source || 'author') : null;
+        const head = visualHeadForSession(row);
+        row.touches = head && row.pr_touches_sha === head ? proposalTouches.storedTouches(row.pr_touches) : null;
+        delete row.pr_diagram; delete row.pr_diagram_source; delete row.pr_touches; delete row.pr_touches_sha;
+      }
 
       // Community-voted priority + assigned-person summary per proposal,
       // keyed by session id (target_type='proposal'). Same minimal shape
@@ -4968,6 +5046,46 @@ function voteRoutes(config) {
   // list or from here. Accepts promoted / merging / merged so a proposal
   // that transitioned status between list-render and click still resolves
   // (active rows are normally fully cached, but this stays robust).
+  // #4367: a change's address is its pull request's number
+  // (`/app/<slug>/dev/changes/<N>`, the "Change #N" on screen), and the page
+  // still opens by session id. This turns the one into the other, under the
+  // same view gate and visibility rule as the read below, so a number it
+  // answers is one that read serves. Several sessions can name one PR; the
+  // one that reached a vote wins, then the newest.
+  router.get('/api/apps/:slug/changes/:number', async (req, res) => {
+    try {
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+      const number = /^\d{1,9}$/.test(String(req.params.number))
+        ? parseInt(req.params.number, 10) : NaN;
+      if (!(number > 0)) return res.status(404).json({ error: 'Change not found' });
+      const { rows } = await pool.query(
+        `SELECT cs.id FROM chat_sessions cs
+         WHERE cs.app_id = $1 AND cs.pr_number = $3
+           AND (cs.status IN ('promoted', 'merging', 'merged')
+             OR (cs.status IN ('active', 'paused')
+               AND (cs.user_id = $2 OR cs.shared_at IS NOT NULL)))
+         ORDER BY (cs.status IN ('promoted', 'merging', 'merged')) DESC, cs.id DESC
+         LIMIT 1`,
+        [gatedApp.id, req.user?.id || null, number]
+      );
+      let sessionId = rows[0] ? rows[0].id : null;
+      // Staging demo mode: the by-id read's mock rows, by their PR number.
+      if (!sessionId && IS_STAGING && req.query.demo === '1') {
+        const mock = stagingMockMerged(req.user).concat(stagingMockProposals())
+          .find((m) => Number(m.pr_number) === number);
+        sessionId = mock ? mock.id : null;
+      }
+      if (!sessionId) return res.status(404).json({ error: 'Change not found' });
+      res.json({ sessionId, prNumber: number });
+    } catch (err) {
+      log.error('votes', 'Failed to resolve change', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/apps/:slug/proposals/:id', async (req, res) => {
     try {
       // View-level (#621): read-only viewers can open a proposal's
@@ -5005,6 +5123,12 @@ function voteRoutes(config) {
         proposal.shots = config.shots?.present
           ? await shotsView.getForSession(pool, proposal, req.params.slug)
           : null;
+        // #4490: the author's diagram, which leads the change's page.
+        const drawn = await pool.query(
+          'SELECT pr_diagram, pr_diagram_source FROM chat_sessions WHERE id = $1', [proposal.id]
+        ).catch(() => ({ rows: [] }));
+        proposal.diagram = diagramContract.storedDiagram(drawn.rows[0] && drawn.rows[0].pr_diagram);
+        proposal.diagram_source = proposal.diagram ? (drawn.rows[0].pr_diagram_source || 'author') : null;
         // #4452: how long testing usually takes here, for the change page's
         // one testing bar and its time left (services/checks-estimate.js).
         proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);

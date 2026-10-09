@@ -61,9 +61,10 @@ test('it fills the slot directly rather than racing the observer', () => {
     'and scrolls, because a before/after capture has to SHOW the row');
   assert.match(body, /#dev-workshop \.dev-feed-comments\[data-comments-for\]/,
     'it looks for the slot the check looks for');
-  // The Workshop keeps its rows folded, and the slot lives inside an unfolded
-  // one, so the deep link also asks the view model to unfold the first issue
-  // row (see _workshopView's autoExpand).
+  // The slot lives inside an unfolded card. #4486: the checks ride this link
+  // on the board with its cards open, where every card is unfolded; the link
+  // still names itself to the view model, whose autoExpand opens the theme
+  // the first issue row is in on a By category route.
   assert.match(body, /AppView\._workshopShot = 'feed-comments'/,
     'it names itself to the view model, which unfolds a row for it');
 });
