@@ -80,6 +80,10 @@ COPY --chown=node:node server.js dapp.json ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node scripts ./scripts
 COPY --chown=node:node worker ./worker
+# The ready-made apps and game starters a new project's repository is written
+# from (services/app-templates.js). They sit outside src/ only so that
+# check-sql.js leaves their queries alone, so they need their own line.
+COPY --chown=node:node app-templates ./app-templates
 # Copy the whole generated public tree: it contains the source assets plus the
 # prerendered document, every lazy shell chunk, and the compiled stylesheet.
 COPY --chown=node:node --from=shell /build/public ./public

@@ -398,6 +398,19 @@ paired clips still play.
 
 ## A change of the Homeroom bot's
 
+The bot's build declares its changes with `declare_visible_changes`, as a dev
+chat's build does (`homeroom-bot-live.buildPrompt`). When it did not, the bot
+records one derived from its HTML spec just before it proposes
+(`spec-visible-changes.recordForBotProposal`): each `<ol data-changes>` item
+becomes a change with the item's words as its claim, its `data-steps` as the
+steps (a first step that is an in-app path becomes `startPath`, else `/`),
+`member` unless every drawn screen names the same other persona, desktop and
+phone, and impact `ui`. The build's own declaration wins. A derivation the
+validator refuses records nothing, and a spec with no changes list is never
+read as impact `none`. A first version declares nothing: its base is the
+starter, so there is no meaningful before, and its screens are already
+reviewed on the build (`bot-review.js`).
+
 The bot offers a change of its own as ready to try only once its shots on
 that exact head have settled (`shots-state.holdsReady`, read by
 `homeroom-bot-dm.changeReadiness`), for at most 45 minutes after its checks
