@@ -1,6 +1,7 @@
 /**
  * The project hub's own cards. The hub is the first of the project page's
- * four tabs (Hub, Discussion, Needs you, Workshop: ./project-band.tsx), and
+ * places (Hub, Needs you, Workshop, then #general and its topics:
+ * ./project-places.tsx, #4417), and
  * it answers "what is new, what is owed, what are people saying, what is
  * mine" itself. Under the hero (./community-card.tsx), in the order agreed
  * in #852:

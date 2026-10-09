@@ -1430,7 +1430,7 @@ const AppView = {
       }
       // #3620: `?shot=tab-back` walks the reported flow, which a declared check
       // cannot (the runner loads a route and looks; it has no steps): with the
-      // page on its hub, press the Workshop tab through its own button, wait
+      // page on its hub, press the Workshop place through its own row, wait
       // for the Workshop to show, then go Back (history.back(), which is what
       // the browser's Back and page.goBack() do). Once the traversal has
       // landed it writes what Back showed onto <html> — the tab, or `left`
@@ -1453,9 +1453,12 @@ const AppView = {
           const page = document.querySelector('#dev-workshop .dev-ws[data-ws-tab]');
           return page ? page.getAttribute('data-ws-tab') : null;
         };
+        // #4417: the place's row in the list (the section column), else the
+        // page's own way to a place, which a press on a row takes.
         const press = (tab) => {
-          const btn = document.querySelector(`#dev-workshop [data-ws-tab-btn="${tab}"]`);
-          if (btn) btn.click();
+          const row = document.querySelector(`[data-places="${slug}"] [data-place="${tab}"]`);
+          if (row) row.click();
+          else window.UsernodeReact?.places?.openPlace?.(slug, tab);
         };
         const tick = setInterval(() => {
           if ((tries += 1) > 60) { done(); return; }
@@ -7102,6 +7105,12 @@ const AppView = {
     const list = Array.isArray(specs) ? specs.filter((a) => a && ((a.act && a.act.fn) || a.kudos != null)) : [];
     if (list.length) AppView._foldedCardActions[key] = list;
     else delete AppView._foldedCardActions[key];
+    // A menu already open on this card lists them too, so it is refilled: a
+    // row's click reads the CURRENT list by index (_toggleCardMenu), and a
+    // pill folded after the menu opened shifted every row under it by one —
+    // "Change assignee…" opened the category picker.
+    const open = AppView._openCardMenu;
+    if (open && open.key === key && open.el) AppView._fillCardMenu(open.el, AppView._cardMenuItems(key, open.own));
   },
   // The kudos slot, folded off the band (useFoldedActions: not even its clap
   // fit beside Open card, Preview and ⋯): the slot's current face as a ⋯ row
@@ -7418,6 +7427,16 @@ const AppView = {
     return true;
   },
 
+  // The item a clicked row stands for: the row at its index in the current
+  // list when that row still reads the same, else the row of that label. A
+  // list that changed after the rows were drawn would otherwise hand the
+  // click to its neighbour ("Change assignee…" opening the category picker).
+  _cardMenuRowItem(list, idx, label) {
+    const at = list[idx];
+    if (label == null || (at && at.label === label)) return at;
+    return list.find((x) => x.label === label) || at;
+  },
+
   _closeCardMenu() {
     const open = AppView._openCardMenu;
     AppView._openCardMenu = null;
@@ -7470,7 +7489,9 @@ const AppView = {
       // menu now survives repaints (see _reanchorCardMenu), so a captured
       // closure could act on a row the board has already replaced.
       const live = AppView._cardMenuItems(key, own);
-      const it = (live.length ? live : items)[parseInt(btn.dataset.menuIdx, 10)];
+      const label = btn.querySelector && btn.querySelector('.dev-card-menu-label');
+      const it = AppView._cardMenuRowItem(live.length ? live : items,
+        parseInt(btn.dataset.menuIdx, 10), label ? label.textContent : null);
       AppView._closeCardMenu();
       if (it && it.act) {
         // Mark the dispatch so a popover this row opens isn't dismissed by
@@ -7484,6 +7505,15 @@ const AppView = {
     // scroll listener in _cardMenuInit compares against it.
     const at = trigger.getBoundingClientRect();
     AppView._openCardMenu = { key, el: menu, trigger, own, at: { top: at.top, left: at.left } };
+    // Mounting the rows lets React run the board's pending effects first, and
+    // a card's fold (dev-card.tsx useFoldedActions) can move a pill into this
+    // list right then, before the menu counted as open for
+    // _setFoldedCardActions to redraw it. So draw it again if it moved.
+    const now = AppView._cardMenuItems(key, own);
+    if (now.length !== items.length || now.some((x, i) => x.label !== items[i].label)) {
+      AppView._fillCardMenu(menu, now);
+      AppView._positionCardMenu(menu, trigger);
+    }
     const first = menu.querySelector('[data-menu-idx]:not([disabled])');
     if (first && first.focus) first.focus();
   },
@@ -10047,6 +10077,17 @@ const AppView = {
   // screen only reachable by interacting needs a URL: the declared checks
   // select against it and the proposal screenshots are shot from it.
   WORKSHOP_TABS: ['status', 'discussion', 'workshop', 'needs', 'all', 'plan'],
+  // #4417: the page is navigated by its PLACES now — the three pages, then
+  // its channels — and a topic's channel is a place too: `c:<handle>`
+  // (frontend/src/features/dev-board/workshop/places.ts). It is remembered,
+  // stamped on history entries and linked with `?ws=` exactly as a tab is.
+  // The handle is checked for shape only; a channel the project no longer
+  // has opens on the hub when the page has read its places.
+  WORKSHOP_CHANNEL_RE: /^c:[a-z][a-z0-9-]{0,39}$/,
+  _isWorkshopPlace(key) {
+    return AppView.WORKSHOP_TABS.indexOf(key) !== -1
+      || (typeof key === 'string' && AppView.WORKSHOP_CHANNEL_RE.test(key));
+  },
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
@@ -10072,7 +10113,7 @@ const AppView = {
       // the All items tab — the other half of the answer is the grouping, in
       // _readWorkshopGroupOverride above. An explicit `?ws=` wins, because that
       // is the parameter still being offered.
-      AppView._workshopTabUrlOverride = AppView.WORKSHOP_TABS.indexOf(v) !== -1
+      AppView._workshopTabUrlOverride = AppView._isWorkshopPlace(v)
         ? v
         : (AppView._retiredBoardLink() ? 'all' : null);
     } catch { AppView._workshopTabUrlOverride = null; }
@@ -10083,7 +10124,7 @@ const AppView = {
   // transient exactly as `?ws=` is, and a tap on another tab clears it through
   // _setWorkshopTab.
   _overrideWorkshopTab(tab) {
-    if (AppView.WORKSHOP_TABS.indexOf(tab) === -1) return;
+    if (!AppView._isWorkshopPlace(tab)) return;
     AppView._workshopTabUrlOverride = tab;
   },
   /**
@@ -10103,7 +10144,7 @@ const AppView = {
       const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
       // A remembered page (Needs you, All items) reopens as itself, with its
       // way back to the tab it hangs off above it.
-      if (AppView.WORKSHOP_TABS.indexOf(stored) !== -1 && stored !== 'plan') return stored;
+      if (AppView._isWorkshopPlace(stored) && stored !== 'plan') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
       // columns live in, for the same reason _getWorkshopGroup gives them the
       // pane: migrating the retired mode without carrying what it MEANT would
@@ -10291,7 +10332,7 @@ const AppView = {
 
   _setWorkshopTab(key) {
     // The plan is gone once it is built, so the page reopens on the hub.
-    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 && key !== 'plan' ? key : 'status';
+    const next = AppView._isWorkshopPlace(key) && key !== 'plan' ? key : 'status';
     // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
@@ -10349,14 +10390,14 @@ const AppView = {
   _workshopTabStamp(state) {
     const raw = state && typeof state === 'object' ? state[AppView.WORKSHOP_TAB_STATE_KEY] : null;
     if (!raw || typeof raw !== 'object' || typeof raw.slug !== 'string' || !raw.slug) return null;
-    if (AppView.WORKSHOP_TABS.indexOf(raw.tab) === -1) return null;
-    const from = AppView.WORKSHOP_TABS.indexOf(raw.from) !== -1 ? raw.from : null;
+    if (!AppView._isWorkshopPlace(raw.tab)) return null;
+    const from = AppView._isWorkshopPlace(raw.from) ? raw.from : null;
     return { slug: raw.slug, tab: raw.tab, from };
   },
   // Write `tab` onto the entry the page is standing on, keeping whatever else
   // that entry's state carries (a dismissible surface's marker included).
   _stampWorkshopTab(slug, tab) {
-    if (!AppView._onProjectPage(slug) || AppView.WORKSHOP_TABS.indexOf(tab) === -1) return false;
+    if (!AppView._onProjectPage(slug) || !AppView._isWorkshopPlace(tab)) return false;
     try {
       const prev = window.history.state && typeof window.history.state === 'object' ? window.history.state : {};
       const had = AppView._workshopTabStamp(prev);
@@ -10371,9 +10412,9 @@ const AppView = {
   // A press on the page: stamp the entry being left with `from`, then push
   // one for `to`. Nothing when the tab does not change, or off the page.
   _pushWorkshopTab(slug, from, to) {
-    if (!slug || from === to || AppView.WORKSHOP_TABS.indexOf(to) === -1) return false;
+    if (!slug || from === to || !AppView._isWorkshopPlace(to)) return false;
     if (!AppView._onProjectPage(slug)) return false;
-    const left = AppView.WORKSHOP_TABS.indexOf(from) !== -1 ? from : null;
+    const left = AppView._isWorkshopPlace(from) ? from : null;
     try {
       if (left) AppView._stampWorkshopTab(slug, left);
       window.history.pushState({
@@ -10415,7 +10456,7 @@ const AppView = {
   // the page mounts on it), and told to a page already up as a TRAVERSAL, so
   // the page switches without pushing an entry of its own.
   _showHistoryWorkshopTab(slug, tab) {
-    if (AppView.WORKSHOP_TABS.indexOf(tab) === -1) return;
+    if (!AppView._isWorkshopPlace(tab)) return;
     AppView._setWorkshopTab(tab);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab, traversal: true } }));
@@ -10439,7 +10480,7 @@ const AppView = {
    * it saves it at its top.
    */
   _landOnTab(slug, tab) {
-    const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status';
+    const key = AppView._isWorkshopPlace(tab) ? tab : 'status';
     AppView._setWorkshopTab(key);
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
@@ -11378,6 +11419,10 @@ const AppView = {
       counts: { open: 0, underway: 0, review: 0, shipped: 0, fresh: 0 },
       lanes: laneOrder.map((l) => ({ key: l.key, title: l.title, rows: [], more: 0 })),
       ...(ungrouped ? { ungrouped: true } : {}),
+      // #4417: one of the project's topics: By category draws it under
+      // Topics, with a way into its channel (`handle`).
+      ...(def.topic && typeof def.topic.handle === 'string'
+        ? { topic: { key: String(def.topic.key || def.id), handle: def.topic.handle } } : {}),
       _people: new Map(),
     });
     const finish = (t) => {
@@ -11417,7 +11462,11 @@ const AppView = {
         if (lane.rows.length < AppView.WORKSHOP_LANE_MAX) lane.rows.push(e.row);
         else lane.more += 1;
       }
-      const drawnOf = themes.filter((t) => t.lanes.some((l) => l.rows.length)).map(finish);
+      // A TOPIC is drawn with nothing in it yet (#4417): it is a place to
+      // talk as well as a grouping, and its card is the way to its channel.
+      // Not while a search or a filter narrows the list, where an empty card
+      // would read as a match.
+      const drawnOf = themes.filter((t) => (t.topic && !filtering) || t.lanes.some((l) => l.rows.length)).map(finish);
       if (rest.lanes.some((l) => l.rows.length)) {
         if (tData) {
           const restCount = rest.lanes.reduce((n, l) => n + l.rows.length + l.more, 0);

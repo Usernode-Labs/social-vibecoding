@@ -94,8 +94,10 @@ test('a long username is cut with an ellipsis inside the tab, at both sizes', ()
   assert.match(CSS, /\.platform-tab-label \{\s*max-width: 100%;\s*overflow: hidden;\s*text-overflow: ellipsis;/,
     'the phone caption clips at its column');
   const desk = CSS.slice(CSS.indexOf('@media (min-width: 768px) {\n  /* THE BAND AT THE FOOT GOES AWAY'));
-  assert.match(desk, /\.platform-tab-label \{\s*max-width: none;\s*min-width: 0;\s*\}/,
-    'and on the rail it may shrink, or a flex item\'s minimum is its whole text');
+  // #4417: the strip is an icon over a label too, so the label clips at its
+  // column there as well, and may shrink below its whole text.
+  assert.match(desk, /\.platform-tab-label \{\s*max-width: 100%;\s*min-width: 0;\s*text-align: center;\s*\}/,
+    'and on the strip it may shrink, or a flex item\'s minimum is its whole text');
 });
 
 // ── 3. The bridge ─────────────────────────────────────────────────────

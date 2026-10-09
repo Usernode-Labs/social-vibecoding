@@ -43,17 +43,39 @@
  * the room itself comes the same way (public/js/group-chat.js
  * openReplyThread), with no address of its own: the page's address is the
  * page's, as it is for #general's threads.
+ *
+ * ── A topic's channel, too (#4417) ───────────────────────────────────
+ *
+ * A project's channels are #general and its TOPICS: lasting conversations
+ * about one part of it, each a channel and a category at once (a category
+ * row with origin 'topic'; ./places.ts). The place names which (`channel`,
+ * a handle; null or `general` is #general), and a topic's channel is its
+ * 'category' thread on the app's own chat, mounted the way a request's or a
+ * change's own thread is (GroupChat.mountThread, in a host this component
+ * renders empty), under the topic's line (./topic-head.tsx). On Homeroom's
+ * own project too, where #general is a Messages conversation and the topics
+ * are threads of the app's chat: the list hides the difference.
+ *
+ * A retired topic (archived, or merged into another) is read-only, with its
+ * whole history. A topic that others were merged into draws one card in its
+ * history for each, where the merge happened (./merged-topic-card.tsx),
+ * handed to the history as markers: nothing was posted for them.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { XIcon } from '@/components/ui/icons';
-import type { CommunityPayload } from './community-card';
+import { reloadCommunity, type CommunityPayload, type PlaceChannel } from './community-card';
 import { AppReplyThreadPane, EmbeddedConversation } from '../../messages';
 import { closeThread, embeddedThreadOpen } from '../../messages/store';
 import { navStore } from '../../nav/nav-store.js';
 import { registerLevel } from '../../workshop/tab-ladder';
 import { useStoreState } from '../../../lib/use-store-state';
+import { unmountLegacyPortal } from '../../../lib/legacy-portals';
+import { devWorkshopStore } from '../card/cards-store';
+import type { TranscriptMarker } from '../../group-chat/transcript-store';
+import { channelPlace, channelsOf, findChannel, mergedInto, type PlaceKey } from './places';
+import { TopicHead } from './topic-head';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
 
@@ -97,7 +119,22 @@ export function takeDiscussionTarget(slug: string): DiscussionTarget | null {
   };
 }
 
-export function ProjectDiscussion({ slug, name, data }: {
+export function ProjectDiscussion({ slug, name, data, channel = null, onPlace }: {
+  slug: string;
+  name: string;
+  data: CommunityPayload | null;
+  /** #4417: the channel the place names: a topic's handle, or null for #general. */
+  channel?: string | null;
+  /** #4417: go to another of the page's places. */
+  onPlace?: (key: PlaceKey) => void;
+}): ReactNode {
+  const handle = channel && channel !== 'general' ? channel : null;
+  if (handle) return <TopicChannelPlace slug={slug} data={data} handle={handle} onPlace={onPlace} />;
+  return <GeneralChannel slug={slug} name={name} data={data} />;
+}
+
+/** #general: the project's own channel, as it always was. */
+function GeneralChannel({ slug, name, data }: {
   slug: string;
   name: string;
   data: CommunityPayload | null;
@@ -155,6 +192,8 @@ export function ProjectDiscussion({ slug, name, data }: {
     slug,
     below: () => (room ? embeddedThreadOpen(room) : !!threadRef.current),
     up: () => { if (room) closeThread(); else setThread(null); },
+    // #4417: a thread is below the channel, which is below the Hub.
+    depth: 2,
   }), [slug, room]);
 
   // THE DOOR'S TARGET, taken once the page knows which room this is (the
@@ -257,6 +296,173 @@ export function ProjectDiscussion({ slug, name, data }: {
           )}
         />
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * #4417: the place of a topic's channel. Waits for the community record
+ * (which says what the handle is), then mounts the channel; a handle the
+ * project has no topic for says so, with the way back to the hub.
+ */
+function TopicChannelPlace({ slug, data, handle, onPlace }: {
+  slug: string;
+  data: CommunityPayload | null;
+  handle: string;
+  onPlace?: (key: PlaceKey) => void;
+}): ReactNode {
+  if (!data) return null;
+  const topic = findChannel(data.places, handle);
+  if (!topic || topic.kind !== 'topic' || topic.id == null) {
+    return (
+      <p className="dev-ws-week-note" data-ws-discussion-none="">
+        {`This project has no #${handle} channel.`}
+      </p>
+    );
+  }
+  // Posting takes collab access (the channel row is only there with it) and
+  // membership, which the composer asks for on its first send (join_required).
+  const readOnly = !data.channel;
+  return <TopicChannel key={topic.id} slug={slug} data={data} topic={topic} readOnly={readOnly} onPlace={onPlace} />;
+}
+
+/** How often an open channel tells the server how far it has been read. */
+const READ_EVERY_MS = 4000;
+
+/** The newest message loaded in a topic channel, as the group chat holds it. */
+function newestLoaded(ref: number): number {
+  const chat = (window as any).GroupChat;
+  try {
+    const st = chat?._threadState?.('category', ref);
+    const ids = (st?.messages || [])
+      .filter((m: any) => m && !m.deleted && m.id != null && Number.isFinite(Number(m.id)))
+      .map((m: any) => Number(m.id));
+    return ids.length ? Math.max(...ids) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function TopicChannel({ slug, data, topic, readOnly, onPlace }: {
+  slug: string;
+  data: CommunityPayload;
+  topic: PlaceChannel;
+  readOnly: boolean;
+  onPlace?: (key: PlaceKey) => void;
+}): ReactNode {
+  const host = useRef<HTMLDivElement | null>(null);
+  const ref = Number(topic.id);
+  const closed = topic.state !== 'live';
+  // The topic a merged one joined, by its key, for its line and its link.
+  const survivor = topic.state === 'merged' && topic.merged_into
+    ? channelsOf(data.places).find((c) => c.kind === 'topic' && c.key === topic.merged_into) || null
+    : null;
+  // The merges into this topic, as cards the history draws at their time.
+  const markers = useMemo<TranscriptMarker[]>(() => mergedInto(data.places, topic).map((m) => ({
+    key: `merged-${m.key}`,
+    at: String(m.merged_at),
+    kind: 'merged-topic',
+    from: { handle: m.handle, name: m.name, icon: m.icon },
+  })), [data.places, topic]);
+  const markersRef = useRef(markers);
+  markersRef.current = markers;
+  const notice = closed
+    ? (topic.state === 'merged'
+      ? `#${topic.handle} was merged into ${survivor ? `#${survivor.handle}` : 'another topic'}. Its history stays here to read.`
+      : `#${topic.handle} is archived. Its history stays here to read.`)
+    : 'Join this community to post here.';
+
+  useEffect(() => {
+    const el = host.current;
+    if (!el) return undefined;
+    const chat = (window as any).GroupChat;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      if (!live) return;
+      chat?.mountThread?.({
+        type: 'category',
+        ref,
+        container: el,
+        fullHeight: true,
+        readOnly: readOnly || closed,
+        placeholder: `Message #${topic.handle}`,
+        notice,
+        markers: markersRef.current,
+      });
+    }, 0);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      const list = el.querySelector('#gc-thread-messages');
+      if (list) (window as any).UsernodeReact?.groupChat?.unmountTranscript?.(list);
+      unmountLegacyPortal(el);
+      if (chat?.activeThread?.type === 'category' && Number(chat.activeThread.ref) === ref) chat.unmountThread?.();
+    };
+  }, [slug, ref, readOnly, closed, topic.handle, notice]);
+
+  // A merge that lands while the channel is open draws its card at once.
+  useEffect(() => {
+    (window as any).GroupChat?.setThreadMarkers?.('category', ref, markers);
+  }, [ref, markers]);
+
+  // READ AS IT IS SEEN: while the channel is on screen, the newest message
+  // loaded in it is where this reader's reading stands, and the list's
+  // count for it goes with it (app_category_chat_reads). A live channel
+  // only, and only while the window is in front.
+  useEffect(() => {
+    if (closed) return undefined;
+    let posted = 0;
+    let stopped = false;
+    const tick = async () => {
+      if (stopped || document.visibilityState !== 'visible') return;
+      const newest = newestLoaded(ref);
+      if (!newest || newest <= posted) return;
+      posted = newest;
+      try {
+        // `?demo=1`: a staging demo channel's rows are mock ones, which only
+        // the demo branch of the route knows (src/routes/chat.js).
+        let demo = '';
+        try { demo = new URLSearchParams(window.location.search).get('demo') === '1' ? '?demo=1' : ''; } catch { demo = ''; }
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/read${demo}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message_id: newest, thread_type: 'category', thread_ref: ref }),
+        });
+        if (res.ok && Number(topic.unread) > 0) void reloadCommunity(slug);
+      } catch { /* the next tick tries again */ }
+    };
+    const timer = window.setInterval(() => { void tick(); }, READ_EVERY_MS);
+    const first = window.setTimeout(() => { void tick(); }, 1200);
+    return () => { stopped = true; window.clearInterval(timer); window.clearTimeout(first); };
+  }, [slug, ref, closed, topic.unread]);
+
+  const openRequests = () => {
+    // All items, narrowed to the topic: the Workshop's own filter by
+    // category (AppView.openBoardForTheme), under the theme the grouping
+    // drew the topic as.
+    const themes = devWorkshopStore.get().themes || [];
+    const theme = themes.find((t) => t.topic && t.topic.key === topic.key);
+    (window as any).AppView?.openBoardForTheme?.(theme ? theme.id : topic.key);
+  };
+
+  return (
+    <section
+      className="dev-ws-discussion dev-ws-topic-channel"
+      data-ws-discussion=""
+      data-ws-topic={topic.handle}
+      data-ws-topic-state={topic.state}
+      aria-label={`#${topic.handle}`}
+    >
+      <TopicHead
+        slug={slug}
+        topic={topic}
+        survivor={survivor ? survivor.handle : null}
+        onRequests={openRequests}
+        onSurvivor={survivor && onPlace ? () => onPlace(channelPlace(survivor.handle)) : undefined}
+      />
+      {/* The host's class string is constant and its subtree is the group
+          chat's: the one-owner rule, satisfied at this boundary. */}
+      <div ref={host} className="dev-ws-discussion-host dev-ws-topic-host" data-topic-channel={topic.id} />
     </section>
   );
 }

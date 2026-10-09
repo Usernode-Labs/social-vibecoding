@@ -19,7 +19,9 @@
  *
  *   1. BELOW A COMMUNITY'S TABS (All items, a card, a reply thread beside
  *      its Discussion): back to the community, on the tab you were on, at
- *      its top. 'up'
+ *      its top. 'up'. #4417: the tabs are places now, and every place but
+ *      the Hub is below it: a channel, Needs you or the Workshop goes up to
+ *      the Hub, and a page under a place (All items) to that place first.
  *   2. ON ONE OF ITS TABS, SCROLLED DOWN: to the top. 'top'
  *   3. ON ONE OF ITS TABS, AT THE TOP: All communities, the tab's root. 'root'
  *   4. ON ALL COMMUNITIES: to the top, and nothing else. 'top', or 'none'
@@ -81,6 +83,12 @@ export interface Level {
   up?: () => void;
   /** The page's own element, which says where the page scrolls. */
   host?: () => HTMLElement | null;
+  /**
+   * #4417: how deep it is. The page says every place but the Hub is below
+   * the Hub (depth 1); a reply thread open beside a channel is below the
+   * channel (depth 2). A press takes the deepest step first.
+   */
+  depth?: number;
 }
 
 const levels = new Set<Level>();
@@ -128,17 +136,19 @@ export function toTop(el: HTMLElement | null): void {
   el.scrollTop = 0;
 }
 
-/** The project page's tabs (AppView.WORKSHOP_TABS). */
+/** The project page's places (AppView.WORKSHOP_TABS), and a topic's channel (`c:<handle>`, #4417). */
 const PAGE_TABS = ['status', 'discussion', 'workshop', 'needs', 'all'];
+const CHANNEL_PLACE = /^c:[a-z][a-z0-9-]{0,39}$/;
 
 /**
- * The tab a page below the community goes back to: the one last up there
+ * The place a page below the community goes back to: the one last up there
  * (AppView._workshopTab), and for All items the Workshop it hangs off, which
- * is the tab lit over it. Anything unreadable is the hub.
+ * is the place lit over it. Anything unreadable is the hub.
  */
 export function tabToReturnTo(last: unknown): string {
   if (last === 'all') return 'workshop';
-  return typeof last === 'string' && PAGE_TABS.includes(last) ? last : 'status';
+  if (typeof last !== 'string') return 'status';
+  return PAGE_TABS.includes(last) || CHANNEL_PLACE.test(last) ? last : 'status';
 }
 
 type ViewApi = {
@@ -193,8 +203,12 @@ export function pressLitTab(screen: string | null): Rung {
   let onPage = false;
   try { onPage = !!view()?._onProjectPage?.(slug); } catch { onPage = false; }
   const mine = [...levels].filter((level) => level.slug === slug);
+  // The deepest level that says something is up (#4417): a reply thread
+  // beside a channel before the channel's own step up to the Hub.
   const open = onPage
-    ? mine.find((level) => { try { return !!level.below?.(); } catch { return false; } })
+    ? mine
+      .filter((level) => { try { return !!level.below?.(); } catch { return false; } })
+      .sort((a, b) => (b.depth || 0) - (a.depth || 0))[0]
     : undefined;
   const host = mine.map((level) => level.host?.() || null).find(Boolean) || null;
   const el = scrollerOf(host?.closest<HTMLElement>('#dev-forum-scroll') || null);

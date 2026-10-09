@@ -2237,7 +2237,11 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   assert.match(APP_VIEW_SRC, /if \(subTab !== 'topic'\) \{ AppView\._devTopic = null; AppView\._devTopicInPanel = false; \}/,
     'a move to another sub-view lets it go');
   // A plain click on a wide window; anything else is the row's own link.
+  // #4417: still 1180px, so a 1280px window keeps it. The places column
+  // steps aside for it under 1296px (section-column.test.js), told by the
+  // page through the place store.
   assert.match(WORKSHOP, /const SIDE_QUERY = '\(min-width: 1180px\)';/);
+  assert.match(WORKSHOP, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all'\);\s*useEffect\(\(\) => \{\s*if \(v\.slug\) publishSide\(v\.slug, sideOpen\);/);
   assert.match(WORKSHOP, /if \(!sideWide\) return;\s*event\.preventDefault\(\);/);
   assert.match(WORKSHOP, /\{\(tab === 'workshop' \|\| tab === 'all'\) && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/,
     'from the Workshop tab\u2019s lists, and from All items (#4486)');
@@ -3168,8 +3172,10 @@ test('"By stage" swaps the pane for the board\'s own columns, and keeps everythi
   // are the bar at the bottom — so what has to hold is that the grouping
   // choice is a control WITHIN one destination and does not move you off it.
   assert.ok(!html.includes('data-ws-dashboard'), 'the status strip is the Workshop page\'s');
-  assert.match(html, /data-ws-band=""[\s\S]*?data-ws-tab-btn="workshop" aria-selected="true"[\s\S]*?data-ws-allbar=""/,
-    'and you are still on All items: the Workshop tab lit, the page\'s way back in the head under it (#852, #4486)');
+  // #4417: the place bar names the Workshop over All items, its page;
+  // #4486: the page's way back is in its pinned head under it.
+  assert.match(html, /data-ws-band="" data-place-bar="all"[\s\S]*?data-place-title="">Workshop<\/h2>[\s\S]*?data-ws-allbar=""/,
+    'and you are still on All items: the bar names the Workshop, the page\'s way back in the head under it (#852, #4486)');
 });
 
 test('the stage pane is the SAME board component, not a second one', () => {
@@ -3559,7 +3565,7 @@ test('a search that matches nothing keeps the pane on screen, with the search bo
   assert.ok(html.includes('data-ws-pane'), 'the pane renders');
   assert.ok(html.includes('id="dev-actions"'), 'with its toolbar');
   assert.ok(html.includes('id="dev-kanban-filterbar"'), 'and the host the search box fills');
-  assert.ok(html.includes('data-ws-tab-btn="workshop"'), 'and the project\'s tabs above it');
+  assert.ok(html.includes('data-place-bar="all"'), 'and the project\'s place bar above it');
   assert.ok(html.includes('data-ws-group="category"'), 'and the grouping tabs');
   // The rows' place says why they are gone, UNDER the controls it is about.
   assert.match(html, /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
@@ -3654,12 +3660,18 @@ test('#2915: while a search or filter is on, a dot on the way to All items says 
   // rides the Workshop tab (#852: All items is the Workshop's page, reached
   // by its See all) and that See all, the two ways to the page it narrows,
   // and leaves while All items itself is up, where the search box says so.
+  // #4417: the Workshop is a row of the places list (the section column, or
+  // the tray), drawn apart from the page: the page hands it the dot.
+  const { ProjectPlaces } = loadTsx('frontend/src/features/dev-board/workshop/project-places.tsx');
+  const list = (filtered) => renderToHtml(createElement(ProjectPlaces, {
+    slug: 'x', name: 'X', place: 'status', owed: 0, places: null, filtered, onPlace: () => {},
+  }));
+  assert.match(list(true), /data-place="workshop"[^>]*>[\s\S]*?<span class="dev-ws-place-label">Workshop<\/span><span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span><\/a>/,
+    'the dot on the Workshop\'s row, and its words');
+  assert.doesNotMatch(list(false), /data-ws-filtered/);
+  assert.match(WORKSHOP, /filtered=\{!!v\.meta\.filtered && tab !== 'all'\}/, 'from everywhere but All items');
   for (const over of [{ q: 'dark' }, { assignedToMe: true }, { priority: 'high' }]) {
     AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), ...over };
-    for (const tab of ['status', 'needs', 'workshop']) {
-      assert.match(workshopHtml(AppView, tab), /data-ws-tab-btn="workshop"[^>]*><span class="dev-ws-ctab-text"><span class="dev-ws-ctab-label">Workshop<\/span><span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><\/span><span class="sr-only"> \(filtered\)<\/span>/,
-        `${tab} / ${JSON.stringify(over)}: the dot on the Workshop tab, and its words`);
-    }
     const ws = workshopHtml(AppView, 'workshop');
     assert.match(ws, /data-ws-all-open="">See all<span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>/,
       `workshop / ${JSON.stringify(over)}: on See all`);
@@ -3672,18 +3684,20 @@ test('#2915: while a search or filter is on, a dot on the way to All items says 
   assert.match(CSS, /\.dev-ws-filter-dot \{ flex: none; width: 6px; height: 6px; border-radius: 999px; background: var\(--accent\); \}/);
 });
 
-test('the tabs are a band in the community\'s colour, not the old pill: nothing slides', () => {
+test('the band in the community\'s colour is the place bar, not the old pill: nothing slides', () => {
   // The hub and the Workshop were two tabs under a segmented control with a
-  // sliding marker, and then no tabs at all. #852 brings back four (Hub,
-  // Discussion, Needs you, Workshop) as a band under the coloured header,
-  // with an underline rather than a marker; All items is the Workshop's page.
-  assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"/);
-  assert.match(WORKSHOP, /<ProjectBand\s+tab=\{tab\}\s+owed=\{owed\}/);
+  // sliding marker, then four tabs as a band under the coloured header
+  // (#852). #4417 makes the places one list, and the band holds the bar that
+  // opens it and names the place you are on; All items is the Workshop's page.
+  assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"|ProjectBand/);
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/project-band.tsx')),
+    'the four tabs are retired');
+  assert.match(WORKSHOP, /<PlaceBar\s+name=\{projectName\}\s+place=\{tab\}\s+owed=\{owed\}/);
   assert.ok(!/dev-ws-pagebar/.test(WORKSHOP),
     'All items has no back bar of its own: its way back is in its pinned head (#4486)');
-  const band = read('frontend/src/features/dev-board/workshop/project-band.tsx');
-  assert.match(band, /className="dev-ws-tabs dev-ws-band"/, 'and so does the band');
-  assert.match(band, /<div className="dev-ws-tabtrack" role="tablist" aria-label="Project"/);
+  const bar = read('frontend/src/features/dev-board/workshop/place-bar.tsx');
+  assert.match(bar, /className="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band=""/, 'and so does the bar');
+  assert.match(bar, /<div className="dev-ws-tabtrack">/);
 });
 
 test('#2915: declared checks open the Workshop page and the hub with a search on', () => {
@@ -3692,9 +3706,9 @@ test('#2915: declared checks open the Workshop page and the hub with a search on
   assert.ok(whole, 'a check opens the Workshop tab narrowed by ?q=');
   assert.match(whole.expectSelector, /\.dev-ws\[data-ws-tab="workshop"\]:not\(:has\(\[data-ws-empty\]\)\)/,
     'and expects no "nothing here" note on it');
-  const dot = searched('status').find((t) => /data-ws-filtered/.test(t.expectSelector || ''));
-  assert.ok(dot, 'and one expects the dot on the Workshop tab from the hub');
-  assert.match(dot.expectSelector, /\.dev-ws\[data-ws-tab="status"\] \[data-ws-band\] \[data-ws-tab-btn="workshop"\] \[data-ws-filtered\]/);
+  // #4417: and the dot on the Workshop's row in the places list says the
+  // search is still on (folded into the same check: the row is lit there).
+  assert.match(whole.expectSelector, /\[data-places\] \[data-place="workshop"\]\[aria-current="page"\] \[data-ws-filtered\]/);
 });
 
 test('an empty board still gets the All items pane, and the note names the ⋯ and where it is', () => {
@@ -4173,7 +4187,9 @@ test('#2767/#2769: the phone rail sits at the HEAD of the page, in flow, and lea
   // Workshop's own subtree, so hiding the app view hides it.
   assert.ok(!/createPortal/.test(WORKSHOP), 'nothing lifts the rail out of the tree');
   assert.ok(!/useRailHost|railHost/.test(WORKSHOP), 'and no hook looks for a host');
-  assert.match(WORKSHOP, /\{band\}\n\s*\{\/\* Everything but the bar lives in here\./, 'the band renders where it is written');
+  // #4417: the places tray follows it, which renders nothing in place: it is
+  // portalled to the body while it is open (./places-tray.tsx).
+  assert.match(WORKSHOP, /\{band\}\n\s*\{tray\}\n\s*\{\/\* Everything but the bar lives in here\./, 'the band renders where it is written');
   assert.ok(!/dev-ws-rail-host/.test(SHELL), 'the shell keeps no anchor for it');
   assert.ok(!/dev-ws-rail-host/.test(CSS), 'and no rule styles one');
   // ONE SPELLING OF THE BREAKPOINT survives for the ask composer and the feed.
@@ -4399,7 +4415,7 @@ test('Needs you is a fitted screen on a phone, in the page-scrolling layout too'
   // `min-height: 0`.
   // Discussion is the second fitted tab (#852 review): the channel's pane
   // rests its composer on the foot of the reading area the same way.
-  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="needs"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\] \{ min-height: 0; \}/);
+  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="needs"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab\^="c:"\] \{ min-height: 0; \}/);
   // ONLY those tabs: the others are meant to grow and scroll inside
   // #dev-forum-scroll, and `.dev-ws-tabbody` is not a scroller itself, so
   // shrinking them would clip what they hold rather than make it reachable.
@@ -4752,7 +4768,7 @@ test('the growing tabs keep the tab-bar clearance at the foot of the scroller (#
   // app.css at 390x844: the last card 13px past the bar's top edge before,
   // 51px clear of it after.
   // Not the fitted tabs, Needs you and Discussion (#852 review).
-  const rule = /#dev-body:has\(> #dev-workshop > \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\)\),\s*#dev-workshop:has\(> \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\)\) \{ flex-shrink: 0; \}/;
+  const rule = /#dev-body:has\(> #dev-workshop > \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\):not\(\[data-ws-tab\^="c:"\]\)\),\s*#dev-workshop:has\(> \.dev-ws:not\(\[data-ws-tab="needs"\]\):not\(\[data-ws-tab="discussion"\]\):not\(\[data-ws-tab\^="c:"\]\)\) \{ flex-shrink: 0; \}/;
   assert.match(CSS, rule, 'the two links above a growing tab do not shrink');
   // It lands AFTER the chain it overrides, so equal-or-higher specificity and
   // source order both favour it.
@@ -5074,9 +5090,9 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   assert.ok(!/\.dev-ws-tabbody \{[^}]*padding-bottom/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')),
     'no clearance for a bar that no longer floats');
 
-  // The markup half: the track exists and is inert on a phone, so the bar
-  // there is byte-identical to what it was.
-  assert.match(read('frontend/src/features/dev-board/workshop/project-band.tsx'), /<div className="dev-ws-tabtrack" role="tablist"/);
+  // The markup half: the track exists and is inert on a phone. #4417: it is
+  // the place bar's now (the four tabs are retired), and its row is the bar's.
+  assert.match(read('frontend/src/features/dev-board/workshop/place-bar.tsx'), /<div className="dev-ws-tabtrack">/);
   assert.match(CSS, /\.dev-ws-tabtrack \{ display: contents; \}/,
     'the wrapper introduces no box on a phone');
 });
@@ -5455,7 +5471,7 @@ test('#3651: on All items one header pins, the tabs and the head, in the pane\'s
   const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
 
   // 1. THE TABS ARE THE BAR ON EVERY PAGE; the back bar is not measured.
-  assert.match(WORKSHOP, /<ProjectBand[^>]*?\n\s*barRef=\{setBar\}\n\s*\/>/, 'the band is the bar, All items too');
+  assert.match(WORKSHOP, /<PlaceBar\s[\s\S]{0,400}?\n\s*barRef=\{setBar\}\n/, 'the place bar is the bar, All items too');
   assert.equal((WORKSHOP.match(/\{setBar\}/g) || []).length, 1, 'and nothing else is the bar');
 
   // 2. NO BACK BAR OF ITS OWN (#4486). The way back and the page's name are

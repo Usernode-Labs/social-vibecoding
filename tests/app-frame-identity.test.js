@@ -2012,16 +2012,17 @@ test('#2902: a small device keeps one app fewer', async () => {
   assert.deepEqual(liveAppSlugs({ slug: '', kept: [{ slug: 'y' }] }), ['y']);
 });
 
-test('#2902: the green dot reads the frame store, on Home tiles and Recents rows', () => {
+test('#2902: the green dot reads the frame store, on Home tiles and the desktop strip\'s apps', () => {
   const live = read('frontend/src/features/app-frame/live-apps.tsx');
   assert.match(live, /liveAppSlugs\(useStoreState\(appFrameStore\)\)/,
     'the dot is derived from the frames actually loaded');
   const grid = read('frontend/src/features/home/app-grid.tsx');
   assert.match(grid, /live=\{live\.includes\(item\.app\.slug\)\}/);
   assert.match(grid, /\{live \? <LiveAppDot className="app-card-live-dot" \/> : null\}/);
-  const recents = read('frontend/src/features/nav/recents-list.tsx');
-  assert.match(recents, /live=\{!!item\.app && live\.includes\(item\.app\.slug\)\}/);
-  assert.match(recents, /\{live \? <LiveAppDot className="platform-recent-live" \/> : null\}/);
+  // #4417: Recents is retired; the strip's five recent apps carry the dot.
+  const strip = read('frontend/src/features/nav/strip-apps.tsx');
+  assert.match(strip, /const running = live\.includes\(app\.slug\);/);
+  assert.match(strip, /\{running \? <LiveAppDot className="platform-strip-live" \/> : null\}/);
   const css = read('public/css/app.css');
   assert.match(css, /\.app-launch-host > iframe\[data-kept\] \{[\s\S]{0,200}visibility: hidden;/,
     'a kept frame keeps its box and is hidden by visibility, not display');

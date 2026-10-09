@@ -493,6 +493,12 @@ export interface WorkshopTheme {
   ungrouped?: boolean;
   /** On the pseudo-theme: how many of its cards are being placed now. */
   placing?: number;
+  /**
+   * #4417: one of the project's TOPICS (dapp.json `topics`): its category
+   * key and its channel's handle. By category draws topics first, under
+   * their own heading, each with a way into its channel.
+   */
+  topic?: { key: string; handle: string };
 }
 
 export interface DevWorkshopView {
@@ -510,8 +516,11 @@ export interface DevWorkshopView {
    * which says "Nothing here matches" from `meta.filtered` itself.
    */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
-  /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
-  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | null;
+  /**
+   * Which place a `?ws=` deep link asked for; null for the viewer's own
+   * choice. A topic's channel is `c:<handle>` (#4417).
+   */
+  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | `c:${string}` | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and

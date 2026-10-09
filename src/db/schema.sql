@@ -2383,6 +2383,60 @@ UPDATE topic_attribute_votes v
    );
 DELETE FROM topic_attribute_votes WHERE field = 'theme';
 
+-- #4417: TOPICS. On screen and in dapp.json a topic is a lasting
+-- conversation about one part of a project, with the requests about that
+-- part filed under it. Inside the platform it is a CATEGORY ROW with
+-- origin = 'topic' (the word "topic" already means one request or proposal
+-- here: topic_attribute_votes, services/topic-attributes.js), and its
+-- channel is a chat_messages thread of type 'category' whose thread_ref is
+-- this row's id. dapp.json's `topics` array is the only writer
+-- (services/app-manifest.js reconcileAppTopics), on the rebuild a merged
+-- topics PR triggers and, for the platform's own app, at boot.
+--
+--   topic_handle   the channel's name (#onboarding); a rename may change it
+--   topic_aliases  handles it had before, so an old link keeps working
+--   topic_state    'live' | 'archived' | 'merged'. A retired topic also
+--                  carries retired_at, so every reader of the live
+--                  vocabulary leaves it out with no change of its own.
+--   merged_into    the surviving topic's category_key, when merged
+--   merged_at      when the merge applied: where the channel's history draws
+--                  its card (no chat_messages row is written for it)
+--   topic_order    the array's order, which is the list's order
+--
+-- A topic row is PINNED, so a discovery never retires it, and its
+-- category_key is dapp.json's `id`, set once: the literal value a category
+-- vote carries, so no rename moves a vote.
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_handle TEXT;
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_aliases TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_state VARCHAR(8);
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS merged_into TEXT;
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_order INTEGER;
+-- The read the places list, the channel lookup and the tally's exclusion
+-- make: one app's topics, in order.
+CREATE INDEX IF NOT EXISTS idx_app_category_registry_topics
+  ON app_category_registry (app_id, topic_order)
+  WHERE origin = 'topic';
+
+-- #4417: one person's read position in one topic's channel, for its unread
+-- count on the places list. It mirrors app_chat_reads (the general stream's
+-- watermark) one level down: every message of that 'category' thread with
+-- an id above `last_read_id`, from somebody else, not deleted and not from
+-- someone the reader blocked, is unread (services/app-chat.js). A missing
+-- row is created at the channel's newest message the first time the list is
+-- read for a member, so a topic starts at zero unread. staging:private for
+-- the reason app_chat_reads is: personal reading history.
+CREATE TABLE IF NOT EXISTS app_category_chat_reads (
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  category_id  INTEGER NOT NULL REFERENCES app_category_registry(id) ON DELETE CASCADE,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_read_id INTEGER NOT NULL DEFAULT 0,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, category_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_category_chat_reads_user ON app_category_chat_reads (user_id);
+COMMENT ON TABLE app_category_chat_reads IS 'staging:private';
+
 -- #613: manual drag-and-drop ordering of cards WITHIN a Dev-board kanban
 -- column. The board's default order is derived (recency / merge-priority);
 -- this table is an OVERLAY: cards whose identity appears here sort first,

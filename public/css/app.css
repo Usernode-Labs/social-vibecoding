@@ -5902,11 +5902,15 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   top: -2px;
   right: -2px;
 }
-/* In a Recents row: before the unread dot, beside the label. */
-.platform-recent-live {
-  width: 8px;
-  height: 8px;
-  box-shadow: none;
+/* On the desktop strip's app tile (#4417): on the tile's corner, ringed
+   in the strip's own ground. */
+.platform-strip-live {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 2px var(--dc-sheet-solid, var(--bg-primary));
 }
 
 /* ── APPS KEPT ALIVE BEHIND THE ONE ON SCREEN (#2902) ──────────────────
@@ -16752,7 +16756,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    so shrinking them to the viewport would clip what they hold rather than
    make it reachable. */
 #dev-workshop > .dev-ws[data-ws-tab="needs"],
-#dev-workshop > .dev-ws[data-ws-tab="discussion"] { min-height: 0; }
+#dev-workshop > .dev-ws[data-ws-tab="discussion"],
+#dev-workshop > .dev-ws[data-ws-tab^="c:"] { min-height: 0; }
 /* …AND ON THE TWO TABS THAT GROW, THE LINKS ABOVE MUST NOT SHRINK (#3053).
    `min-height: 0` on #dev-body and #dev-workshop is what lets Needs you be
    bounded; on Current status and All items it let both shrink to the
@@ -16764,8 +16769,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    to scroll it clear. Native layout only — in the browser layout the
    scroller is auto-height and nothing shrinks. `flex-shrink: 0` keeps the
    grow (the lander still fills a short tab) and gives the padding back. */
-#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])),
-#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])) { flex-shrink: 0; }
+#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])),
+#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) { flex-shrink: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* ── A SHORT TAB STILL HAS SOMETHING TO SCROLL (#3520) ──────────────────
    "Unable to over scroll down on hub page (but can on workshop)", in the
@@ -16815,10 +16820,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    (`data-browser-scroller`) and the pixel would lengthen the page. Not Needs
    you or Discussion either: those are fitted on purpose and scroll inside. */
 @media (max-width: 699.98px) and (pointer: coarse) {
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])) {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"])) {
     position: relative;
   }
-  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]))::after {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]):not([data-ws-tab^="c:"]))::after {
     content: '';
     position: absolute; left: 0; bottom: -1px;
     width: 1px; height: 1px;
@@ -18353,8 +18358,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
     }
   }
 }
-/* THE BAND: Hub, Discussion, Needs you, Workshop, under the header, in its
-   colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)
+/* THE BAND: the place bar (#4417, place-bar.tsx; it held the four tabs,
+   Hub, Discussion, Needs you, Workshop, until the places became one list),
+   under the header, in its colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)
    for the two hooks that measure it, and bleeds to the column's edges and
    up under the header's overlap (`-mb-2` on the bar, plus the body's own
    top padding), so the colour runs unbroken from the top of the screen to
@@ -18375,57 +18381,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   background: var(--community-tint, #2a2e34);
   gap: 0;
 }
-/* FOUR EQUAL CELLS, each label centred in its own (#852 review): the whole
-   cell is the tap target, a quarter of the band each. They hugged their
-   labels once, spread across the band, which made Hub's target a third of
-   Needs you's and set no word over the middle of anything. */
-.dev-ws-band .dev-ws-tabtrack {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-  flex: 1 1 auto; min-width: 0;
-}
-.dev-ws-ctab {
-  position: relative; min-width: 0;
-  display: flex; align-items: center; justify-content: center;
-  height: 40px; padding: 0;
-  border: 0; background: none;
-  color: rgba(255, 255, 255, .72);
-  font: inherit; font-size: 14px; font-weight: 600; white-space: nowrap;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-/* The WORD is centred, and what it carries hangs off its top-right corner
-   rather than pushing it aside: "Needs you" and its count together are
-   wider than a phone's quarter. */
-.dev-ws-ctab-text { position: relative; display: inline-block; }
-.dev-ws-band .dev-ws-ctab-count {
-  position: absolute; right: -10px; top: -12px;
-}
-.dev-ws-band .dev-ws-filter-dot {
-  position: absolute; left: calc(100% + 3px); top: 1px;
-}
-/* The narrowest phones take the labels a point down. */
-@media (max-width: 379.98px) {
-  .dev-ws-band .dev-ws-ctab { font-size: 13px; }
-}
-.dev-ws-ctab[aria-selected="true"] { color: #fff; }
-.dev-ws-ctab[aria-selected="true"]::after {
-  content: ''; position: absolute; left: 10px; right: 10px; bottom: 0;
-  height: 3px; border-radius: 3px 3px 0 0; background: #fff;
-}
-.dev-ws-ctab:focus-visible { outline: 2px solid #fff; outline-offset: -2px; border-radius: 6px; }
-@media (hover: hover) {
-  .dev-ws-ctab:hover { color: #fff; }
-}
-/* How many votes wait on you, on Needs you: white, the colour for its ink,
-   ringed in the band so it sits cleanly on the label's corner. */
-.dev-ws-ctab-count {
-  display: inline-block;
-  min-width: 17px; height: 17px; padding: 0 4px; box-sizing: border-box;
-  border-radius: 999px; background: #fff; color: var(--community-tint, #2a2e34);
-  box-shadow: 0 0 0 2px var(--community-tint, #2a2e34);
-  font-size: 10.5px; font-weight: 750; line-height: 17px; text-align: center;
-}
-.dev-ws-band .dev-ws-filter-dot { background: #fff; }
+/* #4417: THE BAND HOLDS THE PLACE BAR (place-bar.tsx): the tray's button
+   and the place's name, one row. The four cells it held are retired with
+   the tabs (project-band.tsx); the places are one list now. */
 /* On a phone the band is the page's own: no pinned sheet behind it (the
    strip's band below is for the pill it replaced). */
 .dev-ws-tabs.dev-ws-band::before { content: none; }
@@ -18526,13 +18484,13 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   transform: translateY(var(--dev-ptr-pull));
 }
 
-/* ON A WIDE WINDOW THE TABS ARE THE PANEL'S FIRST ROW (#852 review: they
+/* ON A WIDE WINDOW THE BAR IS THE PANEL'S FIRST ROW (#852 review: the tabs
    sat in the coloured header's row for a round). Not a band: the header
    above already says whose page this is, so the row is the page's own ink,
-   with the tab you are on, its underline and the count in the community's
-   colour. Left-aligned, each tab as wide as its word plus room to press. It
-   pins under the header's edge as the old strip did, on the sheet band that
-   strip drew while pinned (`data-ws-pinned`, usePinnedStrip). */
+   and since #4417 it is the page's title, naming the place (the list is the
+   section column beside the strip). It pins under the header's edge as the
+   old strip did, on the sheet band that strip drew while pinned
+   (`data-ws-pinned`, usePinnedStrip). */
 @media (min-width: 768px) {
   .dev-ws-tabs.dev-ws-band {
     margin: 0 0 4px;
@@ -18540,25 +18498,100 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
     background: none;
     box-shadow: inset 0 -1px 0 var(--app-sheet-line);
   }
-  .dev-ws-band .dev-ws-tabtrack { display: flex; gap: 4px; }
-  .dev-ws-band .dev-ws-ctab {
-    height: 44px; padding: 0 14px;
-    color: var(--text-muted); font-size: 15px;
-  }
-  .dev-ws-band .dev-ws-ctab[aria-selected="true"] { color: var(--community-tint, var(--lit-ink)); }
-  .dev-ws-band .dev-ws-ctab[aria-selected="true"]::after { left: 8px; right: 8px; background: var(--community-tint, var(--lit-ink)); }
-  .dev-ws-band .dev-ws-ctab:focus-visible { outline-color: var(--accent); }
-  @media (hover: hover) {
-    .dev-ws-band .dev-ws-ctab:not([aria-selected="true"]):hover { color: var(--text-primary); }
-  }
-  /* The count rides after the word here, where there is room. */
-  .dev-ws-band .dev-ws-ctab-text { display: inline-flex; align-items: center; gap: 6px; }
-  .dev-ws-band .dev-ws-ctab-count {
-    position: static;
-    background: var(--community-tint, var(--accent)); color: #fff; box-shadow: none;
-  }
-  .dev-ws-band .dev-ws-filter-dot { position: static; background: var(--accent); }
   .dev-ws-tabs.dev-ws-band::before { content: ''; }
+}
+
+/* ── #4417: A PROJECT'S PLACES (project-places.tsx) ───────────────────
+   One list where the four tabs were: Hub, Needs you, Workshop, a line, then
+   Channels (#general) and Topics, each under its own small-caps heading.
+   Rows are the left rail's: 40px, a 20px glyph, 15px words, and the place
+   you are on in the rail's lit-row treatment (`--lit-tint`, `--lit-ink`).
+   A count is the accent, a number that asks for you; a zero is not drawn. */
+.dev-ws-places { display: flex; flex-direction: column; min-height: 100%; }
+.dev-ws-places-nav { display: flex; flex-direction: column; gap: 2px; }
+.dev-ws-place {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; height: 40px; padding: 0 10px; border-radius: 10px;
+  border: 0; background: none; text-align: left;
+  font: inherit; font-size: 15px; line-height: 20px; white-space: nowrap;
+  color: var(--text-primary); text-decoration: none; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (hover: hover) {
+  .dev-ws-place:not([aria-current="page"]):hover { background: var(--bg-secondary); }
+}
+.dev-ws-place:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dev-ws-place[aria-current="page"] { background: var(--lit-tint); color: var(--lit-ink); font-weight: 600; }
+.dev-ws-place-glyph { width: 20px; height: 20px; flex: 0 0 20px; color: var(--text-muted); }
+.dev-ws-place-hash { width: 18px; height: 18px; margin: 0 1px; }
+.dev-ws-place[aria-current="page"] .dev-ws-place-glyph { color: inherit; }
+.dev-ws-place-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dev-ws-place-count {
+  flex-shrink: 0; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 20px; text-align: center;
+}
+.dev-ws-place .dev-ws-filter-dot { position: static; flex-shrink: 0; background: var(--accent); }
+.dev-ws-places-line { height: 1px; margin: 8px 10px; background: var(--app-sheet-line); }
+.dev-ws-places-group { display: flex; flex-direction: column; gap: 2px; }
+.dev-ws-places-head {
+  padding: 4px 10px; font-size: 12px; font-weight: 700; line-height: 16px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+}
+.dev-ws-places-group + .dev-ws-places-group .dev-ws-places-head { padding-top: 12px; }
+.dev-ws-places-foot { margin-top: auto; padding-top: 12px; }
+
+/* THE PLACE BAR (place-bar.tsx): the band's box, one row: the tray's
+   button, then the place's name. On a phone it is the band, in the
+   community's colour; its 44px button sits at the band's left edge. */
+.dev-ws-placebar .dev-ws-tabtrack {
+  display: flex; align-items: center; gap: 4px; min-width: 0; height: 44px;
+}
+.dev-ws-places-btn {
+  position: relative; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; margin-left: -6px;
+  border: 0; background: none; border-radius: 10px;
+  color: #fff; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.dev-ws-places-btn:focus-visible { outline: 2px solid #fff; outline-offset: -4px; }
+.dev-ws-places-btn-glyph { width: 22px; height: 22px; }
+.dev-ws-places-dot {
+  position: absolute; top: 9px; right: 8px; width: 9px; height: 9px; border-radius: 999px;
+  background: #ff5a4f; box-shadow: 0 0 0 2px var(--community-tint, #2a2e34);
+}
+.dev-ws-place-title {
+  min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 17px; font-weight: 650; letter-spacing: -0.01em; line-height: 22px; color: #fff;
+}
+.dev-ws-place-title-hash { margin-right: 3px; opacity: 0.6; }
+@media (min-width: 768px) {
+  .dev-ws-placebar .dev-ws-tabtrack { height: 52px; }
+  .dev-ws-places-btn { color: var(--text-muted); margin-left: -10px; }
+  .dev-ws-places-btn:focus-visible { outline-color: var(--accent); }
+  @media (hover: hover) { .dev-ws-places-btn:hover { background: var(--bg-secondary); color: var(--text-primary); } }
+  .dev-ws-places-dot { box-shadow: 0 0 0 2px var(--bg-primary); }
+  .dev-ws-place-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+}
+
+/* THE TRAY (places-tray.tsx): the list, slid in from the left over a
+   scrim, on a phone. Over the tab bar and the header (z 60), under a
+   dialog. */
+.dev-ws-tray-root { position: fixed; inset: 0; z-index: 60; }
+.dev-ws-tray-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); animation: dev-ws-tray-fade 160ms ease-out; }
+.dev-ws-tray {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: min(296px, calc(100vw - 56px));
+  padding: calc(16px + var(--platform-safe-top, 0px)) 12px calc(16px + var(--platform-safe-bottom, 0px));
+  overflow-y: auto; overscroll-behavior: contain;
+  background: var(--dc-sheet-solid, var(--bg-primary));
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.25);
+  animation: dev-ws-tray-in 200ms cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes dev-ws-tray-in { from { transform: translateX(-100%); } to { transform: none; } }
+@keyframes dev-ws-tray-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .dev-ws-tray, .dev-ws-tray-scrim { animation: none; }
 }
 
 /* ── The hero's rows (community-card.tsx) ──
@@ -18769,7 +18802,8 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    bottom as it does in Messages, so on a phone it spans the band's width:
    the screen's, by cancelling the same 4px of `#dev-body` the band does
    (#3499), not 12. */
-html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
+html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"],
+html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   height: var(--ws-fit);
   min-height: var(--ws-fit);
 }
@@ -18847,6 +18881,52 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   .dev-ws-discussion-threaded { flex-direction: row; }
   .dev-ws-discussion-threaded > .dev-ws-discussion-host { min-width: 0; }
   .dev-ws-discussion-threaded > .messages-reply-pane { margin-left: 8px; }
+}
+/* A TOPIC'S CHANNEL (#4417, project-discussion.tsx TopicChannel). The same
+   fitted pane as #general, with one line above the room: what the topic is
+   for, and how many requests are filed under it as a link to them
+   (topic-head.tsx). 13px muted, like every fact under a title; the link is
+   the accent, because it is an action. A retired topic's line says what
+   became of it, and the room under it takes no messages. */
+.dev-ws-topic-head {
+  margin: 0 0 8px; padding: 0 4px;
+  font-size: 13px; line-height: 18px; color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.dev-ws-topic-head-link { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.dev-ws-topic-head-link:hover { text-decoration: underline; }
+/* "Discuss in #name ›" at the foot of a topic's card in By category. */
+.dev-ws-topic-link { display: inline-block; margin-top: 6px; font-size: 13px; font-weight: 600; }
+/* AFTER A MERGE, A CARD MARKS IT (merged-topic-card.tsx): a row in the
+   survivor's history where the merge applied, drawn like a date divider
+   rather than a message: no author, no bubble, a hairline box on the room. */
+.dev-ws-merged-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 10px 12px; padding: 9px 12px; border-radius: 12px;
+  border: 1px solid var(--messages-hair, var(--border-light));
+  font-size: 13px; line-height: 18px; color: var(--text-muted);
+}
+.dev-ws-merged-card-text { min-width: 0; overflow-wrap: anywhere; }
+.dev-ws-merged-card-link { flex-shrink: 0; color: var(--accent); font-weight: 600; text-decoration: none; }
+.dev-ws-merged-card-link:hover { text-decoration: underline; }
+/* The Topics dialog (features/dialogs/topics.tsx): a row's ⋯, and the three
+   changes it offers, as a row of quiet pills under it. */
+.topics-row-more {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; flex-shrink: 0; border-radius: 999px;
+  font-size: 18px; line-height: 1; color: var(--text-muted);
+}
+.topics-row-more:hover, .topics-row-more[aria-expanded="true"] { background: var(--bg-secondary); }
+.topics-row-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 12px 64px; }
+.topics-row-actions > button {
+  min-height: 32px; padding: 0 12px; border-radius: 999px;
+  font-size: 13px; font-weight: 600;
+  background: var(--bg-secondary); color: var(--text-primary);
+}
+.topics-into {
+  width: 100%; min-height: 40px; padding: 0 10px; border-radius: 10px;
+  border: 1px solid var(--border-light); background: transparent;
+  font-size: 15px; color: var(--text-primary);
 }
 .dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
 .dev-ws-hero-spark-tip {
@@ -20206,8 +20286,15 @@ body {
      rail (over an app, or over a screen whose rail is folded) is drawn at its
      full width while the content under it reserves nothing; a rail that had
      one number for both was 17px of padding and a border, because the
-     reserved figure was 0. A constant, never overridden. */
-  --platform-rail-full: 224px;
+     reserved figure was 0. A constant, never overridden.
+     #4417: 76px, THE STRIP. It was a 224px rail of rows and Recents; the
+     sections are an icon over a label now, with the five recent apps under
+     them, and the column beside it belongs to the section on screen
+     (`--platform-column-w`, features/nav/section-column.tsx). */
+  --platform-rail-full: 76px;
+  /* #4417: the section column's width, while one is drawn beside the strip
+     (a project's places in Communities, the conversation list in Messages). */
+  --platform-column-full: 264px;
   /* HOW MUCH ROOM THE RAIL'S FOOT TAKES — the Me row, plus the rail's own
      8px of bottom padding. Read by the parked strip, which is fixed to the
      same corner and has to rest ON that row rather than over it. One number,
@@ -20217,6 +20304,9 @@ body {
      and cost width nothing; 0 again on a desktop while the rail is folded or
      peeking, where the content takes the width back. */
   --platform-rail-w: 0px;
+  /* #4417: what the section column beside the strip reserves: its width
+     while it is drawn there (features/nav/section-column.tsx), else 0. */
+  --platform-column-w: 0px;
   --platform-gutter: 0px;
 }
 /* `:not(.platform-tabs-peek)` because a PEEKING bar reserves nothing: the
@@ -20756,10 +20846,13 @@ html.un-ios {
 }
 
 
-/* RECENTS ARE THE DESKTOP RAIL'S (#2802). The phone's bar is five tabs
-   across the foot of the screen with no room for a list, so the element is
-   in the markup at every width and drawn only from 768px up, below. */
-.platform-recents {
+/* THE STRIP'S RECENT APPS AND THE SECTION COLUMN ARE THE DESKTOP'S
+   (#4417). The phone's bar is five tabs across the foot of the screen with
+   no room for either, and a project's places are the tray behind its place
+   bar there, so both elements are in the markup at every width and drawn
+   only from 768px up, below. */
+.platform-strip-apps,
+.platform-section-column {
   display: none;
 }
 
@@ -21262,7 +21355,8 @@ html.un-kb #platform-parked {
     flex-direction: column;
     align-items: stretch;
     gap: 2px;
-    padding: 8px;
+    /* #4417: 4px at the sides in a 76px strip, so a label has 68px. */
+    padding: 8px 4px;
     /* WHAT THE PARKED STRIP RESTS ON. That strip is `position: fixed` to the
        foot of this column and overlays it, so the rail owes it a floor's
        worth of room or the last row reads through it. `--platform-bar-h` is
@@ -21305,35 +21399,29 @@ html.un-kb #platform-parked {
     margin: auto 4px 6px;
     background: var(--app-sheet-line);
   }
-  #platform-tab-me {
+  /* SETTINGS, THEN YOU, AT THE FOOT (#3120, #4417). In a 76px strip there
+     is no row for the cog to end, so it stands above you, after the rule:
+     your settings next to you, as before, and you last. The markup does not
+     move (the cog follows Me there); `order` places them. */
+  .platform-rail-settings {
     order: 2;
   }
-  /* ROOM FOR THE COG (#3120): Settings sits at the end of Me's row, so the
-     row gives up the cog's 44px plus the rail's 4px step between targets,
-     and a long username ellipsizes before it rather than under it. The cog
-     follows Me in the markup but is out of flow, so Me is still the last
-     item the `order` above places. */
   #platform-tab-me {
-    margin-right: 48px;
+    order: 3;
   }
-  /* SETTINGS BESIDE YOU (#3120). A square the height of Me's row, pinned to
-     the same foot: absolutely placed, because the rail is a flex COLUMN and
-     a second item in it would stack under Me rather than sit beside it. The
-     offsets are the rail's own padding (8px, plus the home-indicator inset
-     at the foot), so its bottom edge is Me's bottom edge. `.platform-tabs`
-     is `position: fixed`, which makes the rail the containing block. The
-     ink, radius, lit fill and hover are a tab row's, so it reads as one more
-     place in the rail rather than a toolbar button. */
+  /* The cog is a square the size of a strip's glyph target, centred: the
+     ink, radius, lit fill and hover are a tab's, so it reads as one more
+     place on the strip rather than a toolbar button. */
   .platform-rail-settings {
-    position: absolute;
-    right: 8px;
-    bottom: calc(8px + var(--platform-safe-bottom, 0px));
+    position: relative;
     z-index: 1;
+    align-self: center;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 44px;
-    height: 44px;
+    height: 40px;
+    margin-bottom: 2px;
     border-radius: 12px;
     color: var(--text-muted);
     text-decoration: none;
@@ -21359,82 +21447,43 @@ html.un-kb #platform-parked {
     bottom: calc(var(--platform-rail-foot-h) + var(--platform-safe-bottom, 0px));
   }
 
-  /* A ROW, not a stack: the glyph leads and the label sits beside it at
-     reading size. Under a glyph at 11px the word is a caption on a target;
-     beside it at 15px it is the name of a place, which is what a rail's
-     rows are. */
+  /* #4417: AN ICON OVER A LABEL, as on the phone's bar, in a 76px strip.
+     It was a row (the glyph, then the label at 15px) in a 224px rail; the
+     strip gives the width back to the section's column and the page, and a
+     section is still named in words under its glyph. */
   .platform-tab {
-    /* NEVER SHRINK (#2878): Recents now holds more than fits, and a column
-       of shrinkable rows would take the overflow out of the tabs' height
-       as well as the list's. The list is the one that scrolls. */
     flex: none;
-    flex-direction: row;
-    justify-content: flex-start;
-    gap: 12px;
-    height: 44px;
-    padding: 0 12px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    height: 58px;
+    padding: 0;
     border-radius: 12px;
-    font-size: 15px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: -.01em;
   }
   .platform-tab[aria-current="page"] {
     background: var(--lit-tint);
   }
-  /* The rail keeps its own row fill; the phone's sliding marker is not
-     drawn here (#2824). */
+  /* The strip keeps its own fill on the lit tab; the phone's sliding
+     marker is not drawn here (#2824). */
   .platform-tabs-marker {
     display: none;
   }
-  /* `min-width: 0` so the label can SHRINK in the row and the ellipsis the
-     base rule asks for actually appears (#2760). The fifth tab carries the
-     reader's username now, up to 32 characters, and a flex item's automatic
-     minimum is its whole text — so a long name was cut off flat by the tab's
-     `overflow: hidden` instead of ending in "…". */
+  /* `min-width: 0` so the label can SHRINK and the ellipsis the base rule
+     asks for appears (#2760): the fifth tab carries the reader's username. */
   .platform-tab-label {
-    max-width: none;
+    max-width: 100%;
     min-width: 0;
+    text-align: center;
   }
-
-  /* THE UNREAD COUNT SITS AT THE ROW'S END (#2912), as a quiet pill rather
-     than a disc on the glyph's corner. Beside a 15px label there is room to
-     say the number without covering the icon, and the far end of the row is
-     the column Recents draws its unread dots in just below, so the rail
-     keeps its marks in one place.
-
-     THE MARKUP DOES NOT MOVE. The badge stays inside the glyph's wrapper
-     (the phone still pins it to the icon's corner) and inside
-     #platform-tab-messages (a declared check selects it there). The wrapper
-     dissolves instead (`display: contents`), so the glyph, the label and the
-     badge are all items of this row. `order: 1` takes the badge past the
-     label, and `margin-left: auto` pushes it to the end. It is back in the
-     flow (`position: static`), so the label can never run under it. The
-     peeked rail over an open app is this same element, so it gets the same
-     row. */
-  .platform-tab-mark {
-    display: contents;
-  }
+  /* The counts sit on the glyph's corner, as on the phone's bar: the
+     wrapper is the badge's anchor (the base rules), and the quiet unread
+     count gives way to the votes. */
   .platform-tab-badge {
-    position: static;
-    order: 1;
-    flex: none;
-    margin-left: auto;
-    margin-right: 2px;
-    min-width: 20px;
-    height: 18px;
-    padding: 0 6px;
-    /* The rail's own muted ink over a faint wash of it: quieter than the
-       phone's disc, because beside the label it no longer sits on a glyph
-       it has to stand out from. */
-    background: color-mix(in srgb, var(--text-muted) 16%, transparent);
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 600;
-  }
-  /* The votes count rides the row's end the same way, in the accent. */
-  .platform-tab-votes {
-    position: static; order: 1; flex: none;
-    margin-left: auto; margin-right: 2px;
-    min-width: 20px; height: 18px; padding: 0 6px;
-    font-size: 11px;
+    top: -4px;
+    left: calc(100% - 9px);
   }
 
   /* A TAB ANSWERS THE POINTER (#2798). The rail's rows had no hover at all,
@@ -21444,221 +21493,141 @@ html.un-kb #platform-parked {
      pointer reads as "this one, if you press". Only where there IS a pointer:
      a touch screen's sticky hover would leave a tapped tab half lit. */
   .platform-tab,
-  .platform-recent {
+  .platform-strip-app {
     transition: background-color 120ms ease, color 120ms ease;
   }
   @media (hover: hover) {
     .platform-tab:not([aria-current="page"]):hover,
-    .platform-recent:hover {
+    .platform-strip-app:not([aria-current="page"]):hover {
       background: color-mix(in srgb, var(--lit-tint) 55%, transparent);
       color: var(--lit-ink);
     }
   }
 
-  /* ── RECENTS (#2802) ────────────────────────────────────────────────
-     frontend/src/features/nav/recents-list.tsx carries the argument: what you
-     were just doing, apps and conversations on one clock, between the
-     sections and Me. It takes the room the rail has left over and scrolls
-     inside it rather than pushing Me off the foot of a short window.
-
-     ALL THE WAY DOWN (#2878). The list used to stop at eight rows and leave
-     the rest of a tall rail empty; it now holds far more than fits
-     (RECENTS_LIMIT), so it runs to the rule above Me and scrolls there. */
-  .platform-recents:not(.hidden) {
+  /* ── THE FIVE RECENT APPS (#4417, features/nav/strip-apps.tsx) ────────
+     Under the sections, after a line: each app's own tile over its name,
+     newest first, the green dot on the ones still open, the one on screen
+     lit as a tab is. They replace Recents (#2802), whose conversations are
+     Messages' own list. Never squeezed: five rows of 58px fit any window
+     the strip is drawn in, and the rule above Me keeps them off the foot. */
+  .platform-strip-apps:not(.hidden) {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
     flex: 0 1 auto;
     min-height: 0;
     overflow-y: auto;
-    margin-top: 14px;
-    padding-top: 10px;
+    margin-top: 8px;
+    padding-top: 8px;
     border-top: 1px solid var(--app-sheet-line);
+    scrollbar-width: none;
   }
-  /* #4027: the shell's one section-label size (SectionHeader: 12px bold,
-     tracked .06em, muted). At 10.5px / 600 the ACTIVE and RECENTS labels
-     were too small and faint to scan the rail by. */
-  .platform-recents-head {
-    margin: 0 0 4px;
-    padding: 0 12px;
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .06em;
-    line-height: 1.35;
-    text-transform: uppercase;
-  }
-  .platform-recent {
+  .platform-strip-app {
     display: flex;
     flex: none;
+    flex-direction: column;
     align-items: center;
-    gap: 10px;
+    justify-content: center;
+    gap: 3px;
     min-width: 0;
-    height: 34px;
-    padding: 0 12px;
-    border-radius: 10px;
-    /* THE RAIL'S OWN INK (#2890): the muted grey `.platform-tab` draws its
-       sections in, not the page's near-black, so the history reads as more
-       of the same rail rather than louder than it. The hover above lifts it
-       to periwinkle exactly as it lifts a tab. */
+    height: 58px;
+    padding: 0 2px;
+    border-radius: 12px;
     color: var(--text-muted);
-    font-size: 14px;
+    font-size: 11px;
     font-weight: 500;
     text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
   }
-  .platform-recent-glyph {
-    width: 18px;
-    height: 18px;
-    flex: none;
-    color: var(--text-muted);
+  .platform-strip-app[aria-current="page"] {
+    background: var(--lit-tint);
+    color: var(--lit-ink);
   }
-  /* AN APP'S OWN ICON (#2878), at the glyph's footprint so every label
-     starts on the same line: the launcher's tile (`.app-icon-tile` draws the
-     face and ring) shrunk to a row. The emoji inside carries the launcher's
-     `text-3xl`, which is sized for a 56px tile. */
-  .platform-recent-tile {
-    width: 18px;
-    height: 18px;
+  .platform-strip-mark {
+    position: relative;
+    display: inline-flex;
     flex: none;
-    border-radius: 5px;
+  }
+  /* THE LAUNCHER'S TILE, at a strip's size (`.app-icon-tile` draws the face
+     and its hairline). The emoji inside carries the launcher's text size,
+     which is sized for a 56px tile. */
+  .platform-strip-tile {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
     overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .platform-recent-tile > img {
-    border-radius: 0;
-  }
-  .platform-recent-tile > span {
-    font-size: 11px;
-  }
-  .platform-recent-label {
-    flex: 1 1 auto;
-    min-width: 0;
+  .platform-strip-tile > img { border-radius: 0; }
+  .platform-strip-tile > span { font-size: 16px; }
+  .platform-strip-label {
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1.35;
   }
-  /* UNREAD IS A DOT, not a count: the count lives on the Messages tab and
-     on the row in Messages, and a 224px rail has room for one mark. */
-  .platform-recent-dot {
-    width: 8px;
-    height: 8px;
-    flex: none;
-    border-radius: 999px;
-    /* The unread count's own fill in Messages (`.messages-unread`). */
-    background: var(--accent);
-  }
 
-  /* RESUME ON A RUNNING APP YOU LEFT (#3618). The Active row's one action,
-     filled in the accent so the apps waiting for you are the thing the rail
-     points at (recents-list.tsx). It says what the green dot said, so the
-     dot steps aside for it; the row you are in keeps neither. */
-  .platform-recent-resume {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    height: 22px;
-    padding: 0 9px;
-    border-radius: 999px;
-    background: var(--accent);
-    color: var(--accent-ink);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1;
-  }
-  .platform-recent-resume ~ .platform-recent-live {
-    display: none;
-  }
-
-  /* ── ACTIVE (#3074) ──────────────────────────────────────────────────
-     frontend/src/features/nav/recents.ts (buildActive) carries the argument:
-     the running apps, in a section of their own at the top of the list, above
-     the RECENTS heading and under one of the same cut. Never squeezed: the
-     frame store keeps three at most, so it is always short. */
-  .platform-active {
+  /* ── THE SECTION COLUMN (#4417, features/nav/section-column.tsx) ──────
+     264px beside the strip, from under the header to the floor, on the
+     strip's own ground with its hairline: a project's places while its page
+     is up under Communities. The page moves over by it as it moves over by
+     the strip (`--platform-column-w`, added to #app-view's padding below).
+     Folded with the strip, and never while the strip only peeks. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) .platform-section-column:not(.hidden) {
+    position: fixed;
+    z-index: 30;
+    top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px));
+    bottom: 0;
+    left: var(--platform-rail-full);
     display: flex;
-    flex: none;
     flex-direction: column;
-    gap: 1px;
-    margin-bottom: 10px;
+    width: var(--platform-column-full);
+    padding: 12px 12px calc(12px + var(--platform-safe-bottom, 0px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--dc-sheet-solid, var(--bg-primary));
+    box-shadow: inset -1px 0 0 var(--app-sheet-line);
   }
-  /* THE APP YOU ARE IN is lit as the tab you are on is: the same fill, so
-     the rail says "you are here" once, in one voice. */
-  .platform-recent[aria-current="true"] {
-    background: var(--lit-tint);
-    color: var(--lit-ink);
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)):has(#platform-section-column:not(.hidden)) {
+    --platform-column-w: var(--platform-column-full);
   }
-  /* Only apps are running and none has been left yet: no RECENTS heading
-     over nothing. The heading is the list's last child only then. */
-  .platform-recents-head:last-child {
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)):has(#platform-section-column:not(.hidden)) #app-view {
+    padding-left: calc(var(--platform-rail-w, 0px) + var(--platform-column-w, 0px) + var(--platform-gutter));
+  }
+  /* Beside the column the list is there, so the page's place bar is the
+     page's title and its tray's button has nothing to open. With the strip
+     folded the column folds too, and the button is the way to the list. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)):has(#platform-section-column:not(.hidden)) .dev-ws-places-btn {
     display: none;
   }
 
-  /* ── RECENTS BY DAY (#2919) ──────────────────────────────────────────
-     frontend/src/features/nav/recents.ts (groupRecents) carries the argument.
-     A small label before each day that has a row, quieter than the RECENTS
-     heading above it: sentence case, no caps or tracking, smaller and
-     lighter than the heading so the rows stay the thing you read. Full
-     muted ink, not a step below it (#4027: at 75% it was too faint). Less air above
-     the first one, which already sits under the heading. */
-  .platform-recents-day {
-    flex: none;
-    padding: 8px 12px 2px;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: .01em;
-    line-height: 1.5;
+  /* ── MESSAGES' COLUMN IS ITS OWN LIST (#4417) ─────────────────────────
+     The conversation list moves into the section column's place: flush
+     with the strip, the column's width and ground, from under the header to
+     the floor, and the conversation fills the rest of the page. It is the
+     inbox's own list pane rather than a copy in #platform-section-column,
+     so its search, its rows and the declared checks that select them stay
+     in #messages-screen. A channel opened full width, a reply thread and a
+     strip too narrow for both still put the list away, as they did. */
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen {
+    padding-left: var(--platform-rail-w, 0px);
   }
-  .platform-recents-head + .platform-recents-day {
-    padding-top: 2px;
-  }
-  /* "Show N older" / "Show less": a quiet row at the list's foot, in the
-     rows' own muted ink and hover, a little smaller than a row so it reads
-     as a control on the list rather than one more place to go. */
-  .platform-recents-more {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 6px;
-    height: 30px;
-    margin-top: 4px;
-    padding: 0 12px;
-    border: 0;
-    border-radius: 10px;
-    background: none;
-    color: var(--text-muted);
-    font-size: 12.5px;
-    font-weight: 500;
-    line-height: 1.35;
-    text-align: left;
-    cursor: pointer;
-    transition: background-color 120ms ease, color 120ms ease;
-  }
-  .platform-recents-more-icon {
-    width: 14px;
-    height: 14px;
-    flex: none;
-  }
-  /* The ring is drawn inside the button: the list scrolls, and would clip
-     one drawn outside it. */
-  .platform-recents-more:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-  @media (hover: hover) {
-    .platform-recents-more:hover {
-      background: color-mix(in srgb, var(--brand-tint) 55%, transparent);
-      color: var(--brand-ink);
-    }
+  html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #messages-screen > .messages-layout > .messages-list-pane {
+    flex: 0 0 var(--platform-column-full);
+    width: var(--platform-column-full);
+    padding-right: 0;
+    background: var(--dc-sheet-solid, var(--bg-primary));
+    box-shadow: inset -1px 0 0 var(--app-sheet-line);
   }
 
-  /* THE RESUME STRIP GIVES WAY TO RECENTS ON THE DESKTOP (#2802). The apps
-     in the list above are the same offer, several at once, so a second copy
-     at the rail's foot would say it twice. The phone has no rail and keeps
-     the strip. By id so no later `.platform-parked` rule can bring it back. */
+  /* THE RESUME STRIP GIVES WAY TO THE STRIP'S APPS ON THE DESKTOP (#2802,
+     #4417). The apps on the strip are the same offer, several at once, the
+     ones still open with their dot, so a second copy at its foot would say
+     it twice. The phone has no strip and keeps it. By id so no later
+     `.platform-parked` rule can bring it back. */
   #platform-parked {
     display: none;
   }

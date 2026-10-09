@@ -42,6 +42,7 @@ import { AppSecretsDialog } from './app-secrets';
 import { BoardFiltersDialog } from './board-filters';
 import { WalletRecoveryDialog } from './wallet-recovery';
 import { AppDomainDialog } from './app-domain';
+import { TopicsDialog } from './topics';
 
 export function Dialogs() {
   return (
@@ -71,6 +72,8 @@ export function Dialogs() {
       <ReportDialog />
       {/* #4405: a project's custom domain. New markup, appended last. */}
       <AppDomainDialog />
+      {/* #4417: a project's topics, from Settings & rules. New markup, appended last. */}
+      <TopicsDialog />
     </>
   );
 }

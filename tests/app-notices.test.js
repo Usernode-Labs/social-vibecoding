@@ -137,7 +137,7 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   // #3555: the hub's door is the general one turned to the hub, so a Recents
   // channel can open its project's Discussion tab the same way.
   assert.match(view, /_landOnHub\(slug\) \{\n\s*AppView\._landOnTab\(slug, 'status'\);\n\s*\},/);
-  assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\.WORKSHOP_TABS\.indexOf\(tab\) !== -1 \? tab : 'status';\n\s*AppView\._setWorkshopTab\(key\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
+  assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\._isWorkshopPlace\(tab\) \? tab : 'status';\n\s*AppView\._setWorkshopTab\(key\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(lander, /if \(!door \|\| \(door\.slug && door\.slug !== v\.slug\)\) return;\n\s*setTab\(door\.tab\);/, 'a page already open switches; another project\'s door is not its');
   assert.match(lander, /window\.addEventListener\('usernode:workshop-tab', onDoor\);/);

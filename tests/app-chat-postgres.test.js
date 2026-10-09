@@ -195,8 +195,10 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     assert.deepEqual(chat[0].data.thread, { type: 'message', ref: rootId }, 'the live frame names its thread');
     // #2387 follow-up: and the start of its first message, which the reply's
     // line in the general stream names.
+    // #4417: and where that message is: the general stream, so the reply's
+    // line is drawn there (a topic channel's root would name its thread).
     assert.deepEqual(chat[0].data.threadRoot,
-      { id: rootId, username: 'ta_alice', content: 'Root: which colour for the header?', deleted: false });
+      { id: rootId, username: 'ta_alice', content: 'Root: which colour for the header?', deleted: false, thread_type: null, thread_ref: null });
     const summary = roomFrames('thread_summary');
     assert.equal(summary.length, 1, 'the room hears the thread grew');
     assert.equal(summary[0].data.root_id, rootId);

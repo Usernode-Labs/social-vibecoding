@@ -599,7 +599,12 @@ const GroupChat = {
         // drawn there as a line where it happened.
         if (msg.thread && msg.thread.type) {
           GroupChat._handleThreadIncoming(msg);
-          if (msg.thread.type === 'message' && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
+          // #4417: a reply under a message of one of the project's TOPIC
+          // channels is that channel's (its root says where it is), so it
+          // is drawn there, never in the general stream.
+          const rootElsewhere = !!(msg.threadRoot && msg.threadRoot.thread_type);
+          if (msg.thread.type === 'message' && !rootElsewhere
+              && !GroupChat.messages.some((m) => String(m.id) === String(msg.id))) {
             const shouldStick = GroupChat._lockedToBottom;
             GroupChat.messages.push(msg);
             if (GroupChat._streamLoaded && !GroupChat._streamStale) GroupChat._syncedMax = Math.max(GroupChat._syncedMax, Number(msg.id) || -Infinity);
@@ -871,7 +876,9 @@ const GroupChat = {
   // sent today, and it answers a chat message, so it says that too.
   _showSocketError(msg) {
     const text = (msg && (msg.message || msg.error)) || 'Something went wrong. Try again.';
-    window.PlatformUI?.toast?.(msg && msg.code === 'channel_moved' ? `Not sent. ${text}` : text);
+    // #4417: `topic_closed` is a retired topic's channel, read-only too.
+    const notSent = msg && (msg.code === 'channel_moved' || msg.code === 'topic_closed');
+    window.PlatformUI?.toast?.(notSent ? `Not sent. ${text}` : text);
   },
 
   sendTyping(thread) {
@@ -1194,7 +1201,12 @@ const GroupChat = {
     // thread is not read at all (only its author can open the page).
     const language = ['chat', 'request', 'change'].includes(opts.language) ? opts.language : 'flat';
     const closed = language === 'change' && opts.closed ? String(opts.closed) : null;
-    GroupChat.activeThread = { type, ref: Number(ref), language, ...(closed ? { closed } : {}) };
+    // #4417: cards a topic's channel draws by time (a merged topic's), which
+    // the transcript places among the rows (TranscriptLead.markers).
+    const markers = Array.isArray(opts.markers) && opts.markers.length ? opts.markers : null;
+    GroupChat.activeThread = {
+      type, ref: Number(ref), language, ...(closed ? { closed } : {}), ...(markers ? { markers } : {}),
+    };
 
     const threadKey = GroupChat.threadKey(type, ref);
     // A quote staged in the general composer must not ride along into a
@@ -1347,6 +1359,17 @@ const GroupChat = {
     if (closed) return;
     if (!st.loaded) GroupChat.loadThreadHistory(type, ref);
     else if (st.stale && !st.read) void GroupChat._refreshLatest({ type, ref });
+  },
+
+  // #4417: the cards a topic's channel draws by time changed while it is
+  // open (a merge applied): redraw it with them, where the reader is.
+  setThreadMarkers(type, ref, markers) {
+    const a = GroupChat.activeThread;
+    if (!a || a.type !== type || Number(a.ref) !== Number(ref)) return;
+    const next = Array.isArray(markers) && markers.length ? markers : null;
+    if (JSON.stringify(a.markers || null) === JSON.stringify(next)) return;
+    if (next) a.markers = next; else delete a.markers;
+    GroupChat.renderThread({ keepScroll: true });
   },
 
   // Drop the active thread render target (its history cache survives in
@@ -1928,11 +1951,14 @@ const GroupChat = {
         // A request's page says it in its own "N replies" line instead.
         // A change's page (#4455) as well.
         placeholder: language === 'request' || language === 'change' ? null : st.loaded
-          ? (st.messages.length || chat ? null : 'No messages yet. Start the thread.')
+          ? (st.messages.length || chat ? null
+            // #4417: a topic's channel is a room, not a reply thread.
+            : (a.type === 'category' ? 'Nothing said here yet.' : 'No messages yet. Start the thread.'))
           : (st.failed ? null : 'Loading…'),
         error: !st.loaded && st.failed ? 'Couldn’t load this thread.' : null,
         language,
         ...(language === 'request' ? { request: { loaded: !!st.loaded, githubMore } } : {}),
+        ...(a.markers ? { markers: a.markers } : {}),
         ...(language === 'change' ? { change: { loaded: !!(st.loaded || a.closed), closed: a.closed || null } } : {}),
         ...(chat && st.loaded ? {
           quiet: {
@@ -4817,12 +4843,38 @@ function escapeHtml(str) {
 // is what decides whether a `#name` is a channel reference or just text.
 // Empty until that store has loaded its lists, when a `#name` stays text.
 function knownChannelHandles() {
+  const handles = new Set();
   try {
     const list = window.UsernodeReact?.messages?.channels?.() || [];
-    return new Set(list.map((item) => item.handle));
+    for (const item of list) handles.add(item.handle);
+  } catch {}
+  // #4417: and, inside a project, its topics' handles and the ones they had
+  // before a rename (features/dev-board/workshop/place-store.ts).
+  for (const handle of Object.keys(knownTopicHandles())) handles.add(handle);
+  return handles;
+}
+
+// #4417: the topic handles a `#name` can mean in the project whose chat is
+// on screen, each to the handle the topic has now. Inside the project they
+// come before the platform's own channels of the same name.
+function knownTopicHandles() {
+  try {
+    const slug = typeof App !== 'undefined' ? App.currentApp : null;
+    return (slug && window.UsernodeReact?.places?.topicHandles?.(slug)) || {};
   } catch {
-    return new Set();
+    return {};
   }
+}
+
+// Where a `#name` link goes: a topic's channel on its project's page, or the
+// platform channel in Messages.
+function channelRefLink(handle) {
+  const topic = knownTopicHandles()[handle];
+  const slug = typeof App !== 'undefined' ? App.currentApp : null;
+  if (topic && slug) {
+    return { href: `#app/${encodeURIComponent(slug)}/dev/c/${topic}`, handle: topic, topic: true };
+  }
+  return { href: `#messages/channel/${handle}`, handle, topic: false };
 }
 
 // #4029: a mention is a link to that person's page, the address a project's
@@ -4858,7 +4910,9 @@ function renderChannelChips(html) {
   return html.replace(/(^|[^\w&;"=\/])#([A-Za-z][A-Za-z0-9-]{0,39})(?![\w-])/g, (m, pre, name) => {
     const handle = name.toLowerCase();
     if (!handles.has(handle)) return m;
-    return `${pre}<a class="gc-channel-ref" href="#messages/channel/${handle}" data-channel-ref="${handle}">#${handle}</a>`;
+    const link = channelRefLink(handle);
+    const topicAttr = link.topic ? ` data-topic-ref="${link.handle}"` : '';
+    return `${pre}<a class="gc-channel-ref" href="${link.href}" data-channel-ref="${link.handle}"${topicAttr}>#${handle}</a>`;
   });
 }
 
@@ -4974,9 +5028,12 @@ function replaceTextWithSegments(textNode, segs) {
       // #2783: a real link — see .gc-channel-ref in app.css for why it is
       // not a `.gc-ref`.
       const link = document.createElement('a');
+      const to = channelRefLink(seg.handle);
       link.className = 'gc-channel-ref';
-      link.setAttribute('href', `#messages/channel/${seg.handle}`);
-      link.setAttribute('data-channel-ref', seg.handle);
+      link.setAttribute('href', to.href);
+      link.setAttribute('data-channel-ref', to.handle);
+      // #4417: a topic's channel, on its project's page.
+      if (to.topic) link.setAttribute('data-topic-ref', to.handle);
       link.textContent = `#${seg.handle}`;
       frag.appendChild(link);
     } else { // ref

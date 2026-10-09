@@ -189,19 +189,6 @@ test('the phone bar over an unanswered request names its requester too', () => {
   assert.match(helper, /active\.kind === 'direct' && active\.membershipStatus === 'invited' && active\.requester\?\.username\)\s*\{\s*return active\.requester\.username;/);
 });
 
-test('Recents names a request by its sender too', () => {
-  const { buildRecents } = loadTsx('frontend/src/features/nav/recents.ts');
-  const items = buildRecents({
-    apps: [], discussions: [], agents: [], agentSessions: [], viewerId: ME.id,
-    conversations: [{
-      id: 5, kind: 'direct', title: 'Direct message', lastActivityAt: '2026-09-24T12:00:00Z', unreadCount: 0,
-      peer: null, members: [], membershipStatus: 'invited', requester: { id: 1, username: 'localadmin' },
-    }, {
-      id: 6, kind: 'direct', title: 'Direct message', lastActivityAt: '2026-09-24T11:00:00Z', unreadCount: 0,
-      peer: null, members: [], membershipStatus: 'member', requester: { id: 1, username: 'localadmin' },
-    }],
-  });
-  const label = (id) => items.find((item) => item.key === `conversation:${id}`)?.label;
-  assert.equal(label(5), '@localadmin');
-  assert.equal(label(6), 'Direct message', 'only an unanswered request borrows its requester');
-});
+// #4417: "Recents names a request by its sender too" went with the rail's
+// Recents. A request's sender names it where the conversation is listed now,
+// Messages' own list (the inbox tests above).

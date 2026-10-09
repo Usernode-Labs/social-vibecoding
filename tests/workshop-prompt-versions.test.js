@@ -41,7 +41,12 @@ const STAGES = {
     // 4 is the ONE-LIST merge: the grouping is the app's CATEGORIES again,
     // `previousThemes` became `previousCategories`, and the draft is handed
     // `builtInCategories` so it works around the six the platform ships.
-    pinned: { 1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e', 3: '5539cd0961999c6a', 4: 'd6ca79b69d490122' },
+    // 5 hands it the project's TOPICS (#4417), fixed definitions it returns
+    // as given and drafts the rest of its categories around.
+    pinned: {
+      1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e', 3: '5539cd0961999c6a', 4: 'd6ca79b69d490122',
+      5: '76a69f845f7976a4',
+    },
   },
   placement: {
     constant: 'WORKSHOP_PLACEMENT_VERSION',
@@ -49,7 +54,8 @@ const STAGES = {
     // 2: the placer sorts into CATEGORIES, and the card's own category is no
     // longer fed to it — that is the thing being decided, so offering it back
     // would anchor the answer to the value already there.
-    pinned: { 1: 'd82abd8a00088937', 2: 'fdff738ca4ac4873' },
+    // 3: the project's topics lead the list, marked, and win a tie (#4417).
+    pinned: { 1: 'd82abd8a00088937', 2: 'fdff738ca4ac4873', 3: '8ca2521f788c61ab' },
   },
   digest: {
     constant: 'WORKSHOP_DIGEST_VERSION',
@@ -127,4 +133,15 @@ test('the versions the row is compared against are the ones the builders export'
     assert.match(schema, new RegExp(`ADD COLUMN IF NOT EXISTS ${col} INTEGER NOT NULL DEFAULT 1;`),
       `${col} defaults to 1 so the rows from before it existed are grandfathered`);
   }
+});
+
+test('#4417: discovery keeps the topics as given and placement offers them first', () => {
+  const discovery = llm.generateWorkshopThemeDefinitions.toString();
+  assert.match(discovery, /"topics"/, 'discovery is told what the snapshot\'s topics are');
+  assert.match(discovery, /RETURN EVERY ONE, with its "id" and its "name" exactly as given/);
+  assert.match(discovery, /never draft a category that restates a topic/);
+  const placement = llm.placeWorkshopItems.toString();
+  assert.match(placement, /"topic": true come first/);
+  assert.match(placement, /choose the topic/);
+  assert.ok(llm.WORKSHOP_DISCOVERY_VERSION >= 5 && llm.WORKSHOP_PLACEMENT_VERSION >= 3, 'both prompts were bumped for topics');
 });

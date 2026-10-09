@@ -334,7 +334,7 @@ test('#4074: the plan, read only, for the people who joined: what it will do, wh
   assert.match(html, /<p class="dev-ws-plan-qq">How long\?<\/p><p class="dev-ws-plan-qa" data-ws-plan-suggested="">Half a day<\/p>/,
     'each question with its suggested answer, as text');
   assert.match(html, /data-ws-plan-who="">ada decides on this plan\.<\/p>/);
-  assert.match(html, /data-ws-plan-discussion="">Talk about it in Discussion<\/button>/);
+  assert.match(html, /data-ws-plan-discussion="">Talk about it in #general<\/button>/);
   assert.doesNotMatch(html, /Build it|Change something|data-bot-answer|aria-pressed/, 'nothing here answers it: only its maker does');
   assert.equal(page.decidesLine(null), 'The person who started it decides on this plan.');
   assert.equal(page.planStep(null, 7), null);
