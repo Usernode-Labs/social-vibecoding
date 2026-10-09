@@ -156,7 +156,7 @@ test('the module publishes the staged reply to both scopes, and no longer paints
   assert.match(fn[1], /q\.author \? `@\$\{q\.author\}` : ''/);
   // An authorless row has a sentence of its own: the module says which, and
   // the strip reads it from the catalog.
-  assert.match(fn[1], /unnamed: q\.source === 'pr' \|\| q\.author \? null : \(q\.source === 'event' \? 'event' : 'message'\)/);
+  assert.match(fn[1], /unnamed: q\.source === 'pr' \? null\s*: q\.authorMissing && q\.author \? q\.authorMissing\s*: q\.author \? null : \(q\.source === 'event' \? 'event' : 'message'\)/);
   assert.match(slots('general', { quote: { label: '', unnamed: 'event', snippet: 'x' } }), />↩ Replying to a platform message<\/span>/);
   assert.match(slots('general', { quote: { label: '', unnamed: 'message', snippet: 'x' } }), />↩ Replying to a message<\/span>/);
   assert.equal(message('chat:group.composer.replyingToPlatform'), '↩ Replying to a platform message');
