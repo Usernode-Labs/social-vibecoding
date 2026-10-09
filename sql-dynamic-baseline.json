@@ -481,6 +481,13 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "ba8110c429c6037d85c2",
+      "count": 1,
+      "preview": "`SELECT s.version, s.built_at FROM chat_session_specs s WHERE s.session_id = $1 AND ($2::int = $3::int OR ${specVersionSharedVisibilitySql('s', '$3')}) ORDER BY"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "e16f1722cca1c2b80269",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"

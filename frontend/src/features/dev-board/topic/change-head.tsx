@@ -17,6 +17,7 @@
  *
  * The root post: who put it up, when and what built it; the title; the
  * summary as a quote folded at four lines (the request page's own fold);
+ * the plan it was built from, as the request page's plan card (#4479);
  * one row with the requests it addresses and the thanks; then where it
  * stands, as two cards one above the other, Votes then Testing, each its
  * name and figure over its bar, its button beside them and one line under;
@@ -35,7 +36,7 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeThreadView, TopicBody } from './model';
-import { RequestWords } from './request-head';
+import { RequestWords, SpecCard } from './request-head';
 import { TopicBack } from './topic-back';
 import { IncludedIn, IssueAssociations, SummaryMore } from './topic-head';
 
@@ -186,6 +187,11 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {body.summaryStale && body.summaryHtml
             ? <p className="dev-change-stale" role="note">Written for an earlier version of this change.</p>
             : null}
+          {body.plan ? (
+            <div className="messages-object-list dev-request-specs" data-change-plan={id ?? ''}>
+              <SpecCard card={body.plan} />
+            </div>
+          ) : null}
           {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
           {id && (issues.length || body.canEditIssues || thanks) ? (
             <IssueAssociations

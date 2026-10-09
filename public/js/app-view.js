@@ -5092,6 +5092,7 @@ const AppView = {
     // the builders above already made (topic/topic-head.tsx draws them).
     if (body.changeId) {
       body.hero = AppView._topicHeroView(t.kind, item);
+      if (body.plan && body.hero.author) body.plan.by = body.hero.author;
       body.steps = AppView._topicStepsView(item, card, body);
       body.thread = AppView._changeThreadView(t.kind, item, card, body);
     }
@@ -5980,8 +5981,11 @@ const AppView = {
     // returns it to the owner of an underway change only.
     const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
     if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
-    body.summaryHtml ||= specStandIn
-      ? '<p>No short summary has been added yet. The plan this change is built from is under Details.</p>'
+    // #4479: the plan it was built from, as the card a request's page hangs
+    // under the request (request-head.tsx SpecCard), with the same Read.
+    body.plan = AppView._changePlanCard(item, mine && underway);
+    body.summaryHtml ||= body.plan
+      ? '<p>No short summary has been added yet. The plan this change is built from is below.</p>'
       : body.proposalBody
         ? '<p>No short summary has been added yet. The current description is under Details.</p>'
         : '<p>No change summary has been added yet.</p>';
@@ -6128,6 +6132,34 @@ const AppView = {
   // Tested line).
   openTechnicalDetails(id, part = null) {
     window.dispatchEvent(new CustomEvent('change-details-open', { detail: part ? { id: Number(id), part } : Number(id) }));
+  },
+
+  // #4479: a change's plan card, in request-model.ts's RequestSpecCard
+  // shape, or null when it was not built from a plan this viewer may read.
+  // `plan` is the newest readable version (/details and the proposal read);
+  // an owner's live draft with no numbered version yet is read as text.
+  _changePlanCard(item, ownDraft) {
+    const plan = item && item.plan;
+    const version = plan && Number(plan.version) > 0 ? Number(plan.version) : null;
+    const draft = ownDraft && String(item.spec_md || '').trim() ? String(item.spec_md) : null;
+    if (!version && !draft) return null;
+    const title = item.pr_title || item.session_title || 'The plan';
+    const at = (version ? plan.at : null) || null;
+    const stamp = at && typeof GroupChat !== 'undefined' && GroupChat._stamp
+      ? GroupChat._stamp(at) : (at ? relStamp(at) : { text: '', title: '' });
+    return {
+      key: `c${item.id}`,
+      title,
+      version,
+      // The change's author, as its hero names them (set once it is built).
+      by: item.username || 'someone',
+      at,
+      time: stamp.text,
+      timeTitle: stamp.title,
+      read: version
+        ? { kind: 'shared', sessionId: Number(item.id), version, previewTitle: title }
+        : { kind: 'text', title, markdown: draft, html: '' },
+    };
   },
 
   // ── #4455: a change's page, drawn as a Messages reply thread ─────────

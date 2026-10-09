@@ -181,7 +181,13 @@ test('before review the author reads the spec under About this change (#2371)', 
   const own = av._topicViewFor('session', draft);
   assert.ok(own.body.proposalBody, 'the spec stands in for the technical details');
   assert.match(own.body.proposalBody.html, /Authenticate previews/);
-  assert.match(own.body.summaryHtml, /plan this change is built from is under Details/);
+  // #4479: and the plan is on the page itself, as a request's plan card,
+  // so the summary points at the card rather than at a hidden sheet.
+  assert.match(own.body.summaryHtml, /plan this change is built from is below/);
+  assert.doesNotMatch(own.body.summaryHtml, /under Details/);
+  assert.equal(own.body.plan.read.kind, 'text');
+  assert.match(own.body.plan.read.markdown, /Authenticate previews/);
+  assert.equal(own.body.plan.version, null);
 
   // A real PR body wins, and a summary is never replaced.
   const withBody = av._topicViewFor('session', { ...draft, pr_body: 'The PR body', pr_summary_md: 'Previews wait for sign-in.' });
@@ -194,6 +200,22 @@ test('before review the author reads the spec under About this change (#2371)', 
   assert.doesNotMatch(readerView.body.summaryHtml, /spec this change/);
   const promoted = av._topicViewFor('proposal', { ...draft, status: 'promoted' });
   assert.doesNotMatch(promoted.body.summaryHtml || '', /spec this change/);
+  assert.equal(readerView.body.plan, null, 'no readable plan, no card');
+});
+
+test('a change built from a plan shows the plan card with its Read (#4479)', () => {
+  const draft = { ...failing, source: null, proposal_state: undefined, pr_body: null, pr_summary_md: null,
+    pr_title: 'Spec for topics', plan: { version: 3, at: '2026-10-08T21:58:00Z' } };
+  // A reader with a shared version: the card opens that version.
+  const reader = context({ id: 99 })._topicViewFor('session', { ...draft, shared_at: '2026-10-08' });
+  assert.deepEqual({ ...reader.body.plan.read }, { kind: 'shared', sessionId: draft.id, version: 3, previewTitle: 'Spec for topics' });
+  assert.equal(reader.body.plan.version, 3);
+  assert.equal(reader.body.plan.title, 'Spec for topics');
+  assert.match(reader.body.summaryHtml, /plan this change is built from is below/);
+  // Up for review with a summary: the card stays, the summary is its own.
+  const promoted = context()._topicViewFor('proposal', { ...draft, status: 'promoted', pr_summary_md: 'Topics hold discussions.' });
+  assert.equal(promoted.body.plan.version, 3);
+  assert.doesNotMatch(promoted.body.summaryHtml, /built from/);
 });
 
 test('readers cannot promote, sync, or open the private workspace', () => {

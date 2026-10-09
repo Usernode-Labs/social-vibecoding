@@ -5008,6 +5008,9 @@ function voteRoutes(config) {
         // #4452: how long testing usually takes here, for the change page's
         // one testing bar and its time left (services/checks-estimate.js).
         proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
+        // #4479: the plan it was built from, for the page's plan card.
+        proposal.plan = await require('./sessions')
+          .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);
       }
 
       // #3669: the proposal page's own read must carry the same per-row
@@ -6620,7 +6623,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
                 ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
                 : "couldn't run its tests")
           : checksQueued ? 'is waiting for a checks slot' : 'is still running its tests';
-      const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
+      const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass.`;
       // Said once. This gate runs on every vote and every check re-run, and
       // it used to post the same sentence each time — eight copies on one
       // topic thread. If the latest system line in this proposal's thread
