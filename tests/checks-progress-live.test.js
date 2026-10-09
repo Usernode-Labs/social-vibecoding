@@ -992,7 +992,11 @@ test('the board card and the running badge carry the live count', () => {
   assert.match(badge, /title="12 of 523 checks done\. Automated tests/);
   // #4628: while the run is in flight but does not know its total yet — the
   // build and prepare phase — the bar is there from the start, pulsing, in
-  // the ARIA indeterminate form: no valuenow, no valuemax, no fill.
+  // the ARIA indeterminate form: no valuenow, no valuemax, no fill. The
+  // build phase keeps its words ("Checks starting…", which a declared check
+  // reads on the board) beside its bar.
+  const startingBadge = AppView.checksBadgeHtml({ status: 'promoted' });
+  assert.match(startingBadge, />Checks starting…<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>$/, 'the build phase: words and the busy bar');
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
   assert.match(quiet, />Checks<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>$/, 'the bar shows from the start');
   assert.doesNotMatch(quiet, /aria-valuenow/, 'indeterminate: no valuenow');
@@ -1014,7 +1018,7 @@ test('the board card and the running badge carry the live count', () => {
   assert.match(running.title, /^619 of 732 checks done\. /);
   assert.equal(running.spinner, true);
   const starting = tag({ status: 'promoted', check_state: null, console_check_state: null });
-  assert.equal(starting.label, 'Checks');
+  assert.equal(starting.label, 'Checks starting…');
   assert.deepEqual({ ...starting.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks starting' });
   const early = tag({ status: 'promoted', check_state: 'pending', checks_progress: null });
   assert.equal(early.label, 'Checks');

@@ -323,7 +323,7 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   const fresh = PR({});
   const starting = AppView.statusTagSpecs(fresh, {}).find((t) => t.key === 'tag-checks-running');
   assert.ok(starting);
-  assert.equal(starting.label, 'Checks');
+  assert.equal(starting.label, 'Checks starting…');
   assert.ok(starting.progress && starting.progress.indeterminate, 'the busy bar covers the build too');
   assert.ok(starting.spinner);
 });

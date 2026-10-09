@@ -21374,13 +21374,17 @@ const AppView = {
       // the chip ("Checks" and the bar) — counting done-of-total once the
       // run knows its total, and pulsing until then (#4628), because the
       // build and prepare phase is part of the run too. The exact count is
-      // the tooltip and the bar's accessible name.
-      const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
+      // the tooltip and the bar's accessible name. The build phase keeps
+      // its words ("Checks starting…", which a declared check reads on the
+      // board) beside its now-pulsing bar; once the tests run, the bar says
+      // it and the chip is just "Checks".
+      const fresh = p.check_state !== 'pending';
+      const live = !fresh ? AppView._checksProgressView(p) : null;
       const progress = AppView._checksChipProgress(live, true);
       const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
-        label: 'Checks',
+        label: fresh ? 'Checks starting…' : 'Checks',
         spinner: true, meta: true, progress,
         data: { 'data-status-tag': 'checks-running' },
         title: `${progress.text}. ${why}`,
@@ -21872,7 +21876,9 @@ const AppView = {
       // instead of silence. Rows carrying a console snapshot are genuine
       // pre-#47 legacy — keep their advisory fallback.
       if (!pr.console_check_state) {
-        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks${AppView.checksChipBarHtml(AppView._checksChipProgress(null, true))}</span>`;
+        // #4628: the build phase keeps its words (a declared check reads
+        // them on the board) and gains the pulsing bar.
+        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…${AppView.checksChipBarHtml(AppView._checksChipProgress(null, true))}</span>`;
       }
       return AppView.consoleWarningBadgeHtml(pr);
     }
