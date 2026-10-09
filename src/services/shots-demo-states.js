@@ -1283,10 +1283,12 @@ async function installDemoStates({ base, head }, stateIds, { retry = {} } = {}) 
   const wanted = new Set(stateIds || []);
   const states = STATES.filter((state) => wanted.has(state.id));
   if (!states.length) return { installed: [], skipped: [] };
-  return installInStep({ base, head }, states, { retry });
+  return installInStep({ base, head }, states, { retry, at });
 }
 
-async function installInStep({ base, head }, states, { retry = {} } = {}) {
+async function installInStep({ base, head }, states, {
+  retry = {}, at = shotsFixtures.pairMoment(base.at ?? head.at),
+} = {}) {
   const attempts = retry.attempts || dbRetry.DB_RETRY_ATTEMPTS;
   let committing = false;
   return dbRetry.withDbRetry((attempt) => shotsFixtures.withClient(base.databaseUrl, (baseClient) =>
