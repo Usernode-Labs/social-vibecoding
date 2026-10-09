@@ -830,3 +830,24 @@ test('a folded kudos slot is a ⋯ row: the slot’s line, acting through its bu
   AppView._setFoldedCardActions('proposal:7', [{ key: 'x', label: 'x' }]);
   assert.equal(AppView._cardMenuItems('proposal:7').length, 0);
 });
+
+// A row's click reads the CURRENT list by index, so a pill folded while the
+// menu is open has to redraw it: drawn from the old list, every row under the
+// new one pointed one row off ("Change assignee…" opened the category picker).
+test('a pill folded while its card’s menu is open redraws that menu', () => {
+  const AppView = makeAppView();
+  const drawn = [];
+  AppView._fillCardMenu = (el, items) => { drawn.push({ el, labels: items.map((i) => i.label) }); };
+  AppView._cardMenus['issue:9'] = [{ label: 'Set category…', act: () => {} }, { label: 'Change assignee…', act: () => {} }];
+  const menu = {};
+  AppView._openCardMenu = { key: 'issue:9', el: menu, trigger: null, own: null };
+  AppView._setFoldedCardActions('issue:9', [{ key: 'primary', label: 'Build it now', act: { fn: 'chooseIssueWork', args: [9] } }]);
+  assert.equal(drawn.length, 1, 'redrawn once');
+  assert.equal(drawn[0].el, menu);
+  assert.deepEqual(drawn[0].labels, AppView._cardMenuItems('issue:9').map((i) => i.label), 'drawn from the list a click reads');
+  assert.equal(drawn[0].labels.length, 3);
+  // Another card's fold leaves the open menu alone.
+  AppView._setFoldedCardActions('issue:10', [{ key: 'primary', label: 'Build it now', act: { fn: 'chooseIssueWork', args: [10] } }]);
+  assert.equal(drawn.length, 1);
+  AppView._openCardMenu = null;
+});

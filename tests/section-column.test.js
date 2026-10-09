@@ -57,6 +57,29 @@ test('which column: a project\'s places under Communities, none anywhere else', 
   assert.equal(columnFor({ screen: 'browse-screen', tab: 'discover', placeSlug: 'notes' }), null, 'Discover');
   // Messages' column is its own list (below), not this element.
   assert.equal(columnFor({ screen: 'messages-screen', tab: 'messages', placeSlug: 'notes' }), null);
+  // An item's page open beside the list: the column steps aside for it
+  // where the window has no room for both, and stays where it has.
+  const page = { screen: 'app-view', tab: 'workshop', placeSlug: 'notes' };
+  assert.equal(columnFor({ ...page, side: true, roomBesideSide: false }), null, 'under 1296px');
+  assert.equal(columnFor({ ...page, side: true, roomBesideSide: true }), 'places', 'from 1296px');
+  assert.equal(columnFor({ ...page, side: false, roomBesideSide: false }), 'places', 'no panel open');
+});
+
+test('the column steps aside for the side panel under 1296px, told by the page', () => {
+  const src = read(COLUMN);
+  assert.match(src, /export const COLUMN_BESIDE_SIDE_QUERY = '\(min-width: 1296px\)';/);
+  assert.match(src, /const roomBesideSide = useMatches\(COLUMN_BESIDE_SIDE_QUERY\);\s*const column = columnFor\(\{ screen, tab, placeSlug: place\.slug, side: place\.side, roomBesideSide \}\);/);
+  const { placeStore, publishPlace, publishSide, clearPlace } = loadTsx('frontend/src/features/dev-board/workshop/place-store.ts');
+  publishPlace('notes', 'all', 0);
+  assert.equal(placeStore.get().side, false);
+  publishSide('other', true);
+  assert.equal(placeStore.get().side, false, 'another project\'s page says nothing here');
+  publishSide('notes', true);
+  assert.equal(placeStore.get().side, true);
+  publishPlace('notes', 'all', 2);
+  assert.equal(placeStore.get().side, true, 'a new count keeps it');
+  clearPlace('notes');
+  assert.deepEqual(placeStore.get(), { slug: null, place: 'status', owed: 0, side: false });
 });
 
 test('the places column is the page\'s list, and a press there moves the page in place', () => {

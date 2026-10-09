@@ -6942,6 +6942,12 @@ const AppView = {
     const list = Array.isArray(specs) ? specs.filter((a) => a && ((a.act && a.act.fn) || a.kudos != null)) : [];
     if (list.length) AppView._foldedCardActions[key] = list;
     else delete AppView._foldedCardActions[key];
+    // A menu already open on this card lists them too, so it is refilled: a
+    // row's click reads the CURRENT list by index (_toggleCardMenu), and a
+    // pill folded after the menu opened shifted every row under it by one —
+    // "Change assignee…" opened the category picker.
+    const open = AppView._openCardMenu;
+    if (open && open.key === key && open.el) AppView._fillCardMenu(open.el, AppView._cardMenuItems(key, open.own));
   },
   // The kudos slot, folded off the band (useFoldedActions: not even its clap
   // fit beside Open card, Preview and ⋯): the slot's current face as a ⋯ row

@@ -2237,9 +2237,11 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   assert.match(APP_VIEW_SRC, /if \(subTab !== 'topic'\) \{ AppView\._devTopic = null; AppView\._devTopicInPanel = false; \}/,
     'a move to another sub-view lets it go');
   // A plain click on a wide window; anything else is the row's own link.
-  // #4417: 1296px, the old 1180px plus what the strip and the places column
-  // take beside the page beyond the 224px rail they replaced.
-  assert.match(WORKSHOP, /const SIDE_QUERY = '\(min-width: 1296px\)';/);
+  // #4417: still 1180px, so a 1280px window keeps it. The places column
+  // steps aside for it under 1296px (section-column.test.js), told by the
+  // page through the place store.
+  assert.match(WORKSHOP, /const SIDE_QUERY = '\(min-width: 1180px\)';/);
+  assert.match(WORKSHOP, /const sideOpen = !!sideItem && \(tab === 'workshop' \|\| tab === 'all'\);\s*useEffect\(\(\) => \{\s*if \(v\.slug\) publishSide\(v\.slug, sideOpen\);/);
   assert.match(WORKSHOP, /if \(!sideWide\) return;\s*event\.preventDefault\(\);/);
   assert.match(WORKSHOP, /\{\(tab === 'workshop' \|\| tab === 'all'\) && sideItem \? <TopicSidePanel item=\{sideItem\} onClose=\{closeSide\} \/> : null\}/,
     'from the Workshop tab\u2019s lists, and from All items (#4486)');

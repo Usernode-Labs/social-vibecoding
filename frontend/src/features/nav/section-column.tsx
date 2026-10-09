@@ -22,6 +22,12 @@
  * place bar there. Folding the rail from the header's sidebar button folds
  * the column with it.
  *
+ * Under 1296px it also steps aside while an item's page is open in the panel
+ * beside the Workshop's list (`placeStore.side`): the strip, the column, the
+ * list and the 560px panel do not all fit, and the panel is what was asked
+ * for. The place bar's button is the way to the places meanwhile, as it is
+ * with the strip folded, and the column is back when the panel closes.
+ *
  * ── The list moves the page, in place ───────────────────────────────
  *
  * The page owns which place is up (../dev-board/workshop/workshop.tsx), as
@@ -36,7 +42,7 @@
  * page publishes after it has loaded. `hidden` goes through useHiddenClass.
  */
 
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
@@ -49,10 +55,42 @@ import { navStore } from './nav-store.js';
 /** The column's width, which app.css reserves beside the strip. */
 export const SECTION_COLUMN_W = 264;
 
+/**
+ * From here the column stays beside an item's page open in the Workshop's
+ * side panel: the side panel's own 1180px (../dev-board/workshop/workshop.tsx
+ * SIDE_QUERY) plus the 116px the strip and the column take over the old rail.
+ */
+export const COLUMN_BESIDE_SIDE_QUERY = '(min-width: 1296px)';
+
 /** Which section's column is up: the places of a project page in Communities, or none. Pure. */
-export function columnFor(input: { screen: string | null; tab: string | null; placeSlug: string | null }): 'places' | null {
+export function columnFor(input: {
+  screen: string | null;
+  tab: string | null;
+  placeSlug: string | null;
+  /** An item's page is open in the panel beside the list. */
+  side?: boolean;
+  /** The window has room for the column beside that panel. */
+  roomBesideSide?: boolean;
+}): 'places' | null {
+  if (input.side && !input.roomBesideSide) return null;
   if (input.screen === 'app-view' && input.tab === 'workshop' && input.placeSlug) return 'places';
   return null;
+}
+
+/** `matchMedia(query).matches`, kept current; false where there is no matchMedia. */
+function useMatches(query: string): boolean {
+  const read = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    && window.matchMedia(query).matches;
+  const [on, setOn] = useState(read);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia(query);
+    const apply = () => setOn(mq.matches);
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, [query]);
+  return on;
 }
 
 function PlacesColumn({ slug }: { slug: string }) {
@@ -77,7 +115,8 @@ export function SectionColumn() {
   const ref = useRef<HTMLElement | null>(null);
   const { screen, tab } = useStoreState(navStore);
   const place = useStoreState(placeStore);
-  const column = columnFor({ screen, tab, placeSlug: place.slug });
+  const roomBesideSide = useMatches(COLUMN_BESIDE_SIDE_QUERY);
+  const column = columnFor({ screen, tab, placeSlug: place.slug, side: place.side, roomBesideSide });
   useHiddenClass(ref, column === null);
   return (
     <aside

@@ -26,9 +26,15 @@ export interface PlaceState {
   place: PlaceKey;
   /** The votes waiting on the viewer there, less the ones seen (the page's own count). */
   owed: number;
+  /**
+   * An item's page is open in the panel beside the list (./side-panel.tsx).
+   * Under 1296px the places column steps aside for it
+   * (../../nav/section-column.tsx).
+   */
+  side: boolean;
 }
 
-export const placeStore = createStore<PlaceState>({ slug: null, place: 'status', owed: 0 });
+export const placeStore = createStore<PlaceState>({ slug: null, place: 'status', owed: 0, side: false });
 
 let opener: { slug: string; open: (key: PlaceKey) => void } | null = null;
 
@@ -41,12 +47,19 @@ export function registerPlaceOpener(slug: string, open: (key: PlaceKey) => void)
 
 /** The page says where it is. */
 export function publishPlace(slug: string | null, place: PlaceKey, owed: number): void {
-  placeStore.set({ slug, place, owed: Math.max(0, Number(owed) || 0) });
+  const was = placeStore.get();
+  placeStore.set({ slug, place, owed: Math.max(0, Number(owed) || 0), side: was.slug === slug && was.side });
+}
+
+/** The page says whether an item's page is open beside its list. */
+export function publishSide(slug: string, side: boolean): void {
+  const was = placeStore.get();
+  if (was.slug === slug && was.side !== side) placeStore.set({ ...was, side });
 }
 
 /** The page is gone (unmounted, or another project is on it). */
 export function clearPlace(slug: string): void {
-  if (placeStore.get().slug === slug) placeStore.set({ slug: null, place: 'status', owed: 0 });
+  if (placeStore.get().slug === slug) placeStore.set({ slug: null, place: 'status', owed: 0, side: false });
 }
 
 type ViewApi = { _landOnTab?: (slug: string, tab: string) => void };

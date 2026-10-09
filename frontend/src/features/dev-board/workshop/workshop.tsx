@@ -96,7 +96,7 @@ import {
 import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { ProjectPlaces } from './project-places';
-import { clearPlace, publishPlace, registerPlaceOpener } from './place-store';
+import { clearPlace, publishPlace, publishSide, registerPlaceOpener } from './place-store';
 import { SinceSummaryCard } from './since-summary-card';
 import { PlanPage } from './plan-page';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
@@ -3353,11 +3353,12 @@ const WIDE_QUERY = '(min-width: 700px)';
 /**
  * #4457: where a Workshop row opens its page in a panel beside the list
  * rather than as the page: room for the list and a 560px panel beside it.
- * #4417: 116px later than it was. The chrome beside the page grew from the
- * 224px rail to the 76px strip and the 264px places column, so this keeps
- * the list the 292px it had at the old 1180px.
+ * #4417: the chrome beside the page is the 76px strip and the 264px places
+ * column now, 116px more than the 224px rail. So under 1296px the column
+ * steps aside while the panel is open (`placeStore.side`,
+ * ../../nav/section-column.tsx) and the list keeps its room.
  */
-const SIDE_QUERY = '(min-width: 1296px)';
+const SIDE_QUERY = '(min-width: 1180px)';
 /**
  * #4417: from here the project's places are the section column beside the
  * strip (../../nav/section-column.tsx); under it, the tray behind the bar.
@@ -4104,6 +4105,10 @@ export function DevWorkshop(): ReactNode {
   useEffect(() => {
     if (v.slug && !v.loading) publishPlace(v.slug, tab, owed);
   }, [v.slug, v.loading, tab, owed]);
+  const sideOpen = !!sideItem && (tab === 'workshop' || tab === 'all');
+  useEffect(() => {
+    if (v.slug) publishSide(v.slug, sideOpen);
+  }, [v.slug, sideOpen]);
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
