@@ -189,7 +189,8 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
             whose meaning lived only in its tooltip, and a tooltip does nothing
             on a phone: a new reader could not tell add from install from save.
             "Add" says it on every screen; the tooltip and the aria-label still
-            name the destination (My apps). Added is grey with a check, not a
+            name the destination (My apps), and each accessible name starts
+            with the visible word, so a voice command of "Added" finds it. Added is grey with a check, not a
             filled green pill: the settled state is not the loudest thing on
             the card (AGENTS.md, one accent).
         */}
@@ -205,7 +206,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           data-slug={tile.slug}
           data-added={String(added)}
           title={added ? 'Added. Tap to remove from My apps' : 'Add to My apps'}
-          aria-label={added ? `Remove ${tile.name} from My apps` : `Add ${tile.name} to My apps`}
+          aria-label={added ? `Added: ${tile.name} is in My apps. Tap to remove` : `Add ${tile.name} to My apps`}
           aria-pressed={added}
         >
           {added

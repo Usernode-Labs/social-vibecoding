@@ -862,8 +862,8 @@ const HomePanels = {
   // directory's rows derive a meta line instead — so the one place an app can
   // say what it is in its own words is its manifest, and the row already
   // carries the whole of it (`manifest_snapshot` is a non-secret column).
-  // Absent or blank on most apps today, and the card draws nothing rather
-  // than a filler sentence: an invented blurb is worse than a short card.
+  // Absent or blank on most apps today; the card then says "No description
+  // yet" (#4020) rather than inventing a sentence for the app.
   // Capped here as well as at the manifest reader, because the snapshot is
   // whatever the app's own repository last committed.
   appBlurb(app) {

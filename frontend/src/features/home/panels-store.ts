@@ -60,7 +60,8 @@ export interface DiscoverTileView {
   illustration?: { url: string; darkUrl?: string | null; zoom: number; x: number; y: number; tint?: string | number | null } | null;
   /**
    * The app's own one-line description, from its manifest — null when it
-   * declares none, which is most apps. The card draws nothing in its place.
+   * declares none, which is most apps. The card then says "No description
+   * yet" (#4020) rather than inventing one.
    */
   blurb: string | null;
   /** How many people built it. 0 hides the line rather than printing "0". */

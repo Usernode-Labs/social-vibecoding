@@ -126,6 +126,8 @@ test('Discover card: the add control is labelled, and an app with no description
   const added = renderToHtml(createElement(DiscoverCard, { tile: { ...TILE, added: true, blurb: 'Rank restaurants with friends' } }));
   assert.match(added, /<span>Added<\/span>/);
   assert.match(added, /data-added="true"/);
+  assert.match(added, /aria-label="Added: Alpha Board is in My apps. Tap to remove"/,
+    'the accessible name starts with the visible word (label in name)');
   assert.doesNotMatch(added, /bg-emerald-500/, 'the settled state is grey, not a filled green pill');
   assert.match(added, /class="home-discover-blurb [^"]*">Rank restaurants with friends</, 'a real description wins');
   assert.doesNotMatch(added, /No description yet/);
