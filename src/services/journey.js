@@ -332,7 +332,8 @@ function nextSteps(visitsByPerson, { top = 3 } = {}) {
 // Every admit date is a cohort, however small. A person is counted once, at
 // their earliest admit; a member who already had access before that admit is
 // not a newcomer and stays in Earlier members. Admitted addresses with no
-// account yet are rows too: the waitlist row is all there is of them.
+// account yet are rows too: the waitlist row is all there is of them. An
+// admin's test release (services/test-accounts.js sendRelease) admits nobody.
 //
 // Parameters, fixed for every first-mile query: $1 the admit day or the
 // newcomer window, $2 now, $3 the reserved name patterns, $4 the left-out ids.
@@ -342,6 +343,7 @@ const ADMITTED_CTE = `admitted AS (
            w.id AS signup_id, w.email, w.released_at, w.linked_user_id
       FROM waitlist_signups w
      WHERE w.released_at IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id)
      ORDER BY COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text), w.released_at, w.id
   )`;
 

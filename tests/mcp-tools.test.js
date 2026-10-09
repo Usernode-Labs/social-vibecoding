@@ -2686,7 +2686,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'close_work_order',
     'create_bench_context_pack', 'create_request',
     // Test accounts for first-run testing (create_test_account,
-    // create_test_phone_sign_in, list_test_accounts, retire_test_account):
+    // create_test_phone_sign_in, send_test_release_email, list_test_accounts,
+    // retire_test_account):
     // registered only for a full platform admin, and every route behind them
     // refuses anybody else.
     'create_test_account', 'create_test_phone_sign_in',
@@ -2758,7 +2759,11 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'retire_test_account',
     // The configurations' writes: a version saved, a role set, a scope's
     // side-build budget set, a pick.
-    'save_bot_config', 'set_bot_config_budget', 'set_bot_config_role',
+    'save_bot_config',
+    // The waitlist's "you're in" mail sent to a test address: full platform
+    // admins only, like the other test-account tools.
+    'send_test_release_email',
+    'set_bot_config_budget', 'set_bot_config_role',
     'start_change',
     'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick', 'submit_platform_build', 'submit_work',
     'sync_change',
@@ -2978,7 +2983,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'rate_homeroom_bot_run', 'recheck_change', 'rerun_bench_trial',
     'retire_test_account',
     // The Homeroom bot's configurations: full admins only.
-    'save_bot_config', 'set_bot_config_budget', 'set_bot_config_role', 'start_change',
+    'save_bot_config', 'send_test_release_email', 'set_bot_config_budget', 'set_bot_config_role', 'start_change',
     'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
     'submit_platform_build', 'submit_work', 'sync_change',
     'update_proposal_description', 'update_proposal_issues', 'withdraw_change',

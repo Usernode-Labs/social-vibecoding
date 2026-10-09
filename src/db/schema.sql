@@ -13448,3 +13448,25 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_diagram_source TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_touches_sha TEXT;
+
+-- Test release emails (services/test-accounts.js sendRelease, the connector's
+-- send_test_release_email): a full admin sends the waitlist's real "you're
+-- in" mail to an address they read, so the flow from that mail can be walked
+-- in any environment, production included. Each row marks the
+-- waitlist_signups row a send made: confirmed and released like an admitted
+-- signup, and kept out of Admin → Waitlist and the Journey's admitted
+-- cohorts. The NEW account that address makes is a test account
+-- (waitlist.linkUserByEmail), marked before it is let in; retiring it deletes
+-- the signup row and, by the cascade, this one. used_by is the test account
+-- the release lets in. A release no account used is withdrawn, signup and
+-- all, a week after its last send.
+CREATE TABLE IF NOT EXISTS test_waitlist_releases (
+  signup_id     BIGINT PRIMARY KEY REFERENCES waitlist_signups(id) ON DELETE CASCADE,
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_sent_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  welcome_dm    BOOLEAN NOT NULL DEFAULT FALSE,
+  note          TEXT,
+  used_by       INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+COMMENT ON TABLE test_waitlist_releases IS 'staging:private';

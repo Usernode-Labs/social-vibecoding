@@ -214,14 +214,15 @@ the setup hint, out of the shipped allow rules, prompted like any other write.
 
 First-time-user testing needs a genuinely new account each run, and "Reset
 first run" on an old one keeps its memberships, votes and history. A full
-platform admin's connector (and nobody else's) gets four tools for that, over
+platform admin's connector (and nobody else's) gets five tools for that, over
 `routes/test-accounts.js` and `services/test-accounts.js`:
 
 | Tool | What it actually does |
 |---|---|
 | `create_test_account` | Makes a new account flagged as a test account and returns its username and a one-time password, with the sign-in steps. Inputs, all optional: `username` (omitted: a placeholder and the real "choose your username" step), `platformAccess` (default `true`; `false` leaves it in the waiting room), `welcomeDm` (default `false`), `note` (≤ 200 characters) |
 | `create_test_phone_sign_in` | A one-time phone sign-in for the flows that ask for a phone (an invite's Join sheet): a fictional test number (`+1 415 555 01xx` unless `phoneNumber` names another `+1 … 555 0100–0199` number) and a random six-digit code that works once, within 30 minutes and five tries, in any environment. No text is sent. The account it makes is a test account; naming a live test account's number signs in to it again |
-| `list_test_accounts` | The live ones: id, username, who made it and when, last active, note, and the apps it made with their status. Read-only |
+| `send_test_release_email` | Sends the waitlist's real "You're in. Welcome to Homeroom" email to a test address, so the flow from that email can be walked, and the email itself checked, in any environment. Inputs, all optional: `email` (omitted: a fresh `+test` alias of the admin's own confirmed address, such as `you+test1a2b3c@example.com`), `welcomeDm` (default `false`), `note` (≤ 200 characters). The account its link makes is a test account. Returns the address and the delivery's own status (`sent`, `suppressed_rate_limit`, `skipped_staging`, …) with the steps to follow. Refuses an address that belongs to a real account or a real waitlist signup |
+| `list_test_accounts` | The live ones: id, username, address, who made it and when, last active, note, and the apps it made with their status; and the test release emails nobody has signed up from yet. Read-only |
 | `retire_test_account` | With `confirm: "RETIRE"`: takes down every app the account made (the same teardown as deleting the app), then deletes the account. Refuses an account that is not a test account, and stops without deleting it if an app cannot be taken down |
 
 Username plus a generated password, typed into the ordinary sign-in form, is
@@ -239,6 +240,20 @@ minutes and five tries, is kept only as a bcrypt hash, and adds its number only
 to a test account. A local stack can instead set `PHONE_TEST_CODE`, one fixed
 code for every test number, which production refuses.
 
+The waitlist's "you're in" email is reached only from a released waitlist
+row, so `send_test_release_email` makes one: the address becomes a waitlist
+row, confirmed and released like an admitted signup, marked in
+`test_waitlist_releases`, and the mail goes through the same sender, mobile
+steps and throttle as Admit (three a day per address, a minute apart, which a
+fresh alias avoids). Its link starts the ordinary email-code sign-up, and the
+NEW account that makes is marked a test account before it is let in
+(`waitlist.linkUserByEmail` with `newAccount`, then
+`testAccounts.adoptReleasedAccount`), without the invite-tree skips a release
+by hand gives. An account that already existed is never let in by a test
+release. Test releases are kept out of Admin → Waitlist and the Journey's
+admitted cohorts; one nobody signed up from is withdrawn a week after its last
+send, and retiring the account deletes its row.
+
 A test account is a real account, so it is fenced from real outcomes rather
 than trusted not to use them:
 
@@ -254,7 +269,8 @@ than trusted not to use them:
   shared space is still seen by everyone there.
 - **Wallets.** A native sign-in never assigns it a season wallet.
 - **Scale.** At most 25 live at once, unused phone sign-ins included (refused
-  as `at_capacity`); 10 creates, 10 phone sign-ins and 10 retires an hour per
+  as `at_capacity`, and a release email whose link would make one more);
+  10 creates, 10 phone sign-ins, 10 release emails and 10 retires an hour per
   admin.
 
 The password is in the tool result, so it lands in the client's transcript.
@@ -263,8 +279,8 @@ cannot, is flagged, and is fenced as above; the platform keeps only its hash
 and logs it nowhere. The routes sit at `/api/test-accounts` (a connector can
 reach neither `/api/admin` nor `/api/auth`), each gated `requireAdminWrite,
 testAccountLimiter, sameOriginBrowserOnly`, and no path has a `password`
-segment. `create_test_account`, `create_test_phone_sign_in` and
-`retire_test_account` are acting tools;
+segment. `create_test_account`, `create_test_phone_sign_in`,
+`send_test_release_email` and `retire_test_account` are acting tools;
 `list_test_accounts` is a `list_` read.
 
 ### Admin only: the App bench studio, the benchmark, the bot and recent shots
