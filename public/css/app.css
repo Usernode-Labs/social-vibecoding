@@ -21620,10 +21620,11 @@ html.un-kb #platform-parked {
 
   /* ── THE SECTION COLUMN (#4417, features/nav/section-column.tsx) ──────
      264px beside the strip, from under the header to the floor, on the
-     strip's own ground with its hairline: a project's places while its page
-     is up under Communities. The page moves over by it as it moves over by
-     the strip (`--platform-column-w`, added to #app-view's padding below).
-     Folded with the strip, and never while the strip only peeks. */
+     strip's own glass — `--dc-sheet-fill`, the rail's see-through fill over
+     the fixed wallpaper — with its hairline: a project's places while its
+     page is up under Communities. The page moves over by it as it moves
+     over by the strip (`--platform-column-w`, added to #app-view's padding
+     below). Folded with the strip, and never while the strip only peeks. */
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) .platform-section-column:not(.hidden) {
     position: fixed;
     z-index: 30;
@@ -21636,7 +21637,7 @@ html.un-kb #platform-parked {
     padding: 12px 12px calc(12px + var(--platform-safe-bottom, 0px));
     overflow-y: auto;
     overscroll-behavior: contain;
-    background: var(--dc-sheet-solid, var(--bg-primary));
+    background: var(--dc-sheet-fill);
     box-shadow: inset -1px 0 0 var(--app-sheet-line);
   }
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)):has(#platform-section-column:not(.hidden)) {
@@ -21654,7 +21655,7 @@ html.un-kb #platform-parked {
 
   /* ── MESSAGES' COLUMN IS ITS OWN LIST (#4417) ─────────────────────────
      The conversation list moves into the section column's place: flush
-     with the strip, the column's width and ground, from under the header to
+     with the strip, the column's width and glass, from under the header to
      the floor, and the conversation fills the rest of the page. It is the
      inbox's own list pane rather than a copy in #platform-section-column,
      so its search, its rows and the declared checks that select them stay
@@ -21667,7 +21668,7 @@ html.un-kb #platform-parked {
     flex: 0 0 var(--platform-column-full);
     width: var(--platform-column-full);
     padding-right: 0;
-    background: var(--dc-sheet-solid, var(--bg-primary));
+    background: var(--dc-sheet-fill);
     box-shadow: inset -1px 0 0 var(--app-sheet-line);
   }
 

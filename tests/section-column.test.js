@@ -38,6 +38,7 @@ test('264px beside the 76px strip, reserved only while it is drawn', () => {
   assert.match(rule[0], /position: fixed;/);
   assert.match(rule[0], /left: var\(--platform-rail-full\);/);
   assert.match(rule[0], /width: var\(--platform-column-full\);/);
+  assert.match(rule[0], /background: var\(--dc-sheet-fill\);/, 'the strip\'s own glass over the wallpaper (#4624)');
   assert.match(rule[0], /box-shadow: inset -1px 0 0 var\(--app-sheet-line\);/, 'the strip\'s hairline at its edge');
   // The page moves over by it as it moves over by the strip.
   assert.match(desktop, /:has\(#platform-section-column:not\(\.hidden\)\) \{\s*--platform-column-w: var\(--platform-column-full\);\s*\}/);
@@ -104,6 +105,7 @@ test('Messages\' column is its conversation list, flush with the strip; the conv
   assert.ok(list, 'the inbox\'s own list pane is the column');
   assert.match(list[0], /flex: 0 0 var\(--platform-column-full\);/);
   assert.match(list[0], /width: var\(--platform-column-full\);/);
+  assert.match(list[0], /background: var\(--dc-sheet-fill\);/, 'the same glass as the section column (#4624)');
   assert.match(list[0], /box-shadow: inset -1px 0 0 var\(--app-sheet-line\);/);
   // It stays where its checks find it.
   assert.match(read('frontend/src/features/messages/index.tsx'), /<section className=\{`messages-list-pane /);
