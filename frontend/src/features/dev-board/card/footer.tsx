@@ -1,5 +1,5 @@
 /**
- * The trailing pager / truncation affordance under a kanban column. It lived
+ * The trailing pager / truncation affordance at the foot of a kanban column. It lived
  * in the Activity feed's module (card/dev-feed.tsx) until the feed retired
  * in favour of the Workshop; the kanban was its other reader.
  *
@@ -16,15 +16,18 @@ function callAppView(fn: string): void {
 }
 
 export function FooterView({ f }: { f: FooterSpec }): ReactNode {
+  // #4486: the column's last line, in words, as the Workshop's lists end
+  // ("Show 2,748 more"): a reveal at the foot of the column's card rather
+  // than a pill button.
   if (f.kind === 'showAll') {
     return (
-      <button className="gc-vote-btn" onClick={() => callAppView('showAllDone')}>{`Show all ${f.n}`}</button>
+      <button type="button" className="dev-ws-reveal dev-kanban-more" onClick={() => callAppView('showAllDone')}>{`Show all ${f.n.toLocaleString('en-US')}`}</button>
     );
   }
   if (f.kind === 'loadMerged') {
     return (
-      <button className="gc-vote-btn" disabled={f.loading} onClick={() => callAppView('loadMoreMerged')}>
-        {f.loading ? 'Loading…' : (f.n != null ? `Load more (${f.n})` : 'Load more')}
+      <button type="button" className="dev-ws-reveal dev-kanban-more" disabled={f.loading} onClick={() => callAppView('loadMoreMerged')}>
+        {f.loading ? 'Loading…' : (f.n != null ? `Show ${f.n.toLocaleString('en-US')} more` : 'Show more')}
       </button>
     );
   }

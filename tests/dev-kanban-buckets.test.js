@@ -403,7 +403,7 @@ const seedDone = (AppView, { loaded, total, hasMore, loading }) => {
   AppView._mergedLoadingMore = loading;
 };
 
-test('Kanban Done footer is a clickable Load more button when more pages exist', () => {
+test('Kanban Done footer is a clickable "Show N more" when more pages exist (#4486)', () => {
   const AppView = makeAppView();
   seedDone(AppView, { loaded: 2, total: 25, hasMore: true, loading: false });
   const html = kanbanHtml(AppView);
@@ -412,8 +412,8 @@ test('Kanban Done footer is a clickable Load more button when more pages exist',
   const done = AppView._kanbanView().cols.find((c) => c.key === 'done');
   assert.deepEqual(JSON.parse(JSON.stringify(done.footer)),
     { kind: 'loadMerged', loading: false, n: 23 }, 'wired to the pager');
-  assert.match(html, /Load more \(23\)/, 'shows remaining count');
-  assert.match(html, /class="gc-vote-btn"/, 'uses the shared button class');
+  assert.match(html, />Show 23 more</, 'shows remaining count, in words');
+  assert.match(html, /<button type="button" class="dev-ws-reveal dev-kanban-more"/, 'the lists\u2019 own reveal, at the foot of the column\u2019s card');
   assert.doesNotMatch(html, /more completed/, 'no dead static hint when expandable');
 });
 

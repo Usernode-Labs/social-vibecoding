@@ -1,49 +1,71 @@
 /**
- * The Workshop tab's row (#4457): one item, in one hairline-divided list.
+ * The Workshop's row (#4457, #4486): one item, in one hairline-divided list.
  *
- * It replaces the folded card on the Workshop tab's own lists (Your work,
- * Since your last visit and a week's page). The folded card said "you" three
- * times on your own work (the author, an @ chip, "Picked up · you"), wore a
- * coloured edge, a coloured glyph, a category chip and a 💬 badge, and
- * unfolded in place under a ⇕. A row here is:
+ * ONE ROW, THREE SURFACES. The Workshop tab's lists (Your work, Since your
+ * last visit and a week's page), All items' board columns and its By
+ * category lanes all draw this row now (#4486). The board and By category
+ * used to draw the folded card (../card/fold.tsx), which wore a coloured
+ * edge and a coloured glyph the column already said, named its author and
+ * its provenance twice, and unfolded in place under a ⇕. A row here is:
  *
- *   - a neutral tile (what kind of thing it is, nothing more);
- *   - the title, 15px, at most two lines;
- *   - one line in words: "Change #4456 · yours · for #4455 and #4452",
- *     "Request #4417 · Communities & projects · 3 replies";
- *   - a status line: small tags for what is happening on it, and on a change
- *     up for a vote its votes (the count in words and the card's own Vote
- *     button, so the vote is the existing one). #4485: the vote shares the
- *     tags' line, at its far end, on a phone too, rather than taking a line
- *     of its own; so the longest tags say less on a row ("Taking shots",
- *     "Preview", the full words their tooltip) and the vote's bar went;
- *   - a › that says the row opens.
+ *   - on the Workshop tab, a neutral tile (what kind of thing it is: the tab
+ *     mixes requests, changes and live work in one list); none on the board,
+ *     whose column says it;
+ *   - the title, 15px;
+ *   - one line in the board's words: "PR #4456 · evan · for #4452 and #4455
+ *     · 4m ago", "#4417 · evan · 8h ago" (`rowWords`);
+ *   - a tags line: on live work the card's own "✓ Live" bar at its words'
+ *     width first, then the card's coloured category chip and its 💬 count
+ *     (dev-card.tsx's own pieces, unchanged), then small tags for what is
+ *     happening on it ("Picked up · zura", "Checks passed",
+ *     AppView._workshopBrief), and on the Workshop tab a change's status
+ *     pill and Vote at the line's far end. #4485: the vote shares the tags' line on
+ *     every width, a phone's too, rather than taking a line of its own (it
+ *     wraps only when the line has no room), so the longest tags say less
+ *     on a row ("Taking shots", "Preview"; the full words are their tooltip
+ *     and what a screen reader says);
+ *   - ☰, the card's own menu trigger with the card's own key, so
+ *     `_toggleCardMenu`, the touch action sheet and every item in it work
+ *     unchanged;
+ *   - on the board, under all that, the card's status bar and Vote across
+ *     the row (fold.tsx `RowBand`), except on live work.
  *
  * THE ROW OPENS THE ITEM'S PAGE. Its title is a real link to the page's
  * route, stretched over the row (app.css `.dev-ws-wrow-link::after`), so a
  * modified click, a middle click and "Open in new tab" are the browser's,
- * and on a phone a tap is that link: the page takes the screen, with its
- * "‹ Workshop" chip. On a wide window the Workshop catches the plain click
- * and opens the same page in the panel beside the list (`onOpen`,
- * ./side-panel.tsx). The Vote button sits above the stretched link, so it
- * does its own job.
+ * and on a phone a tap is that link: the page takes the screen. On a wide
+ * window the Workshop catches the plain click and opens the same page in the
+ * panel beside the list or the board (`onOpen`, ./side-panel.tsx). The chips,
+ * the bar, Vote and ☰ sit above the stretched link, so each does its own job.
  *
- * Nothing here carries `data-issue-row` and its siblings: those are what
- * the Board's delegated handler opens a card full-screen on, and this row's
- * click is its own. `data-ws-open` names the item instead.
+ * THE HOOKS. A board row carries the item's `data-issue-row` and its
+ * siblings, as the folded card it replaces did: the declared checks name an
+ * item by them, and the Done column's scroll anchor and the attribute
+ * popover's fallback anchor look items up by them. The delegated `#dev-body`
+ * handler that opens a card full-screen on those hooks stands aside for a
+ * click inside any row (`AppView._inFoldWrapper`), because the row's own
+ * link does that job. The Workshop tab's rows carry none (`data-ws-open`
+ * names the item instead), as they never have.
  */
 
 import type { MouseEvent, ReactNode } from 'react';
 
 import {
-  BallotIcon, ChatBubbleTailIcon, CheckIcon, ChevronRightIcon, EyeIcon, PencilSquareIcon,
+  BallotIcon, ChatBubbleTailIcon, CheckIcon, EyeIcon, LockIcon, PencilSquareIcon,
 } from '@/components/ui/icons';
 
-import { ChecksBar, VoteButton } from '../card/dev-card';
-import { openHref, voteSpecs } from '../card/fold';
+import { CategoryChip, ChatCount, ChecksBar, MenuTrigger, VoteButton } from '../card/dev-card';
+import { itemHooks, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
 import type { DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
+
+/**
+ * Which surface draws the row. `list`: the Workshop tab's lists, with the
+ * tile and the bar beside Vote on the tags line. `board`: All items' columns
+ * and By category's lanes, with no tile and the card's bar across the row.
+ */
+export type RowVariant = 'list' | 'board';
 
 /** Which page a row opens: the kind `AppView.openTopic` takes, and its id. */
 export interface TopicRef {
@@ -71,19 +93,30 @@ function numbers(list: number[]): string {
   return `${s.slice(0, -1).join(', ')} and ${s[s.length - 1]}`;
 }
 
+/** The item's number as the board says it: "#4417", "PR #4456", "Vote #7". */
+function numberWords(b: RowBrief): string {
+  if (!b.n) return b.noun;
+  if (b.kind === 'request') return `#${b.n}`;
+  if (b.noun === 'Vote') return `Vote #${b.n}`;
+  return `PR #${b.n}`;
+}
+
 /**
- * The row's one line in words. `inMine` is Your work, where nothing needs
- * "yours": the list is yours. #4485 dropped it from a change there too; the
- * tile and "Change" tell it apart from a request.
+ * The row's one line, in the board's words (#4486): the number, who made it,
+ * the requests a change is for (or a live one closed), and when.
+ * "PR #4456 · evan · for #4452 and #4455 · 4m ago", "#4417 · evan · 8h ago",
+ * "PR #4454 · evan · closed #4453 · 1h ago". The category and the replies
+ * are the coloured chip and the 💬 count on the tags line, so they are not
+ * said here too. It names the maker everywhere, Your work included, where
+ * #4485 had dropped "yours": the board's words say who, not whose, and a
+ * change Homeroom bot built from your request (#4538) says Homeroom bot.
  */
-export function rowWords(b: RowBrief, inMine = false): string {
-  const parts: string[] = [b.n ? `${b.noun} #${b.n}` : b.noun];
-  const who = b.mine ? 'yours' : b.by;
-  if (who && !(inMine && b.mine)) parts.push(who);
-  if (b.kind === 'request' && b.category) parts.push(b.category);
+export function rowWords(b: RowBrief): string {
+  const parts: string[] = [numberWords(b)];
+  if (b.by) parts.push(b.by);
   if (b.linked.length && b.kind !== 'live') parts.push(`for ${numbers(b.linked)}`);
   if (b.closed.length && b.kind === 'live') parts.push(`closed ${numbers(b.closed)}`);
-  if (b.replies) parts.push(`${b.replies} ${b.replies === 1 ? 'reply' : 'replies'}`);
+  if (b.ago) parts.push(b.ago);
   return parts.join(' · ');
 }
 
@@ -100,49 +133,76 @@ function Tag({ t }: { t: RowTag }): ReactNode {
       {t.tone === 'run' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}
       {t.tone === 'ok' ? <CheckIcon aria-hidden="true" /> : null}
       {t.glyph === 'eye' ? <EyeIcon aria-hidden="true" /> : null}
+      {t.glyph === 'lock' ? <LockIcon aria-hidden="true" /> : null}
       {t.short ? <><span aria-hidden="true">{t.short}</span><span className="sr-only">{t.label}</span></> : t.label}
       {t.progress ? <ChecksBar progress={t.progress} /> : null}
     </span>
   );
 }
 
-/** A change's votes: the count in words, and Vote. */
-function Votes({ vote, card }: { vote: NonNullable<RowBrief['vote']>; card: DevCardModel }): ReactNode {
-  const need = Math.max(1, vote.need);
-  const done = vote.yes >= need;
+/**
+ * A change's vote on the Workshop tab (#4486): the card's own status pill,
+ * with its own words ("0 of 1 approval"), at its words' width plus the 56px
+ * the thin bar it replaces took (app.css `.dev-ws-wvote-state`), and the
+ * card's own Vote button, at the far end of the tags line (#4485).
+ */
+function Votes({ card }: { card: DevCardModel }): ReactNode {
+  const s = card.pill?.state || null;
   const specs = voteSpecs(card);
+  if (!s && !specs) return null;
   return (
     <span className="dev-ws-wvote" data-ws-vote="">
-      <span className="dev-ws-wvote-n" data-ask={vote.ask && !done ? '1' : undefined}>{`${vote.yes} of ${need} yes`}</span>
+      {s ? <StatePill s={s} className="dev-ws-wvote-state" /> : null}
       {specs ? <span className="dev-ws-wvote-btn"><VoteButton yes={specs.yes} no={specs.no} /></span> : null}
     </span>
   );
 }
 
-export function WorkRow({ row, slug, inMine = false, on = false, onOpen }: {
+export function WorkRow({
+  row, slug, on = false, onOpen, variant = 'list', category = true,
+}: {
   row: CardRow;
   slug: string;
-  inMine?: boolean;
   /** Its page is open in the panel beside the list. */
   on?: boolean;
   /** A plain click on the row: the Workshop opens it beside the list, or lets the link go. */
   onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
+  variant?: RowVariant;
+  /** Draw the card's category chip. By category's lanes pass false: the group is the category. */
+  category?: boolean;
 }): ReactNode {
   const b = row.brief;
   if (!b) return null;
-  const href = openHref(slug, row.card);
-  const ref = topicRef(row.card);
+  const card = row.card;
+  const board = variant === 'board';
+  const href = openHref(slug, card);
+  const ref = topicRef(card);
   const Tile = TILE[b.kind] || PencilSquareIcon;
-  const status = b.tags.length > 0 || !!b.vote;
+  const pill = card.pill?.state || null;
+  // Live work leads its tags with the card's own bar at its words' width
+  // ("✓ Live"), in place of the small Live tag the brief carries.
+  const live = b.kind === 'live' && !!pill;
+  const tags = live ? b.tags.filter((t) => t.label !== 'Live') : b.tags;
+  const hasChip = category && (card.badges || []).some((x) => x && x.t === 'attr' && x.field === 'category');
+  const hasChat = (card.chatCount || 0) > 0;
+  const chip = hasChip ? <CategoryChip card={card} /> : null;
+  const chat = hasChat ? <ChatCount card={card} /> : null;
+  // The Workshop tab's bar and Vote ride the tags line; the board's ride
+  // the band under it.
+  const votes = !board && b.vote ? <Votes card={card} /> : null;
+  const status = live || hasChip || hasChat || tags.length > 0 || !!votes;
+  const menuKey = card.rail && card.rail.menuKey ? card.rail.menuKey : '';
+  const specs = board && !live ? voteSpecs(card) : null;
   return (
     <div
-      className="dev-ws-wrow"
+      className={board ? 'dev-ws-wrow dev-ws-brow' : 'dev-ws-wrow'}
       data-ws-row={row.key}
       data-ws-kind={b.kind}
       data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
       data-on={on ? '1' : undefined}
+      {...(board ? itemHooks(card) : {})}
     >
-      <span className="dev-ws-wrow-tile" data-kind={b.kind} aria-hidden="true"><Tile aria-hidden="true" /></span>
+      {board ? null : <span className="dev-ws-wrow-tile" data-kind={b.kind} aria-hidden="true"><Tile aria-hidden="true" /></span>}
       <span className="dev-ws-wrow-main">
         {href ? (
           <a
@@ -151,30 +211,37 @@ export function WorkRow({ row, slug, inMine = false, on = false, onOpen }: {
             aria-current={on ? 'true' : undefined}
             onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
           >
-            {row.card.title.text}
+            {card.title.text}
           </a>
-        ) : <span className="dev-ws-wrow-link">{row.card.title.text}</span>}
-        <span className="dev-ws-wrow-sub">{rowWords(b, inMine)}</span>
+        ) : <span className="dev-ws-wrow-link">{card.title.text}</span>}
+        <span className="dev-ws-wrow-sub">{rowWords(b)}</span>
         {status ? (
           <span className="dev-ws-wrow-status">
-            {b.tags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
-            {b.vote ? <Votes vote={b.vote} card={row.card} /> : null}
+            {live && pill ? <StatePill s={pill} className="dev-ws-wrow-live" /> : null}
+            {chip}
+            {chat}
+            {tags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+            {votes}
           </span>
         ) : null}
       </span>
-      {href ? <ChevronRightIcon className="dev-ws-wrow-chev" aria-hidden="true" /> : null}
+      {menuKey ? <span className="dev-ws-wrow-menu"><MenuTrigger menuKey={menuKey} /></span> : null}
+      {board && !live ? (
+        <RowBand card={card} chips={false} trailing={specs ? <VoteButton yes={specs.yes} no={specs.no} /> : null} />
+      ) : null}
     </div>
   );
 }
 
 /** A hairline-divided list of rows. */
-export function WorkList({ rows, slug, inMine, openKey, onOpen }: {
+export function WorkList({ rows, slug, openKey, onOpen, variant = 'list', category = true }: {
   rows: CardRow[];
   slug: string;
-  inMine?: boolean;
   /** `kind:id` of the item open in the panel, to highlight its row. */
   openKey?: string | null;
   onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
+  variant?: RowVariant;
+  category?: boolean;
 }): ReactNode {
   return (
     <div className="dev-ws-wlist">
@@ -185,9 +252,10 @@ export function WorkList({ rows, slug, inMine, openKey, onOpen }: {
             key={r.key}
             row={r}
             slug={slug}
-            inMine={inMine}
             on={!!openKey && !!ref && openKey === `${ref.kind}:${ref.id}`}
             onOpen={onOpen}
+            variant={variant}
+            category={category}
           />
         );
       })}
