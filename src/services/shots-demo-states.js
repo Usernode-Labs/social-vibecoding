@@ -16,6 +16,10 @@
 // into the run's two disposable databases (assertShotsDatabase). Nothing here
 // fakes a model: a fake model would exist only in the "after" build.
 //
+// Both sides are written at one moment (installDemoStates): a time a state
+// writes, as NOW() in its SQL or from `ctx.at`, is that instant on both,
+// never a read of either side's own clock.
+//
 // Reserved ids: 990840-990895, across every table here, beside the shots
 // session copies (990896-990899, shots-fixtures.js). tests/staging-demo-id-
 // ranges.test.js keeps the staging seeds and mocks out of the block.
@@ -300,7 +304,7 @@ const STATES = [
     needs: {
       chat_sessions: ['id', 'app_id', 'user_id', 'branch_name', 'pr_number', 'pr_title', 'pr_summary_md',
         'status', 'promoted_at', 'votes_required', 'active_users_at_promote', 'approval_epoch',
-        'check_state', 'created_at'],
+        'check_state', 'created_at', 'last_activity_at'],
       pr_votes: ['session_id', 'user_id', 'vote', 'approval_epoch', 'created_at'],
       chat_messages: ['app_id', 'user_id', 'content', 'msg_type', 'metadata', 'thread_type', 'thread_ref', 'created_at'],
     },
@@ -315,11 +319,12 @@ const STATES = [
       await client.query(
         `INSERT INTO chat_sessions
            (id, app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
-            promoted_at, votes_required, active_users_at_promote, approval_epoch, check_state, created_at)
+            promoted_at, votes_required, active_users_at_promote, approval_epoch, check_state, created_at,
+            last_activity_at)
          VALUES ($1, $2, $3, 'shots-fixture/vote-states', $1,
                  '[shots fixture] A proposal changed since you voted',
                  'A demo proposal: its author pushed a new version after people voted, and more people joined since voting opened.',
-                 'promoted', NOW() - INTERVAL '2 hours', NULL, 1, 1, 'pending', NOW() - INTERVAL '3 hours')`,
+                 'promoted', NOW() - INTERVAL '2 hours', NULL, 1, 1, 'pending', NOW() - INTERVAL '3 hours', NOW())`,
         [IDS.proposal, ctx.appId, ctx.admin.id]
       );
       // An explicit earlier epoch: left NULL, a trigger stamps the current one.
@@ -355,7 +360,7 @@ const STATES = [
     persona: 'member',
     needs: {
       chat_sessions: ['id', 'app_id', 'user_id', 'branch_name', 'pr_number', 'pr_title', 'pr_summary_md',
-        'status', 'promoted_at', 'check_state', 'created_at',
+        'status', 'promoted_at', 'check_state', 'created_at', 'last_activity_at',
         'requires_explicit_approval', 'explicit_approval_reason'],
       pr_votes: ['session_id', 'user_id', 'vote', 'created_at'],
     },
@@ -368,11 +373,12 @@ const STATES = [
       await client.query(
         `INSERT INTO chat_sessions
            (id, app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md, status,
-            promoted_at, check_state, created_at, requires_explicit_approval, explicit_approval_reason)
+            promoted_at, check_state, created_at, last_activity_at, requires_explicit_approval,
+            explicit_approval_reason)
          VALUES ($1, $2, $3, 'visibility/shots-fixture-990858', $1,
                  '[shots fixture] Make this app private (collaborators only)',
                  'A demo proposal: it changes who can see the app, so it needs a Yes from another member.',
-                 'promoted', NOW() - INTERVAL '30 minutes', 'pending', NOW() - INTERVAL '40 minutes',
+                 'promoted', NOW() - INTERVAL '30 minutes', 'pending', NOW() - INTERVAL '40 minutes', NOW(),
                  TRUE, 'visibility')`,
         [IDS.visibilityProposal, ctx.appId, ctx.member.id]
       );
@@ -678,7 +684,7 @@ const STATES = [
       return source.rowCount === 1 && taken.rowCount === 0 && idsFree(client, 'apps', [IDS.memberRemix]);
     },
     async install(client, ctx) {
-      const forkedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+      const forkedAt = new Date(Date.parse(ctx.at) - 2 * 24 * 60 * 60 * 1000).toISOString();
       const remix = await client.query(
         `INSERT INTO apps (id, name, slug, status, created_by, collab_visibility, view_visibility, forked_from, created_at)
          SELECT $1, '[shots fixture] My remix', $2, 'running', $3, 'private', 'private',
@@ -715,7 +721,7 @@ const STATES = [
     id: 'shots-demo-member-bot-run-card-v1',
     persona: 'member',
     needs: {
-      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name', 'created_at'],
       conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
       conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
       conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
@@ -754,8 +760,8 @@ const STATES = [
       // A production clone has the bot's account; elsewhere it is made the
       // way the staging Messages fixture makes it (staging-messages.js).
       await client.query(
-        `INSERT INTO users (username, password, is_synthetic, display_name)
-         VALUES ($1, 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+        `INSERT INTO users (username, password, is_synthetic, display_name, created_at)
+         VALUES ($1, 'staging-demo-not-a-login', TRUE, 'Homeroom bot', NOW())
          ON CONFLICT DO NOTHING`,
         [BOT_USERNAME]
       );
@@ -838,8 +844,9 @@ const STATES = [
 // ── Context ─────────────────────────────────────────────────────────────
 
 // The personas, the platform app, and the member's membership of it, which a
-// genuine collaborator has (copyMemberAgentSession grants the same).
-async function context(client, selfAppSlug, { grant = false } = {}) {
+// genuine collaborator has (copyMemberAgentSession grants the same). `at` is
+// the pair's moment, for a state that works out a time in JavaScript.
+async function context(client, selfAppSlug, { grant = false, at = null } = {}) {
   const users = await client.query(
     `SELECT id, username, is_admin FROM users
       WHERE username IN ('usernode-capture', 'usernode-capture-admin', $1)`,
@@ -864,6 +871,7 @@ async function context(client, selfAppSlug, { grant = false } = {}) {
   return {
     member, admin, fullAdmin: fullAdmin || null, appId, selfAppSlug,
     personas: [member, admin, ...(fullAdmin ? [fullAdmin] : [])],
+    at: shotsFixtures.pairMoment(at),
   };
 }
 
@@ -892,11 +900,21 @@ async function inspectDemoStates({ databaseUrl, slug, runId, side, selfAppSlug }
  * that fails on either side is rolled back on both and left out (`skipped`),
  * so a revision whose schema moved under a state costs that state, never the
  * run, and never leaves it on one side only.
+ *
+ * Both are written at the pair's one moment (`at` on the inputs, else now;
+ * shots-fixtures.atMoment): every NOW() a state writes, and `ctx.at`, are
+ * that instant on both sides, so the two copies hold the same rows to the
+ * microsecond however far apart their transactions began.
  */
 async function installDemoStates({ base, head }, stateIds) {
   for (const [side, input] of [['base', base], ['head', head]]) {
     shotsFixtures.assertShotsDatabase(input.databaseUrl, input.slug, input.runId, side);
   }
+  if (base.at != null && head.at != null
+      && shotsFixtures.pairMoment(base.at) !== shotsFixtures.pairMoment(head.at)) {
+    throw new Error('Before & after shots demo states are written at one moment for both sides.');
+  }
+  const at = shotsFixtures.pairMoment(base.at ?? head.at);
   const wanted = new Set(stateIds || []);
   const states = STATES.filter((state) => wanted.has(state.id));
   if (!states.length) return { installed: [], skipped: [] };
@@ -907,8 +925,8 @@ async function installDemoStates({ base, head }, stateIds) {
       await all('BEGIN');
       try {
         const contexts = [
-          await context(baseClient, base.selfAppSlug, { grant: true }),
-          await context(headClient, head.selfAppSlug, { grant: true }),
+          await context(baseClient, base.selfAppSlug, { grant: true, at }),
+          await context(headClient, head.selfAppSlug, { grant: true, at }),
         ];
         if (contexts.some((ctx) => !ctx)) {
           throw new Error('Before & after shots demo states lost their personas or platform app.');
@@ -933,7 +951,7 @@ async function installDemoStates({ base, head }, stateIds) {
         await Promise.all(clients.map((client) => client.query('ROLLBACK').catch(() => {})));
         throw error;
       }
-    }));
+    }, { at }), { at });
 }
 
 module.exports = {

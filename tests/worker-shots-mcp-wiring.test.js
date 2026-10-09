@@ -177,6 +177,75 @@ test('the guest browser is never signed in, and its optional token never outlive
     /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN\n/);
 });
 
+test('on Homeroom\'s own pairs every signed-in persona makes the copies\' first-view demo data on both sides', async () => {
+  const bootstrapModule = require('../worker/shots-browser-bootstrap.js');
+  // The routes Homeroom's copies make first-view demo data on, with ?demo=1
+  // (and only then), for the person asking: the conversations list makes the
+  // staging Messages fixture, and opening the bot's DM its under-way card.
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'conversations.js'), 'utf8');
+  assert.match(routes, /router\.get\('\/api\/conversations', async \(req, res\) => \{\s*try \{\s*if \(isDemo\(req\)\) \{\s*await stagingMessages\.ensureFixtures\(pool, req\.user\);/);
+  assert.match(routes, /router\.post\('\/api\/conversations\/homeroom-bot\/activity', [^\n]*\n\s*try \{\s*if \(isDemo\(req\)\) return res\.json\(await stagingMessages\.ensureDemoUnderWayCard\(pool, req\.user\)\);/);
+  assert.deepEqual(bootstrapModule.DEMO_DATA_REQUESTS.map(({ method, path: route }) => `${method} ${route}`), [
+    'GET /api/conversations?demo=1',
+    'POST /api/conversations/homeroom-bot/activity?demo=1',
+  ]);
+  // Only where the pair is the platform's own (worker.js sends '0' there)
+  // and some path the run may open shows the demo.
+  const hints = (paths) => JSON.stringify({ intentPaths: ['/#messages'], testingPaths: [], ...paths });
+  const warms = (env) => bootstrapModule.warmsDemoData(env);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: hints({ intentPaths: ['/?demo=1#messages'] }) }), true);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: hints({ declaredPaths: ['/?x=2&demo=1'] }) }), true);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: hints({ testingPaths: ['/?demo=10'] }) }), false);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: hints({}) }), false);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: '{' }), false);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '1', SHOTS_NAVIGATION_HINTS: hints({ intentPaths: ['/?demo=1'] }) }), false);
+  assert.equal(warms({}), false);
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  assert.match(worker, /SHOTS_PLATFORM_ASSETS: shotsPlatformAssets \? '1' : '0',/);
+  const orchestrator = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'shots-orchestrator.js'), 'utf8');
+  assert.match(orchestrator, /platformAssets: app\.slug !== config\.selfAppSlug,/);
+  // Each persona, each side, before the browsers' storage is saved; never the guest.
+  const bootstrap = read('shots-browser-bootstrap.js');
+  const warm = bootstrap.indexOf('await warmDemoData(context, origin');
+  assert.ok(warm > bootstrap.indexOf('for (const [index, origin] of origins.entries())'));
+  assert.ok(warm < bootstrap.indexOf("progress.stage = 'storage_state';"));
+  assert.match(bootstrap, /const warmDemo = warmsDemoData\(\);/);
+  assert.match(bootstrap, /if \(warmDemo\) \{/);
+  // As that persona (the context's own cookies), status only, and never fatal.
+  const calls = [];
+  const reports = [];
+  const context = (answer) => ({
+    request: {
+      async fetch(url, options) {
+        calls.push({ url, options });
+        if (answer instanceof Error) throw answer;
+        return { status: () => answer, dispose: async () => {} };
+      },
+    },
+  });
+  await bootstrapModule.warmDemoData(context(200), 'http://shots-base.invalid:3000', (r) => reports.push(r));
+  await bootstrapModule.warmDemoData(context(404), 'http://shots-head.invalid:3000', (r) => reports.push(r));
+  await bootstrapModule.warmDemoData(context(new Error('ECONNRESET http://shots-head.invalid')),
+    'http://shots-head.invalid:3000', (r) => reports.push(r));
+  assert.deepEqual(calls.map(({ url, options }) => `${options.method} ${url}`), [
+    'GET http://shots-base.invalid:3000/api/conversations?demo=1',
+    'POST http://shots-base.invalid:3000/api/conversations/homeroom-bot/activity?demo=1',
+    'GET http://shots-head.invalid:3000/api/conversations?demo=1',
+    'POST http://shots-head.invalid:3000/api/conversations/homeroom-bot/activity?demo=1',
+    'GET http://shots-head.invalid:3000/api/conversations?demo=1',
+    'POST http://shots-head.invalid:3000/api/conversations/homeroom-bot/activity?demo=1',
+  ]);
+  assert.ok(calls.every(({ options }) => options.maxRedirects === 0 && options.failOnStatusCode === false));
+  assert.deepEqual(reports, [
+    { outcome: 'ok', httpStatus: 200 }, { outcome: 'ok', httpStatus: 200 },
+    { outcome: 'http_error', httpStatus: 404 }, { outcome: 'http_error', httpStatus: 404 },
+    { outcome: 'network_error' }, { outcome: 'network_error' },
+  ]);
+  // The local dry-run pair does the same.
+  const dryRun = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'shots-dry-run-pair.js'), 'utf8');
+  assert.match(dryRun, /await warmDemoData\(context, ORIGINS\[side\]\);/);
+});
+
 test('a shots turn carries a guest token only when the platform minted one', () => {
   const worker = require('../src/services/worker');
   const shots = (extra = {}) => worker.buildTurnSecretEnv({

@@ -32,7 +32,36 @@ function assertShotsDatabase(databaseUrl, slug, runId, side) {
   if (actual !== expected) throw new Error('Before & after shots fixture requires its isolated shots database.');
 }
 
-async function withClient(databaseUrl, fn) {
+// ONE MOMENT FOR BOTH SIDES. Every row the platform writes into a pair is
+// stamped from one instant, read once per reset (shots-environment.resetPair)
+// and handed to both sides. Postgres reads NOW() from each side's own
+// transaction, which began at its own instant, so rows written "together"
+// were never quite the same: they differed by however far apart the two
+// transactions began, microseconds for the demo states and a tenth of a
+// second or more for writes made on one side after the other.
+function pairMoment(at) {
+  const ms = at == null ? Date.now() : at instanceof Date ? at.getTime() : Date.parse(String(at));
+  if (!Number.isFinite(ms)) throw new Error('Before & after shots fixtures need a valid moment.');
+  return new Date(ms).toISOString();
+}
+
+// A client whose NOW() is that moment: each NOW() in a statement is bound to
+// it as the statement's next parameter. The fixtures and demo states keep
+// writing NOW() in their SQL, so a state added later is pinned the same way.
+// Column defaults and triggers are Postgres's own and still read its clock.
+const NOW_CALL = /\bNOW\(\)/gi;
+function atMoment(client, at) {
+  const moment = pairMoment(at);
+  return {
+    query(sql, params) {
+      if (typeof sql !== 'string' || !/\bNOW\(\)/i.test(sql)) return client.query(sql, params);
+      const values = params ? [...params, moment] : [moment];
+      return client.query(sql.replace(NOW_CALL, `$${values.length}::timestamptz`), values);
+    },
+  };
+}
+
+async function withClient(databaseUrl, fn, { at = null } = {}) {
   const client = new Client({
     connectionString: databaseUrl,
     connectionTimeoutMillis: 15_000,
@@ -41,7 +70,7 @@ async function withClient(databaseUrl, fn) {
     application_name: 'social-shots-fixture',
   });
   await client.connect();
-  try { return await fn(client); }
+  try { return await fn(at == null ? client : atMoment(client, at)); }
   finally { await client.end(); }
 }
 
@@ -97,8 +126,8 @@ async function installFullAdminFixture(client, slug) {
     await client.query(
       `INSERT INTO users
          (id, username, password, is_admin, admin_readonly, can_create_apps,
-          has_platform_access, platform_access_granted_at)
-       VALUES ($1, $2, '__shots_not_a_login__', TRUE, FALSE, FALSE, TRUE, NOW())`,
+          has_platform_access, platform_access_granted_at, created_at)
+       VALUES ($1, $2, '__shots_not_a_login__', TRUE, FALSE, FALSE, TRUE, NOW(), NOW())`,
       [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]
     );
   } else {
@@ -136,7 +165,7 @@ async function installFullAdminFixture(client, slug) {
   };
 }
 
-async function ensureFullAdminIdentity({ databaseUrl, slug, runId, side }) {
+async function ensureFullAdminIdentity({ databaseUrl, slug, runId, side, at = null }) {
   assertShotsDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
     await client.query('BEGIN');
@@ -148,7 +177,7 @@ async function ensureFullAdminIdentity({ databaseUrl, slug, runId, side }) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
     }
-  });
+  }, { at });
 }
 
 async function installHostedAppFixture(client, runId) {
@@ -199,7 +228,7 @@ async function installHostedAppFixture(client, runId) {
   };
 }
 
-async function ensureHostedAppFixture({ databaseUrl, slug, runId, side }) {
+async function ensureHostedAppFixture({ databaseUrl, slug, runId, side, at = null }) {
   assertShotsDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
     await client.query('BEGIN');
@@ -211,7 +240,7 @@ async function ensureHostedAppFixture({ databaseUrl, slug, runId, side }) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;
     }
-  });
+  }, { at });
 }
 
 // A copy of the staging fixture's agent session, owned by `userId`, with its
@@ -261,7 +290,7 @@ async function copyAgentSession(client, { userId, appId, sessionId, changeId, br
   return session.rows[0];
 }
 
-async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppSlug }) {
+async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppSlug, at = null }) {
   assertShotsDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
     await client.query('BEGIN');
@@ -302,13 +331,13 @@ async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppS
       await client.query('ROLLBACK').catch(() => {});
       throw error;
     }
-  });
+  }, { at });
 }
 
 // The full admin gets an agent session too. Without one, anything drawn only
 // for a viewer with sessions (the menu's Agent sessions list) is absent on a
 // before build, and its change cannot be shown there.
-async function copyFullAdminAgentSession({ databaseUrl, slug, runId, side, selfAppSlug }) {
+async function copyFullAdminAgentSession({ databaseUrl, slug, runId, side, selfAppSlug, at = null }) {
   assertShotsDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
     await client.query('BEGIN');
@@ -338,11 +367,13 @@ async function copyFullAdminAgentSession({ databaseUrl, slug, runId, side, selfA
       await client.query('ROLLBACK').catch(() => {});
       throw error;
     }
-  });
+  }, { at });
 }
 
 module.exports = {
   assertShotsDatabase,
+  pairMoment,
+  atMoment,
   withClient,
   PROFILE,
   FULL_ADMIN_SESSION_ID,

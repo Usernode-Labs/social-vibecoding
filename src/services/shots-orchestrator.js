@@ -638,7 +638,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'runner_phase', 'runner_result', 'runner_exit', 'resume_retry',
   'tool_start', 'tool_end', 'agent_deadline',
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
-  'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist',
+  'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist', 'demo_data',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
   'platform_asset', 'home_tile', 'legacy_tailwind_cdn', 'egress_blocked', 'worker_memory',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',

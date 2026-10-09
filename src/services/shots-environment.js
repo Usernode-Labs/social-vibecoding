@@ -495,9 +495,12 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
     let availableFixtures = [];
     if (pair.app.slug === config.selfAppSlug) {
       const fixtureProfiles = [];
+      // One moment for every row written below, on both sides: read once
+      // here, never by either side's own clock (shots-fixtures.pairMoment).
+      const at = shotsFixtures.pairMoment();
       const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
         databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
-        slug: pair.app.slug, runId: pair.runId, side,
+        slug: pair.app.slug, runId: pair.runId, side, at,
       }]));
       onProgress?.({ stage: 'seed_shots_identities' });
       const admins = await allSettledValues(['base', 'head'].map((side) =>

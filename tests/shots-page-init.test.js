@@ -47,3 +47,44 @@ test('every shots browser loads it, and the image puts it where they look', () =
   assert.ok(dockerfile.includes(`COPY shots-page-init.js ${IMAGE_PATH}`),
     'the worker image copies the script to the path the config names');
 });
+
+// A storage stub with the slice of the Storage API the script uses.
+function storage(entries) {
+  const map = new Map(Object.entries(entries));
+  return {
+    map,
+    get length() { return map.size; },
+    key: (i) => [...map.keys()][i] ?? null,
+    removeItem: (k) => { map.delete(k); },
+    setItem: (k, v) => { map.set(k, String(v)); },
+  };
+}
+
+test('every page opens as a first visit to a project\'s Workshop, on both sides alike', () => {
+  // "Since your last visit" counts from the stamp the previous load wrote
+  // (AppView._workshopBaseline); the agent loads the two addresses a
+  // different number of times, so the stamp is dropped before the page reads it.
+  const appView = read('public/js/app-view.js');
+  const prefix = appView.match(/WORKSHOP_SEEN_KEY: '([^']+)'/)[1];
+  assert.match(appView, /localStorage\.getItem\(`\$\{AppView\.WORKSHOP_SEEN_KEY\}:\$\{slug\}`\)/,
+    'the Workshop reads its baseline from `<WORKSHOP_SEEN_KEY>:<slug>`');
+  const localStorage = storage({
+    [`${prefix}:usernode-2d5619`]: '1760000000000',
+    [`${prefix}:staging-demo-forkable`]: '1760000000001',
+    // Everything else a page remembers on purpose stays: a tab chosen, a draft.
+    'usernode:workshop-tab': 'workshop',
+    'usernode:messages-draft:general': 'hello',
+  });
+  const window = {}; window.top = window;
+  vm.runInNewContext(read(INIT), { sessionStorage: storage({}), localStorage, window });
+  assert.deepEqual([...localStorage.map.keys()], ['usernode:workshop-tab', 'usernode:messages-draft:general']);
+});
+
+test('a framed page keeps its visit stamps, and a page with no local storage does not throw', () => {
+  const localStorage = storage({ 'workshopSeen:usernode-2d5619': '1' });
+  vm.runInNewContext(read(INIT), { sessionStorage: storage({}), localStorage, window: { top: {} } });
+  assert.equal(localStorage.map.size, 1);
+  const window = {}; window.top = window;
+  const refusing = { get length() { throw new Error('SecurityError'); } };
+  assert.doesNotThrow(() => vm.runInNewContext(read(INIT), { sessionStorage: storage({}), localStorage: refusing, window }));
+});
