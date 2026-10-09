@@ -1229,17 +1229,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <span id="comment-pin-shot" className="min-w-[90px] flex-1 text-xs leading-tight text-zinc-500 dark:text-zinc-400">
               {shotLine}
               {!draft.keepShot ? (
-                <>
-                  {' '}
-                  <button
-                    type="button"
-                    disabled={draft.sending || draft.images.length >= MAX_PICTURES}
-                    onClick={() => update(draft.key, { keepShot: true })}
-                    className="font-semibold text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300"
-                  >
-                    Add it back
-                  </button>
-                </>
+                <button
+                  type="button"
+                  disabled={draft.sending || draft.images.length >= MAX_PICTURES}
+                  onClick={() => update(draft.key, { keepShot: true })}
+                  className="ml-1 font-semibold text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300"
+                >
+                  Add it back
+                </button>
               ) : null}
             </span>
             <input
