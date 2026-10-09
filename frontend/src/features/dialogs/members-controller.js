@@ -78,6 +78,13 @@ const MembersDialog = {
 
   _inviteDebounce: null,
 
+  // Set by openMembersModal({ focus: 'approvals' }) — the Approval rules
+  // card's Edit button (#4527): once the sections have settled, land on the
+  // Proposal approvals section instead of the top of the dialog. Cleared as
+  // soon as it is honoured (and by _reset), so an ordinary open from the
+  // menu behaves as before.
+  _focusApprovals: false,
+
   async _load() {
     const appData = AppView.appData;
     const modal = document.getElementById('members-modal');
@@ -88,6 +95,7 @@ const MembersDialog = {
     // when appData is set, so this is a defensive/diagnostic path.
     if (!appData) {
       console.warn('[members] openMembersModal called with no app loaded');
+      MembersDialog._focusApprovals = false;
       const loadError = document.getElementById('members-load-error');
       if (loadError) {
         loadError.textContent = 'This app is still loading. Open Members & approvals again in a moment.';
@@ -184,6 +192,25 @@ const MembersDialog = {
     AppView._hideAppAdminSuggestions();
     AppView._setAppAdminsStatus('', false);
     await AppView.loadAppAdmins();
+
+    // Opened from the Approval rules card's Edit button: the sections are
+    // settled now, so bring the Proposal approvals section to the top of
+    // the dialog and put its current setting under the pointer. The lit
+    // policy pill carries the current answer; on a repo-less app every
+    // control in the section is disabled and nothing takes focus.
+    if (MembersDialog._focusApprovals) {
+      MembersDialog._focusApprovals = false;
+      const govSection = document.getElementById('members-governance-section');
+      if (govSection && !govSection.classList.contains('hidden')) {
+        govSection.scrollIntoView({ block: 'start' });
+        const lit = govSection.querySelector('[data-m-approver-policy].active:not(:disabled)');
+        const first = govSection.querySelector(
+          '[data-m-approver-policy]:not(:disabled), [data-m-approvals-mode]:not(:disabled), #members-approvals-n:not(:disabled), #members-approvals-propose:not(:disabled)'
+        );
+        const target = lit || first;
+        if (target) target.focus();
+      }
+    }
   },
 
   // The entry point every legacy caller uses (the Dev "+" menu item, and
@@ -199,6 +226,7 @@ const MembersDialog = {
   // The state half, called by the island's onClose.
   _reset() {
     AppView._hideInviteSuggestions();
+    MembersDialog._focusApprovals = false;
   },
 
   // Idempotent wiring: the cloneNode swap clears stale listeners, because this
@@ -1201,7 +1229,10 @@ export function init() {
   Object.assign(AppView, MembersDialog);
   // The entry point is the one name that must NOT be the moved method: it
   // forwards to the island instead of loading in place.
-  AppView.openMembersModal = () => {
+  AppView.openMembersModal = (opts) => {
+    // The Approval rules card's Edit button asks to land on the proposal
+    // approvals section (#4527); callers with no argument are unaffected.
+    MembersDialog._focusApprovals = !!opts && opts.focus === 'approvals';
     const island = dialogController();
     if (island) { island.open(); return; }
     return MembersDialog._load();
