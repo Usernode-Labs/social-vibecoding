@@ -163,6 +163,9 @@ function makeHarness(recordAnswers) {
     dataLoads.push(slug);
     if (!slug) return null;
     AppView._ghIssues = [{ number: 7, title: `Issue 7 of ${slug}`, app: slug }];
+    // What a real load does at the end of _fetchDevData (#4524): the lists
+    // above belong to this app, and only for this app do they answer.
+    AppView._devDataSlug = slug;
     return true;
   };
   AppView._renderTopicHead = () => {
