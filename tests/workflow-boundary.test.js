@@ -42,9 +42,23 @@ export function legacy(path: string): any { return load('./' + path); }
 import { legacy } from './legacy.ts';
 export function closeWith(close: (m: any) => unknown) { const gh = legacy('services/helper'); return close(gh); }
 `,
+  // The decisions' own code: held to what a transition may do, and followed
+  // through the rules modules it imports in turn.
+  'src/workflow/rules/wording.ts': `
+import { sentence } from './deeper.ts';
+export function line(n: number): string { return sentence(n); }
+`,
+  'src/workflow/rules/deeper.ts': `
+import { legacy } from '../legacy.ts';
+const seen = new Set<number>();
+export function sentence(n: number): string { seen.add(n); return legacy('services/helper').other(n); }
+export async function lookUp(): Promise<unknown> { return fetch('https://example.com'); }
+`,
   'src/workflow/demo/machine.ts': `
 import { legacy } from '../legacy.ts';
 import { closeWith } from '../shared.ts';
+import { line } from '../rules/wording.ts';
+export const said = (n: number) => line(n);
 const memo = new Map();
 const TABLE = new Map([['a', 1]]);
 let version = 0;
@@ -122,6 +136,14 @@ test('what the workflow code does itself, per part', () => {
   has(demo, 'services | writes things');
   has(demo, 'services | writes logs');
   assert.deepEqual(platform, ['web | state src/workflow/platform.ts#runtime']);
+});
+
+test('rules/ is shared decision code, not a machine, and is followed through its own imports', () => {
+  const { root, demo } = fixture();
+  assert.ok(!boundary(root).has('rules'), 'rules/ is not listed as a machine');
+  has(demo, 'rules | uses src/services/helper.js:other');          // two imports away from the machine
+  has(demo, 'rules | state src/workflow/rules/deeper.ts#seen');
+  has(demo, 'rules | io src/workflow/rules/deeper.ts#lookUp fetch'); // outside I/O is a transition's, refused
 });
 
 test('notifiers, and other writers of owned columns', () => {

@@ -5373,55 +5373,10 @@ function voteRoutes(config) {
 // races against any concurrent vote-driven merge, so we won't double-
 // merge. `options.forceBy` is the admin user object (id, username) used
 // for the "merged by <admin> overriding vote" chat message.
-// Resolve open issue bounties for a single closed issue when a PR merges.
-//
-// A bounty pledged via the Open Issues panel ("Give kudos") flips 'open' →
-// 'awarded' and credits the merged PR's author — EXCEPT a bounty whose
-// pledger IS that author, which would be self-kudos (the same thing the
-// direct PR-kudos give path refuses with a 403; see routes/kudos.js). The
-// awardee isn't known until merge, so the self-check lives here: self-pledged
-// rows are 'voided' instead — not left 'open', because the issue is now
-// closed on GitHub and no later PR will close it again, so an open row would
-// linger forever and keep inflating the issue's open-bounty count. Voided
-// rows keep awarded_session_id/awarded_at for audit but no awarded_user_id,
-// so they earn no leaderboard credit. The pledger's weekly allowance slot is
-// still forfeited (no refund) — every pledged bounty consumes a slot.
-//
-// `IS DISTINCT FROM` keeps a NULL giver (deleted pledger) and a NULL awardee
-// (deleted PR author) on the award path. Self-voiding only runs when the PR
-// has an author. Returns { awarded, voided } id arrays. Extracted from
-// checkAndMerge so the self-bounty guard is unit-testable without driving the
-// whole merge pipeline.
-async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issueNumber }) {
-  const { rows: awarded } = await pool.query(
-    `UPDATE issue_bounties
-        SET status = 'awarded',
-            awarded_session_id = $1,
-            awarded_user_id = $2,
-            awarded_at = NOW()
-      WHERE app_id = $3 AND github_issue_number = $4 AND status = 'open'
-        AND giver_user_id IS DISTINCT FROM $2
-      RETURNING id`,
-    [sessionId, awardeeUserId || null, appId, issueNumber]
-  );
-
-  let voided = [];
-  if (awardeeUserId) {
-    const { rows } = await pool.query(
-      `UPDATE issue_bounties
-          SET status = 'voided',
-              awarded_session_id = $1,
-              awarded_at = NOW()
-        WHERE app_id = $2 AND github_issue_number = $3 AND status = 'open'
-          AND giver_user_id = $4
-        RETURNING id`,
-      [sessionId, appId, issueNumber, awardeeUserId]
-    );
-    voided = rows;
-  }
-
-  return { awarded, voided };
-}
+// Resolve open issue bounties for a single closed issue when a PR merges
+// (src/workflow/rules/bounties.ts, where the self-bounty rule is): the
+// merge-followups machine pays them in its transaction with the same code.
+const { resolveIssueBounty } = require('../workflow/rules/bounties.ts');
 
 // #687 Slice 4: shared post-merge finalizer. Everything AFTER the
 // irreversible github.mergePR call — rebuild production (unless self-hosted),
@@ -5433,88 +5388,9 @@ async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issue
 // honours the `githubMerged` guard (never roll a GitHub-merged PR back to
 // 'promoted') and the merge-debug tracing. Only ever leaves the row in
 // 'merged' — a state recoverStuckMerges already understands.
-// #1688: who to name when a proposal lands.
-//   author  — the proposer.
-//   backers — everyone whose Yes counted at merge, in vote order, the author
-//             excluded (voting for your own is allowed; being thanked for it
-//             reads oddly).
-//   shapers — everyone else who took part: a No with a line on the version
-//             that merged (an objection that did not stop it), or a word in
-//             the proposal's thread before it landed. Nobody is named twice.
-// `before` bounds the thread's speakers to those who spoke before it: the
-// merge-followups machine names them when the change goes live, which can
-// be well after the merge.
-async function mergeCredits(pool, session, { before = null } = {}) {
-  const { rows: authorRows } = session.user_id
-    ? await pool.query('SELECT username FROM users WHERE id = $1', [session.user_id])
-    : { rows: [] };
-  const author = authorRows[0]?.username || null;
-  const { rows: votes } = await pool.query(
-    `SELECT u.username, pv.vote, pv.reason
-       FROM pr_votes pv
-       JOIN users u ON u.id = pv.user_id
-       JOIN chat_sessions cs ON cs.id = pv.session_id
-      WHERE pv.session_id = $1 AND ${currentVotePredicateSql('pv', 'cs')}
-      ORDER BY pv.created_at ASC, pv.id ASC`,
-    [session.id]
-  );
-  const { rows: talkers } = await pool.query(
-    `SELECT u.username, MIN(cm.created_at) AS first_at
-       FROM chat_messages cm
-       JOIN users u ON u.id = cm.user_id
-      WHERE cm.app_id = $1 AND cm.thread_type = 'session' AND cm.thread_ref = $2
-        AND cm.msg_type = 'message'
-        AND ($3::timestamptz IS NULL OR cm.created_at <= $3::timestamptz)
-      GROUP BY u.username
-      ORDER BY first_at ASC`,
-    [session.app_id, session.id, before]
-  );
-  const seen = new Set(author ? [author] : []);
-  const backers = [];
-  for (const v of votes || []) {
-    if (v.vote === 'yes' && v.username && !seen.has(v.username)) {
-      seen.add(v.username);
-      backers.push(v.username);
-    }
-  }
-  const shapers = [];
-  for (const v of votes || []) {
-    if (v.vote === 'no' && v.reason && v.username && !seen.has(v.username)) {
-      seen.add(v.username);
-      shapers.push(v.username);
-    }
-  }
-  for (const t of talkers || []) {
-    if (t.username && !seen.has(t.username)) {
-      seen.add(t.username);
-      shapers.push(t.username);
-    }
-  }
-  return { author, backers, shapers };
-}
-
-// "alice", "alice and bob", "alice, bob and carol", "… and 2 more" past
-// eight — the announcement is a sentence, not a roll call.
-function nameList(names) {
-  const list = names.slice(0, 8);
-  const rest = names.length - list.length;
-  if (rest > 0) return `${list.join(', ')} and ${rest} more`;
-  return list.length <= 1
-    ? list.join('')
-    : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
-}
-
-// "Built by evan, backed by alice and bob, shaped by carol." The author is
-// left out for the push that goes to the author. With nobody to name, the
-// wording the announcement carried before #1688.
-function creditsSentence(credits, { withAuthor = true } = {}) {
-  const parts = [];
-  if (withAuthor && credits.author) parts.push(`Built by ${credits.author}`);
-  if (credits.backers?.length) parts.push(`${parts.length ? 'backed' : 'Backed'} by ${nameList(credits.backers)}`);
-  if (credits.shapers?.length) parts.push(`${parts.length ? 'shaped' : 'Shaped'} by ${nameList(credits.shapers)}`);
-  if (!parts.length) return withAuthor ? 'Thanks to everyone who voted' : '';
-  return `${parts.join(', ')}.`;
-}
+// #1688: who to name when a proposal lands, and the sentence that names
+// them (src/workflow/rules/merge-credits.ts): author, backers, shapers.
+const { mergeCredits, creditsSentence } = require('../workflow/rules/merge-credits.ts');
 
 // On an app in DEMO MODE, the preview the checks ran against is an image of
 // the very tree the merge just squashed onto main, so production can deploy

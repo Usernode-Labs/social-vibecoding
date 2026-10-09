@@ -796,13 +796,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "3d75b43305f5bf9b3142",
-      "count": 1,
-      "preview": "`SELECT u.username, pv.vote, pv.reason FROM pr_votes pv JOIN users u ON u.id = pv.user_id JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "448507211744003a43f6",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1')}, stale_notified_at = NULL WHERE id = $2 RETURNING pr_summary_s"
@@ -1688,6 +1681,13 @@
       "fingerprint": "4cb190fab746c444e38d",
       "count": 1,
       "preview": "`SELECT count(*)::int AS yes, cs.votes_required FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND"
+    },
+    {
+      "source": "src/workflow/rules/merge-credits.ts",
+      "kind": "structural-template",
+      "fingerprint": "3d75b43305f5bf9b3142",
+      "count": 1,
+      "preview": "`SELECT u.username, pv.vote, pv.reason FROM pr_votes pv JOIN users u ON u.id = pv.user_id JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = $"
     }
   ]
 }

@@ -56,7 +56,7 @@ test('Q32c: My history names a proposal\'s kind in words, never the column value
     assert.equal(Leaderboard._kindLabel('brand_new_kind'), 'Brand new kind', 'a newer kind still reads as words');
     assert.equal(Leaderboard._kindLabel(''), '');
     // Every governance kind the server knows has a label of its own.
-    const kinds = [...read('src/services/governance-kinds.js')
+    const kinds = [...read('src/workflow/rules/governance-kinds.ts')
       .matchAll(/^ {2}'([a-z_]+)',$/gm)].map((m) => m[1]);
     assert.ok(kinds.length >= 5);
     for (const kind of kinds) {

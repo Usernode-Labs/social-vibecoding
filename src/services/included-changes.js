@@ -54,35 +54,10 @@ function fullSha(value) {
   return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 
-/** "PR #3: First version of Flat 4B Chores", or "PR #3" untitled. */
-function prLabel(row) {
-  const ref = row?.pr_number ? `PR #${row.pr_number}` : `Change ${row?.id}`;
-  return row?.pr_title ? `${ref}: ${row.pr_title}` : ref;
-}
-
-/** The line its pull request is closed with. */
-// `live: false`: the carrier is merged but not live yet (the merge-followups
-// workflow machine says so later, in the thread: liveLine).
-function closingComment(carrier, { live = true } = {}) {
-  return live ? `Included in #${carrier.pr_number}, which went live.` : `Included in #${carrier.pr_number}, which merged.`;
-}
-
-/** The line in its own thread. */
-function threadLine(row, carrier, { live = true } = {}) {
-  return live
-    ? `${prLabel(row)} went live as part of ${prLabel(carrier)}, which was built on it. Its own vote is closed.`
-    : `${prLabel(row)} was merged as part of ${prLabel(carrier)}, which was built on it, and goes live with it. Its own vote is closed.`;
-}
-
-/** The line in its own thread once its carrier is live (after threadLine's `live: false`). */
-function liveLine(row, carrier) {
-  return `${prLabel(row)} is live, as part of ${prLabel(carrier)}.`;
-}
-
-/** The author's notification, under "Live". */
-function authorLine(carrier) {
-  return `Included in #${carrier.pr_number}, which went live.`;
-}
+// What is said about an included change (its closing comment, its thread's
+// lines, its author's notification): src/workflow/rules/included-lines.ts,
+// which the merge-followups machine writes with.
+const { prLabel, closingComment, threadLine, liveLine, authorLine } = require('../workflow/rules/included-lines.ts');
 
 /**
  * Pure: the candidates whose head is one of `commitShas`, the merged pull
@@ -145,7 +120,7 @@ function depsOf(deps = {}) {
     journey: deps.journey || require('./journey-events'),
     watcher: deps.watcher || require('./issue-close-watcher'),
     isSessionBusy: deps.isSessionBusy || require('./active-workers').isSessionBusy,
-    resolveIssueBounty: deps.resolveIssueBounty || ((...args) => require('../routes/votes').resolveIssueBounty(...args)),
+    resolveIssueBounty: deps.resolveIssueBounty || require('../workflow/rules/bounties.ts').resolveIssueBounty,
   };
 }
 

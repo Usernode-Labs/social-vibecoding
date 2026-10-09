@@ -282,12 +282,16 @@ function readSchema(root) {
 // ── The list ───────────────────────────────────────────────────────────
 
 // A machine is the code under its directory; platform.ts is the routes'
-// side; the kernel is the mechanism.
+// side; the kernel is the mechanism. rules/ is not a machine: it is the
+// decisions' own code (gate rules, line wording, domain writes), shared by
+// the machines and imported back by the code not migrated yet, and it is
+// held to what a transition may do.
+const RULES = `${WORKFLOW}rules/`;
 function machines(root) {
   const dir = path.join(root, WORKFLOW);
   const out = new Map();
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (e.isDirectory()) out.set(e.name, listFiles(root, `${WORKFLOW}${e.name}`));
+    if (e.isDirectory() && e.name !== 'rules') out.set(e.name, listFiles(root, `${WORKFLOW}${e.name}`));
   }
   out.set('platform', [`${WORKFLOW}platform.ts`]);
   return out;
@@ -299,6 +303,7 @@ const FORBIDDEN = new Map([
   ['services', new Set(['state', 'timer', 'hook'])],
   ['notifiers', new Set(['state', 'timer', 'hook'])],
   ['shared', new Set(['state', 'timer', 'hook'])],
+  ['rules', new Set(['state', 'timer', 'hook', 'io'])],
   ['web', new Set(['state', 'timer', 'hook', 'io'])],
   ['kernel', new Set(['state', 'timer', 'hook', 'io'])],
 ]);
@@ -306,6 +311,7 @@ const FORBIDDEN = new Map([
 function roleOf(name, file, top) {
   if (name === 'kernel') return 'kernel';
   if (name === 'platform') return 'web';
+  if (file.startsWith(RULES)) return 'rules';
   if (!file.startsWith(`${WORKFLOW}${name}/`)) return 'shared';
   if (!file.endsWith('/services.ts')) return 'decider';
   return top.endsWith('Notifiers') ? 'notifiers' : 'services';
@@ -336,14 +342,20 @@ function boundary(root = REPO, allowed = new Set()) {
   for (const [name, files] of groups) {
     const entries = new Map();
     const add = (e, from) => { if (!allowed.has(e.replace(/^\w+ \| /, '')) && !entries.has(e)) entries.set(e, from); };
-    // Its files, and the shared workflow modules they import.
+    // Its files, and the shared workflow modules they import, and what
+    // those import in turn.
     const all = new Set(files);
-    for (const f of files) {
+    const queue = [...files];
+    while (queue.length) {
+      const f = queue.shift();
       for (const st of scan(f).sf.statements) {
-        if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+        if (!(ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) || !st.moduleSpecifier || !ts.isStringLiteral(st.moduleSpecifier)) continue;
         const m = resolve(root, f, st.moduleSpecifier.text, false);
         if (m && m.startsWith(WORKFLOW) && !m.startsWith(`${WORKFLOW}kernel/`) && m !== `${WORKFLOW}platform.ts`
-          && ![...groups.keys()].some((g) => m.startsWith(`${WORKFLOW}${g}/`))) all.add(m);
+          && ![...groups.keys()].some((g) => m.startsWith(`${WORKFLOW}${g}/`)) && !all.has(m)) {
+          all.add(m);
+          queue.push(m);
+        }
       }
     }
     for (const f of all) {

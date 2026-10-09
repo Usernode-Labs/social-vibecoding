@@ -12,7 +12,12 @@ import type {
   Check, DomainWrite, Event, Json, Machine, Notification, Outcome, Push, TransitionContext, Tx, WorkRequest,
   WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
-import { legacy } from '../legacy.ts';
+import { changeClosed } from '../rules/agent-notes.ts';
+import { resolveIssueBounty } from '../rules/bounties.ts';
+import { createPrMergedNotification, settleDecidedChange } from '../rules/change-notifications.ts';
+import { authorLine, closingComment, liveLine, threadLine } from '../rules/included-lines.ts';
+import { creditsSentence, mergeCredits } from '../rules/merge-credits.ts';
+import { applyInTransaction } from '../rules/pending-secret-apply.ts';
 import { appVersion, chatLine, issueUpdate, toUser, voteUpdate as votePush } from '../pushes.ts';
 import { readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
@@ -153,7 +158,7 @@ const BOOT_CLOCK_MARGIN_MS = 5 * 60 * 1000;
 const prRef = (d: { prNumber: number | null; sessionId: number }) => `PR #${d.prNumber || d.sessionId}`;
 const label = (d: { prNumber: number | null; sessionId: number; prTitle: string | null }) =>
   (d.prTitle ? `${prRef(d)}: ${d.prTitle}` : prRef(d));
-const legacyRow = (r: { sessionId: number; prNumber: number | null; prTitle: string | null }) =>
+const prRow = (r: { sessionId: number; prNumber: number | null; prTitle: string | null }) =>
   ({ id: r.sessionId, pr_number: r.prNumber, pr_title: r.prTitle });
 
 function failureLine(d: Data, message: string): string {
@@ -328,18 +333,17 @@ function included(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFSt
     tally: null, selfHosted: app.selfHosted, includedIn: ref, included: [], deliveries: 0,
     deliveredSha: null, liveAt: null, failure: null, followups: {},
   };
-  const changes = legacy('services/included-changes');
   // "Went live" only when it has: until its carrier is live, it is merged and
   // goes live with it (the thread says so again on CarrierDelivered).
   const live = p.carrierState === 'live';
   const work = settleWork(d, s.linkedIssues, true);
   if (d.repo && d.prNumber) {
     work.unshift({ kind: WORK.closePr, key: 'close-pr', input: {
-      ...d.repo, number: d.prNumber, comment: changes.closingComment(legacyRow(ref), { live }), marker: `homeroom-included-${d.sessionId}`,
+      ...d.repo, number: d.prNumber, comment: closingComment(prRow(ref), { live }), marker: `homeroom-included-${d.sessionId}`,
     } });
   }
   const x: Extra = {
-    writes: [...settleWrites(e, d, s), chat(e, d.appId, d.sessionId, changes.threadLine(legacyRow(d), legacyRow(ref), { live }),
+    writes: [...settleWrites(e, d, s), chat(e, d.appId, d.sessionId, threadLine(prRow(d), prRow(ref), { live }),
       { included: { sessionId: d.sessionId, inSessionId: ref.sessionId, inPrNumber: ref.prNumber } })],
     work,
     push: [voteUpdate(d, { includedIn: ref.sessionId })],
@@ -396,7 +400,7 @@ function workResult(status: Followup['status']) {
 // An included change whose carrier is now live: it is live too, and its
 // thread, which said it goes live with the carrier, says it is.
 function carrierLive(e: Event<any>, d: Data, ctx: TransitionContext): Outcome<MFState> {
-  const line = legacy('services/included-changes').liveLine(legacyRow(d), legacyRow(d.includedIn!));
+  const line = liveLine(prRow(d), prRow(d.includedIn!));
   return toLive(e, d, e.payload.sha, ctx, { writes: [chat(e, d.appId, d.sessionId, line)] });
 }
 
@@ -543,14 +547,16 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
       bounties: writeBounties,
       agentNote: async (tx, w) => {
         if (!w.agentSessionId) return;
-        await legacy('services/agent-sessions').noteChangeClosed(tx,
+        await changeClosed(tx,
           { change: { id: w.sessionId, agent_session_id: w.agentSessionId, pr_number: w.prNumber }, outcome: 'merged' });
       },
-      // Everyone with a bell row about the change re-reads their bell.
+      // Everyone whose bell the decision settled re-reads it: the asks
+      // about this change, and digests it was the last one waiting in
+      // (those name no session).
       bell: async (tx, w, ctx) => {
-        await legacy('services/notifications').settleDecidedChange(tx, w.sessionId, { status: 'merged', push: false });
-        const { rows } = await tx.query('SELECT DISTINCT user_id FROM notifications WHERE session_id = $1', [w.sessionId]);
-        for (const r of rows) ctx.push(toUser(r.user_id, { type: 'notifications_changed' }));
+        for (const userId of await settleDecidedChange(tx, w.sessionId, { status: 'merged' })) {
+          ctx.push(toUser(userId, { type: 'notifications_changed' }));
+        }
       },
       mergedLine: writeMergedLine,
       mergedNotification: writeMergedNotification,
@@ -592,7 +598,7 @@ const line = (tx: Tx, ctx: WriteContext, eventId: number, appId: number, session
 
 // The values this proposal declared, written with the merge.
 async function writeSecrets(tx: Tx, w: any, dataKey: string, ctx: WriteContext) {
-  const { applied, refused } = await legacy('services/pending-secrets').applyInTransaction(tx, { sessionId: w.sessionId, dataKey });
+  const { applied, refused } = await applyInTransaction(tx, { sessionId: w.sessionId, dataKey });
   for (const a of applied) {
     if (!a.hadValue) continue;
     await line(tx, ctx, w.eventId, w.appId, w.sessionId, a.scope === 'platform'
@@ -612,9 +618,8 @@ async function writeSecrets(tx: Tx, w: any, dataKey: string, ctx: WriteContext) 
 // Bounties on the requests it closes go to its author, with their events
 // and lines in the same transaction.
 async function writeBounties(tx: Tx, w: any, ctx: WriteContext) {
-  const votes = legacy('routes/votes');
   for (const n of w.numbers as number[]) {
-    const { awarded } = await votes.resolveIssueBounty(tx, { appId: w.appId, sessionId: w.sessionId, awardeeUserId: w.userId, issueNumber: n });
+    const { awarded } = await resolveIssueBounty(tx, { appId: w.appId, sessionId: w.sessionId, awardeeUserId: w.userId, issueNumber: n });
     if (!awarded.length) continue;
     await tx.query(
       `INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, 'bounty_awarded', $4::jsonb)`,
@@ -628,15 +633,14 @@ async function writeBounties(tx: Tx, w: any, ctx: WriteContext) {
 // "<title> is live (PR #n). Built by …, backed by … (yes/active votes)",
 // with the names as metadata, as [main]'s merge wrote it.
 async function writeMergedLine(tx: Tx, w: any, ctx: WriteContext) {
-  const votes = legacy('routes/votes');
   const session = { id: w.sessionId, app_id: w.appId, user_id: w.userId };
-  const credits = w.force ? null : await votes.mergeCredits(tx, session, { before: w.mergedAt });
+  const credits = w.force ? null : await mergeCredits(tx, session, { before: w.mergedAt });
   const d = { sessionId: w.sessionId, prNumber: w.prNumber, prTitle: w.prTitle };
   const yes = w.tally?.yes ?? 0;
   const active = w.tally?.active ?? w.tally?.required ?? yes;
   const content = w.force
     ? `${label(d)} force-merged by admin ${w.forcedBy || 'an admin'} (${yes}/${active} vote${yes === 1 ? '' : 's'} at the time)`
-    : `${w.prTitle || prRef(d)} ${w.prTitle ? `is live (${prRef(d)})` : 'is live'}. ${credits ? votes.creditsSentence(credits) : 'Thanks to everyone who voted'} (${yes}/${active} votes)`;
+    : `${w.prTitle || prRef(d)} ${w.prTitle ? `is live (${prRef(d)})` : 'is live'}. ${credits ? creditsSentence(credits) : 'Thanks to everyone who voted'} (${yes}/${active} votes)`;
   const metadata = credits ? { merged: {
     sessionId: w.sessionId, prNumber: w.prNumber || null, title: w.prTitle || '', author: credits.author || '',
     backers: credits.backers, shapers: credits.shapers, votes: `${yes}/${active}`,
@@ -650,13 +654,12 @@ async function writeMergedNotification(tx: Tx, w: any, ctx: WriteContext) {
   if (!w.userId) return;
   let credits: string | null = null;
   if (w.includedIn) {
-    credits = legacy('services/included-changes').authorLine(legacyRow(w.includedIn));
+    credits = authorLine(prRow(w.includedIn));
   } else if (!w.force) {
-    const votes = legacy('routes/votes');
-    const c = await votes.mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
-    credits = votes.creditsSentence(c, { withAuthor: false }) || null;
+    const c = await mergeCredits(tx, { id: w.sessionId, app_id: w.appId, user_id: w.userId }, { before: w.mergedAt });
+    credits = creditsSentence(c, { withAuthor: false }) || null;
   }
-  const created = await legacy('services/notifications').createPrMergedNotification(tx, {
+  const created = await createPrMergedNotification(tx, {
     userId: w.userId, appId: w.appId, sessionId: w.sessionId, forced: !!w.force, credits,
   });
   // Named, not carried: the relaying web process reads the row for the

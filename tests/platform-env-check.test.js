@@ -345,9 +345,12 @@ test('an unparseable reserved list is treated as no overlay, not as an empty one
 
 // ── The static reserved-list parser ───────────────────────────────────
 
-test('the reserved-list parser reads the real app-manifest.js', () => {
+test('the reserved-list parser reads the real lists (src/workflow/rules/platform-keys.ts)', () => {
+  // Their home since they moved out of app-manifest.js, which a branch cut
+  // earlier still carries them in (check.KEY_LISTS_PATH, then the old path).
+  assert.equal(check.KEY_LISTS_PATH, 'src/workflow/rules/platform-keys.ts');
   const src = require('node:fs').readFileSync(
-    path.join(__dirname, '../src/services/app-manifest.js'), 'utf8');
+    path.join(__dirname, '..', check.KEY_LISTS_PATH), 'utf8');
   const overlay = check.unwritableOverlayFromSource(src);
   assert.ok(overlay, 'the real module must parse');
   for (const k of ['DATA_ENCRYPTION_KEY', 'IFRAME_JWT_PRIVATE_KEY', 'IFRAME_JWT_PUBLIC_KEY',

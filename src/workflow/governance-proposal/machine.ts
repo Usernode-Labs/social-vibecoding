@@ -9,7 +9,9 @@ import type {
   Check, DomainWrite, Event, Json, Machine, Notification, Outcome, Push, TransitionContext, Tx, WorkRequest,
   WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
-import { legacy } from '../legacy.ts';
+import { applyProposal } from '../rules/illustrations.ts';
+import { decrypt, encrypt } from '../rules/secrets.ts';
+import { deleteValue, setValue } from '../rules/platform-vars.ts';
 import { appUpdate, chatLine, issueUpdate as issuePush } from '../pushes.ts';
 import { GOVERNANCE_KINDS, readFacts } from './facts.ts';
 import type { Facts, Issue } from './facts.ts';
@@ -31,7 +33,7 @@ interface OpenData {
   targetCheckedAt: string | null;
   // The gate passed (or an admin applied) and the target check decides:
   // admin null is the group vote.
-  applyAfterCheck?: { admin: string | null } | null;
+  applyAfterCheck?: { admin: string | null; adminId?: number | null } | null;
 }
 interface ClosedData {
   issueId: number;
@@ -171,7 +173,7 @@ function close(
 
 function apply(
   issue: Issue, event: Event<any>, ctx: TransitionContext, e: Evaluation, refusal: string | null,
-  by: { admin: string } | null, extra: Extra,
+  by: { admin: string; adminId?: number | null } | null, extra: Extra,
 ): Outcome<GovState> {
   const at = ctx.now.toISOString();
   const tally = { upCount: e.yes, required: by ? e.yes : e.required, active: e.active };
@@ -187,7 +189,7 @@ function apply(
   const line = appliedLine(issue, how, campaignTitle);
   // The row is locked since the facts read it: its payload is current.
   writes.push({ type: 'apply', kind: issue.kind, issueId: issue.id, appId: issue.appId, selfHosted: issue.app.selfHosted,
-    authorId: issue.createdBy, payload: issue.payload, campaignTitle, admin: by?.admin || null });
+    authorId: issue.createdBy, payload: issue.payload, campaignTitle, admin: by?.admin || null, adminId: by?.adminId ?? null });
   writes.push(chat(event, issue, line, governanceThread(issue)));
   const work: WorkRequest[] = [];
   const push: Push[] = [...(extra.push || [])];
@@ -238,7 +240,7 @@ function targetCheckWork(data: OpenData, issue: Issue, ctx: TransitionContext): 
 // Stay open until the target check answers, then apply as `by` says.
 function awaitTarget(
   s: { data: OpenData }, issue: Issue, e: Evaluation, ctx: TransitionContext, timing: Timing,
-  by: { admin: string | null }, extra: Extra = {},
+  by: { admin: string | null; adminId?: number | null }, extra: Extra = {},
 ): Outcome<GovState> {
   const data: OpenData = { ...s.data, evaluation: e, applyAfterCheck: by };
   return {
@@ -360,7 +362,7 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       const pending = (s.data as OpenData).applyAfterCheck;
       if (!pending) return { next: checked };
       // Still open (or GitHub could not say): apply as the gate or the admin decided.
-      if (pending.admin) return apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: pending.admin }, {});
+      if (pending.admin) return apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: pending.admin, adminId: pending.adminId ?? null }, {});
       return decide(checked, e, f, ctx, timing, f.gate!, {}, true);
     },
   });
@@ -422,8 +424,8 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
         AdminApply: watchingOutside({
           guard: (s, e, f) => (f.issue!.kind === 'rename' ? reject('not_admin_appliable') : ok()),
           to: (s, e, f, ctx) => (checksTarget(f.issue!)
-            ? awaitTarget(s, f.issue!, evaluate(f.gate!, ctx.now), ctx, timing, { admin: e.payload.username })
-            : apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: e.payload.username }, {})),
+            ? awaitTarget(s, f.issue!, evaluate(f.gate!, ctx.now), ctx, timing, { admin: e.payload.username, adminId: e.payload.userId })
+            : apply(f.issue!, e, ctx, evaluate(f.gate!, ctx.now), f.refusal, { admin: e.payload.username, adminId: e.payload.userId }, {})),
         }),
         Withdraw: watchingOutside({
           to: (s, e, f, ctx) => close('withdrawn', f.issue!, e, ctx,
@@ -540,7 +542,7 @@ async function writeVote(tx: Tx, w: any, ctx: WriteContext) {
        SELECT $7, $8, $9, $10::jsonb, $11, $12 WHERE $8::text IS NOT NULL
        RETURNING id, app_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
      SELECT * FROM line`,
-    [w.issueId, w.userId, w.vote, w.reason, w.appId, legacy('services/events').EVENT_TYPES.ISSUE_VOTE_CAST, ...line]);
+    [w.issueId, w.userId, w.vote, w.reason, w.appId, 'issue_vote_cast', ...line]);
   for (const row of rows) ctx.push(chatLine(row));
 }
 
@@ -552,7 +554,7 @@ async function applyKind(tx: Tx, w: any, dataKey: string) {
       await tx.query('UPDATE apps SET name = $1 WHERE id = $2', [String(p.newName).trim(), w.appId]);
       return;
     case 'featured_illustration':
-      await legacy('services/illustration-proposals').applyProposal(tx, w.appId, p, w.issueId);
+      await applyProposal(tx, w.appId, p, w.issueId);
       return;
     case 'close_issue':
       // The platform's open twin rows for the target, and its open bounties
@@ -584,18 +586,16 @@ async function applyKind(tx: Tx, w: any, dataKey: string) {
 }
 
 async function applySecret(tx: Tx, w: any, p: any, createdBy: number | null, dataKey: string) {
-  const platformEnv = legacy('services/platform-env');
-  const secrets = legacy('services/secrets');
   const key = String(p.key).trim();
   const isPrivate = !!(p.private || p.sensitive);
   if (p.action === 'delete') {
-    if (w.selfHosted) await platformEnv.deleteValue(tx, w.appId, key);
+    if (w.selfHosted) await deleteValue(tx, w.appId, key);
     else await tx.query('DELETE FROM app_secrets WHERE app_id = $1 AND key = $2', [w.appId, key]);
   } else {
-    const plaintext = secrets.decrypt(p.valueEnc, dataKey);
+    const plaintext = decrypt(p.valueEnc, dataKey)!;
     if (w.selfHosted) {
       // The DAO re-encrypts, re-checks writability and takes `private` from the declaration.
-      await platformEnv.setValue(tx, w.appId, key, plaintext, { userId: createdBy, dataKey });
+      await setValue(tx, w.appId, key, plaintext, { userId: createdBy, dataKey });
     } else {
       await tx.query(
         `INSERT INTO app_secrets (app_id, key, value_enc, value_last4, updated_by)
@@ -603,14 +603,16 @@ async function applySecret(tx: Tx, w: any, p: any, createdBy: number | null, dat
          ON CONFLICT (app_id, key)
          DO UPDATE SET value_enc = EXCLUDED.value_enc, value_last4 = EXCLUDED.value_last4,
                        updated_at = NOW(), updated_by = EXCLUDED.updated_by`,
-        [w.appId, key, secrets.encrypt(plaintext, dataKey), isPrivate ? null : plaintext.slice(-4), createdBy]);
+        [w.appId, key, encrypt(plaintext, dataKey), isPrivate ? null : plaintext.slice(-4), createdBy]);
     }
   }
   if (w.selfHosted) {
-    const events = legacy('services/events');
+    // One event type for a platform-variable change whichever path wrote
+    // it, recorded as [main] did: by the admin who forced it, else by the
+    // proposal's author.
     await tx.query(
-      `INSERT INTO events (user_id, app_id, event_type, metadata) VALUES ($1, $2, $3, $4::jsonb)`,
-      [createdBy, w.appId, events.EVENT_TYPES.PLATFORM_ENV_CHANGED, JSON.stringify({
+      `INSERT INTO events (user_id, app_id, event_type, metadata) VALUES ($1, $2, 'platform_env_changed', $3::jsonb)`,
+      [w.admin ? (w.adminId ?? null) : createdBy, w.appId, JSON.stringify({
         key, action: p.action === 'delete' ? 'clear' : 'set', private: isPrivate,
         appliedBy: w.admin ? 'admin-force-apply' : 'group-vote',
       })]);
