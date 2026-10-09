@@ -523,6 +523,9 @@ export const ArrowsPointingOutIcon = stroked('ArrowsPointingOutIcon', 'M15 3h6v6
 
 export const ArrowsPointingInIcon = stroked('ArrowsPointingInIcon', 'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7');
 
+/** A four-way move cross: the comment bar's drag handle. */
+export const MoveIcon = stroked('MoveIcon', 'M12 2v20M2 12h20M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3');
+
 /**
  * A NEWSPAPER — the Activity row and screen.
  *

@@ -389,6 +389,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // renders once one is open.
     'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
     'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
+    // MoveIcon: the comment bar's handle, drawn only in comment mode. The
+    // name string is on the list with its path: the scan below reads every
+    // single-quoted 'M…' in the module, and this export's name begins with M.
+    'M12 2v20M2 12h20M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3',
+    'MoveIcon',
     // CONTINUE WITH APPLE / GOOGLE: the Apple mark and the four parts of
     // Google's G, on the sign-in sheet's first step, which renders only once
     // the sheet is opened and an admin has set the provider up.
