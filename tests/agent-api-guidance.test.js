@@ -183,46 +183,57 @@ test('shared Homeroom skills retain API safety and scope the hook UI to Codex CL
   assert.match(proposal, /Structured command results do not replace/);
 });
 
-// The hosted connector is a different server from the local `social_vibecoding`
-// MCP one, and the skill used to know only the second: a session that had the
-// connector, asked to post a comment "through the homeroom api", found no
-// `api_write`, followed the setup fallback and started a CLI device login the
-// user never asked for. So the connector comes first, before any route or
-// setup step, and every tool the skill names for it must be a real one.
-test('a session with the hosted connector uses it and never sets up the CLI on its own', () => {
+// Connector presence used to override a local CLI's execution surface. Pin
+// both discovery-time and loaded guidance so a listed connector cannot move
+// local API/proposal work onto the external contribution workflow.
+test('Homeroom routing distinguishes local clients, cloud/web and the hosted harness', () => {
   const api = readSkill('usernode-api');
+  const proposal = readSkill('usernode-proposal');
+  const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  const native = fs.readFileSync(path.join(root, 'src/cli/main.js'), 'utf8');
   const frontmatter = api.match(/^---\n([\s\S]*?)\n---\n/)[1];
-  assert.match(frontmatter, /When the hosted Homeroom connector is connected, use its own tools/);
+  assert.match(frontmatter, /native tools or CLI in local coding clients/);
+  assert.match(frontmatter, /hosted connector only on an OpenAI cloud\/web surface/);
 
-  const heading = '## Use the hosted connector when it is connected';
+  for (const [label, source] of [['API skill', api], ['proposal skill', proposal],
+    ['always-loaded guidance', guidance], ['native MCP instructions', native]]) {
+    assert.match(source, /Codex CLI/ , `${label} identifies the CLI surface`);
+    assert.match(source, /VM|cloud container/, `${label} does not confuse hosting with surface`);
+    assert.match(source, /even\s+when (?:a |the )?hosted Homeroom connector is listed/,
+      `${label} keeps a local client native with a connector listed`);
+    assert.match(source, /(?:Only|only)(?: on)?(?: an)? OpenAI cloud\/web/,
+      `${label} scopes connector selection to cloud/web`);
+    assert.match(source.replace(/\s+/g, ' '), /trusted runtime\/client instructions or explicit user context/,
+      `${label} uses trusted surface evidence`);
+    assert.doesNotMatch(source, /When the hosted Homeroom connector is connected, use its own tools|When only the hosted Homeroom\s+connector is connected/,
+      `${label} removes presence-based routing`);
+  }
+  assert.match(api, /if the `social_vibecoding` MCP tools are unavailable, configure the active client/);
+  assert.match(api, /keep an already-established native CLI\/MCP/);
+  assert.match(api, /Homeroom hosted dev-chat worker/);
+  assert.match(api, /harness owns push, PR creation and staging/);
+  assert.match(proposal, /Inside a Homeroom hosted dev-chat worker, use the supplied/);
+
+  const heading = '## Hosted connector on OpenAI cloud/web';
   const at = api.indexOf(heading);
-  assert.ok(at > 0, 'the skill has a connector-first section');
-  assert.ok(at < api.indexOf('## Choose the route and client'), 'it comes before the route steps');
-  assert.ok(at < api.indexOf('## Set up and authenticate'), 'and before any setup or login');
   const section = api.slice(at, api.indexOf('\n## ', at + heading.length));
-  assert.match(section, /different server from the local `social_vibecoding` MCP server/);
+  assert.ok(at > api.indexOf('## Choose by execution surface'));
+  assert.ok(at < api.indexOf('## Set up and authenticate'));
+  assert.match(section, /different server from the local `social_vibecoding` MCP/);
   assert.match(section, /do not start a device login/);
-  assert.match(section, /tell the user exactly what is missing and stop/);
-  assert.match(section, /Use the CLI only when the user explicitly asks for it/);
-  assert.match(api, /Without the connector, perform setup and authentication yourself/);
-  assert.match(api, /If neither the hosted connector nor the `social_vibecoding` MCP tools are available/);
+  assert.match(section, /missing and stop/);
+  assert.match(section, /CLI only when the user explicitly asks for it/);
+  assert.match(api, /connector is unavailable or lacks the requested capability/);
+  assert.match(proposal, /`prepare_work` → `submit_work` path/);
+  assert.match(proposal, /tell the user rather than falling back to the CLI/);
 
-  const registry = fs.readFileSync(path.join(root, 'src', 'services', 'mcp-tools.js'), 'utf8');
+  const registry = fs.readFileSync(path.join(root, 'src/services/mcp-tools.js'), 'utf8');
   const named = [...section.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)].map((m) => m[1])
     .filter((name) => name !== 'social_vibecoding' && !name.startsWith('api_'));
   assert.ok(named.includes('post_message') && named.includes('get_discussion'));
   for (const name of named) {
     assert.ok(registry.includes(`server.registerTool('${name}'`), `${name} is a connector tool`);
   }
-
-  const proposal = readSkill('usernode-proposal');
-  assert.match(proposal,
-    /hosted Homeroom connector is connected and the local `social_vibecoding` MCP server is not, do not set up the CLI/);
-  assert.match(proposal, /`prepare_work` → `submit_work` path/);
-  assert.match(proposal, /`github_not_linked`, tell the user rather than falling back to the CLI/);
-
-  const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
-  assert.match(guidance, /When only the hosted Homeroom\s+connector is connected, that connector path is the one to take/);
 });
 
 test('proposal summaries remain scannable user-visible Markdown', () => {

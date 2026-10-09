@@ -36,7 +36,7 @@ before editing it.
   question, read the canonical code instead: `git show FETCH_HEAD:<path>` or
   `git grep <pattern> FETCH_HEAD`. To change code, follow the next section:
   the base commit comes from the work order or `proposal_start`, never from
-  merging `FETCH_HEAD` yourself. With the Homeroom connector,
+  merging `FETCH_HEAD` yourself. On the OpenAI cloud/web connector route,
   `get_checkout_status` answers the same question.
 - **A session-start check runs this for you.**
   `.agents/hooks/upstream-drift.js` runs when a Claude Code session starts
@@ -70,10 +70,17 @@ before editing it.
   and the platform-managed commit upload. This path needs no personal GitHub
   link and no `prepare_work`. That tool prepares an external fork contribution
   and requires GitHub identity for that different workflow; do not call it
-  merely to discover a native proposal's base. When only the hosted Homeroom
-  connector is connected, that connector path is the one to take: do not set
-  up the CLI to reach `proposal_start` (see `usernode-api`, which keeps the
-  connector first for every Homeroom call).
+  merely to discover a native proposal's base. Local Codex CLI, IDE and
+  desktop coding sessions use native `social_vibecoding` tools or the CLI even
+  when the hosted Homeroom connector is listed. A CLI in a VM or cloud
+  container is still a CLI surface. Only OpenAI cloud/web sessions use the
+  hosted connector path; do not set up native CLI authentication there to
+  bypass a missing connector capability. Determine the surface from trusted
+  runtime/client instructions or explicit user context, not connector presence,
+  model/provider, server location or filesystem paths. Follow `usernode-api`
+  for routing and setup, keeping an established native route if surface context
+  is missing. Homeroom hosted dev-chat workers retain their supplied harness
+  tools and assigned branch lifecycle.
 - **Establish the base commit before the first edit.** Use an already supplied
   work order or guided hand-off's `Base commit:` when present. For a new native
   proposal, use the exact canonical revision resolved through Homeroom as
