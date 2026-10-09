@@ -11390,8 +11390,8 @@ const AppView = {
         ask: PlatformI18n.t('changes:workshop.queue.voteAsk'),
         // #3977: a Just-you change's Yes is its approval (B7), and the
         // item says Approve / Don't approve, as its card does.
-        yes: yes ? { label: yes.label, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
-        no: no ? { label: no.label, act: no.act } : null,
+        yes: yes ? { label: yes.label, tally: yes.tally, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
+        no: no ? { label: no.label, tally: no.tally, act: no.act } : null,
       });
     }
     for (const e of idle.slice(0, AppView.WORKSHOP_LANE_MAX)) {
@@ -15212,6 +15212,8 @@ const AppView = {
         key: 'yes',
         cls: `gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}`,
         title: yesT.tip, label: PlatformI18n.t('changes:vote.button.yes', { tally: yesT.label }),
+        // The count on its own: what draws it never reads it back out of the label.
+        tally: yesT.label,
         act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
         ...prior,
         ...AppView._voteSolo(),
@@ -15222,6 +15224,7 @@ const AppView = {
         key: 'no',
         cls: `gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}`,
         title: noT.tip, label: PlatformI18n.t('changes:vote.button.no', { tally: noT.label }),
+        tally: noT.label,
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
       },
     ];
@@ -17889,6 +17892,7 @@ const AppView = {
         key: 'yes',
         cls: `gc-vote-btn gc-vote-btn-yes${issue.my_vote === 'up' ? ' gc-vote-active' : ''}`,
         label: PlatformI18n.t('changes:governance.vote.yes', { tally: upT.label }),
+        tally: upT.label,
         title: busy ? applyState.label : upT.tip,
         disabled: busy,
         act: { fn: 'castIssueVote', args: [issue.id, 'up'] },
@@ -17898,6 +17902,7 @@ const AppView = {
         key: 'no',
         cls: `gc-vote-btn gc-vote-btn-no${issue.my_vote === 'down' ? ' gc-vote-active' : ''}`,
         label: PlatformI18n.t('changes:governance.vote.no', { tally: downT.label }),
+        tally: downT.label,
         title: busy ? applyState.label : downT.tip,
         disabled: busy,
         act: { fn: 'castIssueVote', args: [issue.id, 'down'] },
@@ -21668,12 +21673,15 @@ const AppView = {
         const counts = p.approval_policy !== 'invited';
         return { ...base, tier: 5, key: 'needs_vote',
           label: counts ? PlatformI18n.t('changes:badge.pill.needsYourYes', { yes, majority: maj }) : PlatformI18n.t('changes:badge.pill.vote', { yes, majority: maj }),
+          // The label is the plain "Vote · 1/2": the wait itself and nothing more.
+          // Readers that leave that out ask this field, never the words.
+          ...(counts ? {} : { plainVote: true }),
           tone: 'progress', fill: true, dot: true, reasons,
           title: counts
             ? PlatformI18n.t('changes:badge.pill.needsYourYesTitle', { yes, majority: maj })
             : PlatformI18n.t('changes:badge.pill.memberMissingTitle') };
       }
-      return { ...base, tier: 5, key: 'needs_vote', label: PlatformI18n.t('changes:badge.pill.vote', { yes, majority: maj }), tone: 'progress', fill: true, dot: true, reasons,
+      return { ...base, tier: 5, key: 'needs_vote', plainVote: true, label: PlatformI18n.t('changes:badge.pill.vote', { yes, majority: maj }), tone: 'progress', fill: true, dot: true, reasons,
         title: PlatformI18n.t('changes:badge.pill.notVotedTitle') };
     }
     // 6 — plain tally. The member floor's wait gets WORDS (#3826): the

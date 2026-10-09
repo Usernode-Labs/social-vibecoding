@@ -151,3 +151,35 @@ test('#22: on a solo project the Yes spec is marked solo, for proposals and grou
   assert.ok(!('solo' in (gov.actions || []).find((a) => a.key === 'no')));
   delete AppView.appData;
 });
+
+test('a vote spec carries its count beside its label, and the count is exactly what the label\'s parentheses held', () => {
+  const AppView = makeAppView(ME);
+  // Before the text moved, the card read the count back out of "Yes (N)".
+  // The spec now says it once more on its own; in English the two agree.
+  const inParens = (label) => (/\(([^)]*)\)\s*$/.exec(label) || [])[1];
+  for (const over of [
+    { yes_count: 1, no_count: 0 },
+    { yes_count: 12, no_count: 3 },
+    { yes_count: 3, no_count: 1, qualified_yes_count: 2, qualified_no_count: 0, approval_policy: 'invited' },
+    { yes_count: 0, no_count: 0, qualified_yes_count: 0, qualified_no_count: 0, approval_policy: 'invited' },
+  ]) {
+    const [yes, no] = AppView._cardVoteButtonSpecs(proposal(over));
+    assert.equal(yes.tally, inParens(yes.label), yes.label);
+    assert.equal(no.tally, inParens(no.label), no.label);
+    assert.ok(yes.tally.length > 0);
+  }
+});
+
+test('the plain vote pill says so in a field, so nothing has to recognise its English word', () => {
+  const AppView = makeAppView(ME);
+  const states = [
+    proposal({ my_vote: null }), proposal({ my_vote: 'yes' }), proposal({ status: 'merged' }),
+    proposal({ my_vote: null, yes_count: 0 }), proposal({ my_vote: null, approval_policy: 'invited', qualified_yes_count: 0 }),
+  ].map((p) => AppView.statusPillState(p)).filter(Boolean);
+  assert.ok(states.some((s) => s.plainVote), 'a proposal the viewer has not voted on shows the plain vote pill');
+  for (const s of states) {
+    // The old test was /^Vote\b/ on the label; the field is true for exactly those labels.
+    assert.equal(!!s.plainVote, /^Vote\b/.test(s.label || ''), `${s.key}: ${s.label}`);
+  }
+});
+

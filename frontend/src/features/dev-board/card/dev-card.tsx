@@ -539,11 +539,9 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // and a Yes sent without a line keeps the earlier one — the server carries
   // it onto this version. An approval asks again in its own words.
   const prior: 'yes' | 'no' | null = !mine && !approve && (yes.prior === 'yes' || yes.prior === 'no') ? yes.prior : null;
-  // "Yes (2/3)" → "2/3": the tally rides in the spec's label already.
-  const tally = (a: ActionSpec) => {
-    const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
-    return m ? m[1] : '';
-  };
+  // "2/3" beside "Yes (2/3)": the spec carries its count on its own
+  // (AppView's vote specs set `tally`); the label is never read for it.
+  const tally = (a: ActionSpec) => a.tally || '';
   const reasonId = `dev-vote-reason-${String(yes.act?.args?.[0] ?? 'x')}`;
   // #2603: a governance vote carries a line too — every proposal the group
   // votes on does. Anything else demoted into this button (there is nothing

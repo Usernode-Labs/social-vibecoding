@@ -65,6 +65,8 @@ export interface StatusPillState {
   tier: number;
   key: string;
   label: string;
+  /** The label is the plain vote wait ("Vote · 1/2"), which some lines leave out because they say it themselves. */
+  plainVote?: boolean;
   tone: string;
   fill?: boolean | 'full-yes' | 'full-no';
   yes: number;
@@ -120,6 +122,12 @@ export type PreviewSpec =
 export interface ActionSpec {
   key: string;
   label: string;
+  /**
+   * A vote button's count ("2", "1✓ +2"), beside the label that also says
+   * it ("Yes (2)"). What draws the count reads this; a label is words in
+   * the language on screen and is never parsed.
+   */
+  tally?: string;
   /** Rendered as text, so a label with an entity in it arrives decoded. */
   title?: string;
   cls?: string;
@@ -509,8 +517,8 @@ export interface DevWorkshopView {
      * is the one it needs (ActionSpec.approve, B7): the item reads Approve
      * and Don't approve instead of a vote.
      */
-    yes: { label: string; act: { fn: string; args: unknown[] } | null; approve?: boolean } | null;
-    no: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    yes: { label: string; tally?: string; act: { fn: string; args: unknown[] } | null; approve?: boolean } | null;
+    no: { label: string; tally?: string; act: { fn: string; args: unknown[] } | null } | null;
     /** The caption's facts, lifted off the card's meta line. */
     who?: string | null;
     ago?: string;

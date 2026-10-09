@@ -128,8 +128,8 @@ test('B7: the button, the status, the step and ⋯ on a project that is just you
 
 // The pair `_cardVoteButtonSpecs` hands a solo change: the Yes carries
 // `approve` (and `solo`, from the app's own record).
-const yes = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', title: 'Yes votes: 0 of 1', label: 'Yes (0/1)', act: { fn: 'castVote', args: [7, 'yes', 3] }, solo: true, approve: true };
-const no = { key: 'no', cls: 'gc-vote-btn gc-vote-btn-no', title: 'No votes: 0', label: 'No (0/1)', act: { fn: 'castVote', args: [7, 'no', 3] } };
+const yes = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', title: 'Yes votes: 0 of 1', label: 'Yes (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'yes', 3] }, solo: true, approve: true };
+const no = { key: 'no', cls: 'gc-vote-btn gc-vote-btn-no', title: 'No votes: 0', label: 'No (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'no', 3] } };
 const active = (spec) => ({ ...spec, cls: `${spec.cls} gc-vote-active` });
 
 test('#3977: Approve opens the picker a group\'s vote opens, and reads Approved once it is in', () => {
@@ -259,13 +259,13 @@ test('#4270: ⋯ no longer offers a separate "Don\'t approve"', () => {
 test('#3977: the Needs you tab\'s vote sheet is the same picker, as an approval', () => {
   // Its row's Yes carries `approve` from `_cardVoteButtonSpecs` (app-view.js
   // builds the queue; tests/dev-workshop.test.js renders the tab).
-  assert.match(SRC, /yes: yes \? \{ label: yes\.label, act: yes\.act, \.\.\.\(yes\.approve \? \{ approve: true \} : \{\}\) \} : null,/);
+  assert.match(SRC, /yes: yes \? \{ label: yes\.label, tally: yes\.tally, act: yes\.act, \.\.\.\(yes\.approve \? \{ approve: true \} : \{\}\) \} : null,/);
   const { NeedsVoteForm } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   const noop = () => {};
   const row = (approve) => ({
     t: 'card', key: 'needs:proposal:7', kind: 'vote', ask: 'Should this change go in?',
-    yes: { label: 'Yes (0/1)', act: { fn: 'castVote', args: [7, 'yes', 3] }, ...(approve ? { approve: true } : {}) },
-    no: { label: 'No (0/1)', act: { fn: 'castVote', args: [7, 'no', 3] } },
+    yes: { label: 'Yes (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'yes', 3] }, ...(approve ? { approve: true } : {}) },
+    no: { label: 'No (0/1)', tally: '0/1', act: { fn: 'castVote', args: [7, 'no', 3] } },
   });
   const draw = (approve, side = 'yes') => renderToHtml(createElement(NeedsVoteForm, {
     row: row(approve), slug: 'plant-pal', side, line: '',

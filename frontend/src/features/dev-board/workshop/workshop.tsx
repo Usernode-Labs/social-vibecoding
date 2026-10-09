@@ -1214,7 +1214,7 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     // reads "1 of 2 approvals" there (AppView.statusPillState), and every
     // rule's count reads the same way here.
     out.push({ key: 'tally', tone: undefined, text: translate('project:needsYou.fact.approvals', { yes: st.yes, count: st.majority }) });
-    if (st.label && !/^Vote\b/.test(st.label) && !SAID_ELSEWHERE.has(st.key)) out.push({ key: 'state', tone: st.tone, text: st.label });
+    if (st.label && !st.plainVote && !SAID_ELSEWHERE.has(st.key)) out.push({ key: 'state', tone: st.tone, text: st.label });
   } else if (row.kind === 'vote' && row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
@@ -1296,8 +1296,8 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
   return (
     <div className="dev-ws-vote-form" data-ws-vote-form="" data-side={side}>
       <VotePicker
-        yes={{ key: 'yes', label: row.yes ? row.yes.label : t('project:needsYou.vote.yes'), act: row.yes && row.yes.act ? row.yes.act as ActionRef : undefined }}
-        no={{ key: 'no', label: row.no ? row.no.label : t('project:needsYou.vote.no'), act: row.no && row.no.act ? row.no.act as ActionRef : undefined }}
+        yes={{ key: 'yes', label: row.yes ? row.yes.label : t('project:needsYou.vote.yes'), tally: row.yes ? row.yes.tally : undefined, act: row.yes && row.yes.act ? row.yes.act as ActionRef : undefined }}
+        no={{ key: 'no', label: row.no ? row.no.label : t('project:needsYou.vote.no'), tally: row.no ? row.no.tally : undefined, act: row.no && row.no.act ? row.no.act as ActionRef : undefined }}
         prior={null}
         side={side}
         line={line}
@@ -1324,10 +1324,9 @@ export function VoteSub({ row, voted }: { row: QueueRow; voted: string | null })
   return <p className="dev-ws-vote-sub">{tallyLine(row, voted)}</p>;
 }
 
-/** "Yes (2/3)" → "2/3": the tally a vote spec's label carries, as the card's picker reads it. */
-function labelTally(a: { label?: string }): string {
-  const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
-  return m ? m[1] : '';
+/** "2/3" beside "Yes (2/3)": the count a vote spec carries on its own, as the card's picker reads it. */
+function labelTally(a: { tally?: string }): string {
+  return a.tally || '';
 }
 
 /**
@@ -1341,7 +1340,7 @@ function tallyLine(row: QueueRow, voted: string | null): string {
   if (approves(row)) {
     // The pill's own word, when it is not the wait itself. It arrives from
     // AppView.statusPillState already worded, so it is a parameter.
-    const state = st && st.label && !/^Vote\b/.test(st.label) && !SAID_ELSEWHERE.has(st.key) ? st.label : '';
+    const state = st && st.label && !st.plainVote && !SAID_ELSEWHERE.has(st.key) ? st.label : '';
     if (!voted) {
       return state ? translate('project:needsYou.voteSub.waitingState', { state }) : translate('project:needsYou.voteSub.waiting');
     }
@@ -1356,7 +1355,7 @@ function tallyLine(row: QueueRow, voted: string | null): string {
     if (!yes && !no) return translate('project:needsYou.voteSub.nobody');
     return translate('project:needsYou.voteSub.counts', { yes, no });
   }
-  return st.label && !/^Vote\b/.test(st.label)
+  return st.label && !st.plainVote
     ? translate('project:needsYou.voteSub.ofNeededState', { count: st.yes, needed: st.majority, state: st.label })
     : translate('project:needsYou.voteSub.ofNeeded', { count: st.yes, needed: st.majority });
 }
