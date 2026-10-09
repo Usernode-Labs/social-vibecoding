@@ -5620,6 +5620,20 @@ const AppView = {
     };
   },
 
+  // ── A merged change of Homeroom itself, waiting for its release ──────
+  // The platform releases at most once every RELEASE_MIN_GAP_MINUTES, so a
+  // change merged into its own app waits for the next release; the server says when
+  // (`release`, services/release-watch.js), and the words are the one
+  // sentence every surface uses (frontend/src/lib/release-eta.ts, published
+  // as window.ReleaseEta): "Merged; goes live in the next release (about 8
+  // minutes)". Null for any other change (a child app's, one still being
+  // merged), and the caller says what it always said.
+  _releaseSentence(item, now = Date.now()) {
+    const words = typeof window !== 'undefined' ? window.ReleaseEta : null;
+    if (!item || !item.release || !words || typeof words.releaseSentence !== 'function') return null;
+    return words.releaseSentence(item.release, now) || null;
+  },
+
   // ── A change that went live inside another one ─────────────────────
   // services/included-changes.js: an open change whose head was one of a
   // merged change's commits went live with it, and is marked merged with
@@ -5745,10 +5759,12 @@ const AppView = {
     // Every step done is merged, which is live only once production runs it
     // (live_at, null until then).
     const goingLive = merged && item.live_at === null;
+    // A merge of Homeroom itself: when the platform's next release carries it.
+    const release = goingLive ? AppView._releaseSentence(item) : null;
     return {
       headline: goingLive ? 'Going live'
         : req ? req.headline : (merged ? (included ? `Live, ${included}` : 'Live') : 'Where it stands'),
-      detail: req ? (req.detail || null) : null,
+      detail: release ? `${release}.` : req ? (req.detail || null) : null,
       done: req ? req.done : null,
       total: req ? req.total : null,
       rows: out,
@@ -6060,10 +6076,14 @@ const AppView = {
     // #4479: the plan it was built from, as the card a request's page hangs
     // under the request (request-head.tsx SpecCard), with the same Read.
     body.plan = AppView._changePlanCard(item, mine && underway);
+    // With no summary and no plan, the description itself is folded under
+    // the line on the page (change-head.tsx, "Description"): the page draws
+    // no Details section for "under Details" to point at.
+    body.descriptionFold = !body.summaryHtml && !body.plan && !!body.proposalBody;
     body.summaryHtml ||= body.plan
       ? '<p>No short summary has been added yet. The plan this change is built from is below.</p>'
       : body.proposalBody
-        ? '<p>No short summary has been added yet. The current description is under Details.</p>'
+        ? '<p>No short summary has been added yet. The current description is below.</p>'
         : '<p>No change summary has been added yet.</p>';
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
@@ -6330,10 +6350,16 @@ const AppView = {
         deployed: 'It’s live.', merged: 'It’s live.', deploying: 'It’s going live.', merging: 'It’s going live.',
         delivery_pending: 'It’s going live.', deployment_stalled: 'It’s stuck going live.', delivery_failed: 'It couldn’t go live.',
       };
-      if (!item.included_in_session_id && LIVE[pill.key]) note.push(LIVE[pill.key]);
+      // A merge of Homeroom itself says when its release comes instead:
+      // `release`, which the card words and keeps counting down
+      // (change-head.tsx, frontend/src/lib/release-eta.ts).
+      const release = !item.included_in_session_id && pill.key === 'deploying' && AppView._releaseSentence(item)
+        ? item.release : null;
+      if (!release && !item.included_in_session_id && LIVE[pill.key]) note.push(LIVE[pill.key]);
       return {
         name: 'Votes', figure: 'Voted in', tone: 'done', done: true,
         segments: [{ weight: 1, pct: 100, state: 'done' }], label: 'Votes: voted in', note,
+        ...(release ? { release } : {}),
       };
     }
     const waitsOnMember = AppView._awaitingOtherMember(item);
@@ -9689,7 +9715,10 @@ const AppView = {
     // say less there: the full sentence stays the chip's tooltip and its
     // screen-reader words, and the change's page says it in full.
     const ROW_SHORT = { 'Taking before & after shots': 'Taking shots', 'Preview ready': 'Preview' };
-    const shortly = (tag) => (ROW_SHORT[tag.label] ? { ...tag, short: ROW_SHORT[tag.label] } : tag);
+    // "Checks running… 459" (a run that does not know its total yet) carries
+    // a count, so it is matched on its words' start rather than by name.
+    const shortOf = (label) => ROW_SHORT[label] || (/^Checks running…/.test(label) ? 'Checks…' : '');
+    const shortly = (tag) => (shortOf(tag.label) ? { ...tag, short: shortOf(tag.label) } : tag);
     const checkTags = (p) => {
       for (const s of AppView.statusTagSpecs(p)) {
         // #4486: "Behind main" does not stop a change landing, so it stays
@@ -9706,8 +9735,13 @@ const AppView = {
       || (card.actionPreview && card.actionPreview.state === 'live')));
     const settled = (pill) => {
       if (!pill) return;
-      if (pill.key === 'deployed' || pill.key === 'merged') tags.push({ label: 'Live', tone: 'ok' });
-      else tags.push({ label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain' });
+      if (pill.key === 'deployed' || pill.key === 'merged') { tags.push({ label: 'Live', tone: 'ok' }); return; }
+      // A merge of Homeroom itself says when its release comes, on hover.
+      const release = pill.key === 'deploying' ? AppView._releaseSentence(it) : null;
+      tags.push({
+        label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain',
+        ...(release ? { title: `${release}.` } : {}),
+      });
     };
     // #4486: the card's own age, as its meta line says it, for the row's
     // line in words ("snait · 11h ago"): each kind's card dates itself from
@@ -13224,6 +13258,18 @@ const AppView = {
           tone: 'blocked',
           text: `${pending} merged ${noun} · deployment stalled`,
           title: 'Production is still running an earlier revision. The release watcher has detected a stalled deployment.',
+        };
+      }
+      // When the platform's next release carries them (_releaseSentence):
+      // "2 merged changes go live in the next release (about 8 minutes)".
+      const words = typeof window !== 'undefined' ? window.ReleaseEta : null;
+      const line = d.release && words && typeof words.releaseCountLine === 'function'
+        ? words.releaseCountLine(d.release, pending) : null;
+      if (line) {
+        return {
+          tone: 'progress',
+          text: line,
+          title: 'Merged changes go live together, in the platform’s next release. Production is still running an earlier revision.',
         };
       }
       return {
@@ -21152,9 +21198,13 @@ const AppView = {
         return { ...base, tier: 0, key: 'deployed', label: '✓ Live', tone: 'ok', lock: false, advisory: 0,
           title: 'This change is live in the app.' };
       }
+      // A merge of Homeroom itself waits for the platform's next release:
+      // the pill's title says when (_releaseSentence), where a child app's
+      // says only that the app is still on the version before.
+      const releaseWords = AppView._releaseSentence(p);
       if (p.deployment_state === 'deploying') {
         return { ...base, tier: 0, key: 'deploying', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
-          title: 'This change was approved. The app is still running the version before it.' };
+          title: releaseWords ? `${releaseWords}.` : 'This change was approved. The app is still running the version before it.' };
       }
       if (p.deployment_state === 'stalled') {
         return { ...base, tier: 0, key: 'deployment_stalled', label: 'Stuck going live', tone: 'blocked', lock: false, advisory: 0,
@@ -21179,7 +21229,7 @@ const AppView = {
       // field reads as it always did.
       if (p.live_at === null) {
         return { ...base, tier: 0, key: 'deploying', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
-          title: 'This change was approved. The app is still running the version before it.' };
+          title: releaseWords ? `${releaseWords}.` : 'This change was approved. The app is still running the version before it.' };
       }
       return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'ok', lock: false, advisory: 0 };
     }

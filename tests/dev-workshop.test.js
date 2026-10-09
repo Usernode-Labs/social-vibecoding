@@ -5727,3 +5727,14 @@ test('#4568: a no vote is the blocked red, not the ok green', () => {
   assert.match(CSS, /\.dev-ws-rail-vote\.is-on\[data-ws-voted="no"\] \.dev-ws-rail-ic \{ background-color: var\(--state-blocked\); border-color: var\(--state-blocked\); box-shadow: 0 2px 8px rgba\(220, 38, 38, \.28\); \}/);
   assert.match(CSS, /\.dev-ws-rail-vote\.is-on\[data-ws-voted="no"\] \.dev-ws-rail-lab \{ color: var\(--state-blocked\); \}/);
 });
+
+test('a run that does not know its total yet says "Checks…" on a row, its full words the tooltip and what a screen reader reads', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const item = { id: 77, pr_number: 4577, status: 'promoted', check_state: 'pending', created_at: at(1), linked_issues: [] };
+  const running = AppView.statusTagSpecs(item).find((s) => s.data && s.data['data-status-tag'] === 'checks-running');
+  assert.ok(running && /^Checks running…/.test(running.label), 'the card’s status tag keeps its words');
+  const tag = AppView._workshopBrief('proposal', item, null).tags.find((t) => /^Checks running…/.test(t.label));
+  assert.ok(tag, 'the row carries the tag');
+  assert.equal(tag.short, 'Checks…');
+});

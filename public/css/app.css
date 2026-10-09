@@ -949,6 +949,45 @@ html:not(.dark) .messages-markdown .gc-ref-issue { background: rgba(16, 185, 129
   .messages-message-gutter { visibility: visible; }
 }
 
+/* ── The bot's change blocks (#4564) ────────────────────────────────────
+   In the chat with Homeroom bot, everything it says about one change is
+   one outlined block led by that change's card: the same hairline and
+   rounding the cards already wear (20px, one hairline, no fill, so the
+   cards inside keep their own surface), drawn around them. The rows keep
+   every part of a row they had — their id, their data, their action bar —
+   and only the outline and the vertical padding between them change, so
+   the line runs unbroken where one row continues into the next. The part
+   classes sit on the row (message-row.tsx); the box they draw is its
+   content column, which is where the cards already stop (`.messages-
+   object-list`'s 480px, plus this padding). The phone's row padding
+   (the @media rule above for .messages-message) stays: a narrow column
+   keeps the same 12px inside the line. */
+.messages-bot-block-body {
+  max-width: 506px;
+  padding: 0 12px;
+  border-left: 1px solid var(--app-sheet-line);
+  border-right: 1px solid var(--app-sheet-line);
+}
+.messages-bot-block-first .messages-bot-block-body,
+.messages-bot-block-only .messages-bot-block-body {
+  border-top: 1px solid var(--app-sheet-line);
+  border-radius: 20px 20px 0 0;
+  padding-top: 10px;
+}
+.messages-bot-block-last .messages-bot-block-body,
+.messages-bot-block-only .messages-bot-block-body {
+  border-bottom: 1px solid var(--app-sheet-line);
+  border-radius: 0 0 20px 20px;
+  padding-bottom: 10px;
+}
+.messages-bot-block-only .messages-bot-block-body { border-radius: 20px; }
+.messages-bot-block-first, .messages-bot-block-only { margin-top: 6px; }
+/* The row's own vertical padding gives way where the block continues, so
+   the outline is unbroken from the top of its first row to the foot of its
+   last. */
+.messages-bot-block-first, .messages-bot-block-middle { padding-bottom: 0; }
+.messages-bot-block-middle, .messages-bot-block-last { padding-top: 0; }
+
 /* ── The bubble transcript (a direct conversation) ───────────────────────
    Two participants, one of them you, so side and surface say who is
    speaking and no name is drawn. Theirs is an opaque white bubble on the
