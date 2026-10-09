@@ -139,6 +139,13 @@ test('classifyIssue: unchanged since the last run is skipped; changed is re-queu
   assert.equal(changed.eligible, true);
   assert.equal(changed.priority, 2);
   assert.equal(changed.reason, 'changed');
+  assert.equal(changed.changedBy, 'discussion', 'a person\'s message on Homeroom moved past the last read');
+  const onGithub = bot.classifyIssue({
+    issue: { ...issue, updatedAt: '2026-09-06T00:00:00Z' }, threadLastAt: '2026-09-01T00:00:00Z',
+    lastRun: { thread_seen_at: '2026-09-02T00:00:00Z' },
+  });
+  assert.deepEqual([onGithub.reason, onGithub.changedBy], ['changed', 'github'], 'the issue itself: a comment, an edit or a label');
+  assert.equal(unchanged.changedBy, undefined, 'only a change says what changed');
 });
 
 test('classifyIssue: an unchanged issue whose last verdict a cap held says which cap (#3152)', () => {
