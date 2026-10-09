@@ -204,6 +204,11 @@ function shortName(job: Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'firstV
   return !job.firstVersion && job.issueNumber ? `#${job.issueNumber}` : job.appName;
 }
 
+/** The short name is the stand-in for a project nobody can name: the line has its own wording. */
+function shortUnnamed(job: Pick<HomeroomBotJob, 'appUnnamed' | 'issueNumber' | 'firstVersion'>): boolean {
+  return !!job.appUnnamed && !(!job.firstVersion && job.issueNumber);
+}
+
 /** #8 (WP3): the steps of Now that wait their turn in the bot's queue rather than run. */
 const QUEUED_PHASES: ReadonlySet<HomeroomBotPhase> = new Set<HomeroomBotPhase>(['queued', 'follow_up_queued']);
 
@@ -234,8 +239,8 @@ export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date())
   // A phone's line has room for one of the two: what waits on them wins.
   if (work.now.length === 1) {
     const job = work.now[0];
-    let short = translate('messages:bot.tray.workingOnShort', { job: shortName(job) });
-    if (queued) short = waiting ? translate('messages:bot.tray.queuedNeedYou', { count: waiting }) : translate('messages:bot.tray.jobQueued', { job: shortName(job) });
+    let short = shortUnnamed(job) ? translate('messages:bot.tray.workingOnShortUnnamed') : translate('messages:bot.tray.workingOnShort', { job: shortName(job) });
+    if (queued) short = waiting ? translate('messages:bot.tray.queuedNeedYou', { count: waiting }) : (shortUnnamed(job) ? translate('messages:bot.tray.jobQueuedUnnamed') : translate('messages:bot.tray.jobQueued', { job: shortName(job) }));
     else if (waiting) short = translate('messages:bot.tray.workingNeedYou', { count: waiting });
     return {
       kind: 'working',
@@ -256,7 +261,7 @@ export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date())
     return {
       kind: 'you',
       long: translate('messages:bot.tray.jobNeedsYou', { job: jobName(job) }),
-      short: translate('messages:bot.tray.jobNeedsYouShort', { job: shortName(job) }),
+      short: shortUnnamed(job) ? translate('messages:bot.tray.jobNeedsYouShortUnnamed') : translate('messages:bot.tray.jobNeedsYouShort', { job: shortName(job) }),
     };
   }
   if (waiting) {

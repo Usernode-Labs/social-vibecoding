@@ -2327,7 +2327,8 @@ const GroupChat = {
       participants: people.map((p) => (p && typeof p === 'object' ? p.username : p)).filter(Boolean).slice(0, 3),
       // #2387 follow-up: the newest reply, which the card under the message shows.
       lastReply: last && typeof last === 'object'
-        ? { name: String(last.username || PlatformI18n.t('chat:group.thread.unknownAuthor')), text: String(last.content || '') }
+        // `unnamed`: nobody to name, and `name` is the stand-in shown where a name would be.
+        ? { name: String(last.username || PlatformI18n.t('chat:group.thread.unknownAuthor')), unnamed: !last.username, text: String(last.content || '') }
         : null,
     };
   },
@@ -3605,7 +3606,9 @@ const GroupChat = {
       e.stopPropagation();
       GroupChat._openMarkdownAttachment(
         btn.getAttribute('data-att-md'),
-        btn.getAttribute('data-att-name') || 'file.md'
+        btn.getAttribute('data-att-name') || 'file.md',
+        // The chip's name is a stand-in: the failure line has its own wording.
+        btn.hasAttribute('data-att-unnamed')
       );
     }, true);
   },
@@ -3613,7 +3616,7 @@ const GroupChat = {
   // Fetch a markdown attachment (served text/plain) and render it in the
   // spec side panel (same panel as "View full spec"). Falls back to a
   // plain download when the panel slot isn't in the current tab's DOM.
-  async _openMarkdownAttachment(url, filename) {
+  async _openMarkdownAttachment(url, filename, unnamed) {
     if (!url) return;
     if (!document.getElementById('gc-spec-side-panel')) {
       window.open(url, '_blank', 'noopener');
@@ -3621,7 +3624,11 @@ const GroupChat = {
     }
     try {
       const res = await fetch(url);
-      if (!res.ok) throw new Error(PlatformI18n.t('chat:group.file.loadFailedStatus', { file: filename, status: res.status }));
+      if (!res.ok) {
+        throw new Error(unnamed
+          ? PlatformI18n.t('chat:group.file.loadFailedStatusUnnamed', { status: res.status })
+          : PlatformI18n.t('chat:group.file.loadFailedStatus', { file: filename, status: res.status }));
+      }
       const text = await res.text();
       GroupChat._showSpecPanel({ title: filename, content: text });
     } catch (err) {

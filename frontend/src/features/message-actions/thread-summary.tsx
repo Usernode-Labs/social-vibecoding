@@ -21,7 +21,12 @@ export function ThreadSummaryChip({ replyCount, lastReplyAt, avatars, lastReply 
   lastReplyAt: string | null;
   avatars?: ReactNode;
   /** The newest reply: its author's face, name and a line of what they said. */
-  lastReply?: { face: ReactNode; name: string; text: string } | null;
+  /**
+   * `unnamed`: nobody to name. `name` is then the caller's stand-in, shown
+   * where a name would be, and the spoken sentence has its own wording for
+   * it: "unknown" on the Messages screen, "someone" in an app's chat.
+   */
+  lastReply?: { face: ReactNode; name: string; unnamed?: 'unknown' | 'someone'; text: string } | null;
   /** This thread is the one open beside the transcript. */
   active?: boolean;
   onOpen: () => void;
@@ -34,9 +39,15 @@ export function ThreadSummaryChip({ replyCount, lastReplyAt, avatars, lastReply 
       <button
         type="button"
         className={`msgx-thread-chip msgx-thread-card ${active ? 'msgx-thread-chip-active' : ''}`}
-        aria-label={last?.text
-          ? t('messages:thread.summary.openLastFromAt', { count: replyCount, username: lastReply.name, when: last.text })
-          : t('messages:thread.summary.openLastFrom', { count: replyCount, username: lastReply.name })}
+        aria-label={lastReply.unnamed === 'unknown'
+          ? (last?.text ? t('messages:thread.summary.openLastFromUnknownAt', { count: replyCount, when: last.text })
+            : t('messages:thread.summary.openLastFromUnknown', { count: replyCount }))
+          : lastReply.unnamed === 'someone'
+            ? (last?.text ? t('messages:thread.summary.openLastFromSomeoneAt', { count: replyCount, when: last.text })
+              : t('messages:thread.summary.openLastFromSomeone', { count: replyCount }))
+            : last?.text
+              ? t('messages:thread.summary.openLastFromAt', { count: replyCount, username: lastReply.name, when: last.text })
+              : t('messages:thread.summary.openLastFrom', { count: replyCount, username: lastReply.name })}
         aria-pressed={active}
         onClick={(event) => { event.stopPropagation(); onOpen(); }}
       >

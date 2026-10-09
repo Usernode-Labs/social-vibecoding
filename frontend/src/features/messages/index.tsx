@@ -72,6 +72,7 @@ import {
   syncChrome,
   followPlatformSlug,
   setFilter,
+  typingIsUnnamed,
   typingUsers,
   useChannelHandles,
   useMessagesSnapshot,
@@ -1224,7 +1225,9 @@ function ThreadHeader() {
             {active.kind === 'group'
               ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>{t('messages:header.menu.members')}</button>
               : active.kind === 'direct'
-                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">{peer ? t('messages:header.menu.block', { name: senderName(peer) }) : t('messages:header.menu.blockUnknown')}</button>
+                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">{!peer ? t('messages:header.menu.blockUnknown')
+                  : peer.unnamed ? (peer.id ? t('messages:header.menu.blockUnnamedHandle') : t('messages:header.menu.blockUnnamed'))
+                    : t('messages:header.menu.block', { name: senderName(peer) })}</button>
                 : null}
             {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer), userId: peer.id }); }}>{t('messages:header.menu.report')}</button> : null}
             <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>{t('messages:header.menu.refresh')}</button>
@@ -1631,6 +1634,23 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
 }
 
 /**
+ * "ada is typing…", "ada, sam are typing…". A typist whose username did not
+ * come with the row is a stand-in, and the line then has its own wording
+ * instead of taking that word as a name.
+ */
+function typingLine(t: ReturnType<typeof useMessages>, conversationId: number, typing: string[]): string {
+  if (!typing.length) return '';
+  const [first, second] = typing;
+  const firstUnknown = typingIsUnnamed(conversationId, first);
+  if (typing.length === 1) return firstUnknown ? t('messages:thread.typingOneUnknown') : t('messages:thread.typingOne', { name: first });
+  const secondUnknown = typingIsUnnamed(conversationId, second);
+  if (firstUnknown && secondUnknown) return t('messages:thread.typingTwoUnknown');
+  if (firstUnknown) return t('messages:thread.typingTwoFirstUnknown', { second });
+  if (secondUnknown) return t('messages:thread.typingTwoSecondUnknown', { first });
+  return t('messages:thread.typingTwo', { first, second });
+}
+
+/**
  * The open conversation. `embedded` is the copy a community's page mounts
  * (#3494, EmbeddedConversation below): the same thread, drawn without this
  * screen's header because the page's own header and tabs already name it.
@@ -1924,7 +1944,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       <TranscriptOverlay edge="foot">
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
-      <div className="messages-typing" aria-live="polite">{typing.length === 1 ? t('messages:thread.typingOne', { name: typing[0] }) : typing.length > 1 ? t('messages:thread.typingTwo', { first: typing[0], second: typing[1] }) : ''}</div>
+      <div className="messages-typing" aria-live="polite">{typingLine(t, conversationId || 0, typing)}</div>
       <MessageComposer />
     </section>
   );

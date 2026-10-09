@@ -320,6 +320,7 @@ export const MessageRow = memo(function MessageRow({
           lastReply={message.thread.lastReply ? {
             face: <span className="msgx-thread-face"><UserAvatar user={message.thread.lastReply.sender} size="sm" shape="square" /></span>,
             name: message.thread.lastReply.sender.username,
+            ...(message.thread.lastReply.sender.unnamed ? { unnamed: 'unknown' as const } : {}),
             text: message.thread.lastReply.content,
           } : null}
           onOpen={() => openThread(message.id)}

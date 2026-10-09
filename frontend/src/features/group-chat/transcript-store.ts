@@ -267,7 +267,8 @@ export interface ThreadSummaryView {
   lastReplyAt: string | null;
   participants: string[];
   /** The newest reply, which the card under the message shows (#2387 follow-up). */
-  lastReply?: { name: string; text: string } | null;
+  /** `unnamed`: nobody to name; `name` is the stand-in shown where a name would be. */
+  lastReply?: { name: string; unnamed?: boolean; text: string } | null;
 }
 
 /**

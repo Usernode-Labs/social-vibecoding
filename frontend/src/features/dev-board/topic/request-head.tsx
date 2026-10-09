@@ -297,11 +297,11 @@ function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
         <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
           {card.time ? (
             <RichMessage
-              id={card.byUnknown ? 'project:topic.request.spec.bySomeoneAt' : 'project:topic.request.spec.byAt'}
-              values={card.byUnknown ? { time: card.time } : { author: card.by, time: card.time }}
+              id={card.bySystem ? 'project:topic.request.spec.bySystemAt' : card.byUnknown ? 'project:topic.request.spec.bySomeoneAt' : 'project:topic.request.spec.byAt'}
+              values={card.byUnknown || card.bySystem ? { time: card.time } : { author: card.by, time: card.time }}
               components={[<time dateTime={card.at || undefined} title={card.timeTitle} />]}
             />
-          ) : card.byUnknown ? t('project:topic.request.spec.bySomeone') : t('project:topic.request.spec.by', { author: card.by })}
+          ) : card.bySystem ? t('project:topic.request.spec.bySystem') : card.byUnknown ? t('project:topic.request.spec.bySomeone') : t('project:topic.request.spec.by', { author: card.by })}
         </div>
       </div>
       <button

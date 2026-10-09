@@ -2827,6 +2827,10 @@
     "text": "by {{author}}",
     "description": "Line under the title on a spec's card under a request, when the time is not known: who posted the spec. {{author}} is a username, or the assistant's name, Homeroom bot."
   },
+  "topic.request.spec.bySystem": {
+    "text": "by System",
+    "description": "Line under the title on a spec's card under a request, when the time is not known: who posted the spec. Used when the row came with no author and shows \"System\" in the author's place."
+  },
   "topic.request.spec.bySomeone": {
     "text": "by Someone",
     "description": "Line under the title on a spec's card under a request, when the time is not known: who posted the spec. Used when nobody can be named; \"Someone\" is written as the line has always shown it."
@@ -2834,6 +2838,10 @@
   "topic.request.spec.byAt": {
     "text": "by {{author}} · <0>{{time}}</0>",
     "description": "Line under the title on a spec's card under a request: who posted the spec, and when. {{author}} is a username, or the assistant's name, Homeroom bot. {{time}} is when, already formatted, for example 2:41 PM or Oct 5; keep it inside <0></0>."
+  },
+  "topic.request.spec.bySystemAt": {
+    "text": "by System · <0>{{time}}</0>",
+    "description": "Line under the title on a spec's card under a request: who posted the spec, and when. Used when the row came with no author and shows \"System\" in the author's place. {{time}} is when, already worded."
   },
   "topic.request.spec.bySomeoneAt": {
     "text": "by Someone · <0>{{time}}</0>",
@@ -2902,6 +2910,10 @@
   "topic.request.stream.postedSpec": {
     "text": "<0>{{author}}</0> posted a spec",
     "description": "One line among the replies on a request's page, saying something that happened: a spec (the written plan for the change) was posted on the request's GitHub issue. {{author}} is who posted it, a username or the assistant's name, Homeroom bot, drawn bold by <0></0>."
+  },
+  "topic.request.stream.postedSpecSystem": {
+    "text": "<0>System</0> posted a spec",
+    "description": "One line among the replies on a request's page, saying something that happened: a spec (the written plan for the change) was posted on the request's GitHub issue. Used when the row came with no author and shows \"System\" in the author's place. Keep the <0> tag around the word."
   },
   "topic.request.stream.claimed": {
     "text": "<0>{{member}}</0> started working on this",

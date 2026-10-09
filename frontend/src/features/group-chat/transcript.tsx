@@ -243,6 +243,7 @@ function AttachmentChip({ att }: { att: Attachment }) {
           className="dc-attach-name gc-att-open"
           data-att-md={att.url}
           data-att-name={att.name}
+          data-att-unnamed={att.unnamed ? '' : undefined}
           title={att.unnamed ? t('chat:group.attachment.viewUnnamed') : t('chat:group.attachment.view', { file: att.name })}
         >
           {att.name}
@@ -845,6 +846,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           lastReply={msg.thread.lastReply ? {
             face: <ReplyFace name={msg.thread.lastReply.name} />,
             name: msg.thread.lastReply.name,
+            ...(msg.thread.lastReply.unnamed ? { unnamed: 'someone' as const } : {}),
             text: msg.thread.lastReply.text,
           } : null}
           onOpen={() => chat?.openReplyThread?.(msg.id)}
@@ -1013,7 +1015,9 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
       : <RichMessage id="project:topic.request.stream.postedSpecVersion" values={{ author: spec.sharedBy, version: spec.version }} components={[<b />]} />;
   } else if (gh) {
     glyph = '📋';
-    text = <RichMessage id="project:topic.request.stream.postedSpec" values={{ author: displayName(msg.username) }} components={[<b />]} />;
+    text = msg.usernameMissing
+      ? <RichMessage id="project:topic.request.stream.postedSpecSystem" components={[<b />]} />
+      : <RichMessage id="project:topic.request.stream.postedSpec" values={{ author: displayName(msg.username) }} components={[<b />]} />;
   } else if (claim) {
     glyph = '✋';
     text = <RichMessage id="project:topic.request.stream.claimed" values={{ member: claim[1] }} components={[<b />]} />;

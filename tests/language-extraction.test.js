@@ -428,7 +428,7 @@ test('a normalizer says whether the name it gives is real, and the sentence down
   const work = api.normalizeBotWork({
     now: [{ firstVersion: true, phase: 'building' }, { appSlug: 'recetas', issueNumber: 7, phase: 'building' },
       { appName: 'A project', firstVersion: true, phase: 'building' }],
-    needs: [{ issueNumber: 3, kind: 'question' }],
+    needsYou: [{ firstVersion: true, doing: 'Waiting for your answer' }],
     history: [{ firstVersion: true, outcome: 'merged' }],
   });
   const [nameless, slugged, calledAProject] = work.now;
@@ -440,10 +440,10 @@ test('a normalizer says whether the name it gives is real, and the sentence down
   assert.equal(bot.jobName(slugged), 'recetas n.º 7');
   assert.equal(calledAProject.appUnnamed, false, 'a project really called "A project" is named');
   assert.equal(bot.jobName(calledAProject), 'Primera versión de A project');
-  for (const section of [work.needs, work.history]) {
-    if (!section || !section.length) continue;
-    assert.equal(section[0].appUnnamed, true);
-    assert.doesNotMatch(bot.jobName(section[0]), /A project|de Un proyecto|^Un proyecto n/);
+  for (const [name, section] of [['needsYou', work.needsYou], ['history', work.history]]) {
+    assert.equal(section.length, 1, `${name} is read from the payload`);
+    assert.equal(section[0].appUnnamed, true, name);
+    assert.equal(bot.jobName(section[0]), 'Primera versión de un proyecto', name);
   }
 
   // A conversation nobody named, and one that is really called "Conversation".
@@ -466,7 +466,7 @@ test('a normalizer says whether the name it gives is real, and the sentence down
   const read = (file) => require('node:fs').readFileSync(require('node:path').join(__dirname, '..', file), 'utf8');
   const members = read('frontend/src/features/messages/members-dialog.tsx');
   assert.match(members, /active\?\.untitled \? t\('messages:members\.leave\.titleUntitled'\)\s*: active\?\.title \? t\('messages:members\.leave\.title', \{ group: active\.title \}\)/);
-  assert.match(read('frontend/src/features/messages/share-to-dialog.tsx'), /choice\.unnamed \? t\('messages:shareTo\.sharedToUntitled'\)/);
+  assert.match(read('frontend/src/features/messages/share-to-dialog.tsx'), /choice\.unnamed === 'conversation' \? t\('messages:shareTo\.sharedToUntitled'\)/);
   assert.match(read('frontend/src/features/messages/message-row.tsx'), /message\.sender\.unnamed \? \(message\.sender\.id \? t\('messages:row\.block\.titleUnknownHandle'\)/);
   assert.doesNotMatch(read('frontend/src/features/messages/api.ts'), /'A project'|'unknown'\)/);
 });
@@ -544,4 +544,101 @@ test('the remaining-literals report reads what the earlier version skipped', () 
   // A thrown message written to a person; a developer's reason is left alone.
   assert.deepEqual(found("throw new Error('A group needs a name.');"), ['A group needs a name.']);
   assert.deepEqual(found("throw new Error('fetch failed');"), []);
+  // A spoken attribute set by hand, a single-quoted one in markup, an element's children,
+  // a default for a name, and a literal handed to a message as a value.
+  assert.deepEqual(found("el.setAttribute('aria-label', 'close'); el.setAttribute('data-kind', 'Open thing');"), ['close']);
+  assert.deepEqual(found("el.innerHTML = `<button title='Close panel'>x</button>`;"), ['Close panel']);
+  assert.deepEqual(found("React.createElement('p', null, 'Nothing here yet');"), ['Nothing here yet']);
+  assert.deepEqual(found("function row(name = 'someone', kind = 'main') { return name + kind; }"), ['someone']);
+  assert.deepEqual(found("t('chat:x.y', { name: who || 'Someone else' });"), ['Someone else']);
+  // Known not to be seen: an error message with no full stop, and text that is built from pieces.
+  assert.deepEqual(found("throw new Error('Could not save the draft');"), []);
+});
+
+test('the flag survives every copy between the normalizer and the sentence', async (t) => {
+  const es = {
+    'messages:api.unknownUser': 'desconocido',
+    'messages:api.conversationTitle': 'Conversación',
+    'messages:thread.summary.openLastFrom_one': '{{count}} respuesta, la última de @{{username}}. Abrir hilo',
+    'messages:thread.summary.openLastFrom_other': '{{count}} respuestas, la última de @{{username}}. Abrir hilo',
+    'messages:thread.summary.openLastFrom_many': '{{count}} respuestas, la última de @{{username}}. Abrir hilo',
+    'messages:thread.summary.openLastFromUnknown_one': '{{count}} respuesta, la última de alguien sin nombre. Abrir hilo',
+    'messages:thread.summary.openLastFromUnknown_other': '{{count}} respuestas, la última de alguien sin nombre. Abrir hilo',
+    'messages:thread.summary.openLastFromUnknown_many': '{{count}} respuestas, la última de alguien sin nombre. Abrir hilo',
+    'messages:thread.summary.openLastFromSomeone_one': '{{count}} respuesta, la última de otra persona. Abrir hilo',
+    'messages:thread.summary.openLastFromSomeone_other': '{{count}} respuestas, la última de otra persona. Abrir hilo',
+    'messages:thread.summary.openLastFromSomeone_many': '{{count}} respuestas, la última de otra persona. Abrir hilo',
+  };
+  const { module: api } = await loadInSpanish(t, 'frontend/src/features/messages/api.ts', es);
+
+  // Share to: the row's label is built with an @ in front, and the flag goes with it.
+  const { module: share } = await loadInSpanish(t, 'frontend/src/features/messages/share-to-dialog.tsx', es);
+  const conversation = (row) => ({ ...api.normalizeConversation(row), membershipStatus: 'member', canSend: true, archived: false });
+  const [nameless, calledUnknown, group, named] = share.shareDestinations([
+    conversation({ id: 1, kind: 'direct', peer: { id: 7 }, members: [] }),
+    conversation({ id: 2, kind: 'direct', peer: { id: 8, username: 'unknown' }, members: [] }),
+    conversation({ id: 3, kind: 'group', members: [] }),
+    conversation({ id: 4, kind: 'group', title: 'Diseño', members: [] }),
+  ], [], { me: 1 });
+  assert.equal(nameless.label, '@desconocido', 'alone, the row shows the stand-in');
+  assert.equal(nameless.unnamed, 'person');
+  assert.equal(calledUnknown.label, '@unknown');
+  assert.equal(calledUnknown.unnamed, undefined, 'an account really called "unknown" is named');
+  assert.equal(group.unnamed, 'conversation');
+  assert.equal(named.unnamed, undefined);
+
+  // The card under a message: Messages hands "unknown", an app's chat "someone".
+  const { module: summary } = await loadInSpanish(t, 'frontend/src/features/message-actions/thread-summary.tsx', es);
+  const card = (lastReply, replyCount = 2) => renderToHtml(createElement(summary.ThreadSummaryChip, {
+    replyCount, lastReplyAt: null, lastReply: { face: null, text: 'hola', ...lastReply }, onOpen() {},
+  }));
+  assert.match(card({ name: 'desconocido', unnamed: 'unknown' }), /aria-label="2 respuestas, la última de alguien sin nombre\. Abrir hilo"/);
+  assert.match(card({ name: 'desconocido', unnamed: 'unknown' }, 1), /aria-label="1 respuesta, la última de alguien sin nombre\. Abrir hilo"/);
+  assert.match(card({ name: 'alguien', unnamed: 'someone' }), /aria-label="2 respuestas, la última de otra persona\. Abrir hilo"/);
+  assert.match(card({ name: 'unknown' }), /aria-label="2 respuestas, la última de @unknown\. Abrir hilo"/, 'a real username stays on the named path');
+  assert.match(card({ name: 'desconocido', unnamed: 'unknown' }), />@desconocido<\/strong>/, 'alone, the stand-in is a label');
+
+  // English is what it was for each stand-in.
+  for (const [named1, unnamed1, standIn] of [
+    ['messages:thread.summary.openLastFrom', 'messages:thread.summary.openLastFromUnknown', { username: 'unknown' }],
+    ['messages:thread.summary.openLastFrom', 'messages:thread.summary.openLastFromSomeone', { username: 'someone' }],
+    ['messages:thread.summary.openLastFromAt', 'messages:thread.summary.openLastFromUnknownAt', { username: 'unknown' }],
+    ['messages:thread.summary.openLastFromAt', 'messages:thread.summary.openLastFromSomeoneAt', { username: 'someone' }],
+  ]) {
+    for (const count of [1, 2]) {
+      assert.equal(message(unnamed1, { count, when: '5m ago' }), message(named1, { count, when: '5m ago', ...standIn }), `${unnamed1} ${count}`);
+    }
+  }
+  for (const [named1, unnamed1, standIn] of [
+    ['messages:header.menu.block', 'messages:header.menu.blockUnnamedHandle', { name: '@unknown' }],
+    ['messages:header.menu.block', 'messages:header.menu.blockUnnamed', { name: 'unknown' }],
+    ['messages:shareTo.sharedTo', 'messages:shareTo.sharedToUnknown', { destination: '@unknown' }],
+    ['messages:composer.requestSent.waitingNamed', 'messages:composer.requestSent.waitingUnknown', { username: 'unknown' }],
+    ['messages:composer.firstMessageHintNamed', 'messages:composer.firstMessageHintUnknown', { username: 'unknown' }],
+    ['messages:thread.typingOne', 'messages:thread.typingOneUnknown', { name: 'unknown' }],
+    ['messages:thread.typingTwo', 'messages:thread.typingTwoUnknown', { first: 'unknown', second: 'unknown' }],
+    ['messages:thread.typingTwo', 'messages:thread.typingTwoFirstUnknown', { first: 'unknown', second: 'ada' }],
+    ['messages:thread.typingTwo', 'messages:thread.typingTwoSecondUnknown', { first: 'ada', second: 'unknown' }],
+    ['messages:bot.tray.workingOnShort', 'messages:bot.tray.workingOnShortUnnamed', { job: 'A project' }],
+    ['messages:bot.tray.jobQueued', 'messages:bot.tray.jobQueuedUnnamed', { job: 'A project' }],
+    ['messages:bot.tray.jobNeedsYouShort', 'messages:bot.tray.jobNeedsYouShortUnnamed', { job: 'A project' }],
+    ['chat:group.file.loadFailedStatus', 'chat:group.file.loadFailedStatusUnnamed', { file: 'file', status: 404 }],
+    ['project:topic.request.spec.by', 'project:topic.request.spec.bySystem', { author: 'System' }],
+    ['project:topic.request.spec.byAt', 'project:topic.request.spec.bySystemAt', { author: 'System' }],
+    ['project:topic.request.stream.postedSpec', 'project:topic.request.stream.postedSpecSystem', { author: 'System' }],
+  ]) {
+    const rest = { first: 'ada', second: 'ada', time: '2h ago' };
+    assert.equal(message(unnamed1, { ...rest, ...standIn }), message(named1, { ...rest, ...standIn }), unnamed1);
+  }
+
+  // The hops themselves: each copy of the name takes the flag with it.
+  const read = (file) => require('node:fs').readFileSync(require('node:path').join(__dirname, '..', file), 'utf8');
+  assert.match(read('frontend/src/features/messages/message-row.tsx'), /name: message\.thread\.lastReply\.sender\.username,\n\s*\.\.\.\(message\.thread\.lastReply\.sender\.unnamed \? \{ unnamed: 'unknown' as const \} : \{\}\),/);
+  assert.match(read('public/js/group-chat.js'), /unnamed: !last\.username, text:/);
+  assert.match(read('frontend/src/features/group-chat/transcript.tsx'), /data-att-unnamed=\{att\.unnamed \? '' : undefined\}/, 'the DOM bridge carries the flag too');
+  assert.match(read('public/js/group-chat.js'), /btn\.hasAttribute\('data-att-unnamed'\)/);
+  assert.match(read('frontend/src/features/group-chat/transcript.tsx'), /\.\.\.\(msg\.thread\.lastReply\.unnamed \? \{ unnamed: 'someone' as const \} : \{\}\),/);
+  assert.match(read('frontend/src/features/messages/index.tsx'), /peer\.unnamed \? \(peer\.id \? t\('messages:header\.menu\.blockUnnamedHandle'\) : t\('messages:header\.menu\.blockUnnamed'\)\)/);
+  assert.match(read('frontend/src/features/messages/composer.tsx'), /waitingUnknown \? t\('messages:composer\.requestSent\.waitingUnknown'\)/);
+  assert.match(read('frontend/src/features/messages/bot-work.tsx'), /shortUnnamed\(job\) \? translate\('messages:bot\.tray\.workingOnShortUnnamed'\)/);
 });

@@ -2223,9 +2223,13 @@ export function handleEvent(raw: ConversationEvent): void {
       const userId = api.strictId(event.userId ?? event.user_id);
       // The wire event carries no profile data. Resolve the active member
       // locally so a typing event cannot smuggle a stale/unauthorized name.
-      const username = state.active?.id === conversationId
-        ? state.active.members.find((member) => member.id === userId && member.status === 'member')?.username || ''
-        : '';
+      const typist = state.active?.id === conversationId
+        ? state.active.members.find((member) => member.id === userId && member.status === 'member') || null
+        : null;
+      const username = typist?.username || '';
+      // A member whose username did not come with the row types under a
+      // stand-in; the line above the box has its own wording for that.
+      if (typist?.unnamed && username) unnamedTypists.add(`${conversationId}:${username}`);
       // B5: the bot types as its name, "Homeroom bot is typing…".
       const botPeer = state.active?.id === conversationId && state.active.peer?.bot && state.active.peer.id === userId
         ? state.active.peer.displayName || '' : '';
@@ -2279,8 +2283,16 @@ function releaseHeldTyping(conversationId: number): void {
   }
 }
 
+/** `conversationId:name` of the typing names that are stand-ins, not usernames. */
+const unnamedTypists = new Set<string>();
+
 export function typingUsers(conversationId: number): string[] {
   return state.typing[conversationId] || [];
+}
+
+/** Whether a name in `typingUsers` is the stand-in for a member with no username. */
+export function typingIsUnnamed(conversationId: number, name: string): boolean {
+  return unnamedTypists.has(`${conversationId}:${name}`);
 }
 
 export function notifyTyping(typing: boolean): void {

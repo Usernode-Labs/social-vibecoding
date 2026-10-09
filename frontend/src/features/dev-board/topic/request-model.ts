@@ -38,6 +38,8 @@ export interface RequestSpecCard {
   by: string;
   /** `by` is a stand-in word, not a name: the card uses its unnamed wording. */
   byUnknown?: boolean;
+  /** `by` is the chat's "System" stand-in: the row came with no author. */
+  bySystem?: boolean;
   at: string | null;
   time: string;
   timeTitle: string;
@@ -86,6 +88,7 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
         title: m.githubSpec.title || t('project:topic.request.spec.untitled'),
         version: null,
         by: displayName(m.username),
+        bySystem: !!m.usernameMissing,
         at: m.at || null,
         time: m.time,
         timeTitle: m.timeTitle,

@@ -475,15 +475,18 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // for. Every later send used to come back "Not sent · Retry", and the
   // Retry could never work.
   const awaiting = !inThread && !!active.awaitingAcceptance;
-  const waitingOn = awaiting
-    ? active.peer?.username || active.members.find((member) => member.status === 'invited')?.username || ''
-    : '';
+  const waitingUser = awaiting
+    ? (active.peer?.username ? active.peer : active.members.find((member) => member.status === 'invited' && member.username)) || null
+    : null;
+  const waitingOn = waitingUser?.username || '';
+  // The person's username did not come with the row: the two lines say so in their own words.
+  const waitingUnknown = !!waitingUser?.unnamed;
   if (awaiting && (!active.canSend || snap.messages.length > 0)) {
     return (
       <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">
         <div className="messages-awaiting" role="status">
           <strong>{t('messages:composer.requestSent.title')}</strong>
-          <p>{waitingOn ? t('messages:composer.requestSent.waitingNamed', { username: waitingOn }) : t('messages:composer.requestSent.waitingUnnamed')}</p>
+          <p>{waitingUnknown ? t('messages:composer.requestSent.waitingUnknown') : waitingOn ? t('messages:composer.requestSent.waitingNamed', { username: waitingOn }) : t('messages:composer.requestSent.waitingUnnamed')}</p>
         </div>
       </div>
     );
@@ -497,7 +500,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       {/* QA 2026-09-24 Q2: before the opening message of a request, what it
           will be — so the composer turning into a notice after it is no
           surprise. */}
-      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingOn ? t('messages:composer.firstMessageHintNamed', { username: waitingOn }) : t('messages:composer.firstMessageHintUnnamed')}</p> : null}
+      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingUnknown ? t('messages:composer.firstMessageHintUnknown') : waitingOn ? t('messages:composer.firstMessageHintNamed', { username: waitingOn }) : t('messages:composer.firstMessageHintUnnamed')}</p> : null}
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}

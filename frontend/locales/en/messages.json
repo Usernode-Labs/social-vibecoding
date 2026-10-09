@@ -319,6 +319,22 @@
     "text": "{{count}} replies, last from @{{username}} {{when}}. Open thread",
     "description": "Accessible name of the thread chip under a message: pressing it opens the thread. {{count}} is the number of replies, {{username}} wrote the latest one (keep the @) and {{when}} is how long ago, for example \"5m ago\"."
   },
+  "thread.summary.openLastFromUnknownAt_one": {
+    "text": "{{count}} reply, last from @unknown {{when}}. Open thread",
+    "description": "Accessible name of the thread chip under a message: pressing it opens the thread. {{count}} is the number of replies, Used on the Messages screen when the username of the person who replied last is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "thread.summary.openLastFromUnknownAt_other": {
+    "text": "{{count}} replies, last from @unknown {{when}}. Open thread",
+    "description": "Accessible name of the thread chip under a message: pressing it opens the thread. {{count}} is the number of replies, Used on the Messages screen when the username of the person who replied last is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "thread.summary.openLastFromSomeoneAt_one": {
+    "text": "{{count}} reply, last from @someone {{when}}. Open thread",
+    "description": "Accessible name of the thread chip under a message: pressing it opens the thread. {{count}} is the number of replies, Used in an app's chat when nobody can be named for the last reply; \"@someone\" is written as it has always been shown."
+  },
+  "thread.summary.openLastFromSomeoneAt_other": {
+    "text": "{{count}} replies, last from @someone {{when}}. Open thread",
+    "description": "Accessible name of the thread chip under a message: pressing it opens the thread. {{count}} is the number of replies, Used in an app's chat when nobody can be named for the last reply; \"@someone\" is written as it has always been shown."
+  },
   "thread.summary.openLastFrom_one": {
     "text": "{{count}} reply, last from @{{username}}. Open thread",
     "description": "Accessible name of the thread chip under a message when the time of the latest reply is unknown: pressing it opens the thread. {{count}} is the number of replies and {{username}} wrote the latest one (keep the @)."
@@ -326,6 +342,22 @@
   "thread.summary.openLastFrom_other": {
     "text": "{{count}} replies, last from @{{username}}. Open thread",
     "description": "Accessible name of the thread chip under a message when the time of the latest reply is unknown: pressing it opens the thread. {{count}} is the number of replies and {{username}} wrote the latest one (keep the @)."
+  },
+  "thread.summary.openLastFromUnknown_one": {
+    "text": "{{count}} reply, last from @unknown. Open thread",
+    "description": "Accessible name of the thread chip under a message when the time of the latest reply is unknown: pressing it opens the thread. {{count}} is the number of replies and Used on the Messages screen when the username of the person who replied last is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "thread.summary.openLastFromUnknown_other": {
+    "text": "{{count}} replies, last from @unknown. Open thread",
+    "description": "Accessible name of the thread chip under a message when the time of the latest reply is unknown: pressing it opens the thread. {{count}} is the number of replies and Used on the Messages screen when the username of the person who replied last is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "thread.summary.openLastFromSomeone_one": {
+    "text": "{{count}} reply, last from @someone. Open thread",
+    "description": "Accessible name of the thread chip under a message when the time of the latest reply is unknown: pressing it opens the thread. {{count}} is the number of replies and Used in an app's chat when nobody can be named for the last reply; \"@someone\" is written as it has always been shown."
+  },
+  "thread.summary.openLastFromSomeone_other": {
+    "text": "{{count}} replies, last from @someone. Open thread",
+    "description": "Accessible name of the thread chip under a message when the time of the latest reply is unknown: pressing it opens the thread. {{count}} is the number of replies and Used in an app's chat when nobody can be named for the last reply; \"@someone\" is written as it has always been shown."
   },
   "thread.summary.openLastAt_one": {
     "text": "{{count}} reply, last reply {{when}}. Open thread",
@@ -819,9 +851,17 @@
     "text": "Working on {{job}}",
     "description": "Line under Homeroom bot's name at the top of its conversation on a phone: the one piece of work the bot is doing. {{job}} is its short name, a request number such as \"#3\" or a project's name."
   },
+  "bot.tray.workingOnShortUnnamed": {
+    "text": "Working on A project",
+    "description": "Line under Homeroom bot's name at the top of its conversation on a phone: the one piece of work the bot is doing. Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
+  },
   "bot.tray.jobQueued": {
     "text": "{{job}} queued",
     "description": "Phone-width line under Homeroom bot's name when the person's one request is waiting in the bot's queue. {{job}} is a request number such as \"#3\" or a project's name."
+  },
+  "bot.tray.jobQueuedUnnamed": {
+    "text": "A project queued",
+    "description": "Phone-width line under Homeroom bot's name when the person's one request is waiting in the bot's queue. Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
   },
   "bot.tray.workingOnCount_one": {
     "text": "Working on {{count}}",
@@ -854,6 +894,10 @@
   "bot.tray.jobNeedsYouShort": {
     "text": "{{job}} needs you",
     "description": "Phone-width line under Homeroom bot's name when one request waits for the person's answer or decision. {{job}} is a request number such as \"#3\" or a project's name."
+  },
+  "bot.tray.jobNeedsYouShortUnnamed": {
+    "text": "A project needs you",
+    "description": "Phone-width line under Homeroom bot's name when one request waits for the person's answer or decision. Used for a project that cannot be named; \"A project\" is written as the line has always shown it."
   },
   "bot.tray.requestsNeedYou_one": {
     "text": "{{count}} request needs you",
@@ -1515,6 +1559,10 @@
     "text": "Waiting for @{{username}} to accept your message request. You can send more once they do.",
     "description": "Text under \"Message request sent\", in place of the message box. {{username}} is the person the request went to; keep the @."
   },
+  "composer.requestSent.waitingUnknown": {
+    "text": "Waiting for @unknown to accept your message request. You can send more once they do.",
+    "description": "Text under \"Message request sent\", in place of the message box. Used when the person's username is not known; \"unknown\" is written as it has always been shown."
+  },
   "composer.requestSent.waitingUnnamed": {
     "text": "Waiting for them to accept your message request. You can send more once they do.",
     "description": "Text under \"Message request sent\", in place of the message box, when the other person's username is not known."
@@ -1526,6 +1574,10 @@
   "composer.firstMessageHintNamed": {
     "text": "@{{username}} gets your first message as a message request. You can send more once they accept.",
     "description": "Hint above the message box before your first message to someone who has not talked with you before. {{username}} is that person; keep the @."
+  },
+  "composer.firstMessageHintUnknown": {
+    "text": "@unknown gets your first message as a message request. You can send more once they accept.",
+    "description": "Hint above the message box before your first message to someone who has not talked with you before. Used when the person's username is not known; \"unknown\" is written as it has always been shown."
   },
   "composer.firstMessageHintUnnamed": {
     "text": "They get your first message as a message request. You can send more once they accept.",
@@ -2251,6 +2303,10 @@
     "text": "Shared to Conversation",
     "description": "Brief confirmation after sharing something from the \"Share to…\" dialog. Used when it went to a conversation that has no name; \"Conversation\" is written as the toast has always shown it."
   },
+  "shareTo.sharedToUnknown": {
+    "text": "Shared to @unknown",
+    "description": "Brief confirmation after sharing something from the \"Share to…\" dialog. Used when it went to a person whose username is not known; \"@unknown\" is written as the toast has always shown it."
+  },
   "shareTo.title": {
     "text": "Share to…",
     "description": "Title of the dialog for sending an app, request or change to a conversation or a project's discussion. \"Share\" is a verb."
@@ -2795,6 +2851,14 @@
     "text": "Block {{name}}",
     "description": "Item in a direct conversation's \"…\" menu: stops the other person from messaging you. \"Block\" is a verb. {{name}} is that person as shown in the header, a username with @."
   },
+  "header.menu.blockUnnamedHandle": {
+    "text": "Block @unknown",
+    "description": "Item in a direct conversation's \"…\" menu: stops the other person from messaging you. \"Block\" is a verb. Used when the username is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "header.menu.blockUnnamed": {
+    "text": "Block unknown",
+    "description": "Item in a direct conversation's \"…\" menu: stops the other person from messaging you. \"Block\" is a verb. Used when the username is not known and the account has no id; \"unknown\" is written as it has always been shown."
+  },
   "header.menu.blockUnknown": {
     "text": "Block",
     "description": "Item in a direct conversation's \"…\" menu when the other person is not known; it is disabled. A verb: stop this person from messaging you."
@@ -2963,9 +3027,25 @@
     "text": "{{name}} is typing…",
     "description": "Line above the message box while one other person is typing. {{name}} is that person's name."
   },
+  "thread.typingOneUnknown": {
+    "text": "unknown is typing…",
+    "description": "Line above the message box while one other person is typing. Used when the person's username is not known; \"unknown\" is written as it has always been shown."
+  },
   "thread.typingTwo": {
     "text": "{{first}}, {{second}} are typing…",
     "description": "Line above the message box while two or more other people are typing. {{first}} and {{second}} are the names of two of them."
+  },
+  "thread.typingTwoUnknown": {
+    "text": "unknown, unknown are typing…",
+    "description": "Line above the message box while two or more other people are typing. Used when the usernames of both people typing are not known; \"unknown\" is written as it has always been shown."
+  },
+  "thread.typingTwoFirstUnknown": {
+    "text": "unknown, {{second}} are typing…",
+    "description": "Line above the message box while two or more other people are typing. Used when the first person's username is not known; \"unknown\" is written as it has always been shown. {{second}} is the other person's name."
+  },
+  "thread.typingTwoSecondUnknown": {
+    "text": "{{first}}, unknown are typing…",
+    "description": "Line above the message box while two or more other people are typing. Used when the second person's username is not known; \"unknown\" is written as it has always been shown. {{first}} is the other person's name."
   },
   "thread.activityTimeRange": {
     "text": "{{start}} – {{end}}",

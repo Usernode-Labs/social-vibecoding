@@ -163,8 +163,8 @@ function standInWords(text) {
 /** The words a person would read in a string that builds HTML. */
 function htmlProse(text) {
   const found = [];
-  for (const match of text.matchAll(/\b(aria-label|title|placeholder|alt)="([^"$<>]*[A-Za-z]{2,}[^"<>]*)"/g)) {
-    found.push(match[2]);
+  for (const match of text.matchAll(/\b(aria-label|title|placeholder|alt)=(?:"([^"$<>]*[A-Za-z]{2,}[^"<>]*)"|'([^'$<>]*[A-Za-z]{2,}[^'<>]*)')/g)) {
+    found.push(match[2] || match[3]);
   }
   const stripped = text.replace(/<(script|style)[\s\S]*?<\/\1>/g, ' ').replace(/<[^>]*>/g, '\u0000');
   for (const part of stripped.split('\u0000')) {
@@ -258,9 +258,22 @@ function literalsIn(file, text, ts) {
       return;
     }
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      const quiet = SILENT_CALLS.test(calleeName(node));
+      const name = calleeName(node);
+      const quiet = SILENT_CALLS.test(name);
       visit(node.expression, silent);
-      for (const argument of node.arguments || []) visit(argument, silent || quiet);
+      const args = node.arguments || [];
+      args.forEach((argument, index) => {
+        // el.setAttribute('aria-label', 'Close'): the value of a spoken attribute is text.
+        if (name === 'setAttribute' && index === 1 && ts.isStringLiteral(args[0]) && SPOKEN_ATTRIBUTES.has(args[0].text)) {
+          if (ts.isStringLiteral(argument)) { if (WORD.test(argument.text)) report(argument, argument.text, args[0].text); } else visit(argument, false);
+          return;
+        }
+        // createElement('p', props, 'Text'): the children are text, the tag is not.
+        if (/^createElement$/.test(name) && index >= 1) { visit(argument, false); return; }
+        // t('id', { name: fallback || 'someone' }): a literal handed to a message as a value is text.
+        if (/^(t|translate|htmlText|htmlRich)$/.test(name) && index >= 1) { visit(argument, false); return; }
+        visit(argument, silent || quiet);
+      });
       return;
     }
     if (ts.isThrowStatement(node)) {
@@ -278,6 +291,11 @@ function literalsIn(file, text, ts) {
     // A component's name for React DevTools, not for a person.
     if (ts.isBinaryExpression(node) && ts.isPropertyAccessExpression(node.left)
         && node.left.name.text === 'displayName') return;
+    // A default for a name-like parameter: `function row(name = 'someone')`.
+    if (ts.isParameter(node) && node.initializer && !silent && ts.isIdentifier(node.name) && NAME_LIKE.test(node.name.text)
+        && ts.isStringLiteral(node.initializer) && standInWords(node.initializer.text) && !looksLikeProse(node.initializer.text)) {
+      report(node.initializer, node.initializer.text, 'stand-in');
+    }
     if ((ts.isPropertyAssignment(node) || ts.isVariableDeclaration(node)) && node.initializer && !silent
         && NAME_LIKE.test(node.name.getText(source))) {
       for (const fallback of fallbackLiterals(node.initializer)) {

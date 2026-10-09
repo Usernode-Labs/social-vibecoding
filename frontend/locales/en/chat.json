@@ -1223,6 +1223,10 @@
     "text": "Couldn't load {{file}} (HTTP {{status}})",
     "description": "Shown in the side panel when a Markdown file attached to a chat message could not be fetched for viewing. {{file}} is the file's name; {{status}} is the HTTP status code, a number such as 404."
   },
+  "group.file.loadFailedStatusUnnamed": {
+    "text": "Couldn't load file (HTTP {{status}})",
+    "description": "Shown in the side panel when a Markdown file attached to a chat message could not be fetched for viewing. Used when the attached file has no name; \"file\" is written as it has always been shown. {{status}} is the HTTP status number."
+  },
   "group.file.loadFailed": {
     "text": "Failed to load file",
     "description": "Shown in the side panel when a Markdown file attached to a chat message could not be fetched for viewing and nothing more is known."
