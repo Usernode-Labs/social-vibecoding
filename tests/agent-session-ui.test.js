@@ -118,7 +118,7 @@ test('a coding-agent run is one card named for the agent that ran, and a drafted
     // Every agent writes this row's content as "Claude Code progress"; only
     // its metadata says which one ran, so its words are never shown.
     row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js', 'Drafting the spec'], ...codex }, 12),
-    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', {
+    row(5, 'system', 'Scout drafted a 93-line plan from the codebase.', {
       specPreview: '## Thumbnails\nShow an image per item.', specLines: 93, specVersion: 2, durationMs: 81000, ...codex,
     }, 12),
     row(6, 'assistant', 'The spec is drafted.'),
@@ -179,7 +179,7 @@ test('the screen draws a run as the dev chat\'s run card and a spec as a card th
     row(2, 'system', 'Scouting the repo for context (z-ai/glm-5.3-flash)...', codex, 12),
     row(3, 'system', 'Scout reading the codebase...', codex, 12),
     row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js'], ...codex }, 12),
-    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', { specPreview: 'Show an image per item.', specLines: 93, specVersion: 2, ...codex }, 12),
+    row(5, 'system', 'Scout drafted a 93-line plan from the codebase.', { specPreview: 'Show an image per item.', specLines: 93, specVersion: 2, ...codex }, 12),
   ];
   const requests = [];
   globalThis.window = { location: { hash: '#agent/7' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };

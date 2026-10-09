@@ -323,7 +323,7 @@ test('a scout turn runs the runtime read-only and never uploads a commit', async
   assert.match(io.stdout.join(''), /drafted a \d+-line plan/);
 });
 
-test('a scout run that produced no spec text is a failure, not a silent success', async () => {
+test('a scout run that produced no plan text is a failure, not a silent success', async () => {
   const { dir } = tempRepo();
   const api = fakeApi({ '/accept': { status: 200, data: {} }, '/result': { status: 200, data: {} } });
   const io = fakeIo();

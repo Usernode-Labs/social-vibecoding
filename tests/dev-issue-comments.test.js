@@ -115,6 +115,15 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   assert.equal(botSpecOf({ author: 'ada', body }), null, 'a person\'s comment stays as they wrote it');
   assert.equal(botSpecOf({ author: 'usernode-bot', body: 'Thanks for the report.' }), null);
 
+  // #4450: comments posted before the rename fold the plan under "The spec"
+  // and are never edited, so that fold still reads as a plan.
+  const old = botSpecOf({
+    author: 'usernode-bot',
+    body: 'Homeroom bot wrote a spec for this request.\n\n<details><summary>The spec</summary>\n\n# Fix the banner\n\nIt blends in.\n\n</details>',
+  });
+  assert.equal(old.title, 'Fix the banner');
+  assert.equal(old.body, 'It blends in.');
+
   // Both renderers use it: a request's page draws the spec as the spec
   // reader would (paragraph semantics), and the Workshop row's preview
   // names it.
