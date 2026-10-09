@@ -178,6 +178,9 @@ test('_findTopicItem ignores a stale _topicGov from another topic', () => {
 test('_findTopicItem still prefers the cached lists over _topicGov', () => {
   const { AppView } = makeAppView();
   const cached = closeRow({ chat_count: 99 });
+  // The lists answer only for the app they were loaded for (#4524); these
+  // are loaded for the open one.
+  AppView._devDataSlug = 'demo';
   AppView._govProposals = [];
   AppView._merged = [cached];
   AppView._topicGov = closeRow({ chat_count: 0 });
@@ -241,9 +244,11 @@ test('_renderTopicSubView still works when the gov row IS cached (no regression)
       return { ok: true, json: async () => ({}) };
     },
   });
-  AppView._loadDevData = async () => {
-    AppView._govProposals = []; AppView._merged = [row]; return true;
-  };
+  // The row IS cached: preloaded the way a settled board load leaves it
+  // (#4524 — the page paints from these at once, so no by-id fetch runs).
+  AppView._devDataSlug = 'demo';
+  AppView._merged = [row];
+  AppView._loadDevData = async () => true;
   let mounted = 0;
   AppView._mountTopicThread = () => { mounted++; };
   AppView._renderTopicHead = () => {};
@@ -275,7 +280,9 @@ test('_renderTopicSubView toasts and falls back when the gov row is truly missin
   const content = makeEl('content');
   await AppView._renderTopicSubView(content, { kind: 'gov', id: 424242 });
 
-  assert.equal(mounted, 0, 'thread never mounted');
+  // (#4524) A governance thread mounts for the ref alone, before the item
+  // is known — the miss repaints the board over it, as before.
+  assert.equal(mounted, 1, 'thread mounted for the ref, then fallen back over');
   assert.deepEqual(switchTabCalls, [['dev']], 'fell back to the dev board');
   assert.equal(toasts.length, 1, 'the dead end is explained');
   assert.match(toasts[0], /discussion/i);

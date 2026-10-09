@@ -3139,6 +3139,21 @@
     },
     {
       "source": "src/routes/apps.js",
+      "method": "POST",
+      "path": "/api/apps/:slug/topics-pr",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "issues.post.apps.item.topics.pr.ee768d0e",
+      "domain": "issues",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "issue",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/workshop"
+    },
+    {
+      "source": "src/routes/apps.js",
       "method": "GET",
       "path": "/api/apps/:slug/domain",
       "expression": null,
@@ -3337,6 +3352,14 @@
     {
       "source": "src/routes/auth.js",
       "method": "POST",
+      "path": "/api/auth/release-link",
+      "expression": null,
+      "status": "exempt",
+      "reason": "session-mint boundary middleware duplicated by the concrete signed-out authentication routes"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "POST",
       "path": "/api/auth/otp/set-password",
       "expression": null,
       "status": "exempt",
@@ -3479,6 +3502,21 @@
       "expression": null,
       "status": "mapped",
       "capabilityId": "profile.post.auth.otp.verify.34fb3204",
+      "domain": "profile",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "profile",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#profile"
+    },
+    {
+      "source": "src/routes/auth.js",
+      "method": "POST",
+      "path": "/api/auth/release-link",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "profile.post.auth.release.link.3ab723a5",
       "domain": "profile",
       "risk": "external_write",
       "confirmation": "required",

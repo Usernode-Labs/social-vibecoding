@@ -104,6 +104,9 @@ test('_fetchIssueByNumber caches a closed issue and _findItem resolves it', asyn
 
   // The live list still wins when it holds the number.
   const live = closedIssue({ state: 'open', title: 'live copy' });
+  // #4524: the lists answer only for the app they were loaded for — this
+  // one is loaded for the open app (demo).
+  AppView._devDataSlug = 'demo';
   AppView._ghIssues = [live];
   assert.equal(AppView._findItem('issue', 1069), live);
 });

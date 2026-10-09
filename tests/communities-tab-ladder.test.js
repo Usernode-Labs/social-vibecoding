@@ -324,10 +324,12 @@ test('the pages say what is below their tabs: All items on the project page, a r
   assert.match(climb[1], /callAppView\('_pushWorkshopTab', v\.slug, was, next\);/, 'a new entry, as a tab press pushes');
   assert.doesNotMatch(climb[1], /_upWorkshopTab/);
   assert.match(climb[1], /callAppView\('_saveFeedScroll', v\.slug, 0\);\s*scrollToHead\(hostRef\.current\);/, 'at its top');
-  // #4074: the plan is a page under the Hub, as All items is under the Workshop.
-  assert.match(workshop, /registerLevel\(\{\s*slug: v\.slug,\s*below: \(\) => tabRef\.current === 'all' \|\| tabRef\.current === 'plan',\s*up: \(\) => climbRef\.current\(\),\s*host: \(\) => hostRef\.current,\s*\}\)/);
+  // #4074: the plan is a page under the Hub, as All items is under the
+  // Workshop. #4417: and every place but the Hub is a step below it, at
+  // depth 1, so a reply thread beside a channel (depth 2) goes first.
+  assert.match(workshop, /registerLevel\(\{\s*slug: v\.slug,(?:\s*\/\/[^\n]*)*\s*below: \(\) => tabRef\.current !== 'status',\s*up: \(\) => climbRef\.current\(\),\s*host: \(\) => hostRef\.current,\s*depth: 1,\s*\}\)/);
   const discussion = read('frontend/src/features/dev-board/workshop/project-discussion.tsx');
-  assert.match(discussion, /below: \(\) => \(room \? embeddedThreadOpen\(room\) : !!threadRef\.current\),\s*up: \(\) => \{ if \(room\) closeThread\(\); else setThread\(null\); \},/);
+  assert.match(discussion, /below: \(\) => \(room \? embeddedThreadOpen\(room\) : !!threadRef\.current\),\s*up: \(\) => \{ if \(room\) closeThread\(\); else setThread\(null\); \},\s*\/\/[^\n]*\s*depth: 2,/);
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /export function embeddedThreadOpen\(conversationId: number\): boolean \{\s*return !!state\.route\.embedded && state\.route\.conversationId === conversationId && !!state\.route\.threadRootId;/);
   // The switcher's notes say where it opens from now.

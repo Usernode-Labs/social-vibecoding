@@ -126,7 +126,7 @@ export function PlanPage({ name, data, onBack, onDiscussion }: {
       <div className="dev-ws-plan-foot">
         <p className="dev-ws-plan-who" data-ws-plan-who="">{decidesLine(fv.creator, fv.line)}</p>
         <button type="button" className="dev-ws-plan-talk un-touch-target" data-ws-plan-discussion="" onClick={onDiscussion}>
-          Talk about it in Discussion
+          Talk about it in #general
         </button>
       </div>
     </section>

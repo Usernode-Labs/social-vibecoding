@@ -376,7 +376,7 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "6e15f5a9e6dc781720b1",
+      "fingerprint": "e5bba89d6db4a92d4162",
       "count": 1,
       "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, ${allTotalSql} AS all_total, ${allDoneSql} AS all_done, COUNT(*) FILTER ( WHERE ${scopeFilter} AND"
     },
@@ -1426,7 +1426,7 @@
     {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
-      "fingerprint": "f22572e0f628a0273eeb",
+      "fingerprint": "0fc6ef4929f71c2316c8",
       "count": 1,
       "preview": "`/* challenge onboarding */ SELECT c.id, c.season_event_id, c.challenge_template_id, c.display_order, c.enabled, c.completed, COALESCE(c.schedule_start, ct.sche"
     },

@@ -16,6 +16,8 @@ const pendingSecrets = require('../services/pending-secrets');
 const appManifest = require('../services/app-manifest');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
+const topicsPr = require('../services/topics-pr');
+const places = require('../services/places');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
@@ -3335,6 +3337,65 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #4417: propose a change to the project's TOPICS — a new one, a rename,
+  // a merge or an archive. They live in dapp.json's `topics` array, so the
+  // change is a manifest PR with its promoted vote session, the same
+  // lifecycle as a rename (services/topics-pr.js). Applies once it merges:
+  // the rebuild's reconcileAppTopics, or the platform's own boot.
+  //
+  // Body: { op: 'add', name, handle?, about?, icon? }
+  //     | { op: 'rename', id, name?, handle?, about?, icon? }
+  //     | { op: 'merge', id, into } | { op: 'archive', id }
+  //
+  // Proposing is taking part, so it is for members (requireAppMembership,
+  // 403 join_required), and for people who may build here (collab). The
+  // platform's own app is allowed: its dapp.json is the platform repo's.
+  router.post('/api/apps/:slug/topics-pr', drainGuard, issueCreateLimiter, communities.requireAppMembership(pool), async (req, res) => {
+    let change;
+    try {
+      change = topicsPr.parseChange(req.body);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      const app = rows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
+        return res.status(403).json({ error: 'Only people who can build here can propose a change to its topics' });
+      }
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Topic changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+      const result = await topicsPr.createTopicsPR(
+        config, pool, app, change, { id: req.user.id, username: req.user.username }
+      );
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+        title: result.title,
+      });
+    } catch (err) {
+      if (err instanceof topicsPr.TopicsPrError) {
+        return res.status(err.status || 400).json({ error: err.message });
+      }
+      log.error('apps', 'Topics PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
   // ── App-host authorize hop ─────────────────────────────────────────
   //
   // Platform session cookies are host-only (deliberately: child apps run
@@ -3721,7 +3782,22 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         return res.status(404).json({ error: 'App not found' });
       }
       const appId = appRows[0].id;
+      // #4600: whether this pin JOINED the app's community. A pin joins
+      // through the app_favorites trigger (schema.sql,
+      // sync_favorite_community_member), so Home's featured list's ⊕ is a
+      // join as much as /membership is, and is counted the same way: on the
+      // spot (scoreOnJoin), not on the rule's next pass, and said so in the
+      // answer (`joined`) so the client can tell its Challenges block and
+      // Getting started card to read again.
+      let joined = false;
       if (favorited) {
+        const { rows: joinRows } = await pool.query(
+          `SELECT (a.community_id IS NOT NULL AND NOT EXISTS (
+                    SELECT 1 FROM community_members m
+                     WHERE m.community_id = a.community_id AND m.user_id = $2)) AS joins
+             FROM apps a WHERE a.id = $1`,
+          [appId, req.user.id]
+        );
         // DO UPDATE (not DO NOTHING) so the same statement also clears a
         // member's hidden=TRUE opt-out row — "Add to Your apps" un-hides.
         await pool.query(
@@ -3729,6 +3805,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
            ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
           [appId, req.user.id]
         );
+        joined = joinRows[0]?.joins === true;
+        // Never throws, so the pin answers the same either way.
+        if (joined) await challengeScorer.scoreOnJoin(pool, config);
       } else if (await appAccess.isCollaborator(pool, appId, req.user.id)) {
         // #618: membership (creator or accepted invite) pins the app into
         // "Your apps", so a member's "remove" must persist as an explicit
@@ -3758,7 +3837,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           metadata: { source: 'user_favorite_toggle' },
         });
       }
-      res.json({ ok: true, is_favorited: favorited });
+      res.json({ ok: true, is_favorited: favorited, joined });
     } catch (err) {
       log.error('apps', 'Failed to toggle favorite', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3903,6 +3982,23 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // see hasLiveLink for what the records can and cannot say.
       const inviteLink = membership?.is_member && membership.audience === 'solo' && req.user?.id
         ? await communityInvites.hasLiveLink(pool, app.id, req.user.id) : false;
+      // #4417: THE PLACES. The page is navigated by one list — Hub, Needs
+      // you, Workshop, then #general and the project's topics — and this is
+      // what the list says beside each: the votes owed, and per channel its
+      // name, what it is for, whether it is live, how many requests it holds
+      // and how much in it is unread for this viewer. Best-effort: a list
+      // that cannot be read is #general alone, never a failed hub.
+      let placesPayload = null;
+      try {
+        placesPayload = await places.placesFor(pool, app, req.user, {
+          general: channel,
+          member: !!membership?.is_member,
+          showSelfHosted,
+        });
+        placesPayload.proposals = membership?.is_member ? await topicsPr.openTopicsPrs(pool, app.id) : [];
+      } catch (err) {
+        log.warn('apps', 'Could not read the places for the hub', { slug: app.slug, message: err.message });
+      }
       res.json({
         slug: app.slug,
         name: app.name,
@@ -3914,6 +4010,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         ...membership,
         members,
         channel,
+        places: placesPayload,
         activity,
         can_manage: !!canManage,
         audience_change: pendingAudience ? {
@@ -4158,14 +4255,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
 
       // "Try an app" counts the heartbeat that takes this person's time in
-      // an app they did not make across TRY_APPS_MIN_SECONDS, not the rule's
-      // next pass (#3570; challengeScorer.scoreOnAppTime). Every other
+      // an app across TRY_APPS_MIN_SECONDS, not the rule's next pass (#3570;
+      // challengeScorer.scoreOnAppTime). An app they made counts only for the
+      // First challenge (#4602); the pass's own query decides that. Every other
       // heartbeat is answered without a scoring pass, and nearly all without
       // even a read: today's total, returned above, says whether this one can
       // be the crossing at all. Never throws.
       await challengeScorer.scoreOnAppTime(pool, config, {
         appId: appRows[0].id,
-        ownerId: appRows[0].created_by,
         userId: req.user.id,
         seconds,
         daySeconds: activityRows[0]?.seconds_spent,

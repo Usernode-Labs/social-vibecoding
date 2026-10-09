@@ -15,6 +15,7 @@ const {
   otpRequestLimiter,
   otpRequestEmailLimiter,
   otpVerifyLimiter,
+  releaseLinkLimiter,
   passwordResetRequestLimiter,
   passwordResetRequestEmailLimiter,
   passwordResetConfirmLimiter,
@@ -50,6 +51,7 @@ const { isCliSurfaceEnabled } = require('./cli-auth');
 // advertises the Claude Code / Codex flows (#1049).
 const githubLink = require('../services/github-link');
 const emailSignup = require('../services/email-signup');
+const releaseLinks = require('../services/release-links');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 // The platform's own self-hosted app row. The home screen's Improve button is
 // about the PLATFORM, and the client has no other way to learn that row's slug
@@ -111,6 +113,9 @@ const SESSION_MINT_PATHS = [
   // the wallet-recovery dialog and the mobile wallet-claim flow both request
   // codes while signed in, and a mint guard there would break claiming.
   '/api/auth/otp/verify',
+  // The release mail's one-time link (#4594) proves the mailbox as a code
+  // does, and signs an established account straight in the same way.
+  '/api/auth/release-link',
   '/api/auth/otp/set-password',
   '/api/auth/register',
   '/api/auth/wallet-verify',
@@ -364,6 +369,105 @@ function authRoutes(config) {
     }
   });
 
+  // What a proven mailbox answers (an email code, or the release mail's
+  // one-time link, #4594): the invite this visitor carried, then the signed-
+  // in session or the account step's continuation. `extra` is merged into
+  // the JSON answer.
+  async function answerProvenEmail(req, res, verified, { followInvite = false, via = 'code', extra = {} } = {}) {
+    // An invite link this visitor opened first is followed as the account
+    // the code just CREATED (services/community-invites.js): signing up
+    // from the link is the consent, and the new account's community is
+    // queued for the day it is let in. An account that already existed
+    // follows it only when this sign-in IS the Join its page asked for
+    // (`followInvite`, sent by the sheet "Made for you" opens: the person
+    // just pressed "Join …" on the link's own page). Anywhere else it is
+    // asked by the shell instead, like a password sign-in, so the carried
+    // copy is only dropped (and counted as a sign-in it brought). Never
+    // throws.
+    const consented = verified.created || followInvite;
+    const invite = consented
+      ? await communityInvites.redeemCarried(pool, req, res, verified.userId, {
+        requirePhone: phoneAuth.offered(config),
+      })
+      : await communityInvites.dropCarried(pool, req, res, verified.userId);
+    // A link that joined this person (a private member's, or anybody's
+    // with access) counts for its challenge now, not on the rule's next
+    // pass (#3564). A queued one waits for release, and the schedule.
+    // While phone sign-in is offered, an email account new to the platform
+    // stays queued: a private member signs up with a phone.
+    if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
+    if (verified.next === 'signed-in') {
+      // The account has nothing to set up: a password, or (#4595) a username
+      // and no password. Clear any stale continuation and hand back the ordinary web session,
+      // shaped exactly like /api/auth/login's response.
+      clearSignupCookie(res);
+      createSessionCookie(res, verified.session.token, verified.session.expiresAt);
+      log.info('email-signup', via === 'link' ? 'Release link signed an existing account in' : 'Email code signed an existing account in', {
+        userId: verified.userId,
+        next: 'signed-in',
+      });
+      return res.json({
+        ok: true,
+        next: 'signed-in',
+        user: {
+          id: verified.user.id,
+          username: verified.user.username,
+          ...roleFields(verified.user.isAdmin, verified.user.adminReadonly),
+        },
+        ...extra,
+        ...(invite ? { invite } : {}),
+      });
+    }
+    // #2568: a brand-new account gets its included OpenRouter key here,
+    // the moment the row exists. Best effort by construction —
+    // ensureIncludedKey never throws — so signing up cannot fail because
+    // OpenRouter's management API did; the next new-change screen retries.
+    if (verified.created) {
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId: verified.userId, config, reason: 'signup_email',
+      });
+      // The sign-up, as an activation code and a wallet record theirs
+      // (#4039): an email code made no user_signed_up before.
+      events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: verified.userId, metadata: { via: 'email' } });
+    }
+    createSignupCookie(res, verified.signupToken, verified.expiresAt);
+    log.info('email-signup', via === 'link' ? 'Release link spent, account step pending' : 'Email code verified, password setup pending', {
+      userId: verified.userId,
+      next: 'set-password',
+    });
+    // QA 2026-09-24 Q12: say what the next step IS. `created` means this
+    // code just made the account (no account used the address), so the
+    // screen can say so instead of implying one already existed;
+    // `needsUsername` makes it ask for the handle rather than the waiting
+    // room introducing one the person never chose; `waitlisted` lets it
+    // say plainly, before the waiting room, that new accounts queue. `ok`
+    // and `next` are unchanged. Nothing here leaks to somebody who does
+    // not hold the mailbox: the code was just proved.
+    //
+    // #4596: `suggestedUsername` is the handle the field arrives holding,
+    // made from the address (usernames.suggestUsernameForEmail) and free
+    // when it was read, or null for an empty field; absent for an account
+    // that already has its handle. The person can change it, and
+    // set-password still refuses to finish without a handle in the field.
+    //
+    // A link that just let them in (as a private member, or on its maker's
+    // skip) answers `waitlisted`: there is no queue in front of them now.
+    // The verifier read it before the link was followed.
+    const waitlistedNow = invite && invite.status === 'joined'
+      ? false
+      : (typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null);
+    return res.json({
+      ok: true,
+      next: 'set-password',
+      created: !!verified.created,
+      needsUsername: !!verified.needsUsernameChoice,
+      ...(verified.needsUsernameChoice ? { suggestedUsername: verified.suggestedUsername || null } : {}),
+      waitlisted: waitlistedNow,
+      ...extra,
+      ...(invite ? { invite } : {}),
+    });
+  }
+
   router.post('/api/auth/otp/verify', otpVerifyLimiter, async (req, res) => {
     try {
       const verified = await emailSignup.verifyCode(
@@ -372,95 +476,7 @@ function authRoutes(config) {
         req.body?.code,
         { createSession }
       );
-      // An invite link this visitor opened first is followed as the account
-      // the code just CREATED (services/community-invites.js): signing up
-      // from the link is the consent, and the new account's community is
-      // queued for the day it is let in. An account that already existed
-      // follows it only when this sign-in IS the Join its page asked for
-      // (`followInvite`, sent by the sheet "Made for you" opens: the person
-      // just pressed "Join …" on the link's own page). Anywhere else it is
-      // asked by the shell instead, like a password sign-in, so the carried
-      // copy is only dropped (and counted as a sign-in it brought). Never
-      // throws.
-      const consented = verified.created || req.body?.followInvite === true;
-      const invite = consented
-        ? await communityInvites.redeemCarried(pool, req, res, verified.userId, {
-          requirePhone: phoneAuth.offered(config),
-        })
-        : await communityInvites.dropCarried(pool, req, res, verified.userId);
-      // A link that joined this person (a private member's, or anybody's
-      // with access) counts for its challenge now, not on the rule's next
-      // pass (#3564). A queued one waits for release, and the schedule.
-      // While phone sign-in is offered, an email account new to the platform
-      // stays queued: a private member signs up with a phone.
-      if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
-      if (verified.next === 'signed-in') {
-        // The account already has a password, so there is nothing to set up.
-        // Clear any stale continuation and hand back the ordinary web session,
-        // shaped exactly like /api/auth/login's response.
-        clearSignupCookie(res);
-        createSessionCookie(res, verified.session.token, verified.session.expiresAt);
-        log.info('email-signup', 'Email code signed an existing account in', {
-          userId: verified.userId,
-          next: 'signed-in',
-        });
-        return res.json({
-          ok: true,
-          next: 'signed-in',
-          user: {
-            id: verified.user.id,
-            username: verified.user.username,
-            ...roleFields(verified.user.isAdmin, verified.user.adminReadonly),
-          },
-          ...(invite ? { invite } : {}),
-        });
-      }
-      // #2568: a brand-new account gets its included OpenRouter key here,
-      // the moment the row exists. Best effort by construction —
-      // ensureIncludedKey never throws — so signing up cannot fail because
-      // OpenRouter's management API did; the next new-change screen retries.
-      if (verified.created) {
-        await managedOpenRouter.ensureIncludedKey({
-          pool, userId: verified.userId, config, reason: 'signup_email',
-        });
-        // The sign-up, as an activation code and a wallet record theirs
-        // (#4039): an email code made no user_signed_up before.
-        events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId: verified.userId, metadata: { via: 'email' } });
-      }
-      createSignupCookie(res, verified.signupToken, verified.expiresAt);
-      log.info('email-signup', 'Email code verified, password setup pending', {
-        userId: verified.userId,
-        next: 'set-password',
-      });
-      // QA 2026-09-24 Q12: say what the next step IS. `created` means this
-      // code just made the account (no account used the address), so the
-      // screen can say so instead of implying one already existed;
-      // `needsUsername` makes it ask for the handle rather than the waiting
-      // room introducing one the person never chose; `waitlisted` lets it
-      // say plainly, before the waiting room, that new accounts queue. `ok`
-      // and `next` are unchanged. Nothing here leaks to somebody who does
-      // not hold the mailbox: the code was just proved.
-      //
-      // #3575: there is no `suggestedUsername` any more. It was a handle
-      // derived from the address that the field arrived holding, and one
-      // press accepted it; the person now types their own into an empty
-      // field, and set-password refuses to finish without it. A shell cached
-      // from before reads the missing field as null — an empty field.
-      //
-      // A link that just let them in (as a private member, or on its maker's
-      // skip) answers `waitlisted`: there is no queue in front of them now.
-      // The verifier read it before the link was followed.
-      const waitlistedNow = invite && invite.status === 'joined'
-        ? false
-        : (typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null);
-      return res.json({
-        ok: true,
-        next: 'set-password',
-        created: !!verified.created,
-        needsUsername: !!verified.needsUsernameChoice,
-        waitlisted: waitlistedNow,
-        ...(invite ? { invite } : {}),
-      });
+      return await answerProvenEmail(req, res, verified, { followInvite: req.body?.followInvite === true });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {
         return res.status(422).json({ error: error.message, code: error.code });
@@ -470,9 +486,34 @@ function authRoutes(config) {
     }
   });
 
+  // #4594: the waitlist release mail's one-time sign-in link
+  // (services/release-links.js). Spent here, by the page's POST, never by
+  // the GET that opened it. A refusal is one 422 whatever the reason
+  // (expired, used, unknown), and the page falls back to the code. The raw
+  // token is never logged. Rate-limited per source on failures, like the
+  // code it stands in for.
+  router.post('/api/auth/release-link', releaseLinkLimiter, async (req, res) => {
+    try {
+      const verified = await releaseLinks.spend(pool, req.body?.token, { createSession });
+      // The welcome names the address; only somebody holding the mailbox's
+      // link reaches this line.
+      return await answerProvenEmail(req, res, verified, { via: 'link', extra: { email: verified.email } });
+    } catch (error) {
+      if (error instanceof emailSignup.EmailSignupError) {
+        return res.status(422).json({ error: error.message, code: error.code });
+      }
+      log.error('email-signup', 'Release link failed', { message: error.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/auth/otp/set-password', otpVerifyLimiter, async (req, res) => {
-    const password = req.body?.password;
-    if (password !== req.body?.passwordConfirmation) {
+    // #4595: the password is optional ("Skip for now"). Absent or empty in
+    // both fields means none; the service holds a password that IS sent to
+    // the usual rule.
+    const blank = (v) => (v === undefined || v === null || v === '' ? null : v);
+    const password = blank(req.body?.password);
+    if (password !== blank(req.body?.passwordConfirmation)) {
       return res.status(422).json({ error: 'Passwords do not match.', code: 'password_mismatch' });
     }
     try {
@@ -728,14 +769,18 @@ function authRoutes(config) {
     // people in, not strand every signed-in member behind a blocking step
     // the client cannot dismiss.
     let needsUsernameChoice = false;
+    // #4595: false for an account with no password (it signs in with an
+    // email code); Settings then sets a first one without asking for one.
+    let hasPassword = true;
     // A handle made from an invite phone sign-up's name, for private groups
     // only: the shell asks for a username before anything public
     // (frontend/src/features/auth/username-first-run.js askForPublic).
     let usernameProvisional = false;
     // Communities, stage 5 (src/services/onboarding.js): the join screen a
     // new account answers after its username and the terms, and the
-    // Getting started card that follows it, for an account made since that
-    // card became the First challenges (`getting_started_gate`). Same
+    // Getting started card, for every account made since that card became
+    // the First challenges (`getting_started_gate`), however it signed up
+    // (#4601). Same
     // failure direction as the flag above: unreadable means no blocking step
     // and no card.
     let needsCommunitiesChoice = false;
@@ -773,9 +818,9 @@ function authRoutes(config) {
                 u.display_name, u.bio,
                 u.needs_username_choice,
                 u.needs_communities_choice,
+                u.password_set,
                 (u.username_provisional_since IS NOT NULL) AS username_provisional,
-                (u.communities_onboarded_at IS NOT NULL
-                  AND u.getting_started_closed_at IS NULL
+                (u.getting_started_closed_at IS NULL
                   AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
                 identity_needed(u.id) AS identity_needed,
@@ -802,6 +847,7 @@ function authRoutes(config) {
       openrouterAvailable = config.codexOpenrouterEnabled === true
         && rows[0]?.openrouter_credential_valid === true;
       needsUsernameChoice = rows[0]?.needs_username_choice === true;
+      hasPassword = rows[0]?.password_set !== false;
       usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
       showGettingStarted = rows[0]?.show_getting_started === true;
@@ -903,6 +949,7 @@ function authRoutes(config) {
         // whatever the account currently holds, so every existing client
         // renders exactly what it rendered before.
         needsUsernameChoice,
+        hasPassword,
         // Communities, stage 5. TRUE until a new account has answered "What
         // communities do you want to join?" (set by every sign-up path:
         // email, an activation code, a wallet; no existing account ever
@@ -919,8 +966,9 @@ function authRoutes(config) {
         // Only alongside storyFirstSession: the waitlist answer "What should
         // it do?" opens with (frontend/src/features/first-session/make.tsx).
         waitlistIdea,
-        // The Getting started card on Home: shown to an account that came
-        // through the join screen, until it is closed.
+        // The Getting started card on Home: shown to every new account
+        // (getting_started_gate), however it signed up (#4601), until it is
+        // closed.
         showGettingStarted,
         // The verified-identity rule holds this member to it (see above).
         identityNeeded,
@@ -1107,6 +1155,12 @@ function authRoutes(config) {
   // handed over as an admin temporary password, or just chosen during a
   // wallet reset. Wallet users who've forgotten it use the pre-login
   // wallet-reset flow instead.
+  //
+  // #4595: an account made without a password (password_set FALSE: "Skip
+  // for now" at sign-up, or Apple, Google or a phone) has no current
+  // password to give. It sets its first one here without one; the UPDATE is
+  // conditional on password_set still being FALSE, so a concurrent first
+  // set cannot be overwritten by a request that skipped the check.
   router.post('/api/me/password', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     const { currentPassword, newPassword } = req.body || {};
@@ -1114,16 +1168,27 @@ function authRoutes(config) {
     const policy = validatePassword(newPassword);
     if (!policy.ok) return res.status(400).json({ error: policy.error });
 
-    if (!currentPassword || typeof currentPassword !== 'string') {
-      return res.status(400).json({ error: 'Current password is required' });
-    }
-
     try {
       const { rows } = await pool.query(
-        'SELECT password FROM users WHERE id = $1',
+        'SELECT password, password_set FROM users WHERE id = $1',
         [req.user.id]
       );
       if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+      if (rows[0].password_set === false) {
+        const hash = await bcrypt.hash(newPassword, 12);
+        const { rowCount } = await pool.query(
+          'UPDATE users SET password = $1, password_set = TRUE WHERE id = $2 AND password_set = FALSE',
+          [hash, req.user.id]
+        );
+        if (!rowCount) return res.status(409).json({ error: 'A password was just set on this account. Reload and try again.' });
+        log.info('auth', 'First password set', { userId: req.user.id });
+        return res.json({ ok: true, first: true });
+      }
+
+      if (!currentPassword || typeof currentPassword !== 'string') {
+        return res.status(400).json({ error: 'Current password is required' });
+      }
 
       const valid = await bcrypt.compare(currentPassword, rows[0].password);
       if (!valid) {

@@ -78,7 +78,7 @@ test('full read() return carries the screenshot key alongside the others', () =>
   withManifest({ secrets: [], screenshot: { deviceScaleFactor: 1 } }, (m) => {
     assert.deepEqual(Object.keys(m).sort(),
       ['admins', 'description', 'governance', 'icon', 'llm', 'name', 'permissions', 'platform_env', 'screenshot',
-        'secrets', 'tests', 'visibility'].sort());
+        'secrets', 'tests', 'topics', 'visibility'].sort());
     assert.equal(m.screenshot.deviceScaleFactor, 1);
   });
 });

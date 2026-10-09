@@ -198,6 +198,49 @@ const TopochainChallenges = {
       ? `${n.toLocaleString('en-US')} pts` : TopochainChallenges.str(v);
   },
 
+  // A reward as a number of points, or null when it is organiser prose that
+  // cannot be summed ("½ of your final credits"). A copy of the server's
+  // parseRewardPoints (src/services/topochain/challenge-rules.js) — the same
+  // parser Home's panel and the scorer read, kept as a copy because this file
+  // stays import-free (see _illustrationOf).
+  _rewardPoints(reward) {
+    if (reward == null) return null;
+    const cleaned = String(reward)
+      .trim()
+      .replace(/^up\s+to\s+/i, '')
+      .replace(/\s*(?:pts?|points?)\s*$/i, '')
+      .replace(/,/g, '')
+      .trim();
+    if (!/^\d+(?:\.\d+)?$/.test(cleaned)) return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  },
+
+  // The points half of the summary (#4565): what the challenges in scope
+  // offer, and what the viewer has earned on them, from the same `_mine`
+  // rows the cards' green "Earned N pts" reads. Only challenges whose reward
+  // is a plain number count; organiser prose cannot be summed and is left
+  // out of both figures, so the two numbers always describe the same set.
+  // Null when nothing in view offers a number — "0 of 0 pts earned" says
+  // nothing.
+  _pointsView(challenges) {
+    let total = 0;
+    let earned = 0;
+    for (const c of Array.isArray(challenges) ? challenges : []) {
+      const n = TopochainChallenges._rewardPoints(
+        c && c.card_preview ? c.card_preview.reward : null
+      );
+      if (n == null) continue;
+      total += n;
+      const m = TopochainChallenges._mine.get(Number(c.id)) || null;
+      earned += Math.max(0, Number(m && m.activities_total) || 0);
+    }
+    if (!(total > 0)) return null;
+    // A repeatable challenge can credit more than its reward; the figure
+    // never reads "2,400 of 2,000".
+    return { earned: Math.min(Math.max(0, earned), total), total };
+  },
+
   // href-safe URL: only http(s) links are ever rendered as a real anchor.
   // This is the ONE guard React does not make redundant. Rendering through a
   // component stops attribute breakout for free, but it does NOT stop a
@@ -636,7 +679,7 @@ const TopochainChallenges = {
       // Always present when the grid has rows (including "0/8" and "8/8"),
       // so the declared dapp.json check can anchor on #tc-se-challenge-summary
       // whatever the selected event's data happens to be.
-      progress: TopochainChallenges._progressView(doneCount, ordered.length),
+      progress: TopochainChallenges._progressView(doneCount, ordered.length, null, ordered),
       groups,
     };
   },
@@ -680,15 +723,22 @@ const TopochainChallenges = {
     const doneCount = ordered.filter((c) => TopochainChallenges._isDone(c)).length;
     const onboarding = TopochainChallenges._onboarding;
     if (!onboarding) {
-      return { kind: 'cards', progress: TopochainChallenges._progressView(doneCount, ordered.length), groups };
+      return {
+        kind: 'cards',
+        progress: TopochainChallenges._progressView(doneCount, ordered.length, null, ordered),
+        groups,
+      };
     }
     return {
       kind: 'cards',
       // First challenges is its own scope while it gates the rest; once unlocked
       // the grid is the whole event again, and so is the progress.
       progress: onboarding.unlocked
-        ? TopochainChallenges._progressView(doneCount, ordered.length)
-        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'First challenges'),
+        ? TopochainChallenges._progressView(doneCount, ordered.length, null, ordered)
+        : TopochainChallenges._progressView(
+          onboarding.completed, onboarding.total, 'First challenges',
+          ordered.filter((c) => TopochainChallenges._groupOf(c).key === 'setup')
+        ),
       onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'setup')
         ? onboarding.event_id : null,
       // While the gate is closed: the note, and how many of this event's
@@ -984,12 +1034,24 @@ const TopochainChallenges = {
   // event" now, without the name (issue #4528): the event's own name can
   // still be the season's, and the name added nothing the words did not say.
   // A named scope ("First challenges") is unchanged.
-  _progressView(done, total, scope) {
-    if (scope) return { done, total, caption: `done in ${scope}` };
-    const ctx = window.TopochainEventContext;
-    const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
-    const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
-    return { done, total, caption: name ? 'done in this event' : 'done' };
+  //
+  // `challenges` (fourth) is the list in scope, whose numeric rewards and the
+  // viewer's earned points make up the summary's points line (#4565): the
+  // event scope counts the whole ordered grid, First challenges its own
+  // cards. Absent, or no numeric reward in view, the descriptor is exactly
+  // what it was.
+  _progressView(done, total, scope, challenges) {
+    const points = TopochainChallenges._pointsView(challenges);
+    let view;
+    if (scope) {
+      view = { done, total, caption: `done in ${scope}` };
+    } else {
+      const ctx = window.TopochainEventContext;
+      const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
+      const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
+      view = { done, total, caption: name ? 'done in this event' : 'done' };
+    }
+    return points ? { ...view, points } : view;
   },
 
   // The card's rail: which of the three states a challenge is in, the one

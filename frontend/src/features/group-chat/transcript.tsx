@@ -90,9 +90,11 @@ import {
   transcriptStore,
   type Attachment,
   type Quote,
+  type TranscriptMarker,
   type TranscriptMessage,
   type TranscriptView,
 } from './transcript-store';
+import { MergedTopicCard } from '../dev-board/workshop/merged-topic-card';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
@@ -1281,6 +1283,24 @@ export function TranscriptRows({ view, source }: {
   );
   let lineDrawn = lineAt === null;
   const drawn: ReactNode[] = [];
+  // #4417: the cards drawn by time (a merged topic's), oldest first, each
+  // before the first row written after it. One older than every loaded row
+  // waits for "Load earlier" to reach it, unless the history is all here.
+  const markers = useMemo(
+    () => (view.lead.markers || []).filter((m) => m && Number.isFinite(Date.parse(m.at)))
+      .slice().sort((a, b) => Date.parse(a.at) - Date.parse(b.at)),
+    [view.lead.markers],
+  );
+  let marker = 0;
+  const markersBefore = (row: TranscriptMessage | null) => {
+    const at = row && row.at ? Date.parse(row.at) : Infinity;
+    while (marker < markers.length && Date.parse(markers[marker].at) <= at) {
+      const m = markers[marker];
+      marker += 1;
+      if (Number.isFinite(at) && !drawn.length && view.lead.earlier) continue;
+      drawn.push(<TranscriptMarkerCard key={`marker-${m.key}`} marker={m} />);
+    }
+  };
   // The row the next one groups under; a thread-activity card resets it, so
   // the message after a card always carries its own name.
   let previous: TranscriptMessage | null = null;
@@ -1289,6 +1309,7 @@ export function TranscriptRows({ view, source }: {
     // where it landed — one card for a run of replies to one thread with
     // nothing else said between them. A deleted reply leaves the run.
     const replyOf = main ? rows[i].replyOf : null;
+    if (markers.length) markersBefore(rows[i]);
     if (!lineDrawn && rows[i].id != null && (rows[i].id as number) >= (lineAt as number)) {
       lineDrawn = true;
       drawn.push(<NewMessagesDivider key="unread-line" />);
@@ -1358,7 +1379,19 @@ export function TranscriptRows({ view, source }: {
         </div>
       ) : null}
       {drawn}
+      {markers.length ? <TrailingMarkers markers={markers.slice(marker)} /> : null}
       {quiet ? <QuietCard {...quiet} /> : null}
     </>
   );
+}
+
+/** #4417: the cards newer than every loaded row, after them. */
+function TrailingMarkers({ markers }: { markers: TranscriptMarker[] }) {
+  return <>{markers.map((m) => <TranscriptMarkerCard key={`marker-${m.key}`} marker={m} />)}</>;
+}
+
+/** #4417: one card drawn by time: a topic merged into this one. */
+function TranscriptMarkerCard({ marker }: { marker: TranscriptMarker }) {
+  if (marker.kind === 'merged-topic') return <MergedTopicCard from={marker.from} at={marker.at} />;
+  return null;
 }

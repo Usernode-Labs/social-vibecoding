@@ -1747,6 +1747,7 @@ export function LandingScreen() {
           returnTo="/"
           resume={resume}
           releaseToken={sheet === 'start' ? release?.token ?? null : null}
+          releaseSignIn={sheet === 'start' ? release?.signIn ?? null : null}
           beforeFinish={startedFromStory}
           onClose={closeSheet}
           primaryClass={PRIMARY_PILL}

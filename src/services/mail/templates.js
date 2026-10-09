@@ -314,6 +314,11 @@ function waitlistCode(payload) {
 // match OTP_TTL_MS in src/services/email-signup.js.
 const RELEASE_CODE_NOTE = 'Opening it emails you a 6-digit code to sign in with. '
   + 'The code expires in 10 minutes.';
+// #4594: the link signs you in once (services/release-links.js; 7 days must
+// match RELEASE_LINK_TTL_MS there). After that, or once it has expired, it
+// falls back to the code above, so say so.
+const RELEASE_LINK_NOTE = 'The button signs you in once, with no code to type, and works for 7 days. '
+  + 'After that, opening it emails you a 6-digit code to sign in with instead.';
 
 const RELEASE_HEADLINE = 'Make and share apps with groups and friends.';
 
@@ -402,11 +407,12 @@ function waitlistReleased(payload) {
     ? 'Your account now has access. Sign in with your waitlist email.'
     : 'Create your account with the email you joined the waitlist with.';
 
+  const note = payload.signInLink ? RELEASE_LINK_NOTE : RELEASE_CODE_NOTE;
   let text = `You're in.\n${RELEASE_HEADLINE}\n\n${how}\n${url}`;
   // #1548: the no-account link sends a code the moment it is opened, so say
   // so here. Somebody who is not told to expect a SECOND email goes hunting
   // for a button that is not there.
-  if (!hasAccount) text += `\n\n${RELEASE_CODE_NOTE}`;
+  if (!hasAccount) text += `\n\n${note}`;
   text += '\n\n' + RELEASE_CAN_DO.map((c) => `- ${c.line}`).join('\n');
 
   let html = releaseCentered(
@@ -420,7 +426,7 @@ function waitlistReleased(payload) {
       + `color:${NEUTRAL_SECONDARY_INK}">${esc(how)}</p>`
     + releasePill(url, hasAccount ? 'Sign in' : 'Create my account')
     + (hasAccount ? '' : `<p style="margin:10px 0 0;font-size:13px;`
-      + `color:${NEUTRAL_SECONDARY_INK}">${esc(RELEASE_CODE_NOTE)}</p>`)
+      + `color:${NEUTRAL_SECONDARY_INK}">${esc(note)}</p>`)
   )
     + RELEASE_CAN_DO.map((c, i) => releaseChip(c, i === 0 ? 24 : 0)).join('');
 

@@ -77,8 +77,9 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     // ben: admitted, mail sent, never asked for a code, no account.
     await signup('ben@example.test', null);
     await mail('waitlist_released', 'ben@example.test', 'sent', `${D}T09:00:06Z`);
-    // cy: asked for a code, the account exists, the password was never set.
-    const cy = await user('cy', { password_set: false, has_platform_access: true });
+    // cy: asked for a code, the account exists, its account step (a username,
+    // and a password or "Skip for now") never finished.
+    const cy = await user('cy', { password_set: false, needs_username_choice: true, has_platform_access: true });
     await signup('cy@example.test', cy);
     await mail('waitlist_released', 'cy@example.test', 'failed', `${D}T09:00:07Z`);
     await mail('otp', 'cy@example.test', 'sent', `${D}T11:00:00Z`);
@@ -192,8 +193,8 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     // The onboard column: the tour plus the season's First challenges, x of n.
     assert.deepEqual(by.ana.onboard, { shown: true, done: 2, total: 3, complete: false },
       'the tour and one of two First challenges');
-    assert.deepEqual(by.dee.onboard, { shown: false, done: null, total: null, complete: false },
-      'the card is drawn only after the join screen is answered');
+    assert.deepEqual(by.dee.onboard, { shown: true, done: 0, total: 3, complete: false },
+      'the card is drawn for every new account, join screen answered or not (#4601)');
     assert.equal(by['ben@example.test'].onboard, null, 'no account, no card');
     await credit(ana, firsts[1].id);
     const again = (await journey.firstMile(pool, { day: D, now, leftOutIds })).people.find((p) => p.name === 'ana');

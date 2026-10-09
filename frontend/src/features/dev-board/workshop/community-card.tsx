@@ -117,6 +117,36 @@ export type HubFirstVersion = {
   } | null;
 };
 
+/** One channel of a project (#4417): #general, or one of its topics. */
+export interface PlaceChannel {
+  /** The topic's registry row (its channel's thread ref); null for #general. */
+  id: number | null;
+  kind: 'general' | 'topic';
+  /** The topic's category key (dapp.json `id`); null for #general. */
+  key: string | null;
+  handle: string;
+  /** Handles it had before a rename, which still find it. */
+  aliases: string[];
+  name: string;
+  about: string;
+  icon: string;
+  state: 'live' | 'archived' | 'merged';
+  /** A merged topic: the key of the topic it joined, and when. */
+  merged_into: string | null;
+  merged_at: string | null;
+  /** Open requests filed under it; null for #general and retired topics. */
+  requests: number | null;
+  unread: number;
+}
+
+export interface PlacesPayload {
+  /** Votes waiting on the viewer here, or null when not counted. */
+  owed: number | null;
+  channels: PlaceChannel[];
+  /** Topic proposals waiting for a vote (the Topics dialog lists them). */
+  proposals?: Array<{ session_id: number; pr_number: number | null; pr_url: string | null; title: string | null }>;
+}
+
 export type CommunityPayload = {
   slug: string;
   name?: string;
@@ -163,6 +193,13 @@ export type CommunityPayload = {
   can_manage?: boolean;
   /** An audience change already up for a vote, if one is. */
   audience_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
+  /**
+   * #4417: THE PLACES — what the project's list says beside each of its
+   * places: the votes owed here, and every channel, #general first, then
+   * each topic in dapp.json's order, retired ones included and marked so
+   * (the list draws the live ones). Null when it could not be read.
+   */
+  places?: PlacesPayload | null;
   approval: {
     policy: 'anyone' | 'invited';
     approvals_required: number | null;
@@ -307,6 +344,19 @@ export function reloadCommunity(slug: string): Promise<void> {
   });
   inflight.set(slug, pending);
   return pending;
+}
+
+/**
+ * The record already read for `slug`, or null, without asking for one: for a
+ * caller outside React (the chat's `#name` links, ./place-store.ts).
+ */
+export function cachedCommunity(slug: string): CommunityPayload | null {
+  return (slug && communities.get(slug)) || null;
+}
+
+/** Whether a read of `slug`'s record is on its way. */
+export function communityInflight(slug: string): boolean {
+  return !!slug && inflight.has(slug);
 }
 
 export function useCommunity(slug: string): CommunityPayload | null {

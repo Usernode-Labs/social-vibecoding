@@ -40,10 +40,15 @@ test('the invited tour: nine steps, each screen whole or the tap that leads on, 
     ['✕ takes you back to Home', 'Open Sunday Run Club again from Home any time.', 'Tap ✕'],
     ['You can find Sunday Run Club here', 'Communities lists every community you\'re in.', 'Tap Communities'],
     ['The Sunday Run Club hub', 'The discussion and the app\'s changes are here.', null],
-    ['Talk in Discussion', 'Everyone in Sunday Run Club reads it.', 'Tap Discussion'],
+    ['Talk in #general', 'Everyone in Sunday Run Club reads it. It is with the project\'s other places.', 'Open #general'],
     ['Say hi, or share an idea', 'The people using the app decide what goes in.', null],
   ]);
   assert.doesNotMatch(JSON.stringify(steps), /Homeroom bot (builds|turns)/);
+  // #4417: #general is a row of the places list (a wide window) or behind
+  // the place bar's button (a phone): the step rings whichever is on screen,
+  // and opens #general itself, since the button opens the tray.
+  assert.equal(steps[7].target, '[data-places] [data-place="discussion"], [data-places-btn]');
+  assert.equal(steps[7].opensNext, true);
 });
 
 test('starting a community and joining one share their first seven cards, word for word', () => {
@@ -135,7 +140,8 @@ test('every id the tour points at is one the shell ships', () => {
   // select the Communities tab by this one.
   assert.ok(read('dapp.json').includes('#platform-tab-workshop'));
   // The rest are drawn by the screens the tour opens.
-  assert.match(read('frontend/src/features/dev-board/workshop/project-band.tsx'), /data-ws-tab-btn/);
+  assert.match(read('frontend/src/features/dev-board/workshop/project-places.tsx'), /data-place=\{k\}/);
+  assert.match(read('frontend/src/features/dev-board/workshop/place-bar.tsx'), /data-places-btn=""/);
   assert.match(read('frontend/src/features/group-chat/general-chat.tsx'), /id="gc-messages"/);
   assert.match(read(GC_FORM_SRC), /form: 'gc-form',/);
 });
@@ -453,9 +459,12 @@ test('a join from the confirm reads Home\'s challenges again before the welcome 
 test('a link answers the join screen for the person it brings in', () => {
   const invites = read('src/services/community-invites.js');
   assert.match(invites, /SET needs_communities_choice = FALSE,\s+getting_started_seen = COALESCE\(getting_started_seen, '\{\}'::jsonb\)\s+\|\| jsonb_build_object\('join_answer', 'invite'\)\s+WHERE id = \$1 AND needs_communities_choice = TRUE/);
-  // communities_onboarded_at stays NULL, so the Getting started card, which
-  // needs it, stays out of their first session too.
+  // communities_onboarded_at stays NULL: it records the join screen itself.
+  // The Getting started card and the gate no longer need it (#4601): every
+  // new account gets them, however it signed up.
   assert.doesNotMatch(invites, /communities_onboarded_at = NOW\(\)/);
+  const onboarding = read('src/services/onboarding.js');
+  assert.match(onboarding, /return !!\(u && u\.getting_started_gate && !u\.getting_started_closed_at\);/);
 });
 
 test("You're in says that you joined, and shows the community: its app and its people (#4052)", () => {

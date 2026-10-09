@@ -552,6 +552,40 @@ test('the release mail promises the code only on the arm that sends one (#1548)'
   assert.doesNotMatch(returning.html, /6-digit code/);
 });
 
+test('the release mail with a one-time sign-in link says so, and tracking leaves that link alone (#4594)', () => {
+  const linked = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/?signup=1&t=tok&key=k', hasAccount: false, signInLink: true,
+  });
+  for (const part of [linked.text, linked.html]) {
+    assert.match(part, /signs you in once/);
+    // The figure must track RELEASE_LINK_TTL_MS in services/release-links.js.
+    assert.match(part, /works for 7 days/);
+    assert.match(part, /emails you a 6-digit code/, 'and says what happens after');
+  }
+  const { RELEASE_LINK_TTL_MS } = require('../src/services/release-links');
+  assert.equal(RELEASE_LINK_TTL_MS, 7 * 24 * 60 * 60 * 1000);
+
+  // Click tracking stores each destination URL; one carrying a sign-in
+  // credential is never rewritten, so its token is never stored.
+  const tracking = require('../src/services/mail/tracking');
+  const prior = process.env.PLATFORM_MAIL_TRACKING_SECRET;
+  process.env.PLATFORM_MAIL_TRACKING_SECRET = 'test-secret';
+  try {
+    const credential = `https://x.invalid/?signup=1&amp;${tracking.CREDENTIAL_PARAM}=secret-token`;
+    const message = {
+      html: `<html><body><a href="${credential}">Create my account</a><a href="https://x.invalid/other">Other</a></body></html>`,
+      text: '',
+    };
+    const out = tracking.decorate('waitlist_released', message, { trackingEnabled: true, messageId: 'a'.repeat(48) });
+    assert.ok(out.html.includes(credential), 'the credential link is left as it is');
+    assert.ok(!out.trackingLinks.some((l) => l.includes('secret-token')), 'and never stored');
+    assert.deepEqual(out.trackingLinks, ['https://x.invalid/other'], 'other links are still tracked');
+  } finally {
+    if (prior === undefined) delete process.env.PLATFORM_MAIL_TRACKING_SECRET;
+    else process.env.PLATFORM_MAIL_TRACKING_SECRET = prior;
+  }
+});
+
 test('the release mail is the "you\'re in" welcome, with its list and sign-off', () => {
   const m = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?signup=1&t=tok', hasAccount: false,

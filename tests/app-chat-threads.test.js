@@ -11,7 +11,11 @@
 //   * a notification row names the Messages address it opens;
 //   * both thread validations accept 'message' — the read route's
 //     THREAD_TYPES and the write side's validateThread, which checks the
-//     root in SQL — and the topic types keep working unchanged.
+//     root in SQL — and the topic types keep working unchanged;
+//   * #4417: and 'category', a topic's channel: only a topic of this app,
+//     a live one takes posts while an archived or merged one is read-only,
+//     a reply thread may start from a topic message (and closes with its
+//     topic), and the read cursor is the channel's own.
 //
 // Run with: node --test tests/app-chat-threads.test.js
 
@@ -70,9 +74,9 @@ test('an app-chat notification names the Messages address it opens', () => {
   }).href, null, 'a conversation row never carries an app address');
 });
 
-test('the read route accepts a reply thread beside the topic threads', () => {
+test('the read route accepts a reply thread and a topic\'s channel beside the topic threads', () => {
   const { THREAD_TYPES } = require('../src/routes/chat');
-  assert.deepEqual([...THREAD_TYPES].sort(), ['governance', 'issue', 'message', 'session']);
+  assert.deepEqual([...THREAD_TYPES].sort(), ['category', 'governance', 'issue', 'message', 'session']);
 });
 
 test('validateThread checks a reply thread\'s root in SQL, and leaves the topic types alone', async () => {
@@ -87,7 +91,8 @@ test('validateThread checks a reply thread\'s root in SQL, and leaves the topic 
     { type: 'message', ref: 70 });
   const q = seen.at(-1);
   assert.match(q.sql, /FROM chat_messages root/);
-  assert.match(q.sql, /root\.thread_type IS NULL/, 'a root is a general-stream row: no nesting');
+  assert.match(q.sql, /\(root\.thread_type IS NULL OR root\.thread_type = 'category'\)/,
+    'a root is a general-stream row or (#4417) a topic channel\'s: never a reply, so no nesting');
   assert.match(q.sql, /root\.msg_type IN \('message', 'spec_share'\)/, 'written by a person');
   assert.match(q.sql, /blocked\.blocker_id = \$3/, 'and not by somebody the poster blocked');
   assert.deepEqual(q.params, [70, 7, 5]);
@@ -112,6 +117,85 @@ test('validateThread checks a reply thread\'s root in SQL, and leaves the topic 
   assert.deepEqual(await validateThread(poolWith([]), 7, { type: 'issue', ref: 42 }), { type: 'issue', ref: 42 });
   assert.deepEqual(await validateThread(poolWith([{}]), 7, { type: 'session', ref: 9 }), { type: 'session', ref: 9 });
   assert.equal(await validateThread(poolWith([]), 7, { type: 'governance', ref: 9 }), null);
+});
+
+// ── #4417: a topic's channel ────────────────────────────────────────────
+
+test('#4417 validateThread: a topic channel is a live topic of THIS app; a retired one comes back closed', async () => {
+  const { validateThread } = require('../src/services/ws');
+  const seen = [];
+  const poolWith = (rows) => ({
+    async query(sql, params) { seen.push({ sql, params }); return { rows }; },
+  });
+  assert.deepEqual(await validateThread(poolWith([{ topic_state: 'live' }]), 7, { type: 'category', ref: 12 }),
+    { type: 'category', ref: 12 });
+  const q = seen.at(-1);
+  assert.match(q.sql, /FROM app_category_registry/);
+  assert.match(q.sql, /origin = 'topic'/, 'only a topic row is a channel');
+  assert.deepEqual(q.params, [12, 7], 'of this app');
+  assert.equal(await validateThread(poolWith([]), 7, { type: 'category', ref: 13 }), null, 'no such topic here');
+  for (const state of ['archived', 'merged']) {
+    assert.deepEqual(await validateThread(poolWith([{ topic_state: state }]), 7, { type: 'category', ref: 12 }),
+      { type: 'category', ref: 12, closed: true }, `a ${state} topic is read-only`);
+  }
+  // A reply thread whose root is a topic message closes with the topic.
+  const poolSeq = (...answers) => ({ async query() { return { rows: answers.shift() || [] }; } });
+  const topicRoot = { id: 80, user_id: 2, msg_type: 'message', thread_type: 'category', thread_ref: 12 };
+  assert.deepEqual(await validateThread(poolSeq([topicRoot], [{ topic_state: 'live' }]), 7, { type: 'message', ref: 80 }, 5),
+    { type: 'message', ref: 80 }, 'a reply thread can start from a topic message');
+  assert.deepEqual(await validateThread(poolSeq([topicRoot], [{ topic_state: 'archived' }]), 7, { type: 'message', ref: 80 }, 5),
+    { type: 'message', ref: 80, closed: true });
+});
+
+test('#4417 a retired topic refuses a post with an answer, not a silent drop', async () => {
+  const ws = require('../src/services/ws');
+  const sent = [];
+  const pool = {
+    async query(sql) {
+      if (/FROM apps WHERE id = \$1/.test(sql) || /SELECT id, collab_visibility/.test(sql)) {
+        return { rows: [{ id: 7, collab_visibility: 'public', view_visibility: 'public', self_hosted: false, moderation_suspended_at: null }] };
+      }
+      if (/FROM app_category_registry/.test(sql)) return { rows: [{ topic_state: 'archived' }] };
+      return { rows: [] };
+    },
+  };
+  const client = {
+    user: { id: 5, username: 'eve', isAdmin: true }, appId: 7, appSlug: 'x',
+    ws: { readyState: 1, send: (frame) => sent.push(JSON.parse(frame)) },
+  };
+  const out = await ws.handleMessage(pool, client, { type: 'chat', content: 'hello', thread: { type: 'category', ref: 12 } });
+  assert.deepEqual(out, { ok: false, code: 'topic_closed' });
+  assert.deepEqual(sent.at(-1), { type: 'error', code: 'topic_closed', message: ws.TOPIC_CLOSED_MESSAGE });
+});
+
+test('#4417 the topic channel\'s read cursor is its own table, under the general stream\'s definition of unread', async () => {
+  const seen = [];
+  const pool = { async query(sql, params) { seen.push({ sql, params }); return { rows: [] }; } };
+  await appChat.categoryUnreadCounts(pool, 7, 5, [12, 13]);
+  const count = seen.at(-1).sql;
+  assert.match(count, /FROM app_category_chat_reads rc/);
+  assert.match(count, /m\.thread_type = 'category' AND m\.thread_ref = rc\.category_id/);
+  assert.match(count, /m\.id > rc\.last_read_id/);
+  assert.match(count, /m\.deleted_at IS NULL/);
+  assert.match(count, /m\.user_id IS NOT NULL AND m\.user_id <> \$2/, 'written by another person');
+  assert.match(count, /blocked\.blocker_id = \$2/, 'not by somebody the reader blocked');
+  await appChat.ensureCategoryReadCursors(pool, 7, 5, [12]);
+  assert.match(seen.at(-1).sql, /ON CONFLICT \(app_id, category_id, user_id\) DO NOTHING/, 'a cursor is created once, at the newest message');
+  assert.equal((await appChat.moveCategoryCursor(pool, { appId: 7, categoryId: 12, userId: 5, messageId: 0 })).ok, false);
+  await appChat.moveCategoryCursor(pool, { appId: 7, categoryId: 12, userId: 5, messageId: 40 });
+  assert.match(seen.find((q) => /GREATEST/.test(q.sql)).sql, /target\.thread_type = 'category' AND target\.thread_ref = \$2/,
+    'read moves forward only, and only on a message of that channel');
+  await appChat.moveCategoryCursor(pool, { appId: 7, categoryId: 12, userId: 5, messageId: 40, unread: true });
+  assert.ok(seen.some((q) => /LEAST\(app_category_chat_reads\.last_read_id/.test(q.sql)), 'unread moves back only');
+});
+
+test('#4417 a mention in a topic channel opens the channel, on the message', () => {
+  const href = notifications.serialize({
+    id: 1, kind: 'mention', read_at: null, created_at: 'now', app_id: 5, app_slug: 'recipe box', app_name: 'Recipe Box',
+    chat_message_id: 88, message_content: 'x', thread_type: 'category', thread_ref: 12,
+    session_id: null, source_username: 'bob', detail: null,
+  }).href;
+  assert.equal(href, '#messages/app/recipe%20box/c/12/m/88');
 });
 
 test('a deleted row reads as a placeholder that keeps its sender', () => {

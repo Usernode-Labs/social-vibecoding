@@ -5172,6 +5172,9 @@ const App = {
         App.navigateToLeaderboard(_tcSection, null);
         return;
       }
+      // #4417: a channel's own address, `dev/discussion` or `dev/c/<handle>`,
+      // is the project page on that place (App._placeAddress).
+      App._placeAddress(parts);
       if (parts[0] === 'app' && parts[1]) {
         const slug = parts[1];
         // Card-list hashes (#194 revision): app/{slug}/app,
@@ -6200,6 +6203,30 @@ const App = {
   // The address of a project's hub, the page its channel hangs off. A HASH,
   // because the back button follows its href only when it is one (the
   // #back-btn listener below); `#app/<slug>/workshop` is the same route.
+  /**
+   * #4417: A CHANNEL'S OWN ADDRESS. `#app/<slug>/dev/discussion` is the
+   * project's #general and `#app/<slug>/dev/c/<handle>` one of its topics (a
+   * handle it had before a rename too: the page resolves it once it has read
+   * its places). Each is the project page on that place: the place is the one
+   * the page is told it is on (AppView._landOnTab, which also turns a page
+   * already up for the project), and `parts` is rewritten in place to the
+   * page's own address (`workshop`), which the route then takes as it takes
+   * any other. Every older address is left as it is.
+   */
+  _placeAddress(parts) {
+    if (!parts || parts[0] !== 'app' || !parts[1] || parts[2] !== 'dev') return false;
+    if (parts[3] !== 'discussion' && !(parts[3] === 'c' && parts[4])) return false;
+    let handle = '';
+    try { handle = decodeURIComponent(parts[4] || '').toLowerCase(); } catch (_) { handle = ''; }
+    const place = parts[3] === 'discussion' || handle === 'general' ? 'discussion' : `c:${handle}`;
+    if (typeof AppView !== 'undefined' && AppView._isWorkshopPlace && AppView._isWorkshopPlace(place)) {
+      AppView._landOnTab(parts[1], place);
+    }
+    parts.length = 3;
+    parts[2] = 'workshop';
+    return true;
+  },
+
   _hubHref(slug) {
     return slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
   },
@@ -6242,6 +6269,15 @@ const App = {
   _appChatToHub(rawSlug, rest, from) {
     let slug = rawSlug;
     try { slug = decodeURIComponent(rawSlug); } catch (_) { /* the raw segment */ }
+    // #4417: `…/c/<topic>[/m/<id>]` is a message in one of the project's
+    // topic channels (a notification's address), Homeroom's included: its
+    // channel's place on the project page, once the page's record names it.
+    const topicRef = rest && rest[0] === 'c' ? App._numericSegment(rest[1]) : null;
+    const topics = window.UsernodeReact?.places?.openTopicRef;
+    if (slug && topicRef != null && topicRef <= 2147483647 && topics) {
+      void topics(slug, topicRef);
+      return true;
+    }
     if (!slug || App._appChatIsArchive(slug)) return false;
     // Known not to be the archive: straight to the page, no step between.
     if (App._appChatIsNotArchive(slug)) {
@@ -6283,6 +6319,8 @@ const App = {
     let target = null;
     if (parts[1] === 'app' && parts[2]) {
       try { slug = decodeURIComponent(parts[2]); } catch (_) { return false; }
+      // #4417: a topic channel's message is that channel's, not #general's.
+      if (parts[3] === 'c') return false;
       if (App._appChatIsArchive(slug)) return false;
       target = App._messagesExtras(parts.slice(3));
     } else {

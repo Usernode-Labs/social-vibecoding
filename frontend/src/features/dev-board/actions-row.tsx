@@ -56,7 +56,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, ArrowRightIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, KeyIcon, LightBulbIcon, LockIcon,
+  AppWindowIcon, ArrowRightIcon, ArrowUpTrayIcon, ChevronLeftIcon, ChevronRightIcon, CogIcon, EllipsisHorizontalIcon, GitHubIcon, GlobeIcon, HashIcon, KeyIcon, LightBulbIcon, LockIcon,
   PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
@@ -483,6 +483,20 @@ export function DevPlusMenu({
               title="App display name"
               sub="Renames are proposals, applied once voted in"
               dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
+            />
+            {/* #4417: the project's topics, its lasting conversations: each
+                is a channel and a category. A change to them is a proposal
+                against dapp.json's `topics` (features/dialogs/topics.tsx).
+                Its own onClick, so it works however the menu was wired. */}
+            <PlusRow
+              data-plus="topics"
+              icon={<HashIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="Topics"
+              sub="The project's channels, and the categories requests are filed under"
+              onClick={() => {
+                callAppView('_closePlusMenu');
+                window.UsernodeReact?.dialogs?.topics?.open({ slug: window.AppView?.appData?.slug });
+              }}
             />
             <PlusRow
               data-plus="secrets"

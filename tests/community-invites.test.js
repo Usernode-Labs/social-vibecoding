@@ -171,7 +171,11 @@ test('signing UP from an invite page follows the link server-side; signing IN is
   // Otherwise the carried copy is only dropped (dropCarried), which since
   // #4272 also counts the sign-in for the admin Journey's invite funnel as
   // one the link brought; it still follows nothing.
-  assert.match(auth, /const consented = verified\.created \|\| req\.body\?\.followInvite === true;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId, \{\s+requirePhone: phoneAuth\.offered\(config\),\s+\}\)\s+: await communityInvites\.dropCarried\(pool, req, res, verified\.userId\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
+  // The code's route and the release link's (#4594) share that answer
+  // (answerProvenEmail): only the code's passes the sheet's followInvite on.
+  assert.match(auth, /return await answerProvenEmail\(req, res, verified, \{ followInvite: req\.body\?\.followInvite === true \}\);/);
+  assert.match(auth, /return await answerProvenEmail\(req, res, verified, \{ via: 'link', extra: \{ email: verified\.email \} \}\);/);
+  assert.match(auth, /const consented = verified\.created \|\| followInvite;\s+const invite = consented\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId, \{\s+requirePhone: phoneAuth\.offered\(config\),\s+\}\)\s+: await communityInvites\.dropCarried\(pool, req, res, verified\.userId\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
   assert.match(read('frontend/src/features/auth/sign-in-sheet.tsx'), /body: JSON\.stringify\(\{ email, code, \.\.\.\(followInvite \? \{ followInvite: true \} : \{\}\) \}\)/);
   const login = auth.slice(auth.indexOf("log.info('auth', 'Login successful'"), auth.indexOf("log.info('auth', 'Login successful'") + 900);
   assert.match(login, /await communityInvites\.dropCarried\(pool, req, res, user\.id\);/, 'a password sign-in drops the carried copy');
@@ -250,24 +254,21 @@ test('the words: the landing card, the invite pane', () => {
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
   const now = Date.parse('2026-09-27T12:00:00Z');
   const fresh = { expiresAt: '2026-10-04T12:00:00Z', maxUses: 25, uses: 0 };
-  assert.equal(pane.linkSentence(fresh, 'member', now), 'Anyone with this link can join. It expires in 7 days and works for 25 people.');
-  assert.equal(pane.linkSentence({ ...fresh, uses: 24 }, 'collaborator', now),
-    'Anyone with this link can join and build with you. It expires in 7 days and works for 1 more person.');
   assert.equal(pane.linkDetail({ ...fresh, uses: 3 }, now), '3 of 25 used · 7 days left');
   // WP-D: a link with no end date, or for anyone, says so.
   const forever = { expiresAt: null, maxUses: null, uses: 0 };
-  assert.equal(pane.linkSentence(forever, 'member', now), 'Anyone with this link can join. It works until you turn it off.');
-  assert.equal(pane.linkSentence({ ...forever, maxUses: 25 }, 'member', now), 'Anyone with this link can join. It has no end date and works for 25 people.');
-  assert.equal(pane.linkSentence({ ...fresh, maxUses: null }, 'member', now), 'Anyone with this link can join. It expires in 7 days.');
   assert.equal(pane.linkDetail({ ...forever, uses: 4 }, now), '4 joined · no end date');
   assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), '2 joined · 7 days left');
   const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');
   assert.match(paneSrc, /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
   assert.match(paneSrc, /'Until you turn it off'/);
   assert.match(paneSrc, /'Anyone with the link'/);
-  assert.match(paneSrc, /\{state\.joiningRule\}/);
-  assert.equal(pane.newcomerLine(), 'Someone new to Homeroom joins straight away and goes right into this project.');
-  assert.doesNotMatch(pane.newcomerLine.toString(), /skip/, 'no skips past the waitlist to count');
+  // #4599 (evan): no explanatory lines under the link. Its row of Your links
+  // says how long and how many; Change sits beside that heading.
+  assert.equal(pane.linkSentence, undefined);
+  assert.equal(pane.newcomerLine, undefined);
+  assert.doesNotMatch(paneSrc, /joiningRule|app-invite-sentence|Someone new to Homeroom|Change how long or how many/);
+  assert.match(paneSrc, /id="app-invite-change-open"[^\n]*\n\s*Change\n/);
 
   // #3362: the menu's "Invite to community" row is gone; the pane opens from
   // the hub's Invite (and a just-yours project's Share it card), beside the

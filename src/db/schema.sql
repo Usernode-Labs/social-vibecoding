@@ -2383,6 +2383,60 @@ UPDATE topic_attribute_votes v
    );
 DELETE FROM topic_attribute_votes WHERE field = 'theme';
 
+-- #4417: TOPICS. On screen and in dapp.json a topic is a lasting
+-- conversation about one part of a project, with the requests about that
+-- part filed under it. Inside the platform it is a CATEGORY ROW with
+-- origin = 'topic' (the word "topic" already means one request or proposal
+-- here: topic_attribute_votes, services/topic-attributes.js), and its
+-- channel is a chat_messages thread of type 'category' whose thread_ref is
+-- this row's id. dapp.json's `topics` array is the only writer
+-- (services/app-manifest.js reconcileAppTopics), on the rebuild a merged
+-- topics PR triggers and, for the platform's own app, at boot.
+--
+--   topic_handle   the channel's name (#onboarding); a rename may change it
+--   topic_aliases  handles it had before, so an old link keeps working
+--   topic_state    'live' | 'archived' | 'merged'. A retired topic also
+--                  carries retired_at, so every reader of the live
+--                  vocabulary leaves it out with no change of its own.
+--   merged_into    the surviving topic's category_key, when merged
+--   merged_at      when the merge applied: where the channel's history draws
+--                  its card (no chat_messages row is written for it)
+--   topic_order    the array's order, which is the list's order
+--
+-- A topic row is PINNED, so a discovery never retires it, and its
+-- category_key is dapp.json's `id`, set once: the literal value a category
+-- vote carries, so no rename moves a vote.
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_handle TEXT;
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_aliases TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_state VARCHAR(8);
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS merged_into TEXT;
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
+ALTER TABLE app_category_registry ADD COLUMN IF NOT EXISTS topic_order INTEGER;
+-- The read the places list, the channel lookup and the tally's exclusion
+-- make: one app's topics, in order.
+CREATE INDEX IF NOT EXISTS idx_app_category_registry_topics
+  ON app_category_registry (app_id, topic_order)
+  WHERE origin = 'topic';
+
+-- #4417: one person's read position in one topic's channel, for its unread
+-- count on the places list. It mirrors app_chat_reads (the general stream's
+-- watermark) one level down: every message of that 'category' thread with
+-- an id above `last_read_id`, from somebody else, not deleted and not from
+-- someone the reader blocked, is unread (services/app-chat.js). A missing
+-- row is created at the channel's newest message the first time the list is
+-- read for a member, so a topic starts at zero unread. staging:private for
+-- the reason app_chat_reads is: personal reading history.
+CREATE TABLE IF NOT EXISTS app_category_chat_reads (
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  category_id  INTEGER NOT NULL REFERENCES app_category_registry(id) ON DELETE CASCADE,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_read_id INTEGER NOT NULL DEFAULT 0,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, category_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_category_chat_reads_user ON app_category_chat_reads (user_id);
+COMMENT ON TABLE app_category_chat_reads IS 'staging:private';
+
 -- #613: manual drag-and-drop ordering of cards WITHIN a Dev-board kanban
 -- column. The board's default order is derived (recency / merge-priority);
 -- this table is an OVERLAY: cards whose identity appears here sort first,
@@ -6498,6 +6552,26 @@ COMMENT ON COLUMN waitlist_signups.more_token IS 'staging:private';
 -- admin wants to see before releasing a row.
 ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
 
+-- #4594: the release mail's one-time sign-in link (src/services/release-links.js).
+-- "Create my account" signs its recipient in once, in place of a second email
+-- and a code. Random, stored only as a SHA-256 hash, bound to the row and the
+-- address it was minted for, single use, good for 7 days, and spent by a POST
+-- from the page, never by the GET that opens it. NOT more_token, which stays
+-- prefill-only (#1548). Auth material: private to staging.
+CREATE TABLE IF NOT EXISTS waitlist_release_links (
+  token_hash   VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  signup_id    BIGINT NOT NULL REFERENCES waitlist_signups(id) ON DELETE CASCADE,
+  email        VARCHAR(255) NOT NULL,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  consumed_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_release_links_signup
+  ON waitlist_release_links (signup_id);
+CREATE INDEX IF NOT EXISTS idx_waitlist_release_links_expires
+  ON waitlist_release_links (expires_at);
+COMMENT ON TABLE waitlist_release_links IS 'staging:private';
+
 -- Outbound mail log (src/services/mail/). Every send attempt lands here
 -- with its outcome, and it is the ONLY place an operator can see what
 -- happened: the endpoints that trigger mail are always-200 by contract
@@ -10156,12 +10230,14 @@ COMMENT ON TABLE homeroom_bot_hellos IS 'staging:private';
 -- WP-F: somebody who joins by an invite link is greeted as a 'joiner'
 -- (homeroom-bot-dm.js greetJoiner). Everybody who had platform access when
 -- the bot went on for everyone, and had not met it, was greeted once as a
--- 'welcome' (homeroom-bot-welcome.js).
+-- 'welcome' (homeroom-bot-welcome.js). #4604: somebody who ends the
+-- welcome tour without having met it is greeted as a 'tour'
+-- (homeroom-bot-dm.js greetTourFinisher).
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_hellos DROP CONSTRAINT IF EXISTS homeroom_bot_hellos_kind_check;
   ALTER TABLE homeroom_bot_hellos ADD CONSTRAINT homeroom_bot_hellos_kind_check
-    CHECK (kind IN ('maker', 'member', 'joiner', 'welcome', 'known'));
+    CHECK (kind IN ('maker', 'member', 'joiner', 'welcome', 'tour', 'known'));
 END $$;
 -- B5: the name people see the bot by. Its username stays homeroom_bot.
 UPDATE users SET display_name = 'Homeroom bot'

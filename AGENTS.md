@@ -229,12 +229,24 @@ is no replay plan to write and nothing to verify locally.
   (`features/workshop/community-switcher.tsx`, scope in
   `community-scope.ts`). A project's page wears its community's colour
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
-  icon) and has four tabs, **Hub** (who is here and who it is for, the
-  actions, a 14-day trend, since your last visit, votes owed, the chat's
-  last lines, your work), **Discussion**, **Needs you** and **Workshop**
-  (`features/dev-board/workshop/project-band.tsx`). **All items** is a page
-  under the Workshop (its "See all"), with a way back, and the Workshop tab
-  stays lit while it is up. The Communities
+  icon) and is navigated by one list of **places**
+  (`features/dev-board/workshop/project-places.tsx`): **Hub** (who is here
+  and who it is for, the actions, a 14-day trend, since your last visit,
+  votes owed, the chat's last lines, your work), **Needs you** and
+  **Workshop**, a line, then **Channels** (**#general**) and **Topics**
+  (each topic's channel), each group under its heading. Place keys are
+  `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
+  (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
+  On a phone the list is a tray behind the place bar that names where you
+  are (`place-bar.tsx`, `places-tray.tsx`); on a wide window it is the
+  section column beside the 76px strip (`features/nav/section-column.tsx`),
+  and the page publishes where it is for it (`place-store.ts`). **All
+  items** is a page under the Workshop (its "See all"), with a way back, and
+  the Workshop stays lit in the list while it is up. A **topic** is a
+  channel and a category at once: an entry of dapp.json's `topics`,
+  reconciled into `app_category_registry` (origin `'topic'`) when a change
+  merges, its channel a `'category'` thread; a new topic, a rename, a merge
+  or an archive is a proposal (Settings & rules › Topics). The Communities
   screen's Needs you is one feed of every decision owed across your projects
   (`GET /api/workshop/needs-feed`). A project's channel lives on its page,
   not in Messages, and #general is the Homeroom community's channel;
@@ -246,13 +258,13 @@ is no replay plan to write and nothing to verify locally.
   (`{ type: 'session' | 'issue' | 'governance', ref }`) or is not written.
   App-wide state is shown where it lives: merges paused and a stalled release
   are banners on the project page, and settings changed lately and the
-  Friday card are the Workshop tab's notices panel (`services/app-notices.js`,
+  Friday card are the Workshop's notices panel (`services/app-notices.js`,
   read from `events` — record a new kind there, not a chat line).
   `migrate.clearAutomatedChannelLines` clears the lines written before. A
   door to a project's hub (a link that says so) calls
   `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
-  tab the page was last left on. Back and Forward are not doors: the page
-  reopens on the tab last shown, read fresh when it mounts.
+  place the page was last left on. Back and Forward are not doors: the page
+  reopens on the place last shown, read fresh when it mounts.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a

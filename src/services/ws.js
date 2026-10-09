@@ -1017,7 +1017,24 @@ function pushPlatformVersion({ sha, reason = 'rollout' } = {}) {
 // general-stream message a person wrote in THIS app (so a reply can never
 // be a root: no nesting), and — when `viewerId` is given — not by somebody
 // the poster blocked, whose message they cannot see to answer.
-const THREAD_TYPES = Object.freeze(['issue', 'session', 'governance', appChat.MESSAGE_THREAD]);
+//
+// #4417: 'category' is a topic's channel, ref = its app_category_registry
+// row (origin 'topic') of THIS app. A live topic takes posts; an archived or
+// merged one is read-only, and comes back marked `closed` so the sender is
+// told rather than silently dropped. A reply thread under a message of a
+// retired topic is closed with it.
+const THREAD_TYPES = Object.freeze(['issue', 'session', 'governance', appChat.MESSAGE_THREAD, appChat.CATEGORY_THREAD]);
+
+const TOPIC_CLOSED_MESSAGE = 'This topic is archived. Its history stays here to read.';
+
+async function topicChannelState(pool, appId, ref) {
+  const { rows } = await pool.query(
+    `SELECT topic_state FROM app_category_registry
+      WHERE id = $1 AND app_id = $2 AND origin = 'topic'`,
+    [ref, appId]
+  );
+  return rows[0] ? (rows[0].topic_state || 'live') : null;
+}
 
 async function validateThread(pool, appId, thread, viewerId = null) {
   if (!thread || typeof thread !== 'object') return null;
@@ -1038,6 +1055,15 @@ async function validateThread(pool, appId, thread, viewerId = null) {
       );
       if (!rows.length) return null;
     }
+    if (root.thread_type === appChat.CATEGORY_THREAD) {
+      const state = await topicChannelState(pool, appId, Number(root.thread_ref));
+      if (!state) return null;
+      if (state !== 'live') return { type, ref, closed: true };
+    }
+  } else if (type === appChat.CATEGORY_THREAD) {
+    const state = await topicChannelState(pool, appId, ref);
+    if (!state) return null;
+    if (state !== 'live') return { type, ref, closed: true };
   } else if (type === 'session') {
     const { rows } = await pool.query(
       'SELECT 1 FROM chat_sessions WHERE id = $1 AND app_id = $2', [ref, appId]
@@ -1121,6 +1147,19 @@ async function handleMessage(pool, client, msg) {
     let archived = false;
     try {
       archived = await communities.channelArchived(pool, client.appId);
+      // #4417: a reply thread under a message in one of the project's
+      // TOPIC channels is that topic's, not the old channel's: Homeroom's
+      // topics are threads on this same app chat, and they take posts.
+      if (archived && msg.thread && msg.thread.type === 'message') {
+        const rootId = Number(msg.thread.ref);
+        if (Number.isInteger(rootId) && rootId > 0 && rootId <= 2147483647) {
+          const { rows: roots } = await pool.query(
+            'SELECT thread_type FROM chat_messages WHERE id = $1 AND app_id = $2',
+            [rootId, client.appId]
+          );
+          if (roots[0] && roots[0].thread_type === appChat.CATEGORY_THREAD) archived = false;
+        }
+      }
     } catch (err) {
       log.warn('ws', 'channel archive check failed', { appId: client.appId, err: err.message });
     }
@@ -1163,6 +1202,16 @@ async function handleMessage(pool, client, msg) {
             appId: client.appId, userId: client.user.id,
           });
           return { ok: false, code: 'invalid_thread' };
+        }
+        // #4417: a retired topic's channel is read-only. Answered, like the
+        // archived channel above, so the composer can say why.
+        if (thread.closed) {
+          try {
+            if (client.ws && client.ws.readyState === 1) {
+              client.ws.send(JSON.stringify({ type: 'error', code: 'topic_closed', message: TOPIC_CLOSED_MESSAGE }));
+            }
+          } catch { /* a closed socket has nobody to tell */ }
+          return { ok: false, code: 'topic_closed' };
         }
       }
 
@@ -1327,6 +1376,10 @@ async function handleMessage(pool, client, msg) {
           threadRoot = {
             id: Number(root.id), username: root.username || null,
             content: root.deleted_at ? '' : appChat.snippet(root.content), deleted: !!root.deleted_at,
+            // #4417: where the root is: the general stream (null), or one of
+            // the project's topic channels, whose stream draws the reply.
+            thread_type: root.thread_type || null,
+            thread_ref: root.thread_ref == null ? null : Number(root.thread_ref),
           };
         }
       }
@@ -1352,10 +1405,10 @@ async function handleMessage(pool, client, msg) {
       // for something (services/homeroom-bot-chat.js). Not awaited: the read
       // takes a moment, and the room has the message already. Never an edit
       // (that is chat_edit), and never a connector's post.
-      if (!thread) {
+      if (!thread || thread.type === appChat.CATEGORY_THREAD) {
         void require('./homeroom-bot-chat').noteChatMessage(pool, null, {
           appId: client.appId, userId: client.user.id, messageId: rows[0].id, content, thread, postedVia,
-        });
+        }).catch((err) => log.warn('ws', 'Homeroom bot hand-over failed', { err: err.message }));
       }
       // WP-E: somebody an invite brought, writing here for the first time:
       // the link's maker hears they said hi (services/invite-activity.js).
@@ -1586,6 +1639,15 @@ async function handleMessage(pool, client, msg) {
           await appChat.advanceReadCursor(pool, client.appId, client.user.id, rows[0].id);
         } catch (err) {
           log.warn('ws', 'read cursor advance failed', {
+            appId: client.appId, userId: client.user.id, err: err.message,
+          });
+        }
+      } else if (thread.type === appChat.CATEGORY_THREAD) {
+        // #4417: and posting in a topic's channel is reading that channel.
+        try {
+          await appChat.advanceCategoryCursor(pool, client.appId, thread.ref, client.user.id, rows[0].id);
+        } catch (err) {
+          log.warn('ws', 'topic read cursor advance failed', {
             appId: client.appId, userId: client.user.id, err: err.message,
           });
         }
@@ -2348,4 +2410,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { noteBoardChange, connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { noteBoardChange, connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
