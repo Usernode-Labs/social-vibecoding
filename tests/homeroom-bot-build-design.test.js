@@ -238,8 +238,11 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     // #4387: and the "Adding …" phrases its waiting members see.
     const progress = live.FIRST_VERSION_PROGRESS_LINES.join('\n');
     assert.ok(first.includes(progress) && !other.includes('usernode-progress'));
-    assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${pack4}\n`, ''), other,
-      'the record, the progress phrases, the skill\'s nudge and the look-and-fix loop are the only differences');
+    // #4487: and a later change is asked to declare its visible changes.
+    const declare = live.BUILD_VISIBLE_CHANGES_LINES.join('\n');
+    assert.ok(other.includes(declare) && !first.includes('declare_visible_changes'));
+    assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
+      'the record, the progress phrases, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
     // Every build, a later one included, reads the note through the guidance.
     for (const p of [first, other]) {
       assert.match(p, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look/);
