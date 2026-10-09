@@ -126,7 +126,7 @@ test('the panel: nothing to say draws nothing; otherwise the card first, then ea
   // On the Workshop tab, straight under the approval rules (#3528). All
   // items leads the tab since 5 Oct 2026, and the panel kept its place
   // under the rules rather than moving up with it.
-  const ws = lander.slice(lander.indexOf("{tab === 'workshop' ? ("), lander.indexOf("{tab === 'needs' ? ("));
+  const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp ? ("), lander.indexOf("{tab === 'needs' ? ("));
   assert.match(ws, /\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\n\s*\{\/\*[^]{0,500}?\*\/\}\n\s*\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'straight under the approval rules');
   assert.ok(ws.indexOf('data-ws-dashboard=""') < ws.indexOf('<WorkshopNotices') && ws.indexOf('<WorkshopNotices') < ws.indexOf('data-ws-mine=""'),
     'under All items, and above your work');

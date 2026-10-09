@@ -1275,50 +1275,34 @@ const AppView = {
       if (shot === 'since-visit') {
         AppView._workshopSince[slug] = Date.now() - 30 * 86400000;
       }
-      // `?shot=since-seen` lands on the state #2240 is about, which is the
-      // OTHER end of the same walk: a reader with nothing new who walked into
-      // what they had seen anyway — which the strip invites, because its
-      // controls are drawn and live on a quiet day by design. Seen rows come
-      // out, and `Clear`, the control that folds them again, is what has to
-      // be live there.
-      // The baseline is seeded to NOW rather than a month back, so every row
-      // is on the seen side and the strip opens on its "nothing has changed"
-      // note; then the real controls are pressed — through their own
-      // handlers, as `?shot=board-unfold` presses a row — until the "Seen
-      // before" mark is on screen. It stops on the mark rather than after a
-      // fixed number of presses, because how many it takes depends on the
-      // rows.
-      // Nothing is written to storage, so a human who opens the link is not
-      // told they were here.
+      // `?shot=since-seen` is the quiet visit (#4457): the baseline seeded a
+      // month AHEAD (the staging demo stamps some mock rows past the clock),
+      // so nothing is new and Since your last visit says so in one line,
+      // while Week by week still lists the weeks. Nothing is written to
+      // storage, so a human who opens the link is not told they were here.
       if (shot === 'since-seen') {
-        AppView._workshopSince[slug] = Date.now();
+        AppView._workshopSince[slug] = Date.now() + 30 * 86400000;
+      }
+      // `?shot=week-page` opens this week's own page in the Workshop tab
+      // (#4457): Week by week's first row, pressed through its own handler,
+      // as `?shot=board-unfold` presses a row, once the row is drawn. A
+      // human's first real gesture stops it, as there.
+      if (shot === 'week-page') {
+        AppView._workshopSince[slug] = Date.now() - 3 * 86400000;
         let tries = 0;
         const done = () => {
           clearInterval(tick);
           document.removeEventListener('pointerdown', onUserInput, true);
           document.removeEventListener('keydown', onUserInput, true);
         };
-        // A human who opens this link must not have the list walked out from
-        // under them after their first real gesture. Same guard as
-        // `?shot=board-unfold` and `?shot=feed-comments` below, the other two
-        // deep links that drive a control rather than seeding state.
         const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
         document.addEventListener('pointerdown', onUserInput, true);
         document.addEventListener('keydown', onUserInput, true);
         const tick = setInterval(() => {
           if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
-          // Re-asserted for the whole window rather than stopped at the first
-          // sighting, as `?shot=card-menu` does: the week summaries ride in
-          // behind the board's data and repaint the list, and a check that
-          // judged the page after an unfold was undone failed intermittently.
-          if (document.querySelector('[data-ws-since-seen]')) return;
-          // A week's seen rows follow its new ones behind that week's one
-          // `Show N more` (#3524), so an open week's reveal is the press when
-          // there is one; `Show an earlier week` steps back a week to find
-          // one when there is not.
-          const more = document.querySelector('button[data-ws-since-week-more]')
-            || document.querySelector('button[data-ws-since-more]:not([disabled])');
-          if (more) more.click();
+          if (document.querySelector('[data-ws-week-page]')) { done(); return; }
+          const row = document.querySelector('button[data-ws-week]');
+          if (row) row.click();
         }, 300);
       }
       // `?shot=mine-empty` draws "What you are working on" with nothing in
@@ -4161,7 +4145,7 @@ const AppView = {
     // Leaving whatever thread surface was open: drop the live render
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    if (subTab !== 'topic') AppView._devTopic = null;
+    if (subTab !== 'topic') { AppView._devTopic = null; AppView._devTopicInPanel = false; }
 
     // The topic sub-view used to be an `innerHTML` template, so it had to
     // retire whatever interim root the previous surface had left on
@@ -7532,6 +7516,58 @@ const AppView = {
     }
   },
 
+  // ── An item's page in the Workshop tab's side panel (#4457) ──────────
+  //
+  // On a wide window a row of the Workshop tab opens its item's page in a
+  // panel beside the list, so the list keeps its place. The panel is NOT a
+  // second copy of the page: it is the topic page itself, mounted the way
+  // `_renderTopicSubView` mounts it, into a `#dev-topic-thread` host the
+  // panel renders (workshop/side-panel.tsx), while the Workshop's own
+  // sub-view stays up. `_devTopic` names the item, so every live refresh
+  // that repaints an open topic (`_renderTopicHead`, the vote and roster
+  // reloads) reaches the panel the same way. `renderDevView` clears it on
+  // any move to another sub-view, and the panel closes itself with the tab.
+  _devTopicInPanel: false,
+  async openTopicInPanel(kind, id) {
+    if (!kind || !id) return;
+    AppView._topicProposal = null;
+    AppView._topicGov = null;
+    AppView._topicIssue = null;
+    AppView._topicIssueSlug = null;
+    AppView._editingIssueTitle = null;
+    AppView._editingSessionTitle = null;
+    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
+    AppView._devTopic = { kind, id };
+    AppView._devTopicInPanel = true;
+    if (kind === 'proposal' || kind === 'session') window.Notifications?.markProposalSeen?.(id);
+    AppView._invalidateVoteRoster(id);
+    if (kind === 'gov') AppView._invalidateGovVoteRoster(id);
+    const current = () => {
+      const t = AppView._devTopic;
+      return AppView._devTopicInPanel && !!document.getElementById('dev-topic-thread')
+        && !!t && t.kind === kind && t.id === id;
+    };
+    if (!AppView._findTopicItem()) {
+      if (kind === 'gov') await AppView._fetchGovProposalById(id);
+      else if (kind === 'issue') await AppView._fetchIssueByNumber(id);
+      else await AppView._fetchProposalById(id);
+    }
+    if (!current() || !AppView._findTopicItem()) return;
+    AppView._mountTopicThread();
+    AppView._renderTopicHead();
+    // The change page's head host is rendered by its own portal, which may
+    // land a frame after the mount; on the full page later repaints cover
+    // that, so the panel paints once more when it has.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (current()) AppView._renderTopicHead();
+  },
+  closeTopicPanel() {
+    if (!AppView._devTopicInPanel) return;
+    AppView._devTopicInPanel = false;
+    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
+    if (typeof App === 'undefined' || App.currentSubTab !== 'topic') AppView._devTopic = null;
+  },
+
   // ── Full-screen general chat sub-view ───────────────────────────────
   // The ACTIVITY screen (Streamlined Concept): renderGroupChatTab mounts
   // into #dev-chat-body exactly as it used to mount into the pinned pane —
@@ -9497,6 +9533,106 @@ const AppView = {
     return row;
   },
 
+  // #4457: what the Workshop tab's rows say about an item, in words — the
+  // row is a neutral tile, the title, one line ("Change #4456 · yours · for
+  // #4455"), then small tags for what is happening on it and, on a change up
+  // for a vote, the vote. Resolved here, like every other card fact, so the
+  // component re-derives nothing: `noun`/`n`/`by` and the rest are joined
+  // into the line by workshop/work-row.tsx, which also decides what to leave
+  // out where (your own name, on Your work). Tag tones: `run` (in flight),
+  // `ok` (live, passed), `warn` (worth knowing), `bad` (stops it), `plain`.
+  _workshopBrief(kind, item, card) {
+    const it = item || {};
+    const meId = App.user && App.user.id;
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    const who = AppView._devCardAuthor(kind === 'my-session' || kind === 'shared-session' ? 'session' : kind, it);
+    const mineBy = kind === 'my-session'
+      || (meId != null && (String(it.user_id) === String(meId) || String(it.created_by) === String(meId)))
+      || (!!who && !!App.user && who === App.user.username);
+    const nums = (arr) => AppView._sanitizeIssueNumbers(Array.isArray(arr) ? arr : []);
+    const tags = [];
+    const tagTone = (cls) => (cls === AppView.STATUS_TAG_CLS.running ? 'run'
+      : cls === AppView.STATUS_TAG_CLS.soft ? 'warn' : 'bad');
+    const checkTags = (p) => {
+      for (const s of AppView.statusTagSpecs(p)) tags.push({ label: s.label, tone: tagTone(s.cls) });
+      if (p.check_state === 'passing') tags.push({ label: 'Checks passed', tone: 'ok' });
+    };
+    const preview = !!(card && ((card.rail && card.rail.preview && card.rail.preview.state === 'live')
+      || (card.actionPreview && card.actionPreview.state === 'live')));
+    const settled = (pill) => {
+      if (!pill) return;
+      if (pill.key === 'deployed' || pill.key === 'merged') tags.push({ label: 'Live', tone: 'ok' });
+      else tags.push({ label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain' });
+    };
+    const base = {
+      kind: 'change', noun: 'Change', n: null, by: who || '', mine: !!mineBy, category: '',
+      replies: 0, linked: [], closed: [], stage: 'worked', at: 0, tags, vote: null,
+    };
+    if (kind === 'issue') {
+      const ws = AppView._issueWorkState(it);
+      const WORDS = {
+        in_review: 'Waiting for votes', working: 'Being worked on', paused: 'Started', claimed: 'Picked up',
+        auto_solving: 'Auto-solving', answer_needed: 'Needs an answer', draft_ready: 'Draft ready',
+      };
+      if (ws) {
+        tags.push({
+          label: WORDS[ws.key] || ws.label,
+          tone: ws.spinner ? 'run' : ws.key === 'answer_needed' ? 'warn' : 'plain',
+        });
+      }
+      const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
+      return {
+        ...base, kind: 'request', noun: 'Request', n: Number(it.number) || null,
+        category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
+        stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
+        at: ts(it.createdAt || it.created_at),
+      };
+    }
+    if (kind === 'merged') {
+      const closeRow = it.row_type === 'close_issue';
+      settled(AppView.statusPillState(it));
+      return {
+        ...base, kind: 'live', noun: closeRow ? 'Vote' : 'Change', n: Number(it.pr_number || it.id) || null,
+        closed: nums(it.linked_issues), replies: Number(it.chat_count) || 0, stage: 'live',
+        at: ts(it.merged_at || it.closed_at || it.created_at),
+      };
+    }
+    if (kind === 'gov') {
+      const pill = AppView.statusPillState(it, { kind: 'gov' });
+      return {
+        ...base, kind: 'vote', noun: 'Vote', n: Number(it.id) || null, replies: Number(it.chat_count) || 0,
+        stage: 'vote', at: ts(it.created_at),
+        vote: pill ? { yes: pill.yes, need: pill.majority, ask: it.status === 'open' && !it.my_vote && !AppView.readOnly } : null,
+      };
+    }
+    // A change: up for a vote (proposal), or still being made (a session).
+    const out = {
+      ...base, n: Number(it.pr_number) || null, linked: nums(it.linked_issues),
+      replies: Number(it.chat_count) || 0, at: ts(it.promoted_at || it.created_at),
+    };
+    if (it.status === 'merging') {
+      settled(AppView.statusPillState(it));
+      return { ...out, stage: 'vote' };
+    }
+    if (it.status === 'promoted') {
+      checkTags(it);
+      if (preview) tags.push({ label: 'Preview ready', tone: 'plain', glyph: 'eye' });
+      const pill = AppView.statusPillState(it);
+      return {
+        ...out, stage: 'vote',
+        vote: pill ? { yes: pill.yes, need: pill.majority, ask: !it.my_vote && !AppView.readOnly } : null,
+      };
+    }
+    const busy = AppView._sessionBusy(it);
+    tags.push({ label: busy ? 'Being worked on' : 'Started', tone: busy ? 'run' : 'plain' });
+    if (it.pr_number) checkTags(it);
+    if (preview) tags.push({ label: 'Preview ready', tone: 'plain', glyph: 'eye' });
+    return { ...out, stage: 'worked' };
+  },
+
   // ── The Workshop ───────────────────────────────────────────────────
   //
   // The Dev screen's lander (features/dev-board/workshop/workshop.tsx). The
@@ -10590,7 +10726,9 @@ const AppView = {
       if (underThemeHeading && Array.isArray(card.badges) && card.badges.some((b) => b && b.key === 'attr:category')) {
         card = { ...card, badges: card.badges.filter((b) => !(b && b.key === 'attr:category')) };
       }
-      const row = AppView._attachRowConversation({ t: 'card', key: card.key, card }, kind, item);
+      const row = AppView._attachRowConversation({
+        t: 'card', key: card.key, card, brief: AppView._workshopBrief(kind, item, card),
+      }, kind, item);
       const created = createdOf(kind, item);
       if (baseline && created > baseline) row.fresh = true;
       const people = [];
@@ -10667,7 +10805,12 @@ const AppView = {
       // Underway column and in its theme, exactly as before.
       ...mineOf(buckets.inProgress, (e) => e.kind === 'issue' && AppView._issueIsMine(e.item))
         .map((e) => ({ kind: 'issue', item: e.item })),
-    ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
+    ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item))
+      // #4457: a request your own change addresses is that change's, and is
+      // drawn as it ("Change #4456 · yours · for #4455"), not a second time.
+      .filter((x, _i, all) => x.kind !== 'issue' || !all.some((y) => y.kind !== 'issue'
+        && AppView._sanitizeIssueNumbers(Array.isArray(y.item.linked_issues) ? y.item.linked_issues : [])
+          .includes(Number(x.item.number))));
     // #2182: the strip stays on screen when there is nothing in it, so the
     // pane's shape does not change with the viewer's workload. `viewer` is
     // what the empty strip is drawn on: a guest has no work to have none of.
@@ -10690,7 +10833,7 @@ const AppView = {
               : AppView._proposalCardModel(item);
         if (!card) return null;
         return AppView._attachRowConversation(
-          { t: 'card', key: `mine:${card.key}`, card }, kind, item,
+          { t: 'card', key: `mine:${card.key}`, card, brief: AppView._workshopBrief(kind, item, card) }, kind, item,
         );
       }).filter(Boolean),
     };
