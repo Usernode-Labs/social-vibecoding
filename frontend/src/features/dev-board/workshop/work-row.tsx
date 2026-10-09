@@ -102,6 +102,27 @@ function Tag({ t }: { t: RowTag }): ReactNode {
   );
 }
 
+/**
+ * The row shows two tags; the rest stand behind one small "+n" chip (#4485).
+ * The chip is a count, not a button — the row's stretched link under it
+ * still opens the item's page, which carries the full set.
+ */
+const TAG_MAX = 2;
+
+function MoreTag({ tags }: { tags: RowTag[] }): ReactNode {
+  const also = tags.map((t) => t.label).join(', ');
+  return (
+    <span
+      className="dev-ws-tag"
+      data-more={tags.length}
+      title={`Also: ${also}`}
+      aria-label={`Also: ${also}`}
+    >
+      +{tags.length}
+    </span>
+  );
+}
+
 /** A change's votes: one part per Yes it needs, the count, and Vote. */
 function Votes({ vote, card }: { vote: NonNullable<RowBrief['vote']>; card: DevCardModel }): ReactNode {
   const need = Math.max(1, vote.need);
@@ -158,7 +179,8 @@ export function WorkRow({ row, slug, inMine = false, on = false, onOpen }: {
         <span className="dev-ws-wrow-sub">{rowWords(b, inMine)}</span>
         {status ? (
           <span className="dev-ws-wrow-status">
-            {b.tags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+            {b.tags.slice(0, TAG_MAX).map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+            {b.tags.length > TAG_MAX ? <MoreTag tags={b.tags.slice(TAG_MAX)} /> : null}
             {b.vote ? <Votes vote={b.vote} card={row.card} /> : null}
           </span>
         ) : null}

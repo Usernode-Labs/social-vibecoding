@@ -22068,7 +22068,7 @@ html.in-side-panel body {
 .dev-ws-wlist { display: flex; flex-direction: column; margin-top: 4px; }
 .dev-ws-wrow {
   position: relative; display: flex; align-items: flex-start; gap: 12px;
-  padding: 12px 2px; min-width: 0; border-radius: 12px;
+  padding: 10px 2px; min-width: 0; border-radius: 12px;
 }
 .dev-ws-wrow + .dev-ws-wrow,
 .dev-ws-week + .dev-ws-week { border-top: 1px solid var(--app-sheet-line); }
@@ -22095,7 +22095,7 @@ html.in-side-panel body {
   font-size: 13px; line-height: 1.35; color: var(--text-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.dev-ws-wrow-status { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dev-ws-wrow-status { margin-top: 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .dev-ws-wrow-chev { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--text-muted); opacity: .7; }
 .dev-ws-tag {
   display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px;
@@ -22110,7 +22110,7 @@ html.in-side-panel body {
 .dev-ws-tag[data-tone="bad"] { color: var(--state-blocked); background: var(--state-blocked-bg); }
 /* A change's votes: one part per Yes it needs, the count, and Vote. The
    count is in the accent when this viewer's vote is wanted. */
-.dev-ws-wvote { position: relative; z-index: 1; margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.dev-ws-wvote { position: relative; z-index: 1; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .dev-ws-wvote-bar { display: inline-flex; gap: 3px; width: 56px; height: 6px; }
 .dev-ws-wvote-cell { flex: 1 1 0; border-radius: 999px; background: color-mix(in srgb, var(--text-muted) 22%, transparent); }
 .dev-ws-wvote-cell[data-on] { background: var(--lit-ink); }

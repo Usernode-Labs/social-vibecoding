@@ -2105,6 +2105,38 @@ test('#4457: a change up for a vote keeps its votes on the row: one part per yes
   assert.equal(topicRef({ attrs: {} }), null);
 });
 
+test('#4485: a row shows two pills and a +n chip for the rest, and the vote shares their line', () => {
+  const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
+  const AppView = makeAppView();
+  seed(AppView);
+  const v = AppView._workshopView();
+  const row = [...v.votes.rows, ...(v.since ? v.since.rows : [])].find((r) => r.t === 'card' && r.card.attrs['data-proposal-row']);
+  assert.ok(row, 'a proposal row');
+  const brief = { kind: 'change', noun: 'Change', n: 34, by: 'bob', mine: false, category: '', replies: 0, linked: [], closed: [], stage: 'vote', at: 0,
+    tags: [
+      { label: 'Checks running… 549/732', tone: 'run' },
+      { label: 'Preview ready', tone: 'plain', glyph: 'eye' },
+      { label: 'Checks passed', tone: 'ok' },
+    ], vote: { yes: 1, need: 1, ask: false } };
+  const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
+  const status = html.slice(html.indexOf('dev-ws-wrow-status'));
+  assert.match(status, /<span class="dev-ws-tag" data-tone="run"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks running… 549\/732<\/span>/, 'the first pill');
+  assert.match(status, /<span class="dev-ws-tag" data-tone="plain"><svg[^>]*><path[^>]*><\/path><circle[^>]*><\/circle><\/svg>Preview ready<\/span>/, 'the second pill, with its eye');
+  assert.ok(!status.includes('>Checks passed<'), 'the third pill is not drawn on the row');
+  assert.match(status, /<span class="dev-ws-tag" data-more="1" title="Also: Checks passed" aria-label="Also: Checks passed">\+1<\/span>/,
+    'one chip stands for the rest, named for hover and screen readers');
+  assert.match(status, /<span class="dev-ws-wvote" data-ws-vote="">/, 'the vote is in the same status line, not wrapped below');
+  // Two or fewer tags: no chip, the row as it was.
+  const two = renderToHtml(createElement(WorkRow, { row: { ...row, brief: { ...brief, tags: brief.tags.slice(0, 2) } }, slug: 'demo-app' }));
+  assert.ok(!two.includes('data-more'), 'no chip when every pill fits');
+  // Spacing: the row is a few pixels tighter, on the values the change set.
+  assert.match(CSS, /\.dev-ws-wrow \{[^}]*padding: 10px 2px;/, 'less padding above and below the row');
+  assert.match(CSS, /\.dev-ws-wrow-status \{ margin-top: 4px;/, 'a smaller gap before the status line');
+  assert.match(CSS, /\.dev-ws-wvote \{ position: relative; z-index: 1; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; \}/, 'a tighter vote line');
+  // The phone block keeps the vote on its own full-width line.
+  assert.match(CSS, /\.dev-ws-wvote \{ margin-left: 0; width: 100%; \}/);
+});
+
 test('#4457: a row opens its page beside the list on a wide window, and that page is the topic page itself', () => {
   const PANEL = read('frontend/src/features/dev-board/workshop/side-panel.tsx');
   // The panel hosts the SAME page: the host the full page's frame renders,
