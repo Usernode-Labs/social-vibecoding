@@ -61,17 +61,26 @@ const DAY = 24 * 60 * 60 * 1000;
 /**
  * A game's live connection, as its page opens one (/api/live?token=):
  * `opened` resolves once connected, or rejects with the refusal's status;
- * `next(test)` resolves with the next message that passes `test`.
+ * `next(test)` reads on from the last message it returned and resolves with
+ * the first that passes `test`, skipping the rest.
+ *
+ * A message that arrives while nobody is waiting is kept until it is read.
+ * The ws client hands over every frame of one socket read in a single
+ * synchronous run, before the code awaiting the first of them resumes, so
+ * two messages sent back to back (a winning roll's view, then the room's
+ * "over") both land before the test asks for the second whenever the test
+ * process reads late, as it does on a loaded runner. Dropping them timed the
+ * board game out there.
  */
 function liveOf(app, tok) {
   const WebSocket = require('ws');
   const ws = new WebSocket(`${app.base.replace(/^http/, 'ws')}/api/live${tok ? `?token=${encodeURIComponent(tok)}` : ''}`);
-  const waiters = [];
+  const unread = [];
+  let waiter = null;
   ws.on('message', (data) => {
     const msg = JSON.parse(String(data));
-    for (const w of waiters.slice()) {
-      if (w.test(msg)) { waiters.splice(waiters.indexOf(w), 1); w.resolve(msg); }
-    }
+    if (!waiter) unread.push(msg);
+    else if (waiter.test(msg)) { const w = waiter; waiter = null; w.resolve(msg); }
   });
   const opened = new Promise((resolve, reject) => {
     ws.once('open', resolve);
@@ -83,9 +92,14 @@ function liveOf(app, tok) {
     opened,
     send: (msg) => ws.send(JSON.stringify(msg)),
     next(test, ms = 6000) {
+      assert.equal(waiter, null, 'one next() at a time on a live connection');
+      while (unread.length) {
+        const msg = unread.shift();
+        if (test(msg)) return Promise.resolve(msg);
+      }
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('no such message in time')), ms);
-        waiters.push({ test, resolve: (m) => { clearTimeout(timer); resolve(m); } });
+        const timer = setTimeout(() => { waiter = null; reject(new Error('no such message in time')); }, ms);
+        waiter = { test, resolve: (m) => { clearTimeout(timer); resolve(m); } };
       });
     },
     close: () => ws.close(),
