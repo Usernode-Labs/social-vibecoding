@@ -386,6 +386,21 @@ test('the ?demo=1 fixture serves a queued run, and a declared check reads its ca
   assert.equal(makeAppView()._checksStatusNotes({ ...mock, status: 'promoted' })[0].heading,
     'Waiting for a checks slot (2 ahead)');
 
+  // #4502: a clearly labelled deferred example uses the actual conflict
+  // shape, independently of this transient state existing in a cloned DB.
+  const deferred = JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === 9000055)));
+  assert.match(deferred.pr_title, /^\[Mock\] /);
+  assert.equal(deferred.check_state, 'pending');
+  assert.equal(deferred.check_phase, 'deferred');
+  assert.equal(deferred.integration_merges_clean, false);
+  assert.equal(deferred.mergeability, 'conflict');
+  assert.deepEqual(deferred.test_results, []);
+  assert.equal(deferred.checks_progress.build.step, 'done');
+  assert.match(makeAppView()._changeTestingView(deferred).noteDetail, /conflicts with main/);
+  assert.match(src, /const IS_STAGING = process\.env\.USERNODE_ENV === 'staging'/);
+  assert.match(src, /const demoMode = IS_STAGING && req\.query\.demo === '1'/);
+  assert.match(src, /if \(!proposal && IS_STAGING && req\.query\.demo === '1'\)/);
+
   const declared = JSON.parse(read('dapp.json')).tests.filter((t) => String(t.path).includes('/proposals/9000054'));
   assert.equal(declared.length, 1);
   assert.equal(declared[0].expectText, 'Waiting for a checks slot (2 ahead)');

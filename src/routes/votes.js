@@ -847,6 +847,29 @@ function stagingMockProposals(viewer) {
         queue: { ahead: 2, since: hoursAgo(0.05) },
       },
     },
+    // #4502: a reproducible deferred Testing card. A real conflict can be
+    // resolved before a reviewer opens the preview; this explicitly synthetic
+    // row exists only in the existing staging ?demo=1 feed and detail route.
+    {
+      ...mk(9000055, 900155,
+        '[Mock] Checks deferred: preview ready, waiting for conflicts to clear',
+        0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
+      check_state: 'pending',
+      check_phase: 'deferred',
+      check_trigger: 'commit-push',
+      test_results: [],
+      checks_checked_at: hoursAgo(0.05),
+      integration_merges_clean: false,
+      integration_behind_by: 2,
+      integration_conflict_paths: ['example/change.js'],
+      integration_measured_at: hoursAgo(0.05),
+      mergeability: 'conflict',
+      mergeability_files: ['example/change.js'],
+      mergeability_files_complete: true,
+      checks_progress: {
+        build: { step: 'done', steps: mockBuildSteps(), totalMs: 19964 },
+      },
+    },
     // #607: a freshly promoted proposal whose first checks run hasn't even
     // stamped 'pending' yet (staging build still going) — NO verdict, NO
     // console snapshot. The grey "Checks starting…" spinner badge + the

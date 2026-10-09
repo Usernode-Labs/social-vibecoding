@@ -381,6 +381,19 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   assert.equal(testing({ check_state: 'pending', check_phase: 'testing', checks_progress: { ran: 1, expected: 4 } }).figure, 'Checking it');
   // A queued run says where it is in line.
   assert.match(testing({ check_state: 'pending', check_phase: 'queued', checks_progress: { queue: { ahead: 2 } } }).note[0], /\(2 ahead\)$/);
+  // #4502: the deferred status explains the actual admission reason; the
+  // native disclosure can open with a pointer, touch, or keyboard.
+  const deferred = { ...PR, check_state: 'pending', check_phase: 'deferred' };
+  const deferredView = testing(deferred);
+  assert.deepEqual(deferredView.note, ['Checks deferred']);
+  assert.equal(deferredView.noteDetail, av.CHECKS_PHASE_COPY.deferred.detail);
+  assert.match(deferredView.noteDetail, /conflicts with main/);
+  assert.match(deferredView.noteDetail, /run once it merges cleanly/);
+  const deferredPage = render(av, deferred).page;
+  assert.match(deferredPage, /<details[^>]*data-change-gate-explanation="">\s*<summary[^>]*title="[^"]*conflicts with main[^>]*>Checks deferred<\/summary>/);
+  assert.match(deferredPage, /<p class="mt-2">The preview is up, but the tests were not run:/);
+  assert.ok(!render(av, { ...PR, check_state: 'pending', check_phase: 'queued' }).page.includes('data-change-gate-explanation'));
+  assert.ok(!render(av, PR).page.includes('data-change-gate-explanation'));
   // A failure says so in the same card, with the door to what failed.
   const failed = testing({ check_state: 'failing', test_results: [{ name: 'Home loads', status: 'fail' }] });
   assert.deepEqual([failed.figure, failed.tone, failed.details], ['Found a problem', 'bad', true]);

@@ -847,6 +847,13 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
       assert.equal(row.checks_progress.build.step, 'done');
       assert.equal(row.checks_progress.queue.ahead, 2);
       assert.equal('checksMs' in row.checks_progress, false);
+    } else if (row.id === 9000055) {
+      // #4502: deferred behind a conflict. The preview was built, but no
+      // tests ran; it carries build time, no checks cost or queue position.
+      assert.equal(row.check_phase, 'deferred');
+      assert.equal(row.checks_progress.build.step, 'done');
+      assert.equal('checksMs' in row.checks_progress, false);
+      assert.equal('queue' in row.checks_progress, false);
     } else if (row.id === 9000026) {
       // #4452: part way through its checks, for the change page's one
       // testing bar: the build done, the checks and the unit suite running.
