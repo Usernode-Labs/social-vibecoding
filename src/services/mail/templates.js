@@ -313,6 +313,11 @@ function waitlistCode(payload) {
 // src/services/email-signup.js.
 const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
   + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
+// #4594: the link signs you in once (services/release-links.js; 7 days must
+// match RELEASE_LINK_TTL_MS there). After that, or once it has expired, it
+// falls back to the code above, so say so.
+const RELEASE_LINK_NOTE = 'The button signs you in once, with no code to type, and works for 7 days. '
+  + 'After that, opening it emails you a 6-digit code to sign in with instead.';
 
 const RELEASE_HEADLINE = 'Make and share small apps with friends and groups.';
 const RELEASE_CAN_DO = [
@@ -370,8 +375,9 @@ function waitlistReleased(payload) {
     ? 'Sign in with your waitlist email to get started.'
     : 'Create your account with this email address, the one you used for the waitlist.';
 
+  const note = payload.signInLink ? RELEASE_LINK_NOTE : RELEASE_CODE_NOTE;
   let text = `${RELEASE_HEADLINE}\n\n${youreIn}\n\n${how}\n${url}`;
-  if (!hasAccount) text += `\n\n${RELEASE_CODE_NOTE}`;
+  if (!hasAccount) text += `\n\n${note}`;
   text += "\n\nOnce you're inside you can:\n"
     + RELEASE_CAN_DO.map((i) => `- ${i}`).join('\n');
 
@@ -382,9 +388,9 @@ function waitlistReleased(payload) {
     + button(url, hasAccount ? 'Sign in' : 'Create my account')
     + p(esc(how))
     // #1548: the no-account link sends a code the moment it is opened, so
-    // say so here. Somebody who is not told to expect a SECOND email goes
+    // say so here (#4594: or, with its one-time link, that it signs in once). Somebody who is not told to expect a SECOND email goes
     // hunting for a button that is not there.
-    + (hasAccount ? '' : p(esc(RELEASE_CODE_NOTE)))
+    + (hasAccount ? '' : p(esc(note)))
     + p("<strong>Once you're inside you can:</strong>")
     + bulletList(RELEASE_CAN_DO.map(esc));
 

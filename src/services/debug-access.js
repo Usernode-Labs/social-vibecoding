@@ -55,6 +55,7 @@ const DENIED_TABLES = new Set([
   'account_email_verifications', // mailbox proof and current-password hash snapshot
   'mobile_otp_codes',   // hashed one-time email signup/claim codes
   'waitlist_verification_codes', // one-time waitlist email codes, same treatment as mobile_otp_codes
+  'waitlist_release_links', // hashed one-time sign-in links from the release mail (#4594)
   'web_signup_sessions', // hashed, single-use first-password continuations
   'sign_in_providers',  // Apple/Google client secrets and private keys (AES blobs, still deny)
   'oauth_sign_in_states', // Apple/Google round trips: state, binder, nonce, PKCE verifier

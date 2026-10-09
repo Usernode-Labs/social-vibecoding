@@ -383,6 +383,32 @@ export async function releaseArrival(token: string, now = Date.now()): Promise<R
   return { address, send: true };
 }
 
+/** A waitlist "you're in" link's one-time sign-in, spent (#4594). */
+export type ReleaseSpend = { next: 'signed-in' | 'set-password'; email: string; needsUsername: boolean };
+
+/**
+ * Spend the release mail's one-time sign-in link (src/services/release-links.js)
+ * with a POST, never on the GET that opened the page, so a mail scanner's
+ * prefetch cannot use it up. Null on anything else (expired, used, unknown,
+ * offline): the sheet then falls back to the address and a code.
+ */
+export async function spendReleaseLink(key: string): Promise<ReleaseSpend | null> {
+  try {
+    const res = await fetchSessionMint('/api/auth/release-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ token: key }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || typeof data.email !== 'string') return null;
+    if (data.next !== 'signed-in' && data.next !== 'set-password') return null;
+    return { next: data.next, email: data.email, needsUsername: data.needsUsername === true };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * On a step's main button: the press keeps the caret where it is until its
  * click. iPhone Safari, 7 Oct 2026 (#4214): with the keyboard up, a tap on
@@ -438,6 +464,12 @@ export type SignInSheetProps = {
   /** Opened by a waitlist "you're in" link: the token that names the address to sign up with. */
   releaseToken?: string | null;
   /**
+   * The same link's one-time sign-in (#4594): spent first, and on success
+   * the sheet says "Welcome <address>" and goes straight to the account
+   * step. Expired, used or unknown, it falls back to `releaseToken`'s code.
+   */
+  releaseSignIn?: string | null;
+  /**
    * Runs once the session exists and before the shell takes over:
    * 'existing' for an account that signed straight in, 'new' for one that
    * just set its password (in practice, one the code just made).
@@ -465,7 +497,7 @@ function rememberInviteJoin() {
 
 export function SignInSheet({
   open, title, intro = '', followInvite = false, providers = [], native = false, phone = false, askName = true, from = 'signin',
-  returnTo = '/', resume = null, releaseToken = null, beforeFinish, onClose, primaryClass,
+  returnTo = '/', resume = null, releaseToken = null, releaseSignIn = null, beforeFinish, onClose, primaryClass,
 }: SignInSheetProps) {
   const otherWays: Step = providers.length ? 'choose' : 'email';
   const firstStep: Step = phone ? 'phone' : otherWays;
@@ -477,6 +509,8 @@ export function SignInSheet({
   // Whose username step this is: a provider's (Apple, Google) or the phone's.
   const [usernameVia, setUsernameVia] = useState<'oauth' | 'phone'>('oauth');
   const [needsUsername, setNeedsUsername] = useState(false);
+  // The address a release link signed in (#4594), for the account step's welcome.
+  const [welcome, setWelcome] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [busy, setBusy] = useState(false);
@@ -550,6 +584,7 @@ export function SignInSheet({
   useEffect(() => {
     if (!open) return;
     setStep(resume === 'username' ? 'username' : firstStepRef.current);
+    setWelcome(null);
     if (resume === 'username') setUsernameVia('oauth');
     setError(resumeError(resume));
     setDetails(null);
@@ -647,12 +682,40 @@ export function SignInSheet({
   // names, filled in, and the code sent once per tab, exactly what the
   // sign-in screen does for the same link (./login.tsx). A token that names
   // nothing leaves the email step as it is, to be filled in by hand.
+  //
+  // #4594: a link that also carries its one-time sign-in spends that first.
+  // Spent, it is a proven mailbox, like a right code: the account step, with
+  // "Welcome <address>", or straight in for an account with nothing to set
+  // up. Expired, used or unknown, it is the prefill and the code as before.
+  const finishRef = useRef<(kind: 'existing' | 'new') => Promise<void>>(async () => {});
   useEffect(() => {
-    if (!open || !releaseToken || releaseSeen.current === releaseToken) return undefined;
-    releaseSeen.current = releaseToken;
+    const seen = releaseSignIn || releaseToken;
+    if (!open || !seen || releaseSeen.current === seen) return undefined;
+    releaseSeen.current = seen;
     let live = true;
     setStep('email');
-    void releaseArrival(releaseToken).then((arrival) => {
+    const prefill = () => {
+      if (!releaseToken) return;
+      void releaseArrival(releaseToken).then(arrive);
+    };
+    if (releaseSignIn) {
+      setBusy(true);
+      // Not dropped when the sheet re-renders mid-request: the link is spent
+      // either way, so its answer must land.
+      void spendReleaseLink(releaseSignIn).then(async (spent) => {
+        setBusy(false);
+        if (!spent) { prefill(); return; }
+        setEmail(spent.email);
+        if (spent.next === 'signed-in') { await finishRef.current('existing'); return; }
+        setWelcome(spent.email);
+        setNeedsUsername(spent.needsUsername);
+        setCooldownUntil(0);
+        setStep('account');
+      });
+    } else {
+      prefill();
+    }
+    function arrive(arrival: ReleaseArrival | null) {
       if (!live || !arrival) return;
       setEmail(arrival.address);
       if (firstField.current) firstField.current.value = arrival.address;
@@ -663,9 +726,9 @@ export function SignInSheet({
         return;
       }
       void requestCode(arrival.address);
-    });
+    }
     return () => { live = false; };
-  }, [open, releaseToken, requestCode]);
+  }, [open, releaseToken, releaseSignIn, requestCode]);
 
   // Away to the make screen: the panel goes down while the wallpaper comes
   // up behind it. Resolves once that has had its time.
@@ -684,6 +747,7 @@ export function SignInSheet({
     const opened = await confirmSession();
     if (!opened) setLeaving(false);
   }, [beforeFinish, handOff, clearConfirmation, confirmSession]);
+  finishRef.current = finish;
 
   const verify = useCallback(async () => {
     setError(null);
@@ -828,14 +892,19 @@ export function SignInSheet({
     }
   }, [followInvite, finish]);
 
-  const finishAccount = useCallback(async () => {
+  // #4595: the password is optional. "Skip for now" (`skip`), or both
+  // password fields left empty, finishes without one: the account then signs
+  // in with an email code, and can add a password in Settings.
+  const finishAccount = useCallback(async (skip = false) => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
     if (handle === '') { setError('Enter a username.'); usernameField.current?.focus({ preventScroll: true }); return; }
-    const password = passwordField.current?.value || '';
-    const confirm = confirmField.current?.value || '';
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
-    if (password !== confirm) { setError('Passwords do not match'); return; }
+    const password = skip ? '' : passwordField.current?.value || '';
+    const confirm = skip ? '' : confirmField.current?.value || '';
+    if (password || confirm) {
+      if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
+      if (password !== confirm) { setError('Passwords do not match'); return; }
+    }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -843,7 +912,10 @@ export function SignInSheet({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ password, passwordConfirmation: confirm, ...(handle ? { username: handle } : {}) }),
+        body: JSON.stringify({
+          ...(password ? { password, passwordConfirmation: confirm } : {}),
+          ...(handle ? { username: handle } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) {
@@ -990,7 +1062,8 @@ export function SignInSheet({
     : step === 'code' ? 'Check your email'
       : step === 'phone-code' ? 'Check your texts'
         : step === 'password' ? 'Sign in'
-          : step === 'username' ? 'Pick a username' : 'Finish your account';
+          : step === 'username' ? 'Pick a username'
+            : welcome ? `Welcome ${welcome}` : 'Finish your account';
   // The first step says nothing under its title unless it is given a line:
   // "Make your account", "Join Sunday Run Club" and "Sign in" already say
   // it, and the field or the providers come next (#4037). With the phone
@@ -1009,7 +1082,9 @@ export function SignInSheet({
           ? 'With your username or email, and your password.'
           : step === 'username'
             ? 'Your username is public on Homeroom. It is how people @mention you.'
-            : (needsUsername ? 'Pick a username and a password. Your username is public on Homeroom.' : 'Pick a password for next time.');
+            : (needsUsername
+              ? 'Pick a username. It is public on Homeroom. A password is optional: without one, you sign in with an emailed code.'
+              : 'Pick a password for next time, or skip it and sign in with an emailed code.');
   // Up, on its way up, or leaving for the make screen: whole literals, for
   // the extractor. On a phone it slides; from md, where it is a centred
   // card, it fades.
@@ -1051,7 +1126,7 @@ export function SignInSheet({
       >
         <div className="mx-auto h-1 w-9 rounded-full bg-[color:var(--border)] md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
-          <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
+          <h2 id="sign-in-sheet-title" className="min-w-0 flex-1 break-words text-[17px] font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
           <button
             type="button"
             onClick={close}
@@ -1195,7 +1270,7 @@ export function SignInSheet({
                 </div>
               ) : null}
               <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-password" className={LABEL}>Password</label>
+                <label htmlFor="sign-in-sheet-password" className={LABEL}>Password (optional)</label>
                 <input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 1)} className={INPUT} placeholder="At least 8 characters" />
               </div>
               <div className={FIELD}>
@@ -1204,6 +1279,7 @@ export function SignInSheet({
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>
+            <button type="button" data-sign-in-sheet-skip-password="" disabled={busy} className={`${QUIET} self-center disabled:opacity-60`} onClick={() => { void finishAccount(true); }}>Skip for now</button>
           </form>
         ) : null}
 

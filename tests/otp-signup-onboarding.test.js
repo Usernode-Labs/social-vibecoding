@@ -33,8 +33,10 @@ const AUTH = read('src/routes/auth.js');
 const SIGNUP = read('src/services/email-signup.js');
 
 test('the verify answer says what happened, additively, and suggests no name', () => {
-  const route = AUTH.slice(AUTH.indexOf("router.post('/api/auth/otp/verify'"));
-  assert.match(route, /next: 'set-password',\s+created: !!verified\.created,\s+needsUsername: !!verified\.needsUsernameChoice,\s+waitlisted:/);
+  // The code's answer and the release link's (#4594) are one: answerProvenEmail.
+  const answer = AUTH.slice(AUTH.indexOf('async function answerProvenEmail'));
+  assert.match(answer, /next: 'set-password',\s+created: !!verified\.created,\s+needsUsername: !!verified\.needsUsernameChoice,\s+waitlisted:/);
+  const route = AUTH.slice(AUTH.indexOf('async function answerProvenEmail'));
   // #3575: the email-derived suggestion is gone from the answer and the service.
   assert.doesNotMatch(route.slice(0, route.indexOf("router.post('/api/auth/otp/set-password'")),
     /suggestedUsername: verified/);

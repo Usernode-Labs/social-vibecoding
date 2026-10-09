@@ -3536,7 +3536,9 @@
         const el = document.getElementById(id);
         if (el) el.classList.toggle('hidden', !on);
       };
-      show('cp-current-row', !wallet);
+      // #4595: an account with no password (it signs in with an email code)
+      // has no current password to give, and sets its first one without.
+      show('cp-current-row', !wallet && !this._noPasswordYet());
       show('cp-save', !wallet);
       show('cp-wallet-save', wallet);
       // Offer the password-creation link only in password mode and only when
@@ -3676,6 +3678,10 @@
       }
     },
 
+    _noPasswordYet() {
+      return !!(window.App && App.user && App.user.hasPassword === false);
+    },
+
     async changePassword() {
       const currentEl = document.getElementById('cp-current');
       const newEl = document.getElementById('cp-new');
@@ -3685,7 +3691,8 @@
       const newPassword = newEl.value;
       const confirm = confirmEl.value;
 
-      if (!currentPassword) { this._setCpStatus('Enter your current password.', 'error'); return; }
+      const first = this._noPasswordYet();
+      if (!currentPassword && !first) { this._setCpStatus('Enter your current password.', 'error'); return; }
       if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
       if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
 
@@ -3696,14 +3703,18 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({ currentPassword, newPassword }),
+          body: JSON.stringify(first ? { newPassword } : { currentPassword, newPassword }),
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
         currentEl.value = '';
         newEl.value = '';
         confirmEl.value = '';
-        this._setCpStatus('Password changed.', 'ok');
+        if (j.first && window.App && App.user) {
+          App.user.hasPassword = true;
+          this._setChangePasswordMode('password');
+        }
+        this._setCpStatus(j.first ? 'Password set. You can now sign in with it.' : 'Password changed.', 'ok');
       } catch (err) {
         this._setCpStatus(`Network error: ${err.message}`, 'error');
       } finally {

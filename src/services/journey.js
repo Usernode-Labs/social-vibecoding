@@ -499,7 +499,9 @@ function firstMileSteps(row, now = new Date()) {
     code_asked: row.code_asked_at
       ? { done: true, at: t(row.code_asked_at) }
       : { done: false, stuck: 'Admitted, never asked for a login code', expired: mailExpired },
-    account: hasAccount && row.password_set !== false
+    // #4595: the password is optional, so an account is finished once its
+    // account step is: a password set, or (skipped) its username chosen.
+    account: hasAccount && (row.password_set !== false || row.needs_username_choice === false)
       ? { done: true, at: t(row.account_at) }
       : { done: false, stuck: hasAccount ? 'Account started, not finished' : 'Code mailed, no account' },
     access: row.has_platform_access ? { done: true, at: t(row.access_at) }
