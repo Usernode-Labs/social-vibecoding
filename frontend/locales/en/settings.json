@@ -2907,9 +2907,13 @@
     "text": "{{spent}} of {{limit}}",
     "description": "Value in the \"Today's spend\" block of Settings > Anthropic API key: how much of the platform's allowance is used. Both are dollar amounts such as $1.20 and $5.00."
   },
-  "usage.spend.resets": {
-    "text": "Resets {{when}}.",
-    "description": "Line in the spend block of Settings > Anthropic API key saying when the platform allowance starts again. {{when}} is a ready phrase such as \"Monday at 2:00 AM\" or \"in 3 hours\"."
+  "usage.spend.resetsDaily": {
+    "text": "Resets at {{time}}.",
+    "description": "Line in the spend block of Settings > Anthropic API key saying when a daily platform allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
+  },
+  "usage.spend.resetsWeekly": {
+    "text": "Resets {{day}} at {{time}}.",
+    "description": "Line in the spend block of Settings > Anthropic API key saying when the weekly platform allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
   },
   "openrouter.catalog.loadFailed": {
     "text": "Could not load OpenRouter models.",

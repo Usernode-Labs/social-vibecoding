@@ -199,7 +199,8 @@ test('the UNFETCHED row is visible and empty — what the shell prerenders', () 
 });
 
 test('the reset sentence comes from CreditOptions, not a second copy here', () => {
-  assert.match(CREDIT_SRC, /CO\.resetSentence\(state\)/);
+  assert.match(CREDIT_SRC, /CO\.resetSentence\(state, undefined, \{ withUtc: true \}\)/);
+  assert.ok(!/resetText\.replace\(/.test(CREDIT_SRC), 'the UTC instant is part of the sentence, never spliced into it');
   assert.ok(!/Resets at midnight UTC/.test(CREDIT_SRC));
 });
 
@@ -283,7 +284,11 @@ test('the window wording is derived from capWindow, never retyped per state', ()
   // viewer's clock through ResetTime (#3230), or in the server's UTC words
   // where it is absent.
   assert.match(CREDIT_OPTIONS_SRC, /var weekly = s\.capWindow === 'weekly';/);
-  assert.match(CREDIT_OPTIONS_SRC, /RT\.resetWhen\(weekly \? 'weekly' : 'daily'/);
+  assert.match(CREDIT_OPTIONS_SRC, /RT\.resetMoment\(weekly \? 'weekly' : 'daily'/);
+  assert.match(CREDIT_OPTIONS_SRC, /var ids = RESET_SENTENCE_IDS\[weekly \? 'weekly' : 'daily'\];/);
+  assert.equal(message('session:credits.reset.weekly', { day: 'Sunday', time: '8:00 PM' }), 'Free credits reset Sunday at 8:00 PM.');
+  assert.equal(message('session:credits.reset.dailyWithTimeLeftUtc', { time: '9:00 AM', timeLeft: '3h 20m', utc: 'Mon, Oct 5, 00:00 UTC' }),
+    'Free credits reset at 9:00 AM, about 3h 20m from now (Mon, Oct 5, 00:00 UTC).');
   assert.match(CREDIT_OPTIONS_SRC, /if \(weekly\) \{\s+return left\s+\? t\('session:credits\.reset\.whenWithTimeLeft', \{ when: resetLabel, timeLeft: left \}\)\s+: t\('session:credits\.reset\.when', \{ when: resetLabel \}\);/);
   assert.equal(message('session:credits.reset.when', { when: 'Monday 00:00 UTC' }), 'Free credits reset Monday 00:00 UTC.');
   assert.equal(message('session:credits.reset.atBoundary', { boundary: 'midnight UTC' }), 'Free credits reset at midnight UTC.');

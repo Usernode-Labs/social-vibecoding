@@ -2454,25 +2454,23 @@ const DevChat = {
     const CO = typeof window !== 'undefined' && window.CreditOptions;
     const state = DevChat._creditState();
     if (!CO || !state) return '';
-    const sentence = CO.resetSentence(state);
-    const utc = withUtc && CO.resetTitle ? CO.resetTitle(state) : null;
-    return utc ? sentence.replace(/\.$/, ` (${utc}).`) : sentence;
+    return CO.resetSentence(state, undefined, { withUtc });
   },
 
-  // #3230: the reset boundary in the viewer's clock ("Sunday at 8:00 PM",
-  // "at 8:00 PM"), or the server's UTC spelling where ResetTime is absent.
-  // Null where ResetTime is absent: the callers below then say the server's
-  // UTC boundary in a whole sentence of their own.
-  _resetWhen(weekly) {
+  // #3230: the reset boundary in the viewer's clock, as the weekday and
+  // time the callers' sentences take ({ day, time }). Null where ResetTime
+  // is absent: the callers below then say the server's UTC boundary in a
+  // whole sentence of their own.
+  _resetMoment(weekly) {
     const RT = typeof window !== 'undefined' && window.ResetTime;
-    if (RT) return RT.resetWhen(weekly ? 'weekly' : 'daily');
+    if (RT) return RT.resetMoment(weekly ? 'weekly' : 'daily');
     return null;
   },
 
   // "Resets Sunday at 8:00 PM." for the meter's tooltips.
   _resetFallbackSentence(weekly) {
-    const when = DevChat._resetWhen(weekly);
-    if (when) return PlatformI18n.t('devchat:budget.reset.at', { when });
+    const moment = DevChat._resetMoment(weekly);
+    if (moment) return PlatformI18n.t(weekly ? 'devchat:budget.reset.weekly' : 'devchat:budget.reset.daily', moment);
     return weekly ? PlatformI18n.t('devchat:budget.reset.weeklyUtc') : PlatformI18n.t('devchat:budget.reset.dailyUtc');
   },
 
@@ -2932,8 +2930,8 @@ const DevChat = {
   // sentence of its own.
   _freeCreditsResetSentence() {
     const weekly = DevChat._creditWindow().weekly;
-    const when = DevChat._resetWhen(weekly);
-    if (when) return PlatformI18n.t('devchat:banner.credits.out.resetAt', { when });
+    const moment = DevChat._resetMoment(weekly);
+    if (moment) return PlatformI18n.t(weekly ? 'devchat:banner.credits.out.resetWeekly' : 'devchat:banner.credits.out.resetDaily', moment);
     return weekly ? PlatformI18n.t('devchat:banner.credits.out.resetWeeklyUtc') : PlatformI18n.t('devchat:banner.credits.out.resetDailyUtc');
   },
 

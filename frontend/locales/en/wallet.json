@@ -379,9 +379,13 @@
     "text": "A further {{amount}} today was billed to your own Anthropic key and does not count against the allowance.",
     "description": "Last sentence of the AI credit meter's tooltip when the person's own Anthropic API key was also charged today. {{amount}} is that charge in dollars."
   },
-  "credit.tip.resets": {
-    "text": "Free credits reset {{when}}.",
-    "description": "Sentence in the AI credit meter's tooltip saying when the free allowance comes back. {{when}} is the moment in the reader's own time zone, worded to end this sentence: 'Sunday at 8:00 PM' for a weekly allowance, 'at 9:00 AM' for a daily one. Reset is a verb here."
+  "credit.tip.resetsDaily": {
+    "text": "Free credits reset at {{time}}.",
+    "description": "Sentence in the AI credit meter's tooltip saying when the daily free allowance comes back. Reset is a verb here. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
+  },
+  "credit.tip.resetsWeekly": {
+    "text": "Free credits reset {{day}} at {{time}}.",
+    "description": "Sentence in the AI credit meter's tooltip saying when the weekly free allowance comes back. Reset is a verb here. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
   },
   "credit.tip.resetsWeeklyUtc": {
     "text": "Free credits reset Monday 00:00 UTC.",

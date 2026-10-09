@@ -394,7 +394,7 @@ export function init() {
       if (remaining === null) bountyNote.textContent = t('dialogs:feedback.bounty.cost');
       else if (exhausted) {
         bountyNote.textContent = RT
-          ? t('dialogs:feedback.bounty.usedAll', { count: limit, when: RT.resetWhen('weekly') })
+          ? t('dialogs:feedback.bounty.usedAll', { count: limit, ...RT.resetMoment('weekly') })
           : t('dialogs:feedback.bounty.usedAllUtc', { count: limit });
         if (RT) bountyNote.title = RT.resetUtc('weekly');
       } else bountyNote.textContent = t('dialogs:feedback.bounty.costRemaining', { count: remaining, limit });

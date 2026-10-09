@@ -552,7 +552,7 @@ const Leaderboard = {
       // #3230: the weekly reset is named in the viewer's own clock.
       : (window.ResetTime
         ? PlatformI18n.t('leaderboard:kudos.subtitle',
-          { count: Number(window.Kudos?.Budget?.state?.limit || 20), when: window.ResetTime.resetWhen('weekly') })
+          { count: Number(window.Kudos?.Budget?.state?.limit || 20), ...window.ResetTime.resetMoment('weekly') })
         : PlatformI18n.t('leaderboard:kudos.subtitleUtc', { count: Number(window.Kudos?.Budget?.state?.limit || 20) }));
 
     // No <h2> of our own: the Leaderboard screen shell already titles the

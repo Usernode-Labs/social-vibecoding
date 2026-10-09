@@ -6165,6 +6165,63 @@ const AppView = {
     }
   },
 
+  // Message ids for the "Sync with main" row of the ledger: state, then how
+  // far main moved, then what overlaps. Each is a whole sentence.
+  SYNC_TEXT_IDS: {
+    blocked: {
+      commits: {
+        oneFile: 'changes:ledger.sync.blocked.commitsOneFile',
+        files: 'changes:ledger.sync.blocked.commitsFiles',
+        lines: 'changes:ledger.sync.blocked.commitsLines',
+      },
+      ahead: {
+        oneFile: 'changes:ledger.sync.blocked.aheadOneFile',
+        files: 'changes:ledger.sync.blocked.aheadFiles',
+        lines: 'changes:ledger.sync.blocked.aheadLines',
+      },
+    },
+    resolvingNow: {
+      commits: {
+        oneFile: 'changes:ledger.sync.resolvingNow.commitsOneFile',
+        files: 'changes:ledger.sync.resolvingNow.commitsFiles',
+        lines: 'changes:ledger.sync.resolvingNow.commitsLines',
+      },
+      ahead: {
+        oneFile: 'changes:ledger.sync.resolvingNow.aheadOneFile',
+        files: 'changes:ledger.sync.resolvingNow.aheadFiles',
+        lines: 'changes:ledger.sync.resolvingNow.aheadLines',
+      },
+    },
+    afterVote: {
+      commits: {
+        oneFile: 'changes:ledger.sync.afterVote.commitsOneFile',
+        files: 'changes:ledger.sync.afterVote.commitsFiles',
+        lines: 'changes:ledger.sync.afterVote.commitsLines',
+      },
+      ahead: {
+        oneFile: 'changes:ledger.sync.afterVote.aheadOneFile',
+        files: 'changes:ledger.sync.afterVote.aheadFiles',
+        lines: 'changes:ledger.sync.afterVote.aheadLines',
+      },
+    },
+    automatic: {
+      commits: {
+        oneFile: 'changes:ledger.sync.automatic.commitsOneFile',
+        files: 'changes:ledger.sync.automatic.commitsFiles',
+        lines: 'changes:ledger.sync.automatic.commitsLines',
+      },
+      ahead: {
+        oneFile: 'changes:ledger.sync.automatic.aheadOneFile',
+        files: 'changes:ledger.sync.automatic.aheadFiles',
+        lines: 'changes:ledger.sync.automatic.aheadLines',
+      },
+    },
+    catchingUp: {
+      commits: 'changes:ledger.sync.catchingUp.commits',
+      ahead: 'changes:ledger.sync.catchingUp.ahead',
+    },
+  },
+
   // A ledger row's text is a list of parts, a bold verdict among them. The
   // sentence is one message with its verdict in <0></0>; this splits it into
   // those parts. Parameters are filled in after the split, as htmlRich does,
@@ -15662,12 +15719,15 @@ const AppView = {
     const laneWorking = !!remedy && remedy.tone === 'running';
     const served = (pr && pr.integration && Array.isArray(pr.integration.blockReasons))
       ? pr.integration.blockReasons : [];
-    const moved = behindN > 0
-      ? PlatformI18n.t('changes:ledger.sync.moved', { count: behindN })
-      : PlatformI18n.t('changes:ledger.sync.movedUnknown');
-    const overlap = conflictFiles.length
-      ? PlatformI18n.t('changes:ledger.sync.overlapFiles', { count: conflictFiles.length })
-      : PlatformI18n.t('changes:ledger.sync.overlapLines');
+    // The row's sentence is one whole message for each combination of what
+    // is known: how far main moved (a count, or not known) and what overlaps
+    // (one file, several files, or files not known).
+    const movedKey = behindN > 0 ? 'commits' : 'ahead';
+    const overlapKey = conflictFiles.length === 1 ? 'oneFile' : (conflictFiles.length ? 'files' : 'lines');
+    const syncValues = { ...(behindN > 0 ? { count: behindN } : {}), files: conflictFiles.length };
+    const syncText = (state, tone) => AppView._boldLeadText(
+      state === 'catchingUp' ? AppView.SYNC_TEXT_IDS.catchingUp[movedKey] : AppView.SYNC_TEXT_IDS[state][movedKey][overlapKey],
+      syncValues, tone);
     sync.label = PlatformI18n.t('changes:ledger.sync.label');
     sync.tone = manual ? 'bad' : 'warn';
     // Who acts sits under the label only when it is a PERSON. An automatic
@@ -15681,14 +15741,14 @@ const AppView = {
     // Each sentence leads with its state, in the row's tone — the one word
     // a reader scanning the ledger is looking for.
     sync.text = manual
-      ? AppView._boldLeadText('changes:ledger.sync.blocked', { moved, overlap }, 'bad')
+      ? syncText('blocked', 'bad')
       : remedy
         ? (laneWorking
-          ? AppView._boldLeadText('changes:ledger.sync.resolvingNow', { moved, overlap }, 'warn')
+          ? syncText('resolvingNow', 'warn')
           : (afterVote
-            ? AppView._boldLeadText('changes:ledger.sync.afterVote', { moved, overlap }, 'warn')
-            : AppView._boldLeadText('changes:ledger.sync.automatic', { moved, overlap }, 'warn')))
-        : AppView._boldLeadText('changes:ledger.sync.catchingUp', { moved }, 'warn');
+            ? syncText('afterVote', 'warn')
+            : syncText('automatic', 'warn')))
+        : syncText('catchingUp', 'warn');
     // The remedy sentence is the only foot line worth keeping from the box:
     // it names the person and the exact action — or says that nobody need
     // act, and how the author can hurry it. The rest restated the row's own
@@ -15779,6 +15839,56 @@ const AppView = {
   // emphasis is the thing JSX is better at than a string, and it is the part
   // of this popover a reader is most likely to edit.
 
+  // What blocks a merge, by the sentence that says it in the voting help:
+  // with the approvals in hand, with the Yes votes in hand, or as a note
+  // after the rest. Each is a whole message.
+  VOTING_BLOCKER_IDS: {
+    conflictFailed: {
+      approvals: 'changes:votingHelp.approvalsBlocked.conflictFailed',
+      enough: 'changes:votingHelp.enoughBlocked.conflictFailed',
+      note: 'changes:votingHelp.note.conflictFailed',
+    },
+    resolving: {
+      approvals: 'changes:votingHelp.approvalsBlocked.resolving',
+      enough: 'changes:votingHelp.enoughBlocked.resolving',
+      note: 'changes:votingHelp.note.resolving',
+    },
+    conflict: {
+      approvals: 'changes:votingHelp.approvalsBlocked.conflict',
+      enough: 'changes:votingHelp.enoughBlocked.conflict',
+      note: 'changes:votingHelp.note.conflict',
+    },
+    checksFailing: {
+      approvals: 'changes:votingHelp.approvalsBlocked.checksFailing',
+      enough: 'changes:votingHelp.enoughBlocked.checksFailing',
+      note: 'changes:votingHelp.note.checksFailing',
+    },
+    checksPending: {
+      approvals: 'changes:votingHelp.approvalsBlocked.checksPending',
+      enough: 'changes:votingHelp.enoughBlocked.checksPending',
+      note: 'changes:votingHelp.note.checksPending',
+    },
+    checksError: {
+      approvals: 'changes:votingHelp.approvalsBlocked.checksError',
+      enough: 'changes:votingHelp.enoughBlocked.checksError',
+      note: 'changes:votingHelp.note.checksError',
+    },
+    behind: {
+      approvals: 'changes:votingHelp.approvalsBlocked.behind',
+      enough: 'changes:votingHelp.enoughBlocked.behind',
+      note: 'changes:votingHelp.note.behind',
+    },
+    locked: {
+      approvals: 'changes:votingHelp.approvalsBlocked.locked',
+      enough: 'changes:votingHelp.enoughBlocked.locked',
+      note: 'changes:votingHelp.note.locked',
+    },
+    noOtherMember: {
+      approvals: 'changes:votingHelp.approvalsBlocked.noOtherMember',
+      enough: 'changes:votingHelp.enoughBlocked.noOtherMember',
+    },
+  },
+
   // The live "This proposal, right now" line. Reads the serialized gate
   // fields the /promoted endpoint attaches (votes_required,
   // merge_window_ends_at, reject_window_ends_at, rejection_armed,
@@ -15808,34 +15918,34 @@ const AppView = {
     if (pr.status === 'merged') return PlatformI18n.t('changes:votingHelp.merged');
     if (pr.status === 'merging') return PlatformI18n.t('changes:votingHelp.merging');
 
-    // A single merge-blocking clause (lowercase, no trailing period) when
-    // one applies — folded into the "reached" sentence, or appended as a
-    // note to the others so the explainer never implies a countdown will
+    // The one thing blocking the merge, when something is (a key of
+    // VOTING_BLOCKER_IDS) — said inside the "reached" sentence, or as a
+    // note after the others so the explainer never implies a countdown will
     // merge straight past a blocked gate. Ordered by checkAndMerge's own
     // gate precedence (conflict → checks → behind → lock).
     let blocker = '';
     const mcs = pr.merge_conflict_state;
     const check = pr.check_state;
     if (mcs === 'failed') {
-      blocker = PlatformI18n.t('changes:votingHelp.blocker.conflictFailed');
+      blocker = 'conflictFailed';
     } else if (mcs === 'resolving' || pr.resolving === true) {
-      blocker = PlatformI18n.t('changes:votingHelp.blocker.resolving');
+      blocker = 'resolving';
     // #1442 — above the checks clause on purpose. A proposal that conflicts
     // with main cannot merge whatever its checks say, and the whole point of
     // the issue is that passing checks were the loudest thing on the screen
     // while this was true and invisible.
     } else if (AppView._freshnessOf(pr).mergeability === 'conflict') {
-      blocker = PlatformI18n.t('changes:votingHelp.blocker.conflict');
+      blocker = 'conflict';
     } else if (check === 'failing') {
-      blocker = PlatformI18n.t('changes:votingHelp.blocker.checksFailing');
+      blocker = 'checksFailing';
     } else if (check === 'pending') {
-      blocker = PlatformI18n.t('changes:votingHelp.blocker.checksPending');
+      blocker = 'checksPending';
     } else if (check === 'error') {
-      blocker = PlatformI18n.t('changes:votingHelp.blocker.checksError');
+      blocker = 'checksError';
     } else if ((AppView._freshnessOf(pr).behindBy || 0) > 0 || mcs === 'behind' || mcs === 'conflict') {
-      blocker = PlatformI18n.t('changes:votingHelp.blocker.behind');
+      blocker = 'behind';
     } else if (reached && ctx.locked) {
-      blocker = PlatformI18n.t('changes:votingHelp.blocker.locked');
+      blocker = 'locked';
     }
 
     // #788: this proposal changes a protected setting (who runs the app,
@@ -15852,7 +15962,7 @@ const AppView = {
     // The member floor holds a proposal whose votes are in: say so, rather
     // than "queued to merge shortly".
     if (noTimer && reached && AppView._awaitingOtherMember(pr) && !blocker) {
-      blocker = PlatformI18n.t('changes:votingHelp.blocker.noOtherMember');
+      blocker = 'noOtherMember';
     }
 
     // #646: "at least N approvals" mode — clock-free, so none of the
@@ -15863,13 +15973,13 @@ const AppView = {
       let s;
       if (reached) {
         s = blocker
-          ? PlatformI18n.t('changes:votingHelp.approvalsBlocked', { yes, required: n, blocker })
+          ? PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].approvals, { yes, required: n })
           : PlatformI18n.t('changes:votingHelp.approvalsQueued', { yes, required: n });
       } else {
         s = pr.approval_policy === 'invited'
           ? PlatformI18n.t('changes:votingHelp.requiresInvited', { count: n, yes })
           : PlatformI18n.t('changes:votingHelp.requiresAnyone', { count: n, yes });
-        if (blocker) s = say([s, PlatformI18n.t('changes:votingHelp.note', { blocker })]);
+        if (blocker) s = say([s, PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].note)]);
       }
       if (pr.approval_policy === 'invited') {
         s = say([s, PlatformI18n.t('changes:votingHelp.approversOnly')]);
@@ -15894,7 +16004,7 @@ const AppView = {
       // No visibility window to sit out — it merges as soon as the
       // normal threshold is met, subject to the usual blockers.
       sentence = blocker
-        ? PlatformI18n.t('changes:votingHelp.enoughBlocked', { yes, required, blocker })
+        ? PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].enough, { yes, required })
         : PlatformI18n.t('changes:votingHelp.votesQueued', { yes, required });
       foldedBlocker = true;
     } else if (noTimer && pr.rejection_armed && inReject) {
@@ -15915,13 +16025,13 @@ const AppView = {
       sentence = say([PlatformI18n.t('changes:votingHelp.contested'), tally]);
     } else if (reached) {
       sentence = blocker
-        ? PlatformI18n.t('changes:votingHelp.enoughBlocked', { yes, required, blocker })
+        ? PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].enough, { yes, required })
         : PlatformI18n.t('changes:votingHelp.votesGreenQueued', { yes, required });
       foldedBlocker = true;
     } else {
       sentence = say([PlatformI18n.t('changes:votingHelp.needs', { required, active }), tally]);
     }
-    if (blocker && !foldedBlocker) sentence = say([sentence, PlatformI18n.t('changes:votingHelp.note', { blocker })]);
+    if (blocker && !foldedBlocker) sentence = say([sentence, PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].note)]);
     // #695: invited-approver apps on the default clock — say who counts,
     // and how many recorded votes are merely advisory.
     if (pr.approval_policy === 'invited') {
@@ -16084,7 +16194,9 @@ const AppView = {
   },
 
   _conflictRemedy(pr, mode) {
-    const creator = pr.username || PlatformI18n.t('changes:remedy.creatorFallback');
+    // A sentence that names the author, or its own wording for an author
+    // whose name is not known.
+    const byCreator = (named, unnamed) => AppView._boldParts(pr.username ? named : unnamed, { creator: pr.username || '' });
     const home = AppView._headHome(pr);
     // The conflict lane's own verdict on this head, when it has one. Who
     // resolves a PREDICTED conflict is the lane's decision, not the card's:
@@ -16102,32 +16214,32 @@ const AppView = {
     let rest;
     if (pr.source !== 'imported') {
       if (mode === 'failed') {
-        rest = AppView._boldParts('changes:remedy.rest.resolveInChat', { creator });
+        rest = byCreator('changes:remedy.rest.resolveInChat', 'changes:remedy.rest.resolveInChatUnnamed');
       } else if (mode === 'conflict') {
         lead = PlatformI18n.t('changes:remedy.lead.mayNotRun');
-        rest = AppView._boldParts('changes:remedy.rest.needsSync', { creator });
+        rest = byCreator('changes:remedy.rest.needsSync', 'changes:remedy.rest.needsSyncUnnamed');
       } else if (served.includes('integrating')) {
         lead = PlatformI18n.t('changes:remedy.lead.resolvingNow');
         rest = [PlatformI18n.t('changes:remedy.rest.nobody')];
       } else if (served.includes('unresolvable')) {
         lead = PlatformI18n.t('changes:remedy.lead.triedAndFailed');
-        rest = AppView._boldParts('changes:remedy.rest.needsSync', { creator });
+        rest = byCreator('changes:remedy.rest.needsSync', 'changes:remedy.rest.needsSyncUnnamed');
       } else if (served.includes('awaiting_approval')) {
         lead = PlatformI18n.t('changes:remedy.lead.afterVote');
-        rest = AppView._boldParts('changes:remedy.rest.canSyncSooner', { creator });
+        rest = byCreator('changes:remedy.rest.canSyncSooner', 'changes:remedy.rest.canSyncSoonerUnnamed');
       } else {
         lead = PlatformI18n.t('changes:remedy.lead.automatic');
-        rest = AppView._boldParts('changes:remedy.rest.canAlsoSyncSooner', { creator });
+        rest = byCreator('changes:remedy.rest.canAlsoSyncSooner', 'changes:remedy.rest.canAlsoSyncSoonerUnnamed');
       }
     } else if (home === 'app_repo') {
       if (mode === 'failed') {
-        rest = AppView._boldParts('changes:remedy.rest.resubmit', { creator });
+        rest = byCreator('changes:remedy.rest.resubmit', 'changes:remedy.rest.resubmitUnnamed');
       } else {
         lead = PlatformI18n.t('changes:remedy.lead.nextMerge');
-        rest = AppView._boldParts('changes:remedy.rest.resubmitIfFails', { creator });
+        rest = byCreator('changes:remedy.rest.resubmitIfFails', 'changes:remedy.rest.resubmitIfFailsUnnamed');
       }
     } else {
-      rest = AppView._boldParts('changes:remedy.rest.fork', { creator });
+      rest = byCreator('changes:remedy.rest.fork', 'changes:remedy.rest.forkUnnamed');
     }
     // The lead is a whole sentence; the message that joins it to the next
     // one supplies the space between them.
@@ -16596,8 +16708,8 @@ const AppView = {
       if (queued) copy = AppView.PREPARE_QUEUED_COPY;
       const values = { steps: list };
       if (image && image.doing) {
-        copy = AppView.BUILD_IMAGE_DETAIL_COPY;
-        values.detail = image.doing;
+        copy = image.doing.copy;
+        Object.assign(values, image.doing.values);
       }
       sentence = PlatformI18n.t(parts.length ? copy.nowAfter : copy.now, values);
       sub = PlatformI18n.t(copy.sub, values);
@@ -16611,18 +16723,129 @@ const AppView = {
   // line is the detail; on docker it is the builder's step counter. Copy
   // says which and never guesses a phase list it was not given.
   //
-  // Message ids: what the phase is doing, alone and followed by its last
-  // log line.
+  // Message ids: the build's sentences (alone, after finished steps, and the
+  // short line) for each thing the image build can be doing, without and
+  // with its last log line. Each is a whole message.
   IMAGE_PHASE_COPY: {
-    prepare: { alone: 'changes:progress.image.phase.prepare', detail: 'changes:progress.image.phaseDetail.prepare' },
-    analyze: { alone: 'changes:progress.image.phase.analyze', detail: 'changes:progress.image.phaseDetail.analyze' },
-    detect: { alone: 'changes:progress.image.phase.detect', detail: 'changes:progress.image.phaseDetail.detect' },
-    restore: { alone: 'changes:progress.image.phase.restore', detail: 'changes:progress.image.phaseDetail.restore' },
-    build: { alone: 'changes:progress.image.phase.build', detail: 'changes:progress.image.phaseDetail.build' },
-    export: { alone: 'changes:progress.image.phase.export', detail: 'changes:progress.image.phaseDetail.export' },
-    completion: { alone: 'changes:progress.image.phase.completion', detail: 'changes:progress.image.phaseDetail.completion' },
+    prepare: {
+      alone: {
+        now: 'changes:progress.build.now.imagePrepare',
+        nowAfter: 'changes:progress.build.nowAfter.imagePrepare',
+        sub: 'changes:progress.build.sub.imagePrepare',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imagePrepareDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imagePrepareDetail',
+        sub: 'changes:progress.build.sub.imagePrepareDetail',
+      },
+    },
+    analyze: {
+      alone: {
+        now: 'changes:progress.build.now.imageAnalyze',
+        nowAfter: 'changes:progress.build.nowAfter.imageAnalyze',
+        sub: 'changes:progress.build.sub.imageAnalyze',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageAnalyzeDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageAnalyzeDetail',
+        sub: 'changes:progress.build.sub.imageAnalyzeDetail',
+      },
+    },
+    detect: {
+      alone: {
+        now: 'changes:progress.build.now.imageDetect',
+        nowAfter: 'changes:progress.build.nowAfter.imageDetect',
+        sub: 'changes:progress.build.sub.imageDetect',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageDetectDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageDetectDetail',
+        sub: 'changes:progress.build.sub.imageDetectDetail',
+      },
+    },
+    restore: {
+      alone: {
+        now: 'changes:progress.build.now.imageRestore',
+        nowAfter: 'changes:progress.build.nowAfter.imageRestore',
+        sub: 'changes:progress.build.sub.imageRestore',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageRestoreDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageRestoreDetail',
+        sub: 'changes:progress.build.sub.imageRestoreDetail',
+      },
+    },
+    build: {
+      alone: {
+        now: 'changes:progress.build.now.imageBuild',
+        nowAfter: 'changes:progress.build.nowAfter.imageBuild',
+        sub: 'changes:progress.build.sub.imageBuild',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageBuildDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageBuildDetail',
+        sub: 'changes:progress.build.sub.imageBuildDetail',
+      },
+    },
+    export: {
+      alone: {
+        now: 'changes:progress.build.now.imageExport',
+        nowAfter: 'changes:progress.build.nowAfter.imageExport',
+        sub: 'changes:progress.build.sub.imageExport',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageExportDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageExportDetail',
+        sub: 'changes:progress.build.sub.imageExportDetail',
+      },
+    },
+    completion: {
+      alone: {
+        now: 'changes:progress.build.now.imageCompletion',
+        nowAfter: 'changes:progress.build.nowAfter.imageCompletion',
+        sub: 'changes:progress.build.sub.imageCompletion',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageCompletionDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageCompletionDetail',
+        sub: 'changes:progress.build.sub.imageCompletionDetail',
+      },
+    },
   },
-  IMAGE_OTHER_PHASE_COPY: { alone: 'changes:progress.image.phase.other', detail: 'changes:progress.image.phaseDetail.other' },
+  IMAGE_OTHER_PHASE_COPY: {
+    alone: {
+      now: 'changes:progress.build.now.imageOtherPhase',
+      nowAfter: 'changes:progress.build.nowAfter.imageOtherPhase',
+      sub: 'changes:progress.build.sub.imageOtherPhase',
+    },
+    detail: {
+      now: 'changes:progress.build.now.imageOtherPhaseDetail',
+      nowAfter: 'changes:progress.build.nowAfter.imageOtherPhaseDetail',
+      sub: 'changes:progress.build.sub.imageOtherPhaseDetail',
+    },
+  },
+  IMAGE_STEP_COPY: {
+    step: {
+      now: 'changes:progress.build.now.imageStep',
+      nowAfter: 'changes:progress.build.nowAfter.imageStep',
+      sub: 'changes:progress.build.sub.imageStep',
+    },
+    stepIn: {
+      now: 'changes:progress.build.now.imageStepIn',
+      nowAfter: 'changes:progress.build.nowAfter.imageStepIn',
+      sub: 'changes:progress.build.sub.imageStepIn',
+    },
+    stepDetail: {
+      now: 'changes:progress.build.now.imageStepDetail',
+      nowAfter: 'changes:progress.build.nowAfter.imageStepDetail',
+      sub: 'changes:progress.build.sub.imageStepDetail',
+    },
+    stepInDetail: {
+      now: 'changes:progress.build.now.imageStepInDetail',
+      nowAfter: 'changes:progress.build.nowAfter.imageStepInDetail',
+      sub: 'changes:progress.build.sub.imageStepInDetail',
+    },
+  },
   _imageProgressView(img) {
     if (!img || typeof img !== 'object') return null;
     const phase = typeof img.phase === 'string' ? img.phase : null;
@@ -16656,16 +16879,19 @@ const AppView = {
     // A step counter is a fraction, so it draws as a bar the way the checks
     // and the unit suite do, rather than as a row of names it does not have.
     const bar = hasCounter ? { ran: img.index, expected: img.total } : null;
+    // What the build is doing now: the ids of the sentences that say it and
+    // the values they take (BUILD_IMAGE_DETAIL_COPY shows the tool's own
+    // last line when there is neither a counter nor a phase).
     let doing = null;
     if (hasCounter) {
       const values = { index: img.index, total: img.total, phase, detail };
-      if (phase) doing = detail ? PlatformI18n.t('changes:progress.image.stepInDetail', values) : PlatformI18n.t('changes:progress.image.stepIn', values);
-      else doing = detail ? PlatformI18n.t('changes:progress.image.stepDetail', values) : PlatformI18n.t('changes:progress.image.step', values);
+      if (phase) doing = { copy: detail ? AppView.IMAGE_STEP_COPY.stepInDetail : AppView.IMAGE_STEP_COPY.stepIn, values };
+      else doing = { copy: detail ? AppView.IMAGE_STEP_COPY.stepDetail : AppView.IMAGE_STEP_COPY.step, values };
     } else if (phase) {
       const copy = (Object.prototype.hasOwnProperty.call(AppView.IMAGE_PHASE_COPY, phase) && AppView.IMAGE_PHASE_COPY[phase]) || AppView.IMAGE_OTHER_PHASE_COPY;
-      doing = PlatformI18n.t(detail ? copy.detail : copy.alone, { phase, detail });
+      doing = { copy: detail ? copy.detail : copy.alone, values: { phase, detail } };
     } else if (detail) {
-      doing = detail;
+      doing = { copy: AppView.BUILD_IMAGE_DETAIL_COPY, values: { detail } };
     }
     return { phase, phases, bar, detail, doing, index: hasCounter ? img.index : null, total: hasCounter ? img.total : null };
   },
@@ -21944,6 +22170,75 @@ const AppView = {
     phone: 'changes:shots.viewer.pickPhone',
   },
 
+  // "seen as …" under a shot, whole, by the people the screen's changes were
+  // viewed as, in the order they come up (persona keys joined with '+').
+  SHOTS_SEEN_AS_IDS: {
+    'member': 'changes:shots.seenAs.member',
+    'readOnlyAdmin': 'changes:shots.seenAs.readOnlyAdmin',
+    'fullAdmin': 'changes:shots.seenAs.fullAdmin',
+    'guest': 'changes:shots.seenAs.guest',
+    'member+readOnlyAdmin': 'changes:shots.seenAs.memberReadOnlyAdmin',
+    'member+fullAdmin': 'changes:shots.seenAs.memberFullAdmin',
+    'member+guest': 'changes:shots.seenAs.memberGuest',
+    'readOnlyAdmin+member': 'changes:shots.seenAs.readOnlyAdminMember',
+    'readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.readOnlyAdminFullAdmin',
+    'readOnlyAdmin+guest': 'changes:shots.seenAs.readOnlyAdminGuest',
+    'fullAdmin+member': 'changes:shots.seenAs.fullAdminMember',
+    'fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.fullAdminReadOnlyAdmin',
+    'fullAdmin+guest': 'changes:shots.seenAs.fullAdminGuest',
+    'guest+member': 'changes:shots.seenAs.guestMember',
+    'guest+readOnlyAdmin': 'changes:shots.seenAs.guestReadOnlyAdmin',
+    'guest+fullAdmin': 'changes:shots.seenAs.guestFullAdmin',
+    'member+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.memberReadOnlyAdminFullAdmin',
+    'member+readOnlyAdmin+guest': 'changes:shots.seenAs.memberReadOnlyAdminGuest',
+    'member+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.memberFullAdminReadOnlyAdmin',
+    'member+fullAdmin+guest': 'changes:shots.seenAs.memberFullAdminGuest',
+    'member+guest+readOnlyAdmin': 'changes:shots.seenAs.memberGuestReadOnlyAdmin',
+    'member+guest+fullAdmin': 'changes:shots.seenAs.memberGuestFullAdmin',
+    'readOnlyAdmin+member+fullAdmin': 'changes:shots.seenAs.readOnlyAdminMemberFullAdmin',
+    'readOnlyAdmin+member+guest': 'changes:shots.seenAs.readOnlyAdminMemberGuest',
+    'readOnlyAdmin+fullAdmin+member': 'changes:shots.seenAs.readOnlyAdminFullAdminMember',
+    'readOnlyAdmin+fullAdmin+guest': 'changes:shots.seenAs.readOnlyAdminFullAdminGuest',
+    'readOnlyAdmin+guest+member': 'changes:shots.seenAs.readOnlyAdminGuestMember',
+    'readOnlyAdmin+guest+fullAdmin': 'changes:shots.seenAs.readOnlyAdminGuestFullAdmin',
+    'fullAdmin+member+readOnlyAdmin': 'changes:shots.seenAs.fullAdminMemberReadOnlyAdmin',
+    'fullAdmin+member+guest': 'changes:shots.seenAs.fullAdminMemberGuest',
+    'fullAdmin+readOnlyAdmin+member': 'changes:shots.seenAs.fullAdminReadOnlyAdminMember',
+    'fullAdmin+readOnlyAdmin+guest': 'changes:shots.seenAs.fullAdminReadOnlyAdminGuest',
+    'fullAdmin+guest+member': 'changes:shots.seenAs.fullAdminGuestMember',
+    'fullAdmin+guest+readOnlyAdmin': 'changes:shots.seenAs.fullAdminGuestReadOnlyAdmin',
+    'guest+member+readOnlyAdmin': 'changes:shots.seenAs.guestMemberReadOnlyAdmin',
+    'guest+member+fullAdmin': 'changes:shots.seenAs.guestMemberFullAdmin',
+    'guest+readOnlyAdmin+member': 'changes:shots.seenAs.guestReadOnlyAdminMember',
+    'guest+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.guestReadOnlyAdminFullAdmin',
+    'guest+fullAdmin+member': 'changes:shots.seenAs.guestFullAdminMember',
+    'guest+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.guestFullAdminReadOnlyAdmin',
+    'member+readOnlyAdmin+fullAdmin+guest': 'changes:shots.seenAs.memberReadOnlyAdminFullAdminGuest',
+    'member+readOnlyAdmin+guest+fullAdmin': 'changes:shots.seenAs.memberReadOnlyAdminGuestFullAdmin',
+    'member+fullAdmin+readOnlyAdmin+guest': 'changes:shots.seenAs.memberFullAdminReadOnlyAdminGuest',
+    'member+fullAdmin+guest+readOnlyAdmin': 'changes:shots.seenAs.memberFullAdminGuestReadOnlyAdmin',
+    'member+guest+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.memberGuestReadOnlyAdminFullAdmin',
+    'member+guest+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.memberGuestFullAdminReadOnlyAdmin',
+    'readOnlyAdmin+member+fullAdmin+guest': 'changes:shots.seenAs.readOnlyAdminMemberFullAdminGuest',
+    'readOnlyAdmin+member+guest+fullAdmin': 'changes:shots.seenAs.readOnlyAdminMemberGuestFullAdmin',
+    'readOnlyAdmin+fullAdmin+member+guest': 'changes:shots.seenAs.readOnlyAdminFullAdminMemberGuest',
+    'readOnlyAdmin+fullAdmin+guest+member': 'changes:shots.seenAs.readOnlyAdminFullAdminGuestMember',
+    'readOnlyAdmin+guest+member+fullAdmin': 'changes:shots.seenAs.readOnlyAdminGuestMemberFullAdmin',
+    'readOnlyAdmin+guest+fullAdmin+member': 'changes:shots.seenAs.readOnlyAdminGuestFullAdminMember',
+    'fullAdmin+member+readOnlyAdmin+guest': 'changes:shots.seenAs.fullAdminMemberReadOnlyAdminGuest',
+    'fullAdmin+member+guest+readOnlyAdmin': 'changes:shots.seenAs.fullAdminMemberGuestReadOnlyAdmin',
+    'fullAdmin+readOnlyAdmin+member+guest': 'changes:shots.seenAs.fullAdminReadOnlyAdminMemberGuest',
+    'fullAdmin+readOnlyAdmin+guest+member': 'changes:shots.seenAs.fullAdminReadOnlyAdminGuestMember',
+    'fullAdmin+guest+member+readOnlyAdmin': 'changes:shots.seenAs.fullAdminGuestMemberReadOnlyAdmin',
+    'fullAdmin+guest+readOnlyAdmin+member': 'changes:shots.seenAs.fullAdminGuestReadOnlyAdminMember',
+    'guest+member+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.guestMemberReadOnlyAdminFullAdmin',
+    'guest+member+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.guestMemberFullAdminReadOnlyAdmin',
+    'guest+readOnlyAdmin+member+fullAdmin': 'changes:shots.seenAs.guestReadOnlyAdminMemberFullAdmin',
+    'guest+readOnlyAdmin+fullAdmin+member': 'changes:shots.seenAs.guestReadOnlyAdminFullAdminMember',
+    'guest+fullAdmin+member+readOnlyAdmin': 'changes:shots.seenAs.guestFullAdminMemberReadOnlyAdmin',
+    'guest+fullAdmin+readOnlyAdmin+member': 'changes:shots.seenAs.guestFullAdminReadOnlyAdminMember',
+  },
+
   _shotsSizeName(size) {
     const value = String(size || 'screen');
     const id = Object.prototype.hasOwnProperty.call(AppView.SHOTS_SIZE_NAME_IDS, value) ? AppView.SHOTS_SIZE_NAME_IDS[value] : '';
@@ -22102,7 +22397,7 @@ const AppView = {
     const skipped = (claim) => resultOf(claim)?.status === 'skipped' || failed(claim);
     const numberOf = (storyId) => claims.findIndex((claim) => claim.id === storyId) + 1;
     // Who the shots agent was signed in as. `personaId` is the word on its
-    // own; `seenAsId` is the same person as "seen as …" names them.
+    // own; `seenAs` is the whole "seen as …" fact for one or more of them.
     const personaKey = (claim) => (claim.persona === 'read_only_admin' ? 'readOnlyAdmin'
       : claim.persona === 'full_admin' ? 'fullAdmin'
         : claim.persona === 'guest' ? 'guest' : 'member');
@@ -22112,12 +22407,7 @@ const AppView = {
       guest: 'changes:shots.persona.guest',
       member: 'changes:shots.persona.member',
     };
-    const seenAsId = {
-      readOnlyAdmin: 'changes:shots.seenAs.readOnlyAdmin',
-      fullAdmin: 'changes:shots.seenAs.fullAdmin',
-      guest: 'changes:shots.seenAs.guest',
-      member: 'changes:shots.seenAs.member',
-    };
+    const seenAs = (names) => PlatformI18n.t(AppView.SHOTS_SEEN_AS_IDS[names.length ? names.join('+') : 'member']);
     const persona = (claim) => PlatformI18n.t(personaId[personaKey(claim)]);
     const videoStyle = 'display:block;width:100%;max-height:360px;border-radius:6px;background:rgba(0,0,0,0.35)';
 
@@ -22223,10 +22513,7 @@ const AppView = {
       const before = by(screen.shot, screen.viewport, 'base', 'context');
       const after = by(screen.shot, screen.viewport, 'head', 'context');
       const absent = onScreen.length > 0 && onScreen.every((claim) => claim.baseState === 'not_present');
-      const seenAs = [...new Set(onScreen.map(personaKey))].map((name) => PlatformI18n.t(seenAsId[name]));
-      const who = seenAs.length
-        ? seenAs.reduce((first, second) => PlatformI18n.t('changes:shots.seenAs.pair', { first, second }))
-        : PlatformI18n.t('changes:shots.seenAs.member');
+      const who = seenAs([...new Set(onScreen.map(personaKey))]);
       const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
       const described = onScreen.map((claim) => claim.claim || '').join(' ');
       const drawn = { base: outlines(screen, 'base'), head: outlines(screen, 'head') };
@@ -22251,8 +22538,8 @@ const AppView = {
       const width = Number(after && after.width);
       const height = Number(after && after.height);
       const meta = width > 0 && height > 0
-        ? PlatformI18n.htmlText('changes:shots.screen.metaSized', { size: sizeName(screen.viewport), width: Math.round(width), height: Math.round(height), who })
-        : PlatformI18n.htmlText('changes:shots.screen.meta', { size: sizeName(screen.viewport), who });
+        ? PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.t('changes:shots.screen.sized', { size: sizeName(screen.viewport), width: Math.round(width), height: Math.round(height) }), second: who })
+        : PlatformI18n.htmlText('changes:facts.pair', { first: sizeName(screen.viewport), second: who });
       return {
         viewport: screen.viewport,
         afterHtml: side('head', after, 'changes:shots.screen.altAfter'),
@@ -22311,7 +22598,7 @@ const AppView = {
       const rows = claims.map((claim) => {
         const flow = flowOf(claim);
         return `<li class="dev-shot-details-claim" data-shots-detail="${attr(claim.id || '')}"><strong>${esc(claim.claim || '')}</strong>
-          <div class="dev-shot-details-meta">${PlatformI18n.htmlText('changes:shots.details.where', { sizes: PlatformI18n.listText(viewportsOf(claim).map(sizeName)), who: PlatformI18n.t(seenAsId[personaKey(claim)]) })}</div>
+          <div class="dev-shot-details-meta">${PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.listText(viewportsOf(claim).map(sizeName)), second: seenAs([personaKey(claim)]) })}</div>
           ${flow ? `<div class="dev-shot-details-flow">${flow}</div>` : ''}</li>`;
       }).join('');
       return `${rows ? `<ol class="dev-shot-details-claims">${rows}</ol>` : ''}<p class="dev-shot-details-builds">${PlatformI18n.htmlText('changes:shots.details.builds')} ${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span></p>`;
@@ -22904,35 +23191,111 @@ const AppView = {
     return { key, label, tone, spinner, who, people, at, clearAt, tip: note, note };
   },
 
-  // Plain-English age for the work-state sentences. relTime()'s "5d ago" is
-  // right for a dense meta line and wrong inside a sentence, so this spells
-  // the units out. Returns '' for an unusable timestamp, and every caller
-  // omits its clause in that case rather than printing a gap.
-  _workAgeText(iso) {
+  // The age a work-state sentence states, as the wording it needs and the
+  // number or date that goes in it. relTime()'s "5d ago" is right for a dense
+  // meta line and wrong inside a sentence, so each sentence has its own
+  // message per wording (`unit`). Returns null for an unusable timestamp, and
+  // every caller says its sentence without an age in that case.
+  _workAge(iso) {
     const then = Date.parse(iso || '');
-    if (!Number.isFinite(then)) return '';
+    if (!Number.isFinite(then)) return null;
     const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
-    if (mins < 2) return PlatformI18n.t('changes:chips.workAge.justNow');
-    if (mins < 60) return PlatformI18n.t('changes:chips.workAge.minutes', { count: mins });
+    if (mins < 2) return { unit: 'justNow', values: {} };
+    if (mins < 60) return { unit: 'minutes', values: { count: mins } };
     const hrs = Math.round(mins / 60);
-    if (hrs < 24) return PlatformI18n.t('changes:chips.workAge.hours', { count: hrs });
+    if (hrs < 24) return { unit: 'hours', values: { count: hrs } };
     const days = Math.round(hrs / 24);
-    if (days <= 1) return PlatformI18n.t('changes:chips.workAge.yesterday');
-    if (days < 30) return PlatformI18n.t('changes:chips.workAge.days', { count: days });
-    return PlatformI18n.t('changes:chips.workAge.onDate', { date: AppView._workDateText(then) });
+    if (days <= 1) return { unit: 'yesterday', values: {} };
+    if (days < 30) return { unit: 'days', values: { count: days } };
+    return { unit: 'onDate', values: { date: AppView._workDateText(then) } };
   },
 
   // The work-state sentences, whole, by who they are about: the viewer, a
-  // named person, or nobody known. A key ending in `When` takes {{when}},
-  // the age _workAgeText spells out.
+  // named person, or nobody known. A key ending in `When` holds one message
+  // for each wording of the age (_workAge's `unit`).
   WORK_NOTE_IDS: {
     inReview: { you: 'changes:chips.workNote.inReview.you', named: 'changes:chips.workNote.inReview.named', someone: 'changes:chips.workNote.inReview.someone' },
     working: { you: 'changes:chips.workNote.working.you', named: 'changes:chips.workNote.working.named', someone: 'changes:chips.workNote.working.someone' },
-    workingWhen: { you: 'changes:chips.workNote.workingWhen.you', named: 'changes:chips.workNote.workingWhen.named', someone: 'changes:chips.workNote.workingWhen.someone' },
+    workingWhen: {
+      you: {
+        justNow: 'changes:chips.workNote.workingWhen.you.justNow',
+        minutes: 'changes:chips.workNote.workingWhen.you.minutes',
+        hours: 'changes:chips.workNote.workingWhen.you.hours',
+        yesterday: 'changes:chips.workNote.workingWhen.you.yesterday',
+        days: 'changes:chips.workNote.workingWhen.you.days',
+        onDate: 'changes:chips.workNote.workingWhen.you.onDate',
+      },
+      named: {
+        justNow: 'changes:chips.workNote.workingWhen.named.justNow',
+        minutes: 'changes:chips.workNote.workingWhen.named.minutes',
+        hours: 'changes:chips.workNote.workingWhen.named.hours',
+        yesterday: 'changes:chips.workNote.workingWhen.named.yesterday',
+        days: 'changes:chips.workNote.workingWhen.named.days',
+        onDate: 'changes:chips.workNote.workingWhen.named.onDate',
+      },
+      someone: {
+        justNow: 'changes:chips.workNote.workingWhen.someone.justNow',
+        minutes: 'changes:chips.workNote.workingWhen.someone.minutes',
+        hours: 'changes:chips.workNote.workingWhen.someone.hours',
+        yesterday: 'changes:chips.workNote.workingWhen.someone.yesterday',
+        days: 'changes:chips.workNote.workingWhen.someone.days',
+        onDate: 'changes:chips.workNote.workingWhen.someone.onDate',
+      },
+    },
     paused: { you: 'changes:chips.workNote.paused.you', named: 'changes:chips.workNote.paused.named', someone: 'changes:chips.workNote.paused.someone' },
-    pausedWhen: { you: 'changes:chips.workNote.pausedWhen.you', named: 'changes:chips.workNote.pausedWhen.named', someone: 'changes:chips.workNote.pausedWhen.someone' },
+    pausedWhen: {
+      you: {
+        justNow: 'changes:chips.workNote.pausedWhen.you.justNow',
+        minutes: 'changes:chips.workNote.pausedWhen.you.minutes',
+        hours: 'changes:chips.workNote.pausedWhen.you.hours',
+        yesterday: 'changes:chips.workNote.pausedWhen.you.yesterday',
+        days: 'changes:chips.workNote.pausedWhen.you.days',
+        onDate: 'changes:chips.workNote.pausedWhen.you.onDate',
+      },
+      named: {
+        justNow: 'changes:chips.workNote.pausedWhen.named.justNow',
+        minutes: 'changes:chips.workNote.pausedWhen.named.minutes',
+        hours: 'changes:chips.workNote.pausedWhen.named.hours',
+        yesterday: 'changes:chips.workNote.pausedWhen.named.yesterday',
+        days: 'changes:chips.workNote.pausedWhen.named.days',
+        onDate: 'changes:chips.workNote.pausedWhen.named.onDate',
+      },
+      someone: {
+        justNow: 'changes:chips.workNote.pausedWhen.someone.justNow',
+        minutes: 'changes:chips.workNote.pausedWhen.someone.minutes',
+        hours: 'changes:chips.workNote.pausedWhen.someone.hours',
+        yesterday: 'changes:chips.workNote.pausedWhen.someone.yesterday',
+        days: 'changes:chips.workNote.pausedWhen.someone.days',
+        onDate: 'changes:chips.workNote.pausedWhen.someone.onDate',
+      },
+    },
     claimed: { you: 'changes:chips.workNote.claimed.you', named: 'changes:chips.workNote.claimed.named', someone: 'changes:chips.workNote.claimed.someone' },
-    claimedWhen: { you: 'changes:chips.workNote.claimedWhen.you', named: 'changes:chips.workNote.claimedWhen.named', someone: 'changes:chips.workNote.claimedWhen.someone' },
+    claimedWhen: {
+      you: {
+        justNow: 'changes:chips.workNote.claimedWhen.you.justNow',
+        minutes: 'changes:chips.workNote.claimedWhen.you.minutes',
+        hours: 'changes:chips.workNote.claimedWhen.you.hours',
+        yesterday: 'changes:chips.workNote.claimedWhen.you.yesterday',
+        days: 'changes:chips.workNote.claimedWhen.you.days',
+        onDate: 'changes:chips.workNote.claimedWhen.you.onDate',
+      },
+      named: {
+        justNow: 'changes:chips.workNote.claimedWhen.named.justNow',
+        minutes: 'changes:chips.workNote.claimedWhen.named.minutes',
+        hours: 'changes:chips.workNote.claimedWhen.named.hours',
+        yesterday: 'changes:chips.workNote.claimedWhen.named.yesterday',
+        days: 'changes:chips.workNote.claimedWhen.named.days',
+        onDate: 'changes:chips.workNote.claimedWhen.named.onDate',
+      },
+      someone: {
+        justNow: 'changes:chips.workNote.claimedWhen.someone.justNow',
+        minutes: 'changes:chips.workNote.claimedWhen.someone.minutes',
+        hours: 'changes:chips.workNote.claimedWhen.someone.hours',
+        yesterday: 'changes:chips.workNote.claimedWhen.someone.yesterday',
+        days: 'changes:chips.workNote.claimedWhen.someone.days',
+        onDate: 'changes:chips.workNote.claimedWhen.someone.onDate',
+      },
+    },
   },
 
   // What the Homeroom bot started doing, as its own sentence: after "… asked
@@ -22940,15 +23303,43 @@ const AppView = {
   WORK_BOT_STARTED_IDS: {
     it: {
       reading: 'changes:chips.workNote.bot.itStartedReading',
-      readingWhen: 'changes:chips.workNote.bot.itStartedReadingWhen',
+      readingWhen: {
+        justNow: 'changes:chips.workNote.bot.itStartedReadingWhen.justNow',
+        minutes: 'changes:chips.workNote.bot.itStartedReadingWhen.minutes',
+        hours: 'changes:chips.workNote.bot.itStartedReadingWhen.hours',
+        yesterday: 'changes:chips.workNote.bot.itStartedReadingWhen.yesterday',
+        days: 'changes:chips.workNote.bot.itStartedReadingWhen.days',
+        onDate: 'changes:chips.workNote.bot.itStartedReadingWhen.onDate',
+      },
       building: 'changes:chips.workNote.bot.itStartedBuilding',
-      buildingWhen: 'changes:chips.workNote.bot.itStartedBuildingWhen',
+      buildingWhen: {
+        justNow: 'changes:chips.workNote.bot.itStartedBuildingWhen.justNow',
+        minutes: 'changes:chips.workNote.bot.itStartedBuildingWhen.minutes',
+        hours: 'changes:chips.workNote.bot.itStartedBuildingWhen.hours',
+        yesterday: 'changes:chips.workNote.bot.itStartedBuildingWhen.yesterday',
+        days: 'changes:chips.workNote.bot.itStartedBuildingWhen.days',
+        onDate: 'changes:chips.workNote.bot.itStartedBuildingWhen.onDate',
+      },
     },
     bot: {
       reading: 'changes:chips.workNote.bot.startedReading',
-      readingWhen: 'changes:chips.workNote.bot.startedReadingWhen',
+      readingWhen: {
+        justNow: 'changes:chips.workNote.bot.startedReadingWhen.justNow',
+        minutes: 'changes:chips.workNote.bot.startedReadingWhen.minutes',
+        hours: 'changes:chips.workNote.bot.startedReadingWhen.hours',
+        yesterday: 'changes:chips.workNote.bot.startedReadingWhen.yesterday',
+        days: 'changes:chips.workNote.bot.startedReadingWhen.days',
+        onDate: 'changes:chips.workNote.bot.startedReadingWhen.onDate',
+      },
       building: 'changes:chips.workNote.bot.startedBuilding',
-      buildingWhen: 'changes:chips.workNote.bot.startedBuildingWhen',
+      buildingWhen: {
+        justNow: 'changes:chips.workNote.bot.startedBuildingWhen.justNow',
+        minutes: 'changes:chips.workNote.bot.startedBuildingWhen.minutes',
+        hours: 'changes:chips.workNote.bot.startedBuildingWhen.hours',
+        yesterday: 'changes:chips.workNote.bot.startedBuildingWhen.yesterday',
+        days: 'changes:chips.workNote.bot.startedBuildingWhen.days',
+        onDate: 'changes:chips.workNote.bot.startedBuildingWhen.onDate',
+      },
     },
   },
 
@@ -22981,10 +23372,14 @@ const AppView = {
   _workStateNote(s) {
     const t = PlatformI18n.t;
     const subject = s.who === 'you' ? 'you' : (s.who ? 'named' : 'someone');
-    const age = AppView._workAgeText(s.at);
+    const age = AppView._workAge(s.at);
     const clears = s.clearAt ? AppView._workDateText(s.clearAt) : '';
     // One whole sentence about the person, with or without its age.
-    const about = (plain, timed) => t(AppView.WORK_NOTE_IDS[age ? timed : plain][subject], { name: s.who || '', when: age });
+    const about = (plain, timed) => (age
+      ? t(AppView.WORK_NOTE_IDS[timed][subject][age.unit], { name: s.who || '', ...age.values })
+      : t(AppView.WORK_NOTE_IDS[plain][subject], { name: s.who || '' }));
+    // What the bot started doing, with its age when there is one.
+    const started = (ids, doing) => (age ? t(ids[doing][age.unit], age.values) : t(ids[doing]));
     // Two whole sentences, one after the other.
     const then = (first, second) => t('changes:chips.workNote.then', { first, second });
     let main;
@@ -23004,8 +23399,8 @@ const AppView = {
         main = then(asked || t('changes:chips.workNote.bot.askedSomebody'), t('changes:chips.workNote.bot.startsSoon'));
       } else {
         main = asked
-          ? then(asked, t(AppView.WORK_BOT_STARTED_IDS.it[doing], { when: age }))
-          : t(AppView.WORK_BOT_STARTED_IDS.bot[doing], { when: age });
+          ? then(asked, started(AppView.WORK_BOT_STARTED_IDS.it, doing))
+          : started(AppView.WORK_BOT_STARTED_IDS.bot, doing);
       }
       // #4190: Claim is offered beside the bot, and a claim made now does not
       // stop it. Said only while nobody has (the "Also:" below names them).

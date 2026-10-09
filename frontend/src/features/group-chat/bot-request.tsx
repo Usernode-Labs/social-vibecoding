@@ -130,10 +130,11 @@ export function sharedNow(card: BotRequestCard): boolean {
  */
 export function approvalWords(state?: BotRequestState): string {
   if (state?.missing === 0) return translate('chat:group.botCard.approval.has');
+  // The card's own sentences, each with its full stop (`sentence`).
   const words = waitingWords({
     you: !!state?.youApprove, names: state?.waitingOn || [], more: state?.more, missing: state?.missing, needed: state?.needed,
-  });
-  return words ? translate('chat:group.botCard.approval.waitingOn', { waiting: words }) : translate('chat:group.botCard.approval.waiting');
+  }, 'sentence');
+  return words || translate('chat:group.botCard.approval.waiting');
 }
 
 /**

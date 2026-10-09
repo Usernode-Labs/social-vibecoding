@@ -91,8 +91,8 @@ test('the row is repainted from the live Kudos budget, not a literal', () => {
   // Both copy variants interpolate the server's numbers.
   assert.match(feedbackJs, /t\('dialogs:feedback\.bounty\.costRemaining', \{ count: remaining, limit \}\)/);
   assert.equal(message('dialogs:feedback.bounty.costRemaining', { count: 3, limit: 5 }), 'Costs 1 kudos. 3 of 5 left this week');
-  assert.match(feedbackJs, /t\('dialogs:feedback\.bounty\.usedAll', \{ count: limit, when: RT\.resetWhen\('weekly'\) \}\)/);
-  assert.equal(message('dialogs:feedback.bounty.usedAll', { count: 5, when: 'Monday at 2:00 AM' }),
+  assert.match(feedbackJs, /t\('dialogs:feedback\.bounty\.usedAll', \{ count: limit, \.\.\.RT\.resetMoment\('weekly'\) \}\)/);
+  assert.equal(message('dialogs:feedback.bounty.usedAll', { count: 5, day: 'Monday', time: '2:00 AM' }),
     "You've used all 5 kudos this week. Resets Monday at 2:00 AM.");
   // #3230: the reset in the viewer's own clock, the UTC instant on hover.
   assert.match(feedbackJs, /bountyNote\.textContent = RT\s*\? t\('dialogs:feedback\.bounty\.usedAll', [^\n]*\n\s*: t\('dialogs:feedback\.bounty\.usedAllUtc', \{ count: limit \}\)/);
@@ -256,10 +256,10 @@ test('both shot checks survive the manifest reader', () => {
 test('the Kudos-tab subtitle reads the cap from the budget', () => {
   assert.doesNotMatch(lbJs, /'5 kudos per week/);
   assert.match(lbJs, /window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20/);
-  assert.match(lbJs, /PlatformI18n\.t\('leaderboard:kudos\.subtitle',\s*\{ count: Number\(window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20\), when: window\.ResetTime\.resetWhen\('weekly'\) \}\)/,
+  assert.match(lbJs, /PlatformI18n\.t\('leaderboard:kudos\.subtitle',\s*\{ count: Number\(window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20\), \.\.\.window\.ResetTime\.resetMoment\('weekly'\) \}\)/,
     '#3230: in the viewer’s own clock where ResetTime is loaded');
   assert.match(lbJs, /: PlatformI18n\.t\('leaderboard:kudos\.subtitleUtc', \{ count: Number\(window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20\) \}\)/);
-  assert.equal(message('leaderboard:kudos.subtitle', { count: 20, when: 'Sunday at 8:00 PM' }),
+  assert.equal(message('leaderboard:kudos.subtitle', { count: 20, day: 'Sunday', time: '8:00 PM' }),
     '20 kudos per week, resets Sunday at 8:00 PM. Give them to changes you appreciate.');
   assert.equal(message('leaderboard:kudos.subtitleUtc', { count: 20 }),
     '20 kudos per week, resets Monday 00:00 UTC. Give them to changes you appreciate.');

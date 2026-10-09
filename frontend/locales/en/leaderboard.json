@@ -964,12 +964,12 @@
     "description": "Filter on the Kudos tab: count only this week's kudos."
   },
   "kudos.subtitle_one": {
-    "text": "{{count}} kudos per week, resets {{when}}. Give them to changes you appreciate.",
-    "description": "Line at the top of the Kudos tab. {{count}} is how many kudos each member may give per week and {{when}} when the allowance starts again, as a finished phrase such as \"Monday at 2:00 AM\". \"Changes\" is a noun."
+    "text": "{{count}} kudos per week, resets {{day}} at {{time}}. Give them to changes you appreciate.",
+    "description": "Line at the top of the Kudos tab. {{count}} is how many kudos each member may give per week; the middle part says when that allowance starts again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". \"Changes\" is a noun."
   },
   "kudos.subtitle_other": {
-    "text": "{{count}} kudos per week, resets {{when}}. Give them to changes you appreciate.",
-    "description": "Line at the top of the Kudos tab. {{count}} is how many kudos each member may give per week and {{when}} when the allowance starts again, as a finished phrase such as \"Monday at 2:00 AM\". \"Changes\" is a noun."
+    "text": "{{count}} kudos per week, resets {{day}} at {{time}}. Give them to changes you appreciate.",
+    "description": "Line at the top of the Kudos tab. {{count}} is how many kudos each member may give per week; the middle part says when that allowance starts again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". \"Changes\" is a noun."
   },
   "kudos.subtitleUtc_one": {
     "text": "{{count}} kudos per week, resets Monday 00:00 UTC. Give them to changes you appreciate.",
@@ -1352,12 +1352,12 @@
     "description": "The viewer's two weekly allowances, in the menu: {{remaining}} of {{limit}} thanks (kudos) left, then {{bountiesRemaining}} of {{count}} bounties left. The first tag wraps one figure with its words, the second shows the number in strong ink and the third the words in dim ink. The fourth holds the separator, in dim ink."
   },
   "kudos.budget.tip_one": {
-    "text": "{{remaining}} of {{count}} kudos left this week. Resets {{when}} ({{utc}}).",
-    "description": "Tooltip of the weekly kudos allowance in the menu. {{remaining}} of the {{count}} kudos are left. {{when}} is when the allowance starts again in the viewer's own time, as a finished phrase such as \"Monday at 2:00 AM\", and {{utc}} the same moment in UTC."
+    "text": "{{remaining}} of {{count}} kudos left this week. Resets {{day}} at {{time}} ({{utc}}).",
+    "description": "Tooltip of the weekly kudos allowance in the menu. {{remaining}} of the {{count}} kudos are left; the second sentence says when the allowance starts again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
   },
   "kudos.budget.tip_other": {
-    "text": "{{remaining}} of {{count}} kudos left this week. Resets {{when}} ({{utc}}).",
-    "description": "Tooltip of the weekly kudos allowance in the menu. {{remaining}} of the {{count}} kudos are left. {{when}} is when the allowance starts again in the viewer's own time, as a finished phrase such as \"Monday at 2:00 AM\", and {{utc}} the same moment in UTC."
+    "text": "{{remaining}} of {{count}} kudos left this week. Resets {{day}} at {{time}} ({{utc}}).",
+    "description": "Tooltip of the weekly kudos allowance in the menu. {{remaining}} of the {{count}} kudos are left; the second sentence says when the allowance starts again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
   },
   "kudos.budget.tipUtc_one": {
     "text": "{{remaining}} of {{count}} kudos left this week. Resets Monday 00:00 UTC.",
@@ -1368,12 +1368,12 @@
     "description": "Tooltip of the weekly kudos allowance in the menu when the reset time cannot be shown in the viewer's own time zone. {{remaining}} of the {{count}} kudos are left. Keep \"00:00 UTC\"."
   },
   "kudos.budget.tipBounties_one": {
-    "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets {{when}} ({{utc}}).",
-    "description": "Tooltip of the two weekly allowances in the menu: thanks (kudos) and bounties. {{when}} is when they start again in the viewer's own time, as a finished phrase such as \"Monday at 2:00 AM\", and {{utc}} the same moment in UTC."
+    "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets {{day}} at {{time}} ({{utc}}).",
+    "description": "Tooltip of the two weekly allowances in the menu: thanks (kudos) and bounties. {{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties are left; the second sentence says when both start again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
   },
   "kudos.budget.tipBounties_other": {
-    "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets {{when}} ({{utc}}).",
-    "description": "Tooltip of the two weekly allowances in the menu: thanks (kudos) and bounties. {{when}} is when they start again in the viewer's own time, as a finished phrase such as \"Monday at 2:00 AM\", and {{utc}} the same moment in UTC."
+    "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets {{day}} at {{time}} ({{utc}}).",
+    "description": "Tooltip of the two weekly allowances in the menu: thanks (kudos) and bounties. {{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties are left; the second sentence says when both start again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
   },
   "kudos.budget.tipBountiesUtc_one": {
     "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets Monday 00:00 UTC.",

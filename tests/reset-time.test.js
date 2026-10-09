@@ -61,6 +61,9 @@ test('resetWhen names the local moment: New York', () => {
     // Monday 00:00 UTC is Sunday 8 PM in New York (EDT).
     assert.equal(norm(RT.resetWhen('weekly', OPTS)), 'Sunday at 8:00 PM');
     assert.equal(norm(RT.resetWhen('daily', OPTS)), 'at 8:00 PM');
+    // The same moment as the values a whole sentence takes.
+    const moment = RT.resetMoment('weekly', OPTS);
+    assert.deepEqual([moment.day, norm(moment.time)], ['Sunday', '8:00 PM']);
   });
 });
 

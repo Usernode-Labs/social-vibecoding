@@ -1183,9 +1183,13 @@
     "text": "{{model}}: best for {{guidance}}",
     "description": "A sentence about a model. {{model}} is the model's name and {{guidance}} a phrase from the server, starting in lower case, saying what kind of change it suits."
   },
-  "budget.reset.at": {
-    "text": "Resets {{when}}.",
-    "description": "Sentence at the end of the tooltip on the dev chat's AI-credits meter: when the allowance starts again. {{when}} is a moment in words in the viewer's own time, for example 'Sunday at 8:00 PM' or 'at 8:00 PM'."
+  "budget.reset.daily": {
+    "text": "Resets at {{time}}.",
+    "description": "Sentence at the end of the tooltip on the dev chat's AI-credits meter: when the daily allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
+  },
+  "budget.reset.weekly": {
+    "text": "Resets {{day}} at {{time}}.",
+    "description": "Sentence at the end of the tooltip on the dev chat's AI-credits meter: when the weekly allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
   },
   "budget.reset.weeklyUtc": {
     "text": "Resets Monday 00:00 UTC.",
@@ -1443,9 +1447,13 @@
     "text": "The platform’s shared daily AI budget is used up.",
     "description": "First sentence, in bold, of the red banner at the top of a dev chat session when the AI budget shared by everyone on Homeroom is spent for the day."
   },
-  "banner.credits.out.resetAt": {
-    "text": "Free credits reset {{when}}.",
-    "description": "Second sentence of the red out-of-credits banner in the dev chat. {{when}} is a moment in words in the viewer's own time, for example 'Sunday at 8:00 PM' or 'at 8:00 PM'. 'Reset' is a verb: the credits are restored."
+  "banner.credits.out.resetDaily": {
+    "text": "Free credits reset at {{time}}.",
+    "description": "Second sentence of the red out-of-credits banner in the dev chat, for a daily allowance. 'Reset' is a verb: the credits are restored. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
+  },
+  "banner.credits.out.resetWeekly": {
+    "text": "Free credits reset {{day}} at {{time}}.",
+    "description": "Second sentence of the red out-of-credits banner in the dev chat, for a weekly allowance. 'Reset' is a verb: the credits are restored. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
   },
   "banner.credits.out.resetWeeklyUtc": {
     "text": "Free credits reset Monday 00:00 UTC.",

@@ -223,9 +223,25 @@
     "text": "It has the approvals it needs.",
     "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …': the change has been approved by enough people. 'It' is the change."
   },
-  "group.botCard.approval.waitingOn": {
-    "text": "{{waiting}}.",
-    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …'. {{waiting}} is a complete phrase naming who still has to approve the change, already in the reader's language and without its final full stop, for example 'Waiting for approval from you and @ada'. Only the closing punctuation is translated."
+  "group.botCard.approval.needs_one": {
+    "text": "Needs one approval from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many approvals the built change still needs and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number of approvals; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\"."
+  },
+  "group.botCard.approval.needs_other": {
+    "text": "Needs {{count}} approvals from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many approvals the built change still needs and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number of approvals; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\"."
+  },
+  "group.botCard.approval.needsMore_one": {
+    "text": "Needs one more approval from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many more approvals the built change needs, once it has some, and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number still missing; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\"."
+  },
+  "group.botCard.approval.needsMore_other": {
+    "text": "Needs {{count}} more approvals from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many more approvals the built change needs, once it has some, and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number still missing; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\"."
+  },
+  "group.botCard.approval.waitingFrom": {
+    "text": "Waiting for approval from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying that every person listed still has to approve the built change. {{people}} is a list joined with \"and\", for example \"you, @ada and 2 more\"."
   },
   "group.botCard.approval.waiting": {
     "text": "Waiting for approval.",

@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 const kubernetes = require('../src/services/kubernetes');
 const docker = require('../src/services/docker');
 const visuals = require('../src/services/visuals');
@@ -222,7 +223,9 @@ test('the image step shows its phases and the running phase\'s line while buildi
   assert.equal(img.detail, "Running 'npm ci'");
   // docker's counter reads as a step of N.
   const dk = AppView._imageProgressView({ phase: 'shell', index: 4, total: 9, detail: 'RUN npm ci' });
-  assert.equal(dk.doing, 'step 4 of 9 in shell: RUN npm ci');
+  // What it is doing is a whole sentence of its own, not words slotted into another.
+  assert.equal(dk.doing.copy.sub, 'changes:progress.build.sub.imageStepInDetail');
+  assert.equal(message(dk.doing.copy.sub, dk.doing.values), 'build: building the preview image (step 4 of 9 in shell: RUN npm ci)');
   assert.deepEqual(plain(dk.phases).map((p) => [p.name, p.state]), [['shell', 'now']], 'no invented lifecycle for a stage list it was not given');
 });
 
@@ -239,7 +242,8 @@ test('a runtime that reports no phases gets no phase row invented for it', () =>
   const docker = AppView._imageProgressView({ index: 6, phase: null, total: 36, detail: 'COPY frontend ./frontend' });
   assert.deepEqual(plain(docker.phases), [], 'no phases were reported, so none are drawn');
   assert.deepEqual(plain(docker.bar), { ran: 6, expected: 36 }, 'a counter is a fraction, so it draws as a bar');
-  assert.equal(docker.doing, 'step 6 of 36: COPY frontend ./frontend');
+  assert.equal(docker.doing.copy.sub, 'changes:progress.build.sub.imageStepDetail');
+  assert.equal(message(docker.doing.copy.sub, docker.doing.values), 'build: building the preview image (step 6 of 36: COPY frontend ./frontend)');
   // Nothing at all reported: still no invented row.
   assert.deepEqual(plain(AppView._imageProgressView({}).phases), []);
   assert.equal(AppView._imageProgressView({}).bar, null);

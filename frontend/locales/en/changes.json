@@ -2311,49 +2311,161 @@
     "text": "its author, now",
     "description": "Small text beside \"Sync with main\" on a proposal's page when the change's author has to do the sync by hand and their name is not known."
   },
-  "ledger.sync.moved_one": {
-    "text": "Main has moved {{count}} commit ahead",
-    "description": "Clause that fills {{moved}} in the \"Sync with main\" row's sentences on a proposal's page (changes:ledger.sync.blocked and the ones beside it). It starts the sentence, so it is capitalised and has no full stop. {{count}} is how many commits main has gained."
+  "ledger.sync.blocked.commitsOneFile_one": {
+    "text": "<0>Blocked.</0> Main has moved {{count}} commit ahead, and 1 file changed on both sides, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.moved_other": {
-    "text": "Main has moved {{count}} commits ahead",
-    "description": "Clause that fills {{moved}} in the \"Sync with main\" row's sentences on a proposal's page (changes:ledger.sync.blocked and the ones beside it). It starts the sentence, so it is capitalised and has no full stop. {{count}} is how many commits main has gained."
+  "ledger.sync.blocked.commitsOneFile_other": {
+    "text": "<0>Blocked.</0> Main has moved {{count}} commits ahead, and 1 file changed on both sides, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.movedUnknown": {
-    "text": "Main has moved ahead",
-    "description": "Clause that fills {{moved}} in the \"Sync with main\" row's sentences on a proposal's page when the number of new commits on main is not known. It starts the sentence, so it is capitalised and has no full stop."
+  "ledger.sync.blocked.commitsFiles_one": {
+    "text": "<0>Blocked.</0> Main has moved {{count}} commit ahead, and {{files}} files changed on both sides, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.overlapFiles_one": {
-    "text": "{{count}} file changed on both sides",
-    "description": "Clause that fills {{overlap}} in the \"Sync with main\" row's sentences on a proposal's page, after \"…, and\". {{count}} is how many files were edited both in this change and on main. No capital, no full stop."
+  "ledger.sync.blocked.commitsFiles_other": {
+    "text": "<0>Blocked.</0> Main has moved {{count}} commits ahead, and {{files}} files changed on both sides, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.overlapFiles_other": {
-    "text": "{{count}} files changed on both sides",
-    "description": "Clause that fills {{overlap}} in the \"Sync with main\" row's sentences on a proposal's page, after \"…, and\". {{count}} is how many files were edited both in this change and on main. No capital, no full stop."
+  "ledger.sync.blocked.commitsLines_one": {
+    "text": "<0>Blocked.</0> Main has moved {{count}} commit ahead, and the two changes touch the same lines, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.overlapLines": {
-    "text": "the two changes touch the same lines",
-    "description": "Clause that fills {{overlap}} in the \"Sync with main\" row's sentences on a proposal's page, after \"…, and\", when the conflicting files are not known. No capital, no full stop."
+  "ledger.sync.blocked.commitsLines_other": {
+    "text": "<0>Blocked.</0> Main has moved {{count}} commits ahead, and the two changes touch the same lines, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.blocked": {
-    "text": "<0>Blocked.</0> {{moved}}, and {{overlap}}, so the automatic sync cannot finish this one.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{moved}} is a clause such as \"Main has moved 3 commits ahead\" and {{overlap}} a clause such as \"2 files changed on both sides\". The word inside <0></0> is shown in bold."
+  "ledger.sync.blocked.aheadOneFile": {
+    "text": "<0>Blocked.</0> Main has moved ahead, and 1 file changed on both sides, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. Used when the number of new commits on the main branch is not known. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.resolvingNow": {
-    "text": "<0>Syncing.</0> {{moved}}, and {{overlap}}. Homeroom is resolving it now, then it tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{moved}} is a clause such as \"Main has moved 3 commits ahead\" and {{overlap}} a clause such as \"2 files changed on both sides\". The word inside <0></0> is shown in bold."
+  "ledger.sync.blocked.aheadFiles": {
+    "text": "<0>Blocked.</0> Main has moved ahead, and {{files}} files changed on both sides, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. Used when the number of new commits on the main branch is not known. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.afterVote": {
-    "text": "<0>Syncing.</0> {{moved}}, and {{overlap}}. Homeroom resolves it once the group approves, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{moved}} is a clause such as \"Main has moved 3 commits ahead\" and {{overlap}} a clause such as \"2 files changed on both sides\". The word inside <0></0> is shown in bold."
+  "ledger.sync.blocked.aheadLines": {
+    "text": "<0>Blocked.</0> Main has moved ahead, and the two changes touch the same lines, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. Used when the number of new commits on the main branch is not known. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.automatic": {
-    "text": "<0>Syncing.</0> {{moved}}, and {{overlap}}. Homeroom resolves it automatically, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{moved}} is a clause such as \"Main has moved 3 commits ahead\" and {{overlap}} a clause such as \"2 files changed on both sides\". The word inside <0></0> is shown in bold."
+  "ledger.sync.resolvingNow.commitsOneFile_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and 1 file changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.catchingUp": {
-    "text": "<0>Syncing.</0> {{moved}}; Homeroom is bringing this proposal up to date automatically.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when the change is only behind main, with no conflict. {{moved}} is a clause such as \"Main has moved 3 commits ahead\". The word inside <0></0> is shown in bold."
+  "ledger.sync.resolvingNow.commitsOneFile_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and 1 file changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.resolvingNow.commitsFiles_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and {{files}} files changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.resolvingNow.commitsFiles_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and {{files}} files changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.resolvingNow.commitsLines_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and the two changes touch the same lines. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.resolvingNow.commitsLines_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and the two changes touch the same lines. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.resolvingNow.aheadOneFile": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and 1 file changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. Used when the number of new commits on the main branch is not known. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.resolvingNow.aheadFiles": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and {{files}} files changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. Used when the number of new commits on the main branch is not known. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.resolvingNow.aheadLines": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and the two changes touch the same lines. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. Used when the number of new commits on the main branch is not known. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.afterVote.commitsOneFile_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and 1 file changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.afterVote.commitsOneFile_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and 1 file changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.afterVote.commitsFiles_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and {{files}} files changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.afterVote.commitsFiles_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and {{files}} files changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.afterVote.commitsLines_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and the two changes touch the same lines. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.afterVote.commitsLines_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and the two changes touch the same lines. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.afterVote.aheadOneFile": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and 1 file changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. Used when the number of new commits on the main branch is not known. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.afterVote.aheadFiles": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and {{files}} files changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. Used when the number of new commits on the main branch is not known. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.afterVote.aheadLines": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and the two changes touch the same lines. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. Used when the number of new commits on the main branch is not known. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.automatic.commitsOneFile_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and 1 file changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.automatic.commitsOneFile_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and 1 file changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.automatic.commitsFiles_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and {{files}} files changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.automatic.commitsFiles_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and {{files}} files changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.automatic.commitsLines_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and the two changes touch the same lines. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.automatic.commitsLines_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and the two changes touch the same lines. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.automatic.aheadOneFile": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and 1 file changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. Used when the number of new commits on the main branch is not known. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.automatic.aheadFiles": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and {{files}} files changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. Used when the number of new commits on the main branch is not known. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.automatic.aheadLines": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and the two changes touch the same lines. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. Used when the number of new commits on the main branch is not known. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.catchingUp.commits_one": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead; Homeroom is bringing this proposal up to date automatically.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when the change is only behind the project's main branch, with no conflict. {{count}} is how many commits the project's main branch has gained since this change was started. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.catchingUp.commits_other": {
+    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead; Homeroom is bringing this proposal up to date automatically.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when the change is only behind the project's main branch, with no conflict. {{count}} is how many commits the project's main branch has gained since this change was started. The word inside <0></0> is shown in bold."
+  },
+  "ledger.sync.catchingUp.ahead": {
+    "text": "<0>Syncing.</0> Main has moved ahead; Homeroom is bringing this proposal up to date automatically.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when the change is only behind the project's main branch, with no conflict. Used when the number of new commits on the main branch is not known. The word inside <0></0> is shown in bold."
   },
   "ledger.checks.failingOnlyYou": {
     "text": "<0>Failing.</0> 1 of 1 check failed on this build. You must fix it before this proposal can land.",
@@ -2419,9 +2531,109 @@
     "text": "It won’t merge on a timer: it needs {{count}} actual Yes votes.",
     "description": "Sentence in the voting help pop-up for a proposal that needs explicit approval: it is not approved automatically when a waiting period ends. {{count}} is how many Yes votes it needs."
   },
-  "votingHelp.approvalsBlocked": {
-    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: {{blocker}}.",
-    "description": "Sentence in the voting help pop-up on a project with a fixed number of required approvals. {{yes}} is the number of approvals it has and {{required}} the number needed. {{blocker}} is a clause from changes:votingHelp.blocker.* giving the reason."
+  "votingHelp.approvalsBlocked.conflictFailed": {
+    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: automatic conflict resolution failed, so the proposer must resolve it before it can merge.",
+    "description": "Sentence in the voting help pop-up on a proposal's page, on a project with a fixed number of required approvals, when the proposal has them but cannot merge because Homeroom tried to resolve the conflict with the project's main version and could not, so the person who proposed the change has to. {{yes}} is the number of approvals it has and {{required}} the number needed. \"It\" is the proposal."
+  },
+  "votingHelp.approvalsBlocked.resolving": {
+    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: conflicts with the main app are being reconciled automatically before it can merge.",
+    "description": "Sentence in the voting help pop-up on a proposal's page, on a project with a fixed number of required approvals, when the proposal has them but cannot merge because Homeroom is resolving the conflict with the project's main version by itself right now. {{yes}} is the number of approvals it has and {{required}} the number needed. \"It\" is the proposal."
+  },
+  "votingHelp.approvalsBlocked.conflict": {
+    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: it conflicts with the main app, so its creator has to sync with main and resolve them before it can merge.",
+    "description": "Sentence in the voting help pop-up on a proposal's page, on a project with a fixed number of required approvals, when the proposal has them but cannot merge because the change conflicts with the project's main version and its author has to bring it up to date (\"sync with main\") and resolve the conflicts. {{yes}} is the number of approvals it has and {{required}} the number needed. \"It\" is the proposal."
+  },
+  "votingHelp.approvalsBlocked.checksFailing": {
+    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: its automated checks are failing, so it can’t merge until they pass.",
+    "description": "Sentence in the voting help pop-up on a proposal's page, on a project with a fixed number of required approvals, when the proposal has them but cannot merge because the proposal's automated checks (tests) are failing. {{yes}} is the number of approvals it has and {{required}} the number needed. \"It\" is the proposal."
+  },
+  "votingHelp.approvalsBlocked.checksPending": {
+    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: its automated checks are still running, so it can’t merge until they finish.",
+    "description": "Sentence in the voting help pop-up on a proposal's page, on a project with a fixed number of required approvals, when the proposal has them but cannot merge because the proposal's automated checks (tests) have not finished. {{yes}} is the number of approvals it has and {{required}} the number needed. \"It\" is the proposal."
+  },
+  "votingHelp.approvalsBlocked.checksError": {
+    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: its automated checks couldn’t run, so it can’t merge until they pass.",
+    "description": "Sentence in the voting help pop-up on a proposal's page, on a project with a fixed number of required approvals, when the proposal has them but cannot merge because the proposal's automated checks (tests) could not be run at all. {{yes}} is the number of approvals it has and {{required}} the number needed. \"It\" is the proposal."
+  },
+  "votingHelp.approvalsBlocked.behind": {
+    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: it’s behind the main app and will sync automatically before merging.",
+    "description": "Sentence in the voting help pop-up on a proposal's page, on a project with a fixed number of required approvals, when the proposal has them but cannot merge because the project's main version has moved on, and Homeroom will bring the change up to date by itself. {{yes}} is the number of approvals it has and {{required}} the number needed. \"It\" is the proposal."
+  },
+  "votingHelp.approvalsBlocked.locked": {
+    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: the app is locked, so it also needs an admin’s Yes.",
+    "description": "Sentence in the voting help pop-up on a proposal's page, on a project with a fixed number of required approvals, when the proposal has them but cannot merge because the project is locked by its administrators, so one of them must also vote Yes. {{yes}} is the number of approvals it has and {{required}} the number needed. \"It\" is the proposal."
+  },
+  "votingHelp.approvalsBlocked.noOtherMember": {
+    "text": "It has the approvals it needs ({{yes}} of {{required}}), but it can’t merge yet: none of its Yes votes is from another member yet.",
+    "description": "Sentence in the voting help pop-up on a proposal's page, on a project with a fixed number of required approvals, when the proposal has them but cannot merge because every Yes so far is the author's own, and one must come from another member. {{yes}} is the number of approvals it has and {{required}} the number needed. \"It\" is the proposal."
+  },
+  "votingHelp.enoughBlocked.conflictFailed": {
+    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: automatic conflict resolution failed, so the proposer must resolve it before it can merge.",
+    "description": "Sentence in the voting help pop-up on a proposal's page when the proposal has the votes but cannot merge because Homeroom tried to resolve the conflict with the project's main version and could not, so the person who proposed the change has to. {{yes}} is the number of Yes votes and {{required}} the number needed. \"It\" is the proposal; \"Yes\" is the name of the vote."
+  },
+  "votingHelp.enoughBlocked.resolving": {
+    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: conflicts with the main app are being reconciled automatically before it can merge.",
+    "description": "Sentence in the voting help pop-up on a proposal's page when the proposal has the votes but cannot merge because Homeroom is resolving the conflict with the project's main version by itself right now. {{yes}} is the number of Yes votes and {{required}} the number needed. \"It\" is the proposal; \"Yes\" is the name of the vote."
+  },
+  "votingHelp.enoughBlocked.conflict": {
+    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: it conflicts with the main app, so its creator has to sync with main and resolve them before it can merge.",
+    "description": "Sentence in the voting help pop-up on a proposal's page when the proposal has the votes but cannot merge because the change conflicts with the project's main version and its author has to bring it up to date (\"sync with main\") and resolve the conflicts. {{yes}} is the number of Yes votes and {{required}} the number needed. \"It\" is the proposal; \"Yes\" is the name of the vote."
+  },
+  "votingHelp.enoughBlocked.checksFailing": {
+    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: its automated checks are failing, so it can’t merge until they pass.",
+    "description": "Sentence in the voting help pop-up on a proposal's page when the proposal has the votes but cannot merge because the proposal's automated checks (tests) are failing. {{yes}} is the number of Yes votes and {{required}} the number needed. \"It\" is the proposal; \"Yes\" is the name of the vote."
+  },
+  "votingHelp.enoughBlocked.checksPending": {
+    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: its automated checks are still running, so it can’t merge until they finish.",
+    "description": "Sentence in the voting help pop-up on a proposal's page when the proposal has the votes but cannot merge because the proposal's automated checks (tests) have not finished. {{yes}} is the number of Yes votes and {{required}} the number needed. \"It\" is the proposal; \"Yes\" is the name of the vote."
+  },
+  "votingHelp.enoughBlocked.checksError": {
+    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: its automated checks couldn’t run, so it can’t merge until they pass.",
+    "description": "Sentence in the voting help pop-up on a proposal's page when the proposal has the votes but cannot merge because the proposal's automated checks (tests) could not be run at all. {{yes}} is the number of Yes votes and {{required}} the number needed. \"It\" is the proposal; \"Yes\" is the name of the vote."
+  },
+  "votingHelp.enoughBlocked.behind": {
+    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: it’s behind the main app and will sync automatically before merging.",
+    "description": "Sentence in the voting help pop-up on a proposal's page when the proposal has the votes but cannot merge because the project's main version has moved on, and Homeroom will bring the change up to date by itself. {{yes}} is the number of Yes votes and {{required}} the number needed. \"It\" is the proposal; \"Yes\" is the name of the vote."
+  },
+  "votingHelp.enoughBlocked.locked": {
+    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: the app is locked, so it also needs an admin’s Yes.",
+    "description": "Sentence in the voting help pop-up on a proposal's page when the proposal has the votes but cannot merge because the project is locked by its administrators, so one of them must also vote Yes. {{yes}} is the number of Yes votes and {{required}} the number needed. \"It\" is the proposal; \"Yes\" is the name of the vote."
+  },
+  "votingHelp.enoughBlocked.noOtherMember": {
+    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: none of its Yes votes is from another member yet.",
+    "description": "Sentence in the voting help pop-up on a proposal's page when the proposal has the votes but cannot merge because every Yes so far is the author's own, and one must come from another member. {{yes}} is the number of Yes votes and {{required}} the number needed. \"It\" is the proposal; \"Yes\" is the name of the vote."
+  },
+  "votingHelp.note.conflictFailed": {
+    "text": "Note: automatic conflict resolution failed, so the proposer must resolve it before it can merge.",
+    "description": "Sentence added at the end of the voting help pop-up on a proposal's page, after the sentences about its votes, to say what else holds the merge back: Homeroom tried to resolve the conflict with the project's main version and could not, so the person who proposed the change has to. \"It\" is the proposal."
+  },
+  "votingHelp.note.resolving": {
+    "text": "Note: conflicts with the main app are being reconciled automatically before it can merge.",
+    "description": "Sentence added at the end of the voting help pop-up on a proposal's page, after the sentences about its votes, to say what else holds the merge back: Homeroom is resolving the conflict with the project's main version by itself right now. \"It\" is the proposal."
+  },
+  "votingHelp.note.conflict": {
+    "text": "Note: it conflicts with the main app, so its creator has to sync with main and resolve them before it can merge.",
+    "description": "Sentence added at the end of the voting help pop-up on a proposal's page, after the sentences about its votes, to say what else holds the merge back: the change conflicts with the project's main version and its author has to bring it up to date (\"sync with main\") and resolve the conflicts. \"It\" is the proposal."
+  },
+  "votingHelp.note.checksFailing": {
+    "text": "Note: its automated checks are failing, so it can’t merge until they pass.",
+    "description": "Sentence added at the end of the voting help pop-up on a proposal's page, after the sentences about its votes, to say what else holds the merge back: the proposal's automated checks (tests) are failing. \"It\" is the proposal."
+  },
+  "votingHelp.note.checksPending": {
+    "text": "Note: its automated checks are still running, so it can’t merge until they finish.",
+    "description": "Sentence added at the end of the voting help pop-up on a proposal's page, after the sentences about its votes, to say what else holds the merge back: the proposal's automated checks (tests) have not finished. \"It\" is the proposal."
+  },
+  "votingHelp.note.checksError": {
+    "text": "Note: its automated checks couldn’t run, so it can’t merge until they pass.",
+    "description": "Sentence added at the end of the voting help pop-up on a proposal's page, after the sentences about its votes, to say what else holds the merge back: the proposal's automated checks (tests) could not be run at all. \"It\" is the proposal."
+  },
+  "votingHelp.note.behind": {
+    "text": "Note: it’s behind the main app and will sync automatically before merging.",
+    "description": "Sentence added at the end of the voting help pop-up on a proposal's page, after the sentences about its votes, to say what else holds the merge back: the project's main version has moved on, and Homeroom will bring the change up to date by itself. \"It\" is the proposal."
+  },
+  "votingHelp.note.locked": {
+    "text": "Note: the app is locked, so it also needs an admin’s Yes.",
+    "description": "Sentence added at the end of the voting help pop-up on a proposal's page, after the sentences about its votes, to say what else holds the merge back: the project is locked by its administrators, so one of them must also vote Yes. \"It\" is the proposal."
   },
   "votingHelp.approvalsQueued": {
     "text": "It has the approvals it needs ({{yes}} of {{required}}). Queued to merge shortly.",
@@ -2443,17 +2655,9 @@
     "text": "This app requires at least {{count}} approvals from any user. Currently {{yes}} of {{count}}.",
     "description": "Text in the voting help pop-up on a project where anyone's vote counts toward a fixed number of approvals. {{count}} is how many approvals are required and {{yes}} how many the proposal has."
   },
-  "votingHelp.note": {
-    "text": "Note: {{blocker}}.",
-    "description": "Sentence in the voting help pop-up on a proposal's page that adds what else holds the merge back. {{blocker}} is a clause from changes:votingHelp.blocker.* giving the reason."
-  },
   "votingHelp.approversOnly": {
     "text": "Everyone can still vote, but only approvers’ votes count toward the target.",
     "description": "Sentence in the voting help pop-up on a project where only invited approvers' votes count."
-  },
-  "votingHelp.enoughBlocked": {
-    "text": "It has enough Yes votes ({{yes}} of {{required}}), but it can’t merge yet: {{blocker}}.",
-    "description": "Sentence in the voting help pop-up when the proposal has the votes but something else holds it back. {{yes}} is the number of Yes votes and {{required}} the number needed. {{blocker}} is a clause from changes:votingHelp.blocker.* giving the reason."
   },
   "votingHelp.votesQueued": {
     "text": "It has the votes it needs ({{yes}} of {{required}}). Queued to merge shortly.",
@@ -2491,46 +2695,6 @@
     "text": "{{count}} advisory votes from non-approvers are recorded but don’t count.",
     "description": "Sentence in the voting help pop-up on a project where only invited approvers' votes count. {{count}} is how many votes came from people who are not approvers."
   },
-  "votingHelp.blocker.conflictFailed": {
-    "text": "automatic conflict resolution failed, so the proposer must resolve it before it can merge",
-    "description": "Clause that fills {{blocker}} in the voting help pop-up's sentences \"…but it can’t merge yet: {{blocker}}.\" and \"Note: {{blocker}}.\" on a proposal's page. It says what holds the merge back. It follows a colon, so it has no capital letter and no full stop."
-  },
-  "votingHelp.blocker.resolving": {
-    "text": "conflicts with the main app are being reconciled automatically before it can merge",
-    "description": "Clause that fills {{blocker}} in the voting help pop-up's sentences \"…but it can’t merge yet: {{blocker}}.\" and \"Note: {{blocker}}.\" on a proposal's page. It says what holds the merge back. It follows a colon, so it has no capital letter and no full stop."
-  },
-  "votingHelp.blocker.conflict": {
-    "text": "it conflicts with the main app, so its creator has to sync with main and resolve them before it can merge",
-    "description": "Clause that fills {{blocker}} in the voting help pop-up's sentences \"…but it can’t merge yet: {{blocker}}.\" and \"Note: {{blocker}}.\" on a proposal's page. It says what holds the merge back. It follows a colon, so it has no capital letter and no full stop."
-  },
-  "votingHelp.blocker.checksFailing": {
-    "text": "its automated checks are failing, so it can’t merge until they pass",
-    "description": "Clause that fills {{blocker}} in the voting help pop-up's sentences \"…but it can’t merge yet: {{blocker}}.\" and \"Note: {{blocker}}.\" on a proposal's page. It says what holds the merge back. It follows a colon, so it has no capital letter and no full stop."
-  },
-  "votingHelp.blocker.checksPending": {
-    "text": "its automated checks are still running, so it can’t merge until they finish",
-    "description": "Clause that fills {{blocker}} in the voting help pop-up's sentences \"…but it can’t merge yet: {{blocker}}.\" and \"Note: {{blocker}}.\" on a proposal's page. It says what holds the merge back. It follows a colon, so it has no capital letter and no full stop."
-  },
-  "votingHelp.blocker.checksError": {
-    "text": "its automated checks couldn’t run, so it can’t merge until they pass",
-    "description": "Clause that fills {{blocker}} in the voting help pop-up's sentences \"…but it can’t merge yet: {{blocker}}.\" and \"Note: {{blocker}}.\" on a proposal's page. It says what holds the merge back. It follows a colon, so it has no capital letter and no full stop."
-  },
-  "votingHelp.blocker.behind": {
-    "text": "it’s behind the main app and will sync automatically before merging",
-    "description": "Clause that fills {{blocker}} in the voting help pop-up's sentences \"…but it can’t merge yet: {{blocker}}.\" and \"Note: {{blocker}}.\" on a proposal's page. It says what holds the merge back. It follows a colon, so it has no capital letter and no full stop."
-  },
-  "votingHelp.blocker.locked": {
-    "text": "the app is locked, so it also needs an admin’s Yes",
-    "description": "Clause that fills {{blocker}} in the voting help pop-up's sentences \"…but it can’t merge yet: {{blocker}}.\" and \"Note: {{blocker}}.\" on a proposal's page. It says what holds the merge back. It follows a colon, so it has no capital letter and no full stop."
-  },
-  "votingHelp.blocker.noOtherMember": {
-    "text": "none of its Yes votes is from another member yet",
-    "description": "Clause that fills {{blocker}} in the voting help pop-up's sentences \"…but it can’t merge yet: {{blocker}}.\" and \"Note: {{blocker}}.\" on a proposal's page. It says what holds the merge back. It follows a colon, so it has no capital letter and no full stop."
-  },
-  "remedy.creatorFallback": {
-    "text": "the proposal’s creator",
-    "description": "Stands in for the author's account name, in bold, in the sentences of a proposal's conflict note (changes:remedy.rest.*) when the name is not known. It can open a sentence and is still written in lower case."
-  },
   "remedy.leadThenRest": {
     "text": "{{lead}} {{rest}}",
     "description": "Joins the first sentence of a proposal's conflict note to the sentence that follows it. {{lead}} is a whole sentence and {{rest}} the next one. Only the space between them is translated."
@@ -2561,11 +2725,19 @@
   },
   "remedy.rest.resolveInChat": {
     "text": "<0>{{creator}}</0> needs to resolve it: run \"Sync with main\" from the session's dev-chat.",
-    "description": "Sentence in the conflict note on a proposal's page after automatic resolution failed. \"Sync with main\" is the name of a command; \"dev-chat\" is the chat with the coding agent. <0>{{creator}}</0> is the account name of the change's author, shown in bold (or the words from changes:remedy.creatorFallback when the name is not known)."
+    "description": "Sentence in the conflict note on a proposal's page after automatic resolution failed. \"Sync with main\" is the name of a command; \"dev-chat\" is the chat with the coding agent. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+  },
+  "remedy.rest.resolveInChatUnnamed": {
+    "text": "<0>the proposal’s creator</0> needs to resolve it: run \"Sync with main\" from the session's dev-chat.",
+    "description": "Sentence in the conflict note on a proposal's page after automatic resolution failed. \"Sync with main\" is the name of a command; \"dev-chat\" is the chat with the coding agent. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.needsSync": {
     "text": "<0>{{creator}}</0> needs to bring it up to date: open the agent session and run \"Sync with main\".",
-    "description": "Sentence in the conflict note on a proposal's page when the author must bring the change up to date with main. \"Sync with main\" is the name of a command. <0>{{creator}}</0> is the account name of the change's author, shown in bold (or the words from changes:remedy.creatorFallback when the name is not known)."
+    "description": "Sentence in the conflict note on a proposal's page when the author must bring the change up to date with main. \"Sync with main\" is the name of a command. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+  },
+  "remedy.rest.needsSyncUnnamed": {
+    "text": "<0>the proposal’s creator</0> needs to bring it up to date: open the agent session and run \"Sync with main\".",
+    "description": "Sentence in the conflict note on a proposal's page when the author must bring the change up to date with main. \"Sync with main\" is the name of a command. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.nobody": {
     "text": "Nobody needs to do anything.",
@@ -2573,23 +2745,43 @@
   },
   "remedy.rest.canSyncSooner": {
     "text": "<0>{{creator}}</0> can bring it up to date sooner: open the agent session and run \"Sync with main\".",
-    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict after the vote, but the author may do it earlier. \"Sync with main\" is the name of a command. <0>{{creator}}</0> is the account name of the change's author, shown in bold (or the words from changes:remedy.creatorFallback when the name is not known)."
+    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict after the vote, but the author may do it earlier. \"Sync with main\" is the name of a command. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+  },
+  "remedy.rest.canSyncSoonerUnnamed": {
+    "text": "<0>the proposal’s creator</0> can bring it up to date sooner: open the agent session and run \"Sync with main\".",
+    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict after the vote, but the author may do it earlier. \"Sync with main\" is the name of a command. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.canAlsoSyncSooner": {
     "text": "<0>{{creator}}</0> can also bring it up to date sooner: open the agent session and run \"Sync with main\".",
-    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict automatically, but the author may do it earlier. \"Sync with main\" is the name of a command. <0>{{creator}}</0> is the account name of the change's author, shown in bold (or the words from changes:remedy.creatorFallback when the name is not known)."
+    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict automatically, but the author may do it earlier. \"Sync with main\" is the name of a command. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+  },
+  "remedy.rest.canAlsoSyncSoonerUnnamed": {
+    "text": "<0>the proposal’s creator</0> can also bring it up to date sooner: open the agent session and run \"Sync with main\".",
+    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict automatically, but the author may do it earlier. \"Sync with main\" is the name of a command. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.resubmit": {
     "text": "<0>{{creator}}</0> needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.",
-    "description": "Text of the conflict note on an imported proposal's page after automatic resolution failed, when the code lives in the project's own repository. <0>{{creator}}</0> is the account name of the change's author, shown in bold (or the words from changes:remedy.creatorFallback when the name is not known)."
+    "description": "Text of the conflict note on an imported proposal's page after automatic resolution failed, when the code lives in the project's own repository. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+  },
+  "remedy.rest.resubmitUnnamed": {
+    "text": "<0>the proposal’s creator</0> needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.",
+    "description": "Text of the conflict note on an imported proposal's page after automatic resolution failed, when the code lives in the project's own repository. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.resubmitIfFails": {
     "text": "If that fails, <0>{{creator}}</0> needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.",
-    "description": "Sentence in the conflict note on an imported proposal's page, after the sentence saying Homeroom will try to resolve the conflict at the next merge attempt. <0>{{creator}}</0> is the account name of the change's author, shown in bold (or the words from changes:remedy.creatorFallback when the name is not known)."
+    "description": "Sentence in the conflict note on an imported proposal's page, after the sentence saying Homeroom will try to resolve the conflict at the next merge attempt. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+  },
+  "remedy.rest.resubmitIfFailsUnnamed": {
+    "text": "If that fails, <0>the proposal’s creator</0> needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.",
+    "description": "Sentence in the conflict note on an imported proposal's page, after the sentence saying Homeroom will try to resolve the conflict at the next merge attempt. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.fork": {
     "text": "This branch lives in <0>{{creator}}</0>’s own fork, which Homeroom cannot write to, so it cannot sync it itself. <1>{{creator}}</1> needs to merge main into the branch and push it; the proposal follows the push.",
-    "description": "Text of the conflict note on an imported proposal's page when the code lives in its author's own copy (fork) of the repository. {{creator}} is the author's account name, shown in bold both times (or the words from changes:remedy.creatorFallback when the name is not known)."
+    "description": "Text of the conflict note on an imported proposal's page when the code lives in its author's own copy (fork) of the repository. {{creator}} is the author's account name, shown in bold both times."
+  },
+  "remedy.rest.forkUnnamed": {
+    "text": "This branch lives in <0>the proposal’s creator</0>’s own fork, which Homeroom cannot write to, so it cannot sync it itself. <1>the proposal’s creator</1> needs to merge main into the branch and push it; the proposal follows the push.",
+    "description": "Text of the conflict note on an imported proposal's page when the code lives in its author's own copy (fork) of the repository. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold both times and stay in lower case in English."
   },
   "remedy.detail.failed": {
     "text": "The change’s owner needs to resolve it from their agent session.",
@@ -2981,15 +3173,255 @@
   },
   "progress.build.now.imageDetail": {
     "text": "Preview build: building the preview image ({{detail}}).",
-    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{detail}} says where that build is, for example \"step 3 of 12\" or \"exporting the image: saving layer\", and may end in a line of the build tool's own output."
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. Used when the build reports neither a step count nor a phase: {{detail}} is the last line the build tool printed, in its own words, and is not translated."
   },
   "progress.build.nowAfter.imageDetail": {
     "text": "Preview build: {{steps}}, now building the preview image ({{detail}}).",
-    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{detail}} says where that build is, for example \"step 3 of 12\" or \"exporting the image: saving layer\", and may end in a line of the build tool's own output. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\"."
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". Used when the build reports neither a step count nor a phase: {{detail}} is the last line the build tool printed, in its own words, and is not translated."
   },
   "progress.build.sub.imageDetail": {
     "text": "build: building the preview image ({{detail}})",
-    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview. {{detail}} says where the image build is, for example \"step 3 of 12\". Starts in lower case."
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. Used when the build reports neither a step count nor a phase: {{detail}} is the last line the build tool printed, in its own words, and is not translated."
+  },
+  "progress.build.now.imageStep": {
+    "text": "Preview build: building the preview image (step {{index}} of {{total}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are."
+  },
+  "progress.build.now.imageStepIn": {
+    "text": "Preview build: building the preview image (step {{index}} of {{total}} in {{phase}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{phase}} is the build tool's own name for the phase the step belongs to and is not translated."
+  },
+  "progress.build.now.imageStepDetail": {
+    "text": "Preview build: building the preview image (step {{index}} of {{total}}: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.now.imageStepInDetail": {
+    "text": "Preview build: building the preview image (step {{index}} of {{total}} in {{phase}}: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{phase}} is the build tool's own name for the phase the step belongs to and {{detail}} the last line it printed; neither is translated."
+  },
+  "progress.build.now.imagePrepare": {
+    "text": "Preview build: building the preview image (fetching source).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is fetching the source code."
+  },
+  "progress.build.now.imagePrepareDetail": {
+    "text": "Preview build: building the preview image (fetching source: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is fetching the source code. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.now.imageAnalyze": {
+    "text": "Preview build: building the preview image (analyzing the last image).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is reading the image built last time to see what can be reused."
+  },
+  "progress.build.now.imageAnalyzeDetail": {
+    "text": "Preview build: building the preview image (analyzing the last image: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is reading the image built last time to see what can be reused. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.now.imageDetect": {
+    "text": "Preview build: building the preview image (detecting buildpacks).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is working out which buildpacks (build recipes) the code needs."
+  },
+  "progress.build.now.imageDetectDetail": {
+    "text": "Preview build: building the preview image (detecting buildpacks: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is working out which buildpacks (build recipes) the code needs. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.now.imageRestore": {
+    "text": "Preview build: building the preview image (restoring cached layers).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is bringing back layers saved from an earlier build."
+  },
+  "progress.build.now.imageRestoreDetail": {
+    "text": "Preview build: building the preview image (restoring cached layers: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is bringing back layers saved from an earlier build. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.now.imageBuild": {
+    "text": "Preview build: building the preview image (running the buildpacks).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: the buildpacks (build recipes) are running."
+  },
+  "progress.build.now.imageBuildDetail": {
+    "text": "Preview build: building the preview image (running the buildpacks: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: the buildpacks (build recipes) are running. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.now.imageExport": {
+    "text": "Preview build: building the preview image (exporting the image).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: the finished image is being written out."
+  },
+  "progress.build.now.imageExportDetail": {
+    "text": "Preview build: building the preview image (exporting the image: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: the finished image is being written out. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.now.imageCompletion": {
+    "text": "Preview build: building the preview image (finishing).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: the image build is wrapping up."
+  },
+  "progress.build.now.imageCompletionDetail": {
+    "text": "Preview build: building the preview image (finishing: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: the image build is wrapping up. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.now.imageOtherPhase": {
+    "text": "Preview build: building the preview image ({{phase}} phase).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is in a phase Homeroom has no wording for; {{phase}} is the build tool's own name for it and is not translated."
+  },
+  "progress.build.now.imageOtherPhaseDetail": {
+    "text": "Preview build: building the preview image ({{phase}} phase: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. No step has finished yet. The words in parentheses say what the image build is doing now: it is in a phase Homeroom has no wording for; {{phase}} is the build tool's own name for it and is not translated. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.nowAfter.imageStep": {
+    "text": "Preview build: {{steps}}, now building the preview image (step {{index}} of {{total}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are."
+  },
+  "progress.build.nowAfter.imageStepIn": {
+    "text": "Preview build: {{steps}}, now building the preview image (step {{index}} of {{total}} in {{phase}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{phase}} is the build tool's own name for the phase the step belongs to and is not translated."
+  },
+  "progress.build.nowAfter.imageStepDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image (step {{index}} of {{total}}: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.nowAfter.imageStepInDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image (step {{index}} of {{total}} in {{phase}}: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{phase}} is the build tool's own name for the phase the step belongs to and {{detail}} the last line it printed; neither is translated."
+  },
+  "progress.build.nowAfter.imagePrepare": {
+    "text": "Preview build: {{steps}}, now building the preview image (fetching source).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is fetching the source code."
+  },
+  "progress.build.nowAfter.imagePrepareDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image (fetching source: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is fetching the source code. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.nowAfter.imageAnalyze": {
+    "text": "Preview build: {{steps}}, now building the preview image (analyzing the last image).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is reading the image built last time to see what can be reused."
+  },
+  "progress.build.nowAfter.imageAnalyzeDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image (analyzing the last image: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is reading the image built last time to see what can be reused. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.nowAfter.imageDetect": {
+    "text": "Preview build: {{steps}}, now building the preview image (detecting buildpacks).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is working out which buildpacks (build recipes) the code needs."
+  },
+  "progress.build.nowAfter.imageDetectDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image (detecting buildpacks: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is working out which buildpacks (build recipes) the code needs. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.nowAfter.imageRestore": {
+    "text": "Preview build: {{steps}}, now building the preview image (restoring cached layers).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is bringing back layers saved from an earlier build."
+  },
+  "progress.build.nowAfter.imageRestoreDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image (restoring cached layers: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is bringing back layers saved from an earlier build. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.nowAfter.imageBuild": {
+    "text": "Preview build: {{steps}}, now building the preview image (running the buildpacks).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: the buildpacks (build recipes) are running."
+  },
+  "progress.build.nowAfter.imageBuildDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image (running the buildpacks: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: the buildpacks (build recipes) are running. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.nowAfter.imageExport": {
+    "text": "Preview build: {{steps}}, now building the preview image (exporting the image).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: the finished image is being written out."
+  },
+  "progress.build.nowAfter.imageExportDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image (exporting the image: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: the finished image is being written out. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.nowAfter.imageCompletion": {
+    "text": "Preview build: {{steps}}, now building the preview image (finishing).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: the image build is wrapping up."
+  },
+  "progress.build.nowAfter.imageCompletionDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image (finishing: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: the image build is wrapping up. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.nowAfter.imageOtherPhase": {
+    "text": "Preview build: {{steps}}, now building the preview image ({{phase}} phase).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is in a phase Homeroom has no wording for; {{phase}} is the build tool's own name for it and is not translated."
+  },
+  "progress.build.nowAfter.imageOtherPhaseDetail": {
+    "text": "Preview build: {{steps}}, now building the preview image ({{phase}} phase: {{detail}}).",
+    "description": "Sentence in the checks note on a proposal's page while the container image for its preview is being built. {{steps}} is the list of finished steps with their times, for example \"branch fetched (3s)\". The words in parentheses say what the image build is doing now: it is in a phase Homeroom has no wording for; {{phase}} is the build tool's own name for it and is not translated. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.sub.imageStep": {
+    "text": "build: building the preview image (step {{index}} of {{total}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are."
+  },
+  "progress.build.sub.imageStepIn": {
+    "text": "build: building the preview image (step {{index}} of {{total}} in {{phase}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{phase}} is the build tool's own name for the phase the step belongs to and is not translated."
+  },
+  "progress.build.sub.imageStepDetail": {
+    "text": "build: building the preview image (step {{index}} of {{total}}: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.sub.imageStepInDetail": {
+    "text": "build: building the preview image (step {{index}} of {{total}} in {{phase}}: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{phase}} is the build tool's own name for the phase the step belongs to and {{detail}} the last line it printed; neither is translated."
+  },
+  "progress.build.sub.imagePrepare": {
+    "text": "build: building the preview image (fetching source)",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is fetching the source code."
+  },
+  "progress.build.sub.imagePrepareDetail": {
+    "text": "build: building the preview image (fetching source: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is fetching the source code. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.sub.imageAnalyze": {
+    "text": "build: building the preview image (analyzing the last image)",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is reading the image built last time to see what can be reused."
+  },
+  "progress.build.sub.imageAnalyzeDetail": {
+    "text": "build: building the preview image (analyzing the last image: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is reading the image built last time to see what can be reused. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.sub.imageDetect": {
+    "text": "build: building the preview image (detecting buildpacks)",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is working out which buildpacks (build recipes) the code needs."
+  },
+  "progress.build.sub.imageDetectDetail": {
+    "text": "build: building the preview image (detecting buildpacks: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is working out which buildpacks (build recipes) the code needs. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.sub.imageRestore": {
+    "text": "build: building the preview image (restoring cached layers)",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is bringing back layers saved from an earlier build."
+  },
+  "progress.build.sub.imageRestoreDetail": {
+    "text": "build: building the preview image (restoring cached layers: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is bringing back layers saved from an earlier build. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.sub.imageBuild": {
+    "text": "build: building the preview image (running the buildpacks)",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: the buildpacks (build recipes) are running."
+  },
+  "progress.build.sub.imageBuildDetail": {
+    "text": "build: building the preview image (running the buildpacks: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: the buildpacks (build recipes) are running. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.sub.imageExport": {
+    "text": "build: building the preview image (exporting the image)",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: the finished image is being written out."
+  },
+  "progress.build.sub.imageExportDetail": {
+    "text": "build: building the preview image (exporting the image: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: the finished image is being written out. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.sub.imageCompletion": {
+    "text": "build: building the preview image (finishing)",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: the image build is wrapping up."
+  },
+  "progress.build.sub.imageCompletionDetail": {
+    "text": "build: building the preview image (finishing: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: the image build is wrapping up. {{detail}} is the last line the build tool printed, in its own words."
+  },
+  "progress.build.sub.imageOtherPhase": {
+    "text": "build: building the preview image ({{phase}} phase)",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is in a phase Homeroom has no wording for; {{phase}} is the build tool's own name for it and is not translated."
+  },
+  "progress.build.sub.imageOtherPhaseDetail": {
+    "text": "build: building the preview image ({{phase}} phase: {{detail}})",
+    "description": "One short line under the \"Checks\" label on a proposal's page while the container image for its preview is being built. \"build\" is a noun, the building of the preview; the line starts in lower case. The words in parentheses say what the image build is doing now: it is in a phase Homeroom has no wording for; {{phase}} is the build tool's own name for it and is not translated. {{detail}} is the last line the build tool printed, in its own words."
   },
   "progress.build.now.other": {
     "text": "Preview build: building.",
@@ -3022,86 +3454,6 @@
   "progress.build.subBuiltTitle": {
     "text": "Built in {{duration}}",
     "description": "Value of the \"Preview\" line in the checks box on a change's page once its preview is built: how long the build took. {{duration}} is a time such as \"1m 5s\"."
-  },
-  "progress.image.step": {
-    "text": "step {{index}} of {{total}}",
-    "description": "Where the build of a preview's container image is, shown in parentheses after \"building the preview image\" on a proposal's page. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. Starts in lower case."
-  },
-  "progress.image.stepIn": {
-    "text": "step {{index}} of {{total}} in {{phase}}",
-    "description": "Where the build of a preview's container image is, shown in parentheses after \"building the preview image\" on a proposal's page. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{phase}} is the build tool's own name for the phase the step belongs to and is not translated. Starts in lower case."
-  },
-  "progress.image.stepDetail": {
-    "text": "step {{index}} of {{total}}: {{detail}}",
-    "description": "Where the build of a preview's container image is, shown in parentheses after \"building the preview image\" on a proposal's page. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{detail}} is the last line the build tool printed, in its own words. Starts in lower case."
-  },
-  "progress.image.stepInDetail": {
-    "text": "step {{index}} of {{total}} in {{phase}}: {{detail}}",
-    "description": "Where the build of a preview's container image is, shown in parentheses after \"building the preview image\" on a proposal's page. The builder counts its steps: {{index}} is the step it is on and {{total}} how many there are. {{phase}} is the build tool's own name for the phase the step belongs to and {{detail}} the last line it printed; neither is translated. Starts in lower case."
-  },
-  "progress.image.phase.prepare": {
-    "text": "fetching source",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: it is fetching the source code. Starts in lower case."
-  },
-  "progress.image.phaseDetail.prepare": {
-    "text": "fetching source: {{detail}}",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: it is fetching the source code. Starts in lower case. {{detail}} is the last line the build tool printed, in its own words."
-  },
-  "progress.image.phase.analyze": {
-    "text": "analyzing the last image",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: it is reading the image built last time to see what can be reused. Starts in lower case."
-  },
-  "progress.image.phaseDetail.analyze": {
-    "text": "analyzing the last image: {{detail}}",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: it is reading the image built last time to see what can be reused. Starts in lower case. {{detail}} is the last line the build tool printed, in its own words."
-  },
-  "progress.image.phase.detect": {
-    "text": "detecting buildpacks",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: it is working out which buildpacks (build recipes) the code needs. Starts in lower case."
-  },
-  "progress.image.phaseDetail.detect": {
-    "text": "detecting buildpacks: {{detail}}",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: it is working out which buildpacks (build recipes) the code needs. Starts in lower case. {{detail}} is the last line the build tool printed, in its own words."
-  },
-  "progress.image.phase.restore": {
-    "text": "restoring cached layers",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: it is bringing back layers saved from an earlier build. Starts in lower case."
-  },
-  "progress.image.phaseDetail.restore": {
-    "text": "restoring cached layers: {{detail}}",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: it is bringing back layers saved from an earlier build. Starts in lower case. {{detail}} is the last line the build tool printed, in its own words."
-  },
-  "progress.image.phase.build": {
-    "text": "running the buildpacks",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: the buildpacks (build recipes) are running. Starts in lower case."
-  },
-  "progress.image.phaseDetail.build": {
-    "text": "running the buildpacks: {{detail}}",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: the buildpacks (build recipes) are running. Starts in lower case. {{detail}} is the last line the build tool printed, in its own words."
-  },
-  "progress.image.phase.export": {
-    "text": "exporting the image",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: the finished image is being written out. Starts in lower case."
-  },
-  "progress.image.phaseDetail.export": {
-    "text": "exporting the image: {{detail}}",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: the finished image is being written out. Starts in lower case. {{detail}} is the last line the build tool printed, in its own words."
-  },
-  "progress.image.phase.completion": {
-    "text": "finishing",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: the build is wrapping up. Starts in lower case."
-  },
-  "progress.image.phaseDetail.completion": {
-    "text": "finishing: {{detail}}",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page: the build is wrapping up. Starts in lower case. {{detail}} is the last line the build tool printed, in its own words."
-  },
-  "progress.image.phase.other": {
-    "text": "{{phase}} phase",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page, when the phase is one Homeroom has no wording for. {{phase}} is the build tool's own name for it and is not translated. Starts in lower case."
-  },
-  "progress.image.phaseDetail.other": {
-    "text": "{{phase}} phase: {{detail}}",
-    "description": "What the build of a preview's container image is doing now, shown in parentheses after \"building the preview image\" on a proposal's page, when the phase is one Homeroom has no wording for. {{phase}} is the build tool's own name for it and is not translated. Starts in lower case. {{detail}} is the last line the build tool printed, in its own words."
   },
   "progress.unit.sub.couldNotRun": {
     "text": "npm test could not run",
@@ -5620,24 +5972,264 @@
     "description": "Who the shots agent was when it took a screenshot: a visitor who is not signed in. Shown after the screen sizes on a declared change's line."
   },
   "shots.seenAs.member": {
-    "text": "a member",
-    "description": "Fills {{who}} in the line under a before/after screenshot and in the Shot details of a change (\"Desktop · seen as a member\"): the screen was viewed as an ordinary member of the community."
+    "text": "seen as a member",
+    "description": "One fact in the line under a before/after screenshot of a change and in its Shot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as an ordinary member of the community. Lower case in English because it follows the dot."
   },
   "shots.seenAs.readOnlyAdmin": {
-    "text": "a read-only admin",
-    "description": "Fills {{who}} in the line under a before/after screenshot and in the Shot details of a change (\"Desktop · seen as …\"): the screen was viewed as an administrator who can look but not change anything."
+    "text": "seen as a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change and in its Shot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as an administrator who can look but not change anything. Lower case in English because it follows the dot."
   },
   "shots.seenAs.fullAdmin": {
-    "text": "a full admin",
-    "description": "Fills {{who}} in the line under a before/after screenshot and in the Shot details of a change (\"Desktop · seen as …\"): the screen was viewed as an administrator with every permission."
+    "text": "seen as a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change and in its Shot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as an administrator with every permission. Lower case in English because it follows the dot."
   },
   "shots.seenAs.guest": {
-    "text": "a signed-out visitor",
-    "description": "Fills {{who}} in the line under a before/after screenshot and in the Shot details of a change (\"Desktop · seen as …\"): the screen was viewed as a visitor who is not signed in."
+    "text": "seen as a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change and in its Shot details, after the screen size and a middle dot (\"Desktop · seen as …\"): the screen was viewed as a visitor who is not signed in. Lower case in English because it follows the dot."
   },
-  "shots.seenAs.pair": {
-    "text": "{{first}} and {{second}}",
-    "description": "Joins two kinds of viewer in the line under a before/after screenshot, when the changes on that screen were viewed as different people, for example \"a member and a full admin\". {{first}} and {{second}} are each such a phrase."
+  "shots.seenAs.memberReadOnlyAdmin": {
+    "text": "seen as a member and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: an ordinary member of the community; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberFullAdmin": {
+    "text": "seen as a member and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: an ordinary member of the community; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberGuest": {
+    "text": "seen as a member and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: an ordinary member of the community; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminMember": {
+    "text": "seen as a read-only admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: an administrator who can look but not change anything; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminFullAdmin": {
+    "text": "seen as a read-only admin and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: an administrator who can look but not change anything; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminGuest": {
+    "text": "seen as a read-only admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: an administrator who can look but not change anything; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminMember": {
+    "text": "seen as a full admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: an administrator with every permission; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminReadOnlyAdmin": {
+    "text": "seen as a full admin and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: an administrator with every permission; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminGuest": {
+    "text": "seen as a full admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: an administrator with every permission; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestMember": {
+    "text": "seen as a signed-out visitor and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: a visitor who is not signed in; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestReadOnlyAdmin": {
+    "text": "seen as a signed-out visitor and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: a visitor who is not signed in; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestFullAdmin": {
+    "text": "seen as a signed-out visitor and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as two kinds of people, named in this order: a visitor who is not signed in; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberReadOnlyAdminFullAdmin": {
+    "text": "seen as a member and a read-only admin and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an ordinary member of the community; an administrator who can look but not change anything; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberReadOnlyAdminGuest": {
+    "text": "seen as a member and a read-only admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an ordinary member of the community; an administrator who can look but not change anything; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberFullAdminReadOnlyAdmin": {
+    "text": "seen as a member and a full admin and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an ordinary member of the community; an administrator with every permission; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberFullAdminGuest": {
+    "text": "seen as a member and a full admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an ordinary member of the community; an administrator with every permission; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberGuestReadOnlyAdmin": {
+    "text": "seen as a member and a signed-out visitor and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an ordinary member of the community; a visitor who is not signed in; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberGuestFullAdmin": {
+    "text": "seen as a member and a signed-out visitor and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an ordinary member of the community; a visitor who is not signed in; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminMemberFullAdmin": {
+    "text": "seen as a read-only admin and a member and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator who can look but not change anything; an ordinary member of the community; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminMemberGuest": {
+    "text": "seen as a read-only admin and a member and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator who can look but not change anything; an ordinary member of the community; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminFullAdminMember": {
+    "text": "seen as a read-only admin and a full admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator who can look but not change anything; an administrator with every permission; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminFullAdminGuest": {
+    "text": "seen as a read-only admin and a full admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator who can look but not change anything; an administrator with every permission; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminGuestMember": {
+    "text": "seen as a read-only admin and a signed-out visitor and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator who can look but not change anything; a visitor who is not signed in; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminGuestFullAdmin": {
+    "text": "seen as a read-only admin and a signed-out visitor and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator who can look but not change anything; a visitor who is not signed in; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminMemberReadOnlyAdmin": {
+    "text": "seen as a full admin and a member and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator with every permission; an ordinary member of the community; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminMemberGuest": {
+    "text": "seen as a full admin and a member and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator with every permission; an ordinary member of the community; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminReadOnlyAdminMember": {
+    "text": "seen as a full admin and a read-only admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator with every permission; an administrator who can look but not change anything; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminReadOnlyAdminGuest": {
+    "text": "seen as a full admin and a read-only admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator with every permission; an administrator who can look but not change anything; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminGuestMember": {
+    "text": "seen as a full admin and a signed-out visitor and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator with every permission; a visitor who is not signed in; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminGuestReadOnlyAdmin": {
+    "text": "seen as a full admin and a signed-out visitor and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: an administrator with every permission; a visitor who is not signed in; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestMemberReadOnlyAdmin": {
+    "text": "seen as a signed-out visitor and a member and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: a visitor who is not signed in; an ordinary member of the community; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestMemberFullAdmin": {
+    "text": "seen as a signed-out visitor and a member and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: a visitor who is not signed in; an ordinary member of the community; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestReadOnlyAdminMember": {
+    "text": "seen as a signed-out visitor and a read-only admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: a visitor who is not signed in; an administrator who can look but not change anything; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestReadOnlyAdminFullAdmin": {
+    "text": "seen as a signed-out visitor and a read-only admin and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: a visitor who is not signed in; an administrator who can look but not change anything; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestFullAdminMember": {
+    "text": "seen as a signed-out visitor and a full admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: a visitor who is not signed in; an administrator with every permission; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestFullAdminReadOnlyAdmin": {
+    "text": "seen as a signed-out visitor and a full admin and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as three kinds of people, named in this order: a visitor who is not signed in; an administrator with every permission; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberReadOnlyAdminFullAdminGuest": {
+    "text": "seen as a member and a read-only admin and a full admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an ordinary member of the community; an administrator who can look but not change anything; an administrator with every permission; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberReadOnlyAdminGuestFullAdmin": {
+    "text": "seen as a member and a read-only admin and a signed-out visitor and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an ordinary member of the community; an administrator who can look but not change anything; a visitor who is not signed in; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberFullAdminReadOnlyAdminGuest": {
+    "text": "seen as a member and a full admin and a read-only admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an ordinary member of the community; an administrator with every permission; an administrator who can look but not change anything; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberFullAdminGuestReadOnlyAdmin": {
+    "text": "seen as a member and a full admin and a signed-out visitor and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an ordinary member of the community; an administrator with every permission; a visitor who is not signed in; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberGuestReadOnlyAdminFullAdmin": {
+    "text": "seen as a member and a signed-out visitor and a read-only admin and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an ordinary member of the community; a visitor who is not signed in; an administrator who can look but not change anything; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.memberGuestFullAdminReadOnlyAdmin": {
+    "text": "seen as a member and a signed-out visitor and a full admin and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an ordinary member of the community; a visitor who is not signed in; an administrator with every permission; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminMemberFullAdminGuest": {
+    "text": "seen as a read-only admin and a member and a full admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator who can look but not change anything; an ordinary member of the community; an administrator with every permission; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminMemberGuestFullAdmin": {
+    "text": "seen as a read-only admin and a member and a signed-out visitor and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator who can look but not change anything; an ordinary member of the community; a visitor who is not signed in; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminFullAdminMemberGuest": {
+    "text": "seen as a read-only admin and a full admin and a member and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator who can look but not change anything; an administrator with every permission; an ordinary member of the community; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminFullAdminGuestMember": {
+    "text": "seen as a read-only admin and a full admin and a signed-out visitor and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator who can look but not change anything; an administrator with every permission; a visitor who is not signed in; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminGuestMemberFullAdmin": {
+    "text": "seen as a read-only admin and a signed-out visitor and a member and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator who can look but not change anything; a visitor who is not signed in; an ordinary member of the community; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.readOnlyAdminGuestFullAdminMember": {
+    "text": "seen as a read-only admin and a signed-out visitor and a full admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator who can look but not change anything; a visitor who is not signed in; an administrator with every permission; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminMemberReadOnlyAdminGuest": {
+    "text": "seen as a full admin and a member and a read-only admin and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator with every permission; an ordinary member of the community; an administrator who can look but not change anything; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminMemberGuestReadOnlyAdmin": {
+    "text": "seen as a full admin and a member and a signed-out visitor and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator with every permission; an ordinary member of the community; a visitor who is not signed in; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminReadOnlyAdminMemberGuest": {
+    "text": "seen as a full admin and a read-only admin and a member and a signed-out visitor",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator with every permission; an administrator who can look but not change anything; an ordinary member of the community; a visitor who is not signed in. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminReadOnlyAdminGuestMember": {
+    "text": "seen as a full admin and a read-only admin and a signed-out visitor and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator with every permission; an administrator who can look but not change anything; a visitor who is not signed in; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminGuestMemberReadOnlyAdmin": {
+    "text": "seen as a full admin and a signed-out visitor and a member and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator with every permission; a visitor who is not signed in; an ordinary member of the community; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.fullAdminGuestReadOnlyAdminMember": {
+    "text": "seen as a full admin and a signed-out visitor and a read-only admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: an administrator with every permission; a visitor who is not signed in; an administrator who can look but not change anything; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestMemberReadOnlyAdminFullAdmin": {
+    "text": "seen as a signed-out visitor and a member and a read-only admin and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: a visitor who is not signed in; an ordinary member of the community; an administrator who can look but not change anything; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestMemberFullAdminReadOnlyAdmin": {
+    "text": "seen as a signed-out visitor and a member and a full admin and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: a visitor who is not signed in; an ordinary member of the community; an administrator with every permission; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestReadOnlyAdminMemberFullAdmin": {
+    "text": "seen as a signed-out visitor and a read-only admin and a member and a full admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: a visitor who is not signed in; an administrator who can look but not change anything; an ordinary member of the community; an administrator with every permission. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestReadOnlyAdminFullAdminMember": {
+    "text": "seen as a signed-out visitor and a read-only admin and a full admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: a visitor who is not signed in; an administrator who can look but not change anything; an administrator with every permission; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestFullAdminMemberReadOnlyAdmin": {
+    "text": "seen as a signed-out visitor and a full admin and a member and a read-only admin",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: a visitor who is not signed in; an administrator with every permission; an ordinary member of the community; an administrator who can look but not change anything. Lower case in English because it follows the dot."
+  },
+  "shots.seenAs.guestFullAdminReadOnlyAdminMember": {
+    "text": "seen as a signed-out visitor and a full admin and a read-only admin and a member",
+    "description": "One fact in the line under a before/after screenshot of a change, after the screen size and a middle dot (\"Desktop · seen as …\"), when the changes on that screen were viewed as four kinds of people, named in this order: a visitor who is not signed in; an administrator with every permission; an administrator who can look but not change anything; an ordinary member of the community. Lower case in English because it follows the dot."
+  },
+  "shots.screen.sized": {
+    "text": "{{size}}, {{width}} × {{height}}",
+    "description": "First fact in the line under a before/after screenshot of a change: the screen size's name, for example \"Desktop\", then the screenshot's {{width}} and {{height}} in pixels. \"Seen as …\" follows it after a middle dot."
   },
   "shots.claim.notInShots": {
     "text": "<0>Not in these shots:</0> {{note}}",
@@ -5702,14 +6294,6 @@
   "shots.screen.keyLine": {
     "text": "Dashed line: where the change begins on a side that doesn’t have it",
     "description": "Legend under a before/after screenshot explaining a dashed line drawn on it: it marks where the new content starts, on the side (before or after) where that content is absent."
-  },
-  "shots.screen.meta": {
-    "text": "{{size}} · seen as {{who}}",
-    "description": "Line under a before/after screenshot. {{size}} is the screen size's name, for example \"Desktop\", and {{who}} the kind of person the screen was viewed as, for example \"a member\"."
-  },
-  "shots.screen.metaSized": {
-    "text": "{{size}}, {{width}} × {{height}} · seen as {{who}}",
-    "description": "Line under a before/after screenshot. {{size}} is the screen size's name, for example \"Desktop\"; {{width}} and {{height}} are the screenshot's size in pixels; {{who}} is the kind of person the screen was viewed as, for example \"a member\"."
   },
   "shots.claim.failedBadge": {
     "text": "Didn’t work",
@@ -5935,42 +6519,6 @@
     "text": "{{note}}. Open the linked work",
     "description": "Tooltip of the work chip on a request's card when pressing it opens the change being made for the request. {{note}} is the full sentence describing who is working on it, which already ends with its own period."
   },
-  "chips.workAge.justNow": {
-    "text": "just now",
-    "description": "How long ago something happened, placed inside a sentence about work on a request where {{when}} stands, for example \"…in an agent session, last active just now.\" Less than two minutes ago."
-  },
-  "chips.workAge.minutes_one": {
-    "text": "{{count}} minute ago",
-    "description": "How long ago something happened, placed inside a sentence about work on a request where {{when}} stands, for example \"…last active 5 minutes ago.\" {{count}} is the number of minutes."
-  },
-  "chips.workAge.minutes_other": {
-    "text": "{{count}} minutes ago",
-    "description": "How long ago something happened, placed inside a sentence about work on a request where {{when}} stands, for example \"…last active 5 minutes ago.\" {{count}} is the number of minutes."
-  },
-  "chips.workAge.hours_one": {
-    "text": "an hour ago",
-    "description": "How long ago something happened, placed inside a sentence about work on a request where {{when}} stands, for example \"…last active an hour ago.\" {{count}} is the number of hours, here one."
-  },
-  "chips.workAge.hours_other": {
-    "text": "{{count}} hours ago",
-    "description": "How long ago something happened, placed inside a sentence about work on a request where {{when}} stands, for example \"…last active 3 hours ago.\" {{count}} is the number of hours."
-  },
-  "chips.workAge.yesterday": {
-    "text": "yesterday",
-    "description": "How long ago something happened, placed inside a sentence about work on a request where {{when}} stands, for example \"…last active yesterday.\" About a day ago."
-  },
-  "chips.workAge.days_one": {
-    "text": "{{count}} day ago",
-    "description": "How long ago something happened, placed inside a sentence about work on a request where {{when}} stands, for example \"…last active 4 days ago.\" {{count}} is the number of days."
-  },
-  "chips.workAge.days_other": {
-    "text": "{{count}} days ago",
-    "description": "How long ago something happened, placed inside a sentence about work on a request where {{when}} stands, for example \"…last active 4 days ago.\" {{count}} is the number of days."
-  },
-  "chips.workAge.onDate": {
-    "text": "on {{date}}",
-    "description": "When something happened, placed inside a sentence about work on a request where {{when}} stands, for example \"…last active on 3/14/2026.\" Used for a month or more ago. {{date}} is the date in the reader's own format."
-  },
   "chips.workNote.then": {
     "text": "{{first}} {{second}}",
     "description": "Joins two whole sentences of the note that explains who is working on a request. {{first}} is everything said so far and {{second}} the next sentence. Only the space between them is translated."
@@ -5999,17 +6547,473 @@
     "text": "Someone is working on this in an agent session.",
     "description": "Note on a request when an unnamed person has an agent session (a chat with the coding agent) open for it and its last activity time is unknown."
   },
-  "chips.workNote.workingWhen.you": {
-    "text": "You are working on this in an agent session, last active {{when}}.",
-    "description": "Note on a request when the viewer has an agent session open for it. {{when}} is how long ago the session was last active, for example \"5 minutes ago\" or \"yesterday\"."
+  "chips.workNote.workingWhen.you.justNow": {
+    "text": "You are working on this in an agent session, last active just now.",
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active less than two minutes ago."
   },
-  "chips.workNote.workingWhen.named": {
-    "text": "{{name}} is working on this in an agent session, last active {{when}}.",
-    "description": "Note on a request when someone has an agent session open for it. {{name}} is that person's username and {{when}} how long ago the session was last active, for example \"5 minutes ago\" or \"yesterday\"."
+  "chips.workNote.workingWhen.you.minutes_one": {
+    "text": "You are working on this in an agent session, last active {{count}} minute ago.",
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
   },
-  "chips.workNote.workingWhen.someone": {
-    "text": "Someone is working on this in an agent session, last active {{when}}.",
-    "description": "Note on a request when an unnamed person has an agent session open for it. {{when}} is how long ago the session was last active, for example \"5 minutes ago\" or \"yesterday\"."
+  "chips.workNote.workingWhen.you.minutes_other": {
+    "text": "You are working on this in an agent session, last active {{count}} minutes ago.",
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.workingWhen.you.hours_one": {
+    "text": "You are working on this in an agent session, last active an hour ago.",
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.workingWhen.you.hours_other": {
+    "text": "You are working on this in an agent session, last active {{count}} hours ago.",
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.workingWhen.you.yesterday": {
+    "text": "You are working on this in an agent session, last active yesterday.",
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active about a day ago."
+  },
+  "chips.workNote.workingWhen.you.days_one": {
+    "text": "You are working on this in an agent session, last active {{count}} day ago.",
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.workingWhen.you.days_other": {
+    "text": "You are working on this in an agent session, last active {{count}} days ago.",
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.workingWhen.you.onDate": {
+    "text": "You are working on this in an agent session, last active on {{date}}.",
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.workingWhen.named.justNow": {
+    "text": "{{name}} is working on this in an agent session, last active just now.",
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active less than two minutes ago."
+  },
+  "chips.workNote.workingWhen.named.minutes_one": {
+    "text": "{{name}} is working on this in an agent session, last active {{count}} minute ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.workingWhen.named.minutes_other": {
+    "text": "{{name}} is working on this in an agent session, last active {{count}} minutes ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.workingWhen.named.hours_one": {
+    "text": "{{name}} is working on this in an agent session, last active an hour ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.workingWhen.named.hours_other": {
+    "text": "{{name}} is working on this in an agent session, last active {{count}} hours ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.workingWhen.named.yesterday": {
+    "text": "{{name}} is working on this in an agent session, last active yesterday.",
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active about a day ago."
+  },
+  "chips.workNote.workingWhen.named.days_one": {
+    "text": "{{name}} is working on this in an agent session, last active {{count}} day ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.workingWhen.named.days_other": {
+    "text": "{{name}} is working on this in an agent session, last active {{count}} days ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.workingWhen.named.onDate": {
+    "text": "{{name}} is working on this in an agent session, last active on {{date}}.",
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.workingWhen.someone.justNow": {
+    "text": "Someone is working on this in an agent session, last active just now.",
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active less than two minutes ago."
+  },
+  "chips.workNote.workingWhen.someone.minutes_one": {
+    "text": "Someone is working on this in an agent session, last active {{count}} minute ago.",
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.workingWhen.someone.minutes_other": {
+    "text": "Someone is working on this in an agent session, last active {{count}} minutes ago.",
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.workingWhen.someone.hours_one": {
+    "text": "Someone is working on this in an agent session, last active an hour ago.",
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.workingWhen.someone.hours_other": {
+    "text": "Someone is working on this in an agent session, last active {{count}} hours ago.",
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.workingWhen.someone.yesterday": {
+    "text": "Someone is working on this in an agent session, last active yesterday.",
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active about a day ago."
+  },
+  "chips.workNote.workingWhen.someone.days_one": {
+    "text": "Someone is working on this in an agent session, last active {{count}} day ago.",
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.workingWhen.someone.days_other": {
+    "text": "Someone is working on this in an agent session, last active {{count}} days ago.",
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.workingWhen.someone.onDate": {
+    "text": "Someone is working on this in an agent session, last active on {{date}}.",
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.pausedWhen.you.justNow": {
+    "text": "You started work on this and last worked on it just now, so nobody is working on it at the moment.",
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it less than two minutes ago."
+  },
+  "chips.workNote.pausedWhen.you.minutes_one": {
+    "text": "You started work on this and last worked on it {{count}} minute ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.pausedWhen.you.minutes_other": {
+    "text": "You started work on this and last worked on it {{count}} minutes ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.pausedWhen.you.hours_one": {
+    "text": "You started work on this and last worked on it an hour ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.pausedWhen.you.hours_other": {
+    "text": "You started work on this and last worked on it {{count}} hours ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.pausedWhen.you.yesterday": {
+    "text": "You started work on this and last worked on it yesterday, so nobody is working on it at the moment.",
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it about a day ago."
+  },
+  "chips.workNote.pausedWhen.you.days_one": {
+    "text": "You started work on this and last worked on it {{count}} day ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.pausedWhen.you.days_other": {
+    "text": "You started work on this and last worked on it {{count}} days ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.pausedWhen.you.onDate": {
+    "text": "You started work on this and last worked on it on {{date}}, so nobody is working on it at the moment.",
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.pausedWhen.named.justNow": {
+    "text": "{{name}} started work on this and last worked on it just now, so nobody is working on it at the moment.",
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it less than two minutes ago."
+  },
+  "chips.workNote.pausedWhen.named.minutes_one": {
+    "text": "{{name}} started work on this and last worked on it {{count}} minute ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.pausedWhen.named.minutes_other": {
+    "text": "{{name}} started work on this and last worked on it {{count}} minutes ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.pausedWhen.named.hours_one": {
+    "text": "{{name}} started work on this and last worked on it an hour ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.pausedWhen.named.hours_other": {
+    "text": "{{name}} started work on this and last worked on it {{count}} hours ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.pausedWhen.named.yesterday": {
+    "text": "{{name}} started work on this and last worked on it yesterday, so nobody is working on it at the moment.",
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it about a day ago."
+  },
+  "chips.workNote.pausedWhen.named.days_one": {
+    "text": "{{name}} started work on this and last worked on it {{count}} day ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.pausedWhen.named.days_other": {
+    "text": "{{name}} started work on this and last worked on it {{count}} days ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.pausedWhen.named.onDate": {
+    "text": "{{name}} started work on this and last worked on it on {{date}}, so nobody is working on it at the moment.",
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.pausedWhen.someone.justNow": {
+    "text": "Someone started work on this and last worked on it just now, so nobody is working on it at the moment.",
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it less than two minutes ago."
+  },
+  "chips.workNote.pausedWhen.someone.minutes_one": {
+    "text": "Someone started work on this and last worked on it {{count}} minute ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.pausedWhen.someone.minutes_other": {
+    "text": "Someone started work on this and last worked on it {{count}} minutes ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.pausedWhen.someone.hours_one": {
+    "text": "Someone started work on this and last worked on it an hour ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.pausedWhen.someone.hours_other": {
+    "text": "Someone started work on this and last worked on it {{count}} hours ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.pausedWhen.someone.yesterday": {
+    "text": "Someone started work on this and last worked on it yesterday, so nobody is working on it at the moment.",
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it about a day ago."
+  },
+  "chips.workNote.pausedWhen.someone.days_one": {
+    "text": "Someone started work on this and last worked on it {{count}} day ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.pausedWhen.someone.days_other": {
+    "text": "Someone started work on this and last worked on it {{count}} days ago, so nobody is working on it at the moment.",
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.pausedWhen.someone.onDate": {
+    "text": "Someone started work on this and last worked on it on {{date}}, so nobody is working on it at the moment.",
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.claimedWhen.you.justNow": {
+    "text": "You said you'd work on this just now but haven't started building it yet.",
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so less than two minutes ago."
+  },
+  "chips.workNote.claimedWhen.you.minutes_one": {
+    "text": "You said you'd work on this {{count}} minute ago but haven't started building it yet.",
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.claimedWhen.you.minutes_other": {
+    "text": "You said you'd work on this {{count}} minutes ago but haven't started building it yet.",
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.claimedWhen.you.hours_one": {
+    "text": "You said you'd work on this an hour ago but haven't started building it yet.",
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.claimedWhen.you.hours_other": {
+    "text": "You said you'd work on this {{count}} hours ago but haven't started building it yet.",
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.claimedWhen.you.yesterday": {
+    "text": "You said you'd work on this yesterday but haven't started building it yet.",
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so about a day ago."
+  },
+  "chips.workNote.claimedWhen.you.days_one": {
+    "text": "You said you'd work on this {{count}} day ago but haven't started building it yet.",
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.claimedWhen.you.days_other": {
+    "text": "You said you'd work on this {{count}} days ago but haven't started building it yet.",
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.claimedWhen.you.onDate": {
+    "text": "You said you'd work on this on {{date}} but haven't started building it yet.",
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.claimedWhen.named.justNow": {
+    "text": "{{name}} said they'd work on this just now but hasn't started building it yet.",
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so less than two minutes ago."
+  },
+  "chips.workNote.claimedWhen.named.minutes_one": {
+    "text": "{{name}} said they'd work on this {{count}} minute ago but hasn't started building it yet.",
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.claimedWhen.named.minutes_other": {
+    "text": "{{name}} said they'd work on this {{count}} minutes ago but hasn't started building it yet.",
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.claimedWhen.named.hours_one": {
+    "text": "{{name}} said they'd work on this an hour ago but hasn't started building it yet.",
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.claimedWhen.named.hours_other": {
+    "text": "{{name}} said they'd work on this {{count}} hours ago but hasn't started building it yet.",
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.claimedWhen.named.yesterday": {
+    "text": "{{name}} said they'd work on this yesterday but hasn't started building it yet.",
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so about a day ago."
+  },
+  "chips.workNote.claimedWhen.named.days_one": {
+    "text": "{{name}} said they'd work on this {{count}} day ago but hasn't started building it yet.",
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.claimedWhen.named.days_other": {
+    "text": "{{name}} said they'd work on this {{count}} days ago but hasn't started building it yet.",
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.claimedWhen.named.onDate": {
+    "text": "{{name}} said they'd work on this on {{date}} but hasn't started building it yet.",
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.claimedWhen.someone.justNow": {
+    "text": "Someone said they'd work on this just now but hasn't started building it yet.",
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so less than two minutes ago."
+  },
+  "chips.workNote.claimedWhen.someone.minutes_one": {
+    "text": "Someone said they'd work on this {{count}} minute ago but hasn't started building it yet.",
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.claimedWhen.someone.minutes_other": {
+    "text": "Someone said they'd work on this {{count}} minutes ago but hasn't started building it yet.",
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.claimedWhen.someone.hours_one": {
+    "text": "Someone said they'd work on this an hour ago but hasn't started building it yet.",
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.claimedWhen.someone.hours_other": {
+    "text": "Someone said they'd work on this {{count}} hours ago but hasn't started building it yet.",
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.claimedWhen.someone.yesterday": {
+    "text": "Someone said they'd work on this yesterday but hasn't started building it yet.",
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so about a day ago."
+  },
+  "chips.workNote.claimedWhen.someone.days_one": {
+    "text": "Someone said they'd work on this {{count}} day ago but hasn't started building it yet.",
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.claimedWhen.someone.days_other": {
+    "text": "Someone said they'd work on this {{count}} days ago but hasn't started building it yet.",
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.claimedWhen.someone.onDate": {
+    "text": "Someone said they'd work on this on {{date}} but hasn't started building it yet.",
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.bot.itStartedReadingWhen.justNow": {
+    "text": "It started reading it just now.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading less than two minutes ago."
+  },
+  "chips.workNote.bot.itStartedReadingWhen.minutes_one": {
+    "text": "It started reading it {{count}} minute ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.bot.itStartedReadingWhen.minutes_other": {
+    "text": "It started reading it {{count}} minutes ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.bot.itStartedReadingWhen.hours_one": {
+    "text": "It started reading it an hour ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.bot.itStartedReadingWhen.hours_other": {
+    "text": "It started reading it {{count}} hours ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.bot.itStartedReadingWhen.yesterday": {
+    "text": "It started reading it yesterday.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading about a day ago."
+  },
+  "chips.workNote.bot.itStartedReadingWhen.days_one": {
+    "text": "It started reading it {{count}} day ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.bot.itStartedReadingWhen.days_other": {
+    "text": "It started reading it {{count}} days ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.bot.itStartedReadingWhen.onDate": {
+    "text": "It started reading it on {{date}}.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.bot.itStartedBuildingWhen.justNow": {
+    "text": "It started building it just now.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building less than two minutes ago."
+  },
+  "chips.workNote.bot.itStartedBuildingWhen.minutes_one": {
+    "text": "It started building it {{count}} minute ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.bot.itStartedBuildingWhen.minutes_other": {
+    "text": "It started building it {{count}} minutes ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.bot.itStartedBuildingWhen.hours_one": {
+    "text": "It started building it an hour ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.bot.itStartedBuildingWhen.hours_other": {
+    "text": "It started building it {{count}} hours ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.bot.itStartedBuildingWhen.yesterday": {
+    "text": "It started building it yesterday.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building about a day ago."
+  },
+  "chips.workNote.bot.itStartedBuildingWhen.days_one": {
+    "text": "It started building it {{count}} day ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.bot.itStartedBuildingWhen.days_other": {
+    "text": "It started building it {{count}} days ago.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.bot.itStartedBuildingWhen.onDate": {
+    "text": "It started building it on {{date}}.",
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.bot.startedReadingWhen.justNow": {
+    "text": "The Homeroom bot started reading this request just now.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started less than two minutes ago."
+  },
+  "chips.workNote.bot.startedReadingWhen.minutes_one": {
+    "text": "The Homeroom bot started reading this request {{count}} minute ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.bot.startedReadingWhen.minutes_other": {
+    "text": "The Homeroom bot started reading this request {{count}} minutes ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.bot.startedReadingWhen.hours_one": {
+    "text": "The Homeroom bot started reading this request an hour ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.bot.startedReadingWhen.hours_other": {
+    "text": "The Homeroom bot started reading this request {{count}} hours ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.bot.startedReadingWhen.yesterday": {
+    "text": "The Homeroom bot started reading this request yesterday.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started about a day ago."
+  },
+  "chips.workNote.bot.startedReadingWhen.days_one": {
+    "text": "The Homeroom bot started reading this request {{count}} day ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.bot.startedReadingWhen.days_other": {
+    "text": "The Homeroom bot started reading this request {{count}} days ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.bot.startedReadingWhen.onDate": {
+    "text": "The Homeroom bot started reading this request on {{date}}.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started a month or more ago; {{date}} is that date in the reader's own format."
+  },
+  "chips.workNote.bot.startedBuildingWhen.justNow": {
+    "text": "The Homeroom bot started building this request just now.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started less than two minutes ago."
+  },
+  "chips.workNote.bot.startedBuildingWhen.minutes_one": {
+    "text": "The Homeroom bot started building this request {{count}} minute ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.bot.startedBuildingWhen.minutes_other": {
+    "text": "The Homeroom bot started building this request {{count}} minutes ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started some minutes ago; {{count}} is the number of minutes."
+  },
+  "chips.workNote.bot.startedBuildingWhen.hours_one": {
+    "text": "The Homeroom bot started building this request an hour ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.bot.startedBuildingWhen.hours_other": {
+    "text": "The Homeroom bot started building this request {{count}} hours ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+  },
+  "chips.workNote.bot.startedBuildingWhen.yesterday": {
+    "text": "The Homeroom bot started building this request yesterday.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started about a day ago."
+  },
+  "chips.workNote.bot.startedBuildingWhen.days_one": {
+    "text": "The Homeroom bot started building this request {{count}} day ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.bot.startedBuildingWhen.days_other": {
+    "text": "The Homeroom bot started building this request {{count}} days ago.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started some days ago; {{count}} is the number of days."
+  },
+  "chips.workNote.bot.startedBuildingWhen.onDate": {
+    "text": "The Homeroom bot started building this request on {{date}}.",
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started a month or more ago; {{date}} is that date in the reader's own format."
   },
   "chips.workNote.paused.you": {
     "text": "You started work on this, so nobody is working on it at the moment.",
@@ -6022,18 +7026,6 @@
   "chips.workNote.paused.someone": {
     "text": "Someone started work on this, so nobody is working on it at the moment.",
     "description": "Note on a request an unnamed person began work on and then left, when the time of the last work is unknown. It explains that the request is marked as started although no one is active on it."
-  },
-  "chips.workNote.pausedWhen.you": {
-    "text": "You started work on this and last worked on it {{when}}, so nobody is working on it at the moment.",
-    "description": "Note on a request the viewer began work on and then left. {{when}} is how long ago they last worked on it, for example \"3 days ago\"."
-  },
-  "chips.workNote.pausedWhen.named": {
-    "text": "{{name}} started work on this and last worked on it {{when}}, so nobody is working on it at the moment.",
-    "description": "Note on a request someone began work on and then left. {{name}} is that person's username and {{when}} how long ago they last worked on it, for example \"3 days ago\"."
-  },
-  "chips.workNote.pausedWhen.someone": {
-    "text": "Someone started work on this and last worked on it {{when}}, so nobody is working on it at the moment.",
-    "description": "Note on a request an unnamed person began work on and then left. {{when}} is how long ago they last worked on it, for example \"3 days ago\"."
   },
   "chips.workNote.pausedClears": {
     "text": "This clears itself on {{date}} unless the session picks up again.",
@@ -6050,18 +7042,6 @@
   "chips.workNote.claimed.someone": {
     "text": "Someone said they'd work on this but hasn't started building it yet.",
     "description": "Note on a request an unnamed person picked up (promised to work on) without starting, when the time they did so is unknown. \"They\" is that one person."
-  },
-  "chips.workNote.claimedWhen.you": {
-    "text": "You said you'd work on this {{when}} but haven't started building it yet.",
-    "description": "Note on a request the viewer picked up (promised to work on) without starting. {{when}} is how long ago they said so, for example \"yesterday\" or \"2 hours ago\"."
-  },
-  "chips.workNote.claimedWhen.named": {
-    "text": "{{name}} said they'd work on this {{when}} but hasn't started building it yet.",
-    "description": "Note on a request someone picked up (promised to work on) without starting. {{name}} is that person's username, \"they\" is that one person, and {{when}} is how long ago they said so, for example \"yesterday\"."
-  },
-  "chips.workNote.claimedWhen.someone": {
-    "text": "Someone said they'd work on this {{when}} but hasn't started building it yet.",
-    "description": "Note on a request an unnamed person picked up (promised to work on) without starting. \"They\" is that one person; {{when}} is how long ago they said so, for example \"yesterday\"."
   },
   "chips.workNote.claimedClears": {
     "text": "It opens up for others again on {{date}} if nothing happens.",
@@ -6099,33 +7079,17 @@
     "text": "It started reading it.",
     "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request."
   },
-  "chips.workNote.bot.itStartedReadingWhen": {
-    "text": "It started reading it {{when}}.",
-    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. {{when}} is how long ago, for example \"5 minutes ago\"."
-  },
   "chips.workNote.bot.itStartedBuilding": {
     "text": "It started building it.",
     "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request."
-  },
-  "chips.workNote.bot.itStartedBuildingWhen": {
-    "text": "It started building it {{when}}.",
-    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. {{when}} is how long ago, for example \"5 minutes ago\"."
   },
   "chips.workNote.bot.startedReading": {
     "text": "The Homeroom bot started reading this request.",
     "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to and the start time is unknown."
   },
-  "chips.workNote.bot.startedReadingWhen": {
-    "text": "The Homeroom bot started reading this request {{when}}.",
-    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. {{when}} is how long ago it started, for example \"5 minutes ago\"."
-  },
   "chips.workNote.bot.startedBuilding": {
     "text": "The Homeroom bot started building this request.",
     "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to and the start time is unknown."
-  },
-  "chips.workNote.bot.startedBuildingWhen": {
-    "text": "The Homeroom bot started building this request {{when}}.",
-    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. {{when}} is how long ago it started, for example \"5 minutes ago\"."
   },
   "chips.workNote.bot.anyoneCan": {
     "text": "Anyone can still pick it up and work on it alongside the bot.",
@@ -6798,10 +7762,6 @@
   "page.menu.viewPr": {
     "text": "View PR on GitHub",
     "description": "Row in the ⋯ menu of a change's page: opens the change's pull request on GitHub in a new tab. \"PR\" is short for pull request."
-  },
-  "shots.details.where": {
-    "text": "{{sizes}} · seen as {{who}}",
-    "description": "Line under a declared change in the Shot details sheet of a change's page. {{sizes}} is the list of screen sizes it was photographed at, for example \"Desktop, Phone\", and {{who}} the kind of person the app was viewed as, for example \"a member\"."
   },
   "shots.details.builds": {
     "text": "Taken on the exact before and after builds of this change:",

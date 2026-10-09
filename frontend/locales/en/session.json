@@ -520,8 +520,8 @@
     "description": "Tooltip on a row of the menu that chooses where to build, and the explanation under a row of the out-of-credits card: two explanations one after the other. {{blurb}} is one or more whole sentences describing the place; {{consequence}} is one or more whole sentences saying what choosing it does. Only what separates them is translated here."
   },
   "venue.blocked.creditsSpent": {
-    "text": "Today’s AI credits are spent. They reset {{when}}.",
-    "description": "Reason shown on the struck-through \"build on Homeroom\" row after the daily AI credits ran out. {{when}} is a short phrase giving the time of the reset in the person's own clock, such as \"at 8:00 PM\"."
+    "text": "Today’s AI credits are spent. They reset at {{time}}.",
+    "description": "Reason shown on the struck-through \"build on Homeroom\" row after the daily AI credits ran out. \"Reset\" is a verb: the credits are given back. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
   },
   "venue.blocked.creditsSpentUtc": {
     "text": "Today’s AI credits are spent. They reset at midnight UTC.",
@@ -793,11 +793,43 @@
   },
   "credits.reset.when": {
     "text": "Free credits reset {{when}}.",
-    "description": "Says when the free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. {{when}} is a moment in the person's own clock, with its own preposition where it needs one: \"Sunday at 8:00 PM\" or \"at 9:00 AM\"."
+    "description": "Says when the weekly free AI credits are given back, under the credit meter and in its tooltips, when the person's local time cannot be worked out. \"reset\" is a verb. {{when}} is the server's own name for the moment, in English, such as \"Monday 00:00 UTC\"."
   },
   "credits.reset.whenWithTimeLeft": {
     "text": "Free credits reset {{when}}, about {{timeLeft}} from now.",
-    "description": "Says when the free AI credits are given back and how far off that is. \"reset\" is a verb. {{when}} is a moment in the person's own clock, with its own preposition where it needs one (\"Sunday at 8:00 PM\", \"at 9:00 AM\"); {{timeLeft}} is a short duration such as \"3h 20m\" or \"under a minute\"."
+    "description": "Says when the weekly free AI credits are given back and how far off that is, when the person's local time cannot be worked out. \"reset\" is a verb. {{when}} is the server's own name for the moment, in English, such as \"Monday 00:00 UTC\"; {{timeLeft}} is a short duration such as \"3h 20m\" or \"under a minute\"."
+  },
+  "credits.reset.daily": {
+    "text": "Free credits reset at {{time}}.",
+    "description": "Says when the daily free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
+  },
+  "credits.reset.dailyWithTimeLeft": {
+    "text": "Free credits reset at {{time}}, about {{timeLeft}} from now.",
+    "description": "Says when the daily free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. It also says how far off that is. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\". {{timeLeft}} is a short duration such as \"3h 20m\" or \"under a minute\"."
+  },
+  "credits.reset.dailyUtc": {
+    "text": "Free credits reset at {{time}} ({{utc}}).",
+    "description": "Says when the daily free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. This wording is for a tooltip, with the exact moment in brackets. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
+  },
+  "credits.reset.dailyWithTimeLeftUtc": {
+    "text": "Free credits reset at {{time}}, about {{timeLeft}} from now ({{utc}}).",
+    "description": "Says when the daily free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. It also says how far off that is; this wording is for a tooltip, with the exact moment in brackets. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\". {{timeLeft}} is a short duration such as \"3h 20m\" or \"under a minute\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
+  },
+  "credits.reset.weekly": {
+    "text": "Free credits reset {{day}} at {{time}}.",
+    "description": "Says when the weekly free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
+  },
+  "credits.reset.weeklyWithTimeLeft": {
+    "text": "Free credits reset {{day}} at {{time}}, about {{timeLeft}} from now.",
+    "description": "Says when the weekly free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. It also says how far off that is. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{timeLeft}} is a short duration such as \"3h 20m\" or \"under a minute\"."
+  },
+  "credits.reset.weeklyUtc": {
+    "text": "Free credits reset {{day}} at {{time}} ({{utc}}).",
+    "description": "Says when the weekly free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. This wording is for a tooltip, with the exact moment in brackets. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
+  },
+  "credits.reset.weeklyWithTimeLeftUtc": {
+    "text": "Free credits reset {{day}} at {{time}}, about {{timeLeft}} from now ({{utc}}).",
+    "description": "Says when the weekly free AI credits are given back, under the credit meter and in its tooltips. \"reset\" is a verb. It also says how far off that is; this wording is for a tooltip, with the exact moment in brackets. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{timeLeft}} is a short duration such as \"3h 20m\" or \"under a minute\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
   },
   "credits.reset.atBoundary": {
     "text": "Free credits reset at {{boundary}}.",

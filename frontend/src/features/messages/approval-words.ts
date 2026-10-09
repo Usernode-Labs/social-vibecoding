@@ -57,11 +57,27 @@ export function orWords(items: string[]): string {
   return t('messages:approval.list.or', { first: commaWords(items.slice(0, -1)), last: items[items.length - 1] });
 }
 
-/** Pure: "one approval", "2 approvals", or with `again` "one more approval", "2 more approvals". */
-export function approvalsWords(count: number, people: string, again = false): string {
+/**
+ * The same three lines in the two places that say them: a status line under
+ * the ready card (no full stop), and a sentence in the project chat's card
+ * (with one). Two wordings are two messages, so the full stop is never added
+ * to a finished line.
+ */
+export type ApprovalLineForm = 'status' | 'sentence';
+const LINE_IDS = {
+  status: { needs: 'messages:approval.needs', needsMore: 'messages:approval.needsMore', waiting: 'messages:approval.waiting' },
+  sentence: {
+    needs: 'chat:group.botCard.approval.needs',
+    needsMore: 'chat:group.botCard.approval.needsMore',
+    waiting: 'chat:group.botCard.approval.waitingFrom',
+  },
+} as const;
+
+/** Pure: "Needs one approval from …", "Needs 2 approvals from …", or with `again` "… one more approval …". */
+export function approvalsWords(count: number, people: string, again = false, form: ApprovalLineForm = 'status'): string {
   return again
-    ? t('messages:approval.needsMore', { count, people })
-    : t('messages:approval.needs', { count, people });
+    ? t(LINE_IDS[form].needsMore, { count, people })
+    : t(LINE_IDS[form].needs, { count, people });
 }
 
 /** Pure: whoever is named, then the rest as "2 others" (with "or") or "2 more" (with "and"). */
@@ -77,9 +93,10 @@ function people(names: string[], more: number, joiner: 'and' | 'or'): string {
  * Pure: "Needs 2 approvals from you, @priya or @mo" when fewer are needed
  * than the people listed, "Waiting for approval from you and @ada" when
  * every one of them is. Null when nobody is listed, or when no approval is
- * missing any more.
+ * missing any more. `form` picks the status line or the sentence with its
+ * full stop.
  */
-export function waitingWords(need: ApprovalNeed): string | null {
+export function waitingWords(need: ApprovalNeed, form: ApprovalLineForm = 'status'): string | null {
   const missing = countOf(need.missing);
   if (missing === 0) return null;
   const named = [...(need.you ? [t('messages:approval.list.you')] : []), ...(need.names || []).map((name) => `@${name}`)];
@@ -88,9 +105,9 @@ export function waitingWords(need: ApprovalNeed): string | null {
   if (!listed) return null;
   if (missing !== null && missing < listed) {
     const needed = countOf(need.needed);
-    return approvalsWords(missing, people(named, more, 'or'), needed !== null && missing < needed);
+    return approvalsWords(missing, people(named, more, 'or'), needed !== null && missing < needed, form);
   }
-  return t('messages:approval.waiting', { people: people(named, more, 'and') });
+  return t(LINE_IDS[form].waiting, { people: people(named, more, 'and') });
 }
 
 /**

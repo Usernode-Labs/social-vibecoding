@@ -357,11 +357,11 @@
   },
   "time.reset.weekly": {
     "text": "{{day}} at {{time}}",
-    "description": "When a weekly allowance (AI credits, kudos) comes back, in the reader's own time zone. It is placed after words such as 'Resets' or 'Free credits reset', so it must read as the end of that sentence. {{day}} is the weekday's full name, already in the reader's language (Sunday); {{time}} is the time of day (8:00 PM)."
+    "description": "When a weekly allowance comes back, in the reader's own time zone. Used only to replace the words \"Monday 00:00 UTC\" inside a sentence the server wrote in English (for example \"Weekly limit reached. Resets Monday 00:00 UTC.\"), so it must read as the end of an English sentence after \"Resets\". Homeroom's own sentences about a reset are whole entries elsewhere. {{day}} is the weekday's full name and {{time}} the time of day."
   },
   "time.reset.daily": {
     "text": "at {{time}}",
-    "description": "When a daily allowance comes back, in the reader's own time zone. It is placed after words such as 'Resets' or 'They reset', so it must read as the end of that sentence. {{time}} is the time of day (9:00 AM)."
+    "description": "When a daily allowance comes back, in the reader's own time zone. Used only to replace the words \"at midnight UTC\" inside a sentence the server wrote in English, so it must read as the end of an English sentence after \"Resets\" or \"They reset\". Homeroom's own sentences about a reset are whole entries elsewhere. {{time}} is the time of day."
   },
   "spec.screens.afterLabel": {
     "text": "After (planned): {{changes}}",

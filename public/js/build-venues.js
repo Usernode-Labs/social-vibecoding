@@ -511,18 +511,19 @@
     no_credential: 'session:venue.fallback.noCredential',
   };
 
-  // #3230: the daily reset in the viewer's own clock ("at 8:00 PM"), from
-  // the bundle's window.ResetTime, or the UTC boundary where it is absent.
-  function dailyResetWhen() {
+  // #3230: the time of the daily reset in the viewer's own clock ("8:00 PM"),
+  // from the bundle's window.ResetTime, or null where it is absent (the
+  // caller then says the UTC boundary).
+  function dailyResetTime() {
     var RT = typeof window !== 'undefined' && window.ResetTime;
-    return RT ? RT.resetWhen('daily') : null;
+    return RT ? RT.resetMoment('daily').time : null;
   }
 
   // Why the platform-billed venue is struck through in 'blocked' mode.
   function creditsSpentReason() {
-    var when = dailyResetWhen();
-    return when
-      ? t('session:venue.blocked.creditsSpent', { when: when })
+    var time = dailyResetTime();
+    return time
+      ? t('session:venue.blocked.creditsSpent', { time: time })
       : t('session:venue.blocked.creditsSpentUtc');
   }
 

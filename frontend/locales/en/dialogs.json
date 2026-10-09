@@ -1480,12 +1480,12 @@
     "description": "Note under the kudos checkbox in the \"Suggest an improvement\" dialog. {{count}} is how many kudos the person can still give this week and {{limit}} their weekly allowance."
   },
   "feedback.bounty.usedAll_one": {
-    "text": "You've used all {{count}} kudos this week. Resets {{when}}.",
-    "description": "Note under the disabled kudos checkbox in the \"Suggest an improvement\" dialog. {{count}} is the weekly allowance. {{when}} says when it is renewed, already worded for the sentence, for example \"Monday at 2:00 AM\"."
+    "text": "You've used all {{count}} kudos this week. Resets {{day}} at {{time}}.",
+    "description": "Note under the disabled kudos checkbox in the \"Suggest an improvement\" dialog. {{count}} is the weekly allowance; the second sentence says when it is renewed. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
   },
   "feedback.bounty.usedAll_other": {
-    "text": "You've used all {{count}} kudos this week. Resets {{when}}.",
-    "description": "Note under the disabled kudos checkbox in the \"Suggest an improvement\" dialog. {{count}} is the weekly allowance. {{when}} says when it is renewed, already worded for the sentence, for example \"Monday at 2:00 AM\"."
+    "text": "You've used all {{count}} kudos this week. Resets {{day}} at {{time}}.",
+    "description": "Note under the disabled kudos checkbox in the \"Suggest an improvement\" dialog. {{count}} is the weekly allowance; the second sentence says when it is renewed. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
   },
   "feedback.bounty.usedAllUtc_one": {
     "text": "You've used all {{count}} kudos this week. Resets Monday 00:00 UTC.",

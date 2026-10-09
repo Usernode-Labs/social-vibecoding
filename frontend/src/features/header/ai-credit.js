@@ -161,14 +161,11 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // because this text is itself the tooltip.
         var RT = (typeof window !== 'undefined' && window.ResetTime) || null;
         var weeklyReset = s.capWindow === 'weekly';
-        var resetText = state ? CO.resetSentence(state)
-          : RT ? PlatformI18n.t('wallet:credit.tip.resets', {
-            when: RT.resetWhen(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt }),
-          })
+        var resetText = state ? CO.resetSentence(state, undefined, { withUtc: true })
+          : RT ? PlatformI18n.t(weeklyReset ? 'wallet:credit.tip.resetsWeekly' : 'wallet:credit.tip.resetsDaily',
+            RT.resetMoment(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt }))
             : weeklyReset ? PlatformI18n.t('wallet:credit.tip.resetsWeeklyUtc')
               : PlatformI18n.t('wallet:credit.tip.resetsDailyUtc');
-        var resetUtc = state && CO.resetTitle ? CO.resetTitle(state) : null;
-        if (resetUtc) resetText = resetText.replace(/\.$/, ' (' + resetUtc + ').');
         // The raw figures ride along for a reader that draws them itself
         // (the agent-session composer's "$ left" ring): the same numbers the
         // words below are built from, so the two cannot disagree.

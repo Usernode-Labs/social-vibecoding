@@ -185,15 +185,15 @@
   },
   "more.challenges.rank": {
     "text": "rank #{{rank}}",
-    "description": "Part of the small line under \"Challenges & standings\" on the viewer's profile. {{rank}} is their position in the season's ranking. Lower case."
+    "description": "One fact on the small line under \"Challenges & standings\" on the viewer's profile, beside the season's name: the viewer's position in the season's ranking, {{rank}}. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
   "more.challenges.done_one": {
     "text": "{{done}} of {{count}} done",
-    "description": "Part of the small line under \"Challenges & standings\" on the viewer's profile. {{done}} is how many of the season's challenges they completed and {{count}} how many there are."
+    "description": "One fact on the small line under \"Challenges & standings\" on the viewer's profile, beside the season's name: {{done}} is how many of the season's challenges they completed and {{count}} how many there are. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence."
   },
   "more.challenges.done_other": {
     "text": "{{done}} of {{count}} done",
-    "description": "Part of the small line under \"Challenges & standings\" on the viewer's profile. {{done}} is how many of the season's challenges they completed and {{count}} how many there are."
+    "description": "One fact on the small line under \"Challenges & standings\" on the viewer's profile, beside the season's name: {{done}} is how many of the season's challenges they completed and {{count}} how many there are. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence."
   },
   "more.kudos.title": {
     "text": "Kudos",
@@ -281,15 +281,15 @@
   },
   "changes.state.waiting": {
     "text": "waiting for approval",
-    "description": "After the app's name on a row of the \"Your changes\" screen: the change is being voted on. Lower case."
+    "description": "One fact on the small line of a row of the \"Your changes\" screen, after the app's name: the change is being voted on. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
   "changes.state.inProgress": {
     "text": "in progress",
-    "description": "After the app's name on a row of the \"Your changes\" screen: the change is still being worked on. Lower case."
+    "description": "One fact on the small line of a row of the \"Your changes\" screen, after the app's name: the change is still being worked on. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
   "changes.state.closed": {
     "text": "closed without going live",
-    "description": "After the app's name on a row of the \"Your changes\" screen: the change was withdrawn or archived. Lower case."
+    "description": "One fact on the small line of a row of the \"Your changes\" screen, after the app's name: the change was withdrawn or archived without becoming part of the app. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
   "requests.group.open": {
     "text": "Open",
@@ -309,19 +309,19 @@
   },
   "requests.state.waiting": {
     "text": "nobody on it yet",
-    "description": "After the app's name on a row of the \"Your requests\" screen: nobody has started working on the request. Lower case."
+    "description": "One fact on the small line of a row of the \"Your requests\" screen, after the app's name: nobody has started working on the request. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
   "requests.state.underway": {
     "text": "someone is on it",
-    "description": "After the app's name on a row of the \"Your requests\" screen: somebody is working on the request. Lower case."
+    "description": "One fact on the small line of a row of the \"Your requests\" screen, after the app's name: somebody is working on the request. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
   "requests.state.shipped": {
     "text": "live",
-    "description": "After the app's name on a row of the \"Your requests\" screen: what was asked for has been built and is running. Lower case; an adjective."
+    "description": "One fact on the small line of a row of the \"Your requests\" screen, after the app's name: what was asked for has been built and is running. An adjective. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
   "requests.state.closed": {
     "text": "closed",
-    "description": "After the app's name on a row of the \"Your requests\" screen: the request was closed without being built. Lower case; an adjective."
+    "description": "One fact on the small line of a row of the \"Your requests\" screen, after the app's name: the request was closed without being built. An adjective. It is a whole fact of its own: the line's facts are joined with a middle dot by profile:line.factPair, never built into a sentence. Lower case in English because it follows the dot."
   },
   "votes.group.open": {
     "text": "Still open",

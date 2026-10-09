@@ -3060,7 +3060,7 @@
         const RT = window.ResetTime;
         if (reset && RT) {
           const cadence = b.capWindow === 'daily' ? 'daily' : 'weekly';
-          reset.textContent = tr('settings:usage.spend.resets', { when: RT.resetWhen(cadence, { at: b.resetsAt }) });
+          reset.textContent = tr(cadence === 'daily' ? 'settings:usage.spend.resetsDaily' : 'settings:usage.spend.resetsWeekly', RT.resetMoment(cadence, { at: b.resetsAt }));
           reset.title = RT.resetUtc(cadence, { at: b.resetsAt });
         }
         block.classList.remove('hidden');

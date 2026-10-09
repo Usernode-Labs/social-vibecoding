@@ -374,7 +374,7 @@ test('the drawer row renders the remainder and shares the reset wording', () => 
     'rendered, not tooltip-only');
   assert.match(AI_CREDIT_SRC, /remaining: money\(remaining\)/);
   assert.equal(message('wallet:credit.meter.left', { remaining: '$19.00' }), '<0>· </0><1>$19.00 left</1>');
-  assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state\)/,
+  assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state, undefined, \{ withUtc: true \}\)/,
     'one wording for the boundary, shared with the dev chat');
   assert.ok(!/Resets at midnight UTC/.test(AI_CREDIT_SRC),
     'no second, hand-written copy of the reset sentence');

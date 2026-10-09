@@ -124,7 +124,21 @@
     return (typeof window !== 'undefined' && window.ResetTime) || null;
   }
 
-  function resetSentence(state, nowMs) {
+  var RESET_SENTENCE_IDS = {
+    daily: {
+      plain: 'session:credits.reset.daily',
+      left: 'session:credits.reset.dailyWithTimeLeft',
+      plainUtc: 'session:credits.reset.dailyUtc',
+      leftUtc: 'session:credits.reset.dailyWithTimeLeftUtc',
+    },
+    weekly: {
+      plain: 'session:credits.reset.weekly',
+      left: 'session:credits.reset.weeklyWithTimeLeft',
+      plainUtc: 'session:credits.reset.weeklyUtc',
+      leftUtc: 'session:credits.reset.weeklyWithTimeLeftUtc',
+    },
+  };
+  function resetSentence(state, nowMs, options) {
     var s = state || {};
     if (s.level === 'locked') {
       return t('session:credits.reset.locked');
@@ -138,11 +152,16 @@
     if (at && !Number.isFinite(at.getTime())) at = null;
     var left = at ? resetIn(s.resetsAt, nowMs) : null;
     if (RT) {
-      var when = RT.resetWhen(weekly ? 'weekly' : 'daily',
-        { at: at, now: nowMs == null ? undefined : nowMs });
-      return left
-        ? t('session:credits.reset.whenWithTimeLeft', { when: when, timeLeft: left })
-        : t('session:credits.reset.when', { when: when });
+      var resetOptions = { at: at, now: nowMs == null ? undefined : nowMs };
+      var moment = RT.resetMoment(weekly ? 'weekly' : 'daily', resetOptions);
+      // `withUtc`: the exact UTC instant in brackets, for a surface that is
+      // itself a tooltip. One whole message per case, so nothing is added
+      // to a finished sentence afterwards.
+      var utc = options && options.withUtc
+        ? RT.resetUtc(weekly ? 'weekly' : 'daily', { at: s.resetsAt || null, now: resetOptions.now }) : null;
+      var ids = RESET_SENTENCE_IDS[weekly ? 'weekly' : 'daily'];
+      return t(ids[(left ? 'left' : 'plain') + (utc ? 'Utc' : '')],
+        { day: moment.day, time: moment.time, timeLeft: left || '', utc: utc || '' });
     }
     // The server's own name for the boundary, as it states it.
     var resetLabel = s.resetLabel || 'midnight UTC';

@@ -523,7 +523,7 @@ const Kudos = {
       const RT = window.ResetTime;
       // One whole sentence per case: with bounties or without, and with the
       // reset in the viewer's own time or, when that helper is absent, in UTC.
-      const resets = RT ? { when: RT.resetWhen('weekly'), utc: RT.resetUtc('weekly') } : null;
+      const resets = RT ? { ...RT.resetMoment('weekly'), utc: RT.resetUtc('weekly') } : null;
       const tip = bounties
         ? t(resets ? 'leaderboard:kudos.budget.tipBounties' : 'leaderboard:kudos.budget.tipBountiesUtc', {
           remaining, limit, bountiesRemaining: bounties.remaining, count: Number(bounties.limit), ...resets,
