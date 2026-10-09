@@ -224,6 +224,9 @@ test('red checks on its own proposal: one build turn fixes them, the proposal is
   assert.match(h.calls.exec[0].opts.prompt, /"Text size" but the button says "Aa"/);
   assert.match(h.calls.exec[0].opts.commitMsg, /fix the failing checks on #50/);
   assert.equal(h.calls.reconciled.length, 1, 'votes cleared, checks re-run, as for any revision');
+  assert.equal(h.calls.reconciled[0].notify, true, 'the vote panels still refresh');
+  assert.equal(h.calls.reconciled[0].announceClearedVotes, false,
+    '#4613: its own announcement on the proposal is the one voice on the cleared approvals');
   const insert = insertOf(h);
   assert.equal(insert.params[4], 'revise', 'counts toward MAX_REVISIONS like any revision');
   assert.equal(insert.params[20], 5001);

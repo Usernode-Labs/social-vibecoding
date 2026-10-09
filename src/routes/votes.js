@@ -1765,7 +1765,8 @@ function normalizedSha(value) {
 // notice is posted in the proposal's own thread either way, because without
 // it the Discussion keeps "Voted yes" while the tally drops to 0 with nothing
 // saying why. A caller that writes its own line about the cleared votes (the
-// merge's head-moved 409) passes `announceClearedVotes: false`. Only the
+// merge's head-moved 409, and the bot's revision, whose own announcement
+// carries them) passes `announceClearedVotes: false`. Only the
 // caller whose conditional UPDATE claims the move reaches the notice, so two
 // paths reconciling the same push cannot both post it.
 async function reconcileNativeReviewedHead({
@@ -2032,7 +2033,12 @@ async function reconcileNativeReviewedHead({
         ...(keepsApprovals ? { votesKept: true } : {}),
       });
     } catch (_) { /* ws failures are non-fatal */ }
+  }
 
+  // A caller that writes its own line about the move (the bot's revision,
+  // whose announcement already says the cleared approvals) suppresses only
+  // this notice; the vote push above stays either way.
+  if ((notify || clearedVotes) && announceClearedVotes) {
     const label = session.pr_title
       ? `PR #${session.pr_number}: ${session.pr_title}`
       : `PR #${session.pr_number}`;

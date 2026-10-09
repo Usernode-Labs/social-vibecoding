@@ -113,12 +113,12 @@ function makePool({ epoch = 0, voters = 0 }) {
   };
 }
 
-function load(r, posted = []) {
+function load(r, posted = [], pushes = []) {
   const rebuilds = [];
   const restores = [
     stub('src/services/github.js', { isEnabled: () => true }),
     stub('src/services/ws.js', {
-      pushVoteUpdate() {},
+      pushVoteUpdate(u) { pushes.push(u); },
       pushSessionUpdate() {},
       async sendSystemMessage(pool_, appId, content, type, meta, thread) {
         posted.push({ appId, content, type, meta, thread });
@@ -464,4 +464,26 @@ test('the merge\'s head-moved 409 announces the cleared votes itself, so the rec
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/votes.js'), 'utf8');
   assert.match(src, /nativeRefresh = await reconcileNativeReviewedHead\(\{\s*config, pool, session, fresh: true, notify: false,\s*announceClearedVotes: false,\s*\}\)/);
   assert.match(src, /Earlier-revision votes were cleared and the new commit is being checked/);
+});
+
+// #4613: the bot's revision announcement already says the cleared approvals,
+// so its reconcile (notify: true, announceClearedVotes: false) sends no
+// second line into the change's discussion. The vote panels still refresh.
+test('a notifying caller that writes its own line pushes the vote update and sends no notice', async () => {
+  const pushed = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const posted = [];
+  const pushes = [];
+  const loaded = load(pushed, posted, pushes);
+  try {
+    const out = await loaded.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 3, voters: 1 }),
+      session: session(pushed, { approval_epoch: 3 }),
+      notify: true, announceClearedVotes: false,
+    });
+    assert.equal(out.epoch, 4, 'the votes were retired as the move demands');
+    assert.equal(posted.length, 0, 'no second line beside the bot\'s own announcement');
+    assert.equal(pushes.length, 1, 'the open vote panels still refresh');
+    assert.equal(pushes[0].headMoved, true);
+    assert.equal(pushes[0].merged, false);
+  } finally { loaded.restore(); pushed.cleanup(); }
 });

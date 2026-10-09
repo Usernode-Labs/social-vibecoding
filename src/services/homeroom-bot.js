@@ -5770,6 +5770,19 @@ async function runFollowUp(pool, config, {
     return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, spent);
   }
 
+  // One event, one message (#4613): the run's mark covers the replies it
+  // answered, not just what the queue row saw when it was queued. A reply
+  // that landed while the row waited in a loaded batch is read and answered
+  // by the turn, and claimed here, so the next pass does not answer it
+  // again. `advanceSeen` still raises the mark afterwards with GREATEST, and
+  // a reply written while the turn ran is newer than the claim, so it is
+  // still read and answered once on the next pass. A run that failed to
+  // answer never reaches an insert here (recordFailure keeps the row's
+  // mark, and repliesSince rolls it back across its tries), so its replies
+  // stay owed.
+  const claimedSeenAt = replies.reduce(
+    (acc, r) => latestOf(acc, r.createdAt), item.thread_seen_at || null);
+
   let runId = null;
   let targets;
   const say = async (kind, text, postedAt, extra = {}) => {
@@ -5799,7 +5812,7 @@ async function runFollowUp(pool, config, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
-      reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
+      reason: parsed.reply, threadSeenAt: claimedSeenAt, model,
       durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
     });
     await recordSnapshot(runId);
@@ -5843,7 +5856,7 @@ async function runFollowUp(pool, config, {
     questionAnswers: askAnswers,
     reason: reply,
     buildNote: action === 'revise' ? (parsed?.summary || null) : null,
-    threadSeenAt: item.thread_seen_at || null, model,
+    threadSeenAt: claimedSeenAt, model,
     durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
   });
   await recordSnapshot(runId);
@@ -5905,8 +5918,12 @@ async function renameRevised({ pool, github, repo, session, title, app }) {
 /**
  * The same reconcile a person's revision reaches, after a follow-up moved
  * the proposal's head: the new head becomes the reviewed one, earlier votes
- * stop counting, checks and the staging preview re-run on it, and the
- * thread says so. Never throws.
+ * stop counting, checks and the staging preview re-run on it. The thread
+ * does not hear it from the reconciler: the run's own announcement (say, or
+ * postOnProposal on a checks fix) is what says the revision and the cleared
+ * approvals, so one event keeps one message (#4613). A person's own
+ * revision (proposal-update.js, pr-import-sync.js) keeps the reconciler's
+ * line. Never throws.
  */
 async function reconcileRevision({ config, pool, session, app, issueNumber, deps }) {
   try {
@@ -5917,7 +5934,7 @@ async function reconcileRevision({ config, pool, session, app, issueNumber, deps
       [session.id],
     );
     await votes.reconcileNativeReviewedHead({
-      config, pool, session: fresh[0] || session, fresh: true, notify: true,
+      config, pool, session: fresh[0] || session, fresh: true, notify: true, announceClearedVotes: false,
     });
   } catch (err) {
     log.error('homeroom-bot', 'Follow-up revision pushed, but reconciling the proposal failed', {
@@ -6210,8 +6227,9 @@ async function runChecksFix(pool, config, {
     clearFollowUpRefusals(app.id, issueNumber);
     // Said in the proposal's own discussion, where the group votes and the
     // checks are shown; not on the issue, whose people asked for the change,
-    // not for its checks. The reconcile has already said the votes were
-    // cleared there.
+    // not for its checks. The reconcile it ran writes no line there
+    // (reconcileRevision): this announcement is the one voice on the
+    // revision, cleared approvals and all.
     const link = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
     await live.postOnProposal({
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_revise', bot, sessionId: session.id,

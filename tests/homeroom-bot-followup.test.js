@@ -293,7 +293,9 @@ test('a clear change is made on the proposal, and the proposal is reconciled lik
   assert.equal(out.verdict, 'revise');
   assert.equal(h.calls.reconciled.length, 1);
   assert.equal(h.calls.reconciled[0].fresh, true, 'reads the head it just pushed');
-  assert.equal(h.calls.reconciled[0].notify, true, 'the thread says the votes were cleared');
+  assert.equal(h.calls.reconciled[0].notify, true, 'the vote panels still refresh');
+  assert.equal(h.calls.reconciled[0].announceClearedVotes, false,
+    '#4613: its own announcement already says the cleared approvals; no second line');
   assert.equal(h.calls.reconciled[0].session.id, 5001);
   assert.equal(h.calls.posts[0].kind, 'followup_revise');
   assert.equal(h.calls.posts[0].proposalSessionId, null, 'asked on the issue, answered on the issue');
@@ -337,6 +339,78 @@ test('"revise" that pushed nothing is a failure, said plainly, and nothing is re
     // #4367: the change has PR #25, so its link goes by that number.
     link: live.proposalLink('app.onhomeroom.com', APP.slug, 5001, 25),
   });
+});
+
+// #4613: one event, one message. A reply that lands after the queue row was
+// stamped (the row sat in a loaded batch) is answered once, and the run that
+// answered it claims it: its mark covers the newest reply it read. A second
+// pass reading the claimed mark finds nothing new, so the reply is never
+// answered twice; one written while the turn ran is newer than the claim
+// and is still answered, once, on the next pass.
+test('a run that answers a reply claims it: the mark covers the newest reply read, and a second pass reads nothing new', async (t) => {
+  // The row was stamped at 12:00 (ITEM); the reply landed at 12:30.
+  const h = harness({ comments: [{ author: 'evan', body: 'Why so dark?', createdAt: '2026-09-26T12:30:00Z' }] });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'answer');
+  assert.equal(insertOf(h).params[12], '2026-09-26T12:30:00Z', 'the claim, not the queue row\'s older mark');
+
+  // The next pass, reading the mark the first run claimed: the same thread
+  // holds nothing new, so no turn runs and nothing is posted. Exactly one
+  // thread message per event across the two passes.
+  const again = harness({ comments: [{ author: 'evan', body: 'Why so dark?', createdAt: '2026-09-26T12:30:00Z' }] });
+  const realQuery = again.pool.query;
+  again.pool.query = async (sql, params) => (
+    /SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(String(sql))
+      // The run the first pass recorded, with the claim `advanceSeen` left standing.
+      ? { rows: [{ id: 800, thread_seen_at: '2026-09-26T12:30:00Z' }] }
+      : realQuery(sql, params)
+  );
+  const out2 = await run(t, again);
+  assert.deepEqual(out2, { ran: false, reason: 'no_new_replies' });
+  assert.equal(again.calls.exec.length, 0, 'no second turn');
+  assert.equal(again.calls.posts.length, 0, 'no second message');
+
+  // One written while the turn ran is newer than the claim, so the next
+  // pass still answers it, and only it.
+  const later = harness({
+    comments: [
+      { author: 'evan', body: 'Why so dark?', createdAt: '2026-09-26T12:30:00Z' },
+      { author: 'evan', body: 'and the header too?', createdAt: '2026-09-26T12:35:00Z' },
+    ],
+  });
+  const realQuery2 = later.pool.query;
+  later.pool.query = async (sql, params) => (
+    /SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(String(sql))
+      ? { rows: [{ id: 800, thread_seen_at: '2026-09-26T12:30:00Z' }] }
+      : realQuery2(sql, params)
+  );
+  const out3 = await run(t, later);
+  assert.equal(out3.verdict, 'answer');
+  assert.match(later.calls.exec[0].opts.prompt, /and the header too\?/, 'the new reply is read');
+  assert.doesNotMatch(later.calls.exec[0].opts.prompt, /Why so dark\?/, 'the claimed one is not read again');
+  assert.equal(insertOf(later).params[12], '2026-09-26T12:35:00Z', 'its own claim covers it');
+});
+
+test('a turn that failed to answer claims nothing: its replies stay owed', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Why so dark?', createdAt: '2026-09-26T12:30:00Z' }],
+    result: { lastResultText: 'no fenced block here', pushOk: true, sha: OLD_HEAD },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.match(insertOf(h).params[18], /^unparseable:/);
+  assert.equal(insertOf(h).params[12], ITEM.thread_seen_at,
+    'the queue row\'s mark stands, so repliesSince reads the replies again on the next try');
+});
+
+test('a revise that moved nothing claims the replies it read, like any run that spoke', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T12:30:00Z' }],
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Done."}\n```', pushOk: true, sha: OLD_HEAD },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(insertOf(h).params[12], '2026-09-26T12:30:00Z', 'its revise-failed note answered them; it claims them');
 });
 
 test('a GLM follow-up whose agent failed is no revision: its push is never reconciled, and it asked for none', async (t) => {
