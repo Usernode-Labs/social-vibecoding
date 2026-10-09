@@ -331,7 +331,10 @@ test('#3772: a claim nothing backs is asked about once, then cut and said plainl
     ['filed', 'unknown']);
   assert.deepEqual(await kinds('I\'ve filed it for you.'), ['filed']);
   assert.deepEqual(await kinds('I opened a new request for that.'), ['filed']);
-  assert.deepEqual(await kinds('I drafted it below; tap File it to file #13.'), [], 'a draft, and a request that exists');
+  // #4605: a draft promised to appear below counts only when an offer made
+  // this turn puts the buttons under it; #13 itself exists.
+  assert.deepEqual(await kinds('I drafted it below; tap File it to file #13.'), ['offered'],
+    'a draft, and a request that exists: but the buttons must be really offered');
   assert.deepEqual(await kinds('I opened the proposal yesterday.'), [], 'its own proposal is not a filing');
   assert.deepEqual(await kinds('I posted your answer on the request\'s discussion.'), ['posted']);
   assert.deepEqual(await kinds('I posted your answer on the request\'s discussion.', { posted: 'Ear Trainer request #13' }), []);
@@ -340,10 +343,27 @@ test('#3772: a claim nothing backs is asked about once, then cut and said plainl
   assert.deepEqual(await kinds('I\'ve updated the proposal.'), ['revised']);
   assert.deepEqual(await kinds('Request #13 is with the group.'), []);
 
+  // #4605: the promise of the File it buttons is backed only by an offer
+  // made this turn, and ordinary talk of filing matches nothing.
+  assert.deepEqual(await kinds('A File it button will appear under this message.'), ['offered']);
+  assert.deepEqual(await kinds('A File it button will appear under this message.', { offer: { app: {} } }), [],
+    'an offer made this turn backs it');
+  assert.deepEqual(await kinds('the draft will appear below with Not now beside it'), ['offered']);
+  assert.deepEqual(await kinds('Want me to file this on Note board?'), [], 'no button or place named');
+  assert.deepEqual(await kinds('I can\'t file it from here.'), [], 'no button and no place');
+
   const note = mayor.checkNote([{ kind: 'filed', said: 'says a request was filed' }, { kind: 'unknown', numbers: [14], said: 'names request #14, which no project of theirs has' }]);
   assert.match(note, /^\[Homeroom check, not from them: your reply says a request was filed; and it names request #14/);
   assert.match(note, /offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts one/);
   assert.match(note, /never name one that does not exist\. Then call reply again\.\]$/);
+
+  // #4605: the note for a promised offer tells the second pass to make it.
+  const offerNote = mayor.checkNote([{ kind: 'offered', said: 'says the File it buttons will appear under it' }]);
+  assert.match(offerNote, /^\[Homeroom check, not from them: your reply says the File it buttons will appear under it\./);
+  assert.match(offerNote, /If it happened earlier and the tools show it, say when\./);
+  assert.match(offerNote, /To put a request they can file under your reply, call offer_request with the project, a title and details, then reply: the buttons only exist once you do\./);
+  assert.match(offerNote, /Then call reply again\.\]$/);
+  assert.doesNotMatch(offerNote, /—/);
 
   assert.equal(
     mayor.stripClaims('Filed: **Ear Trainer** request #14: Richer synth tones. I\'ll look at it now.', [
@@ -355,6 +375,11 @@ test('#3772: a claim nothing backs is asked about once, then cut and said plainl
   assert.equal(
     mayor.stripClaims('Here is what I found about the size options on Ear Trainer. I\'ve updated the proposal.', [{ kind: 'revised' }]),
     'I haven\'t changed the proposal yet.\n\nHere is what I found about the size options on Ear Trainer.',
+  );
+  // #4605: what a cut promise of the buttons says instead.
+  assert.equal(
+    mayor.stripClaims('A File it button will appear under this message.', [{ kind: 'offered' }]),
+    'I haven\'t drafted a request for that yet. Tell me what to file and I\'ll put it under my message for you to confirm.',
   );
   assert.equal(mayor.stripClaims('Unchanged.', []), 'Unchanged.');
 });
