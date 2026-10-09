@@ -367,6 +367,9 @@ export interface RowTag {
   label: string;
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
   glyph?: 'eye';
+  /** #4485: the fewer words the row draws ("Taking shots"); `label` stays
+   *  the chip's tooltip and what a screen reader says. */
+  short?: string;
   title?: string;
   progress?: ChecksProgress;
 }
