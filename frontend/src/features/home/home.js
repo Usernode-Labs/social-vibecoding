@@ -406,36 +406,41 @@ const Home = {
   // ceiling on one lane, not a second lane's own budget.
   POPULAR_LIMIT: 6,
 
-  // The popular half of the rail (#949): what everyone else is actually
-  // using, appended after the curated cards. Derived from the SAME
-  // /api/apps payload the grid already holds — `active_users` rides along
-  // with every row (see the au join in src/routes/apps.js), so this costs
-  // no query.
+  // The popular half of the rail (#949, re-aimed by #4532): the public
+  // communities the viewer has NOT joined, the most-membered first,
+  // appended after the curated cards. Derived from the SAME /api/apps
+  // payload the grid already holds — `member_count`, `is_member` and
+  // `audience` ride along with every row (see the community joins in
+  // src/routes/apps.js), so this costs no query.
   //
-  // The ranking mirrors Browse.sortApps' 'users' order exactly (most users
-  // first, ties keeping the server's own order via a stable sort), so the
-  // widget and the Browse directory can't disagree about what is popular.
-  // (#1383 gave the directory five orders and made 'recommended' its default
-  // — this lane still tracks the users one, which is the question the word
-  // "Popular" asks.) parseInt because the count arrives as a STRING — it is a
-  // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
+  // The ranking is member count descending, `active_users` breaking ties,
+  // full ties keeping the server's own order via a stable sort. parseInt
+  // because a count arrives as a STRING — it is a Postgres bigint — and
+  // member_count and active_users go through the same coercion.
   //
-  // Only currently reviewed working apps with icons qualify. Also exclude:
+  // Only currently reviewed working apps with icons qualify, and only
+  // PUBLIC ones: audience is the communities service's solo / invited /
+  // open, and a private or just-you community is never suggested. Also
+  // exclude:
   //   * `featured` — the curated half of the same lane already offers those.
   //     The renderer dedupes by slug anyway, since one lane is where a
   //     double-listing would show as the same card twice.
-  //   * isYours — the whole point is apps you don't have yet.
-  // And a floor of one active user: an app nobody uses is not "popular",
-  // and padding the lane out with zero-user rows would misrepresent it.
+  //   * isJoined — the whole point is communities you could still join. Not
+  //     isYours: having a shortcut to an app is not being in its community,
+  //     and the two sets disagree on purpose (see isJoined above).
+  // There is no floor of one active user any more: members are the
+  // popularity measure, and an unused app with members still answers the
+  // question "what could I join?".
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
     if (Home._shotDiscoverEmpty()) return [];
+    const members = (a) => (parseInt(a && a.member_count, 10) || 0);
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     return (apps || [])
       .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
-        && users(a) >= 1
-        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
-      .sort((x, y) => users(y) - users(x))
+        && a.audience === 'open'
+        && (!Home.isJoined(a) || Home._discoverKeep.has(a.slug)))
+      .sort((x, y) => (members(y) - members(x)) || (users(y) - users(x)))
       .slice(0, Home.POPULAR_LIMIT);
   },
 

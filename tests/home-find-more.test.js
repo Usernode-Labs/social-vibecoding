@@ -136,6 +136,10 @@ const app = (over) => ({
   favorite_order: null,
   featured: false,
   featured_order: null,
+  // The community fields GET /api/apps serves on every row. The default is
+  // a public community the viewer has not joined — what popularApps offers.
+  audience: 'open',
+  is_member: false,
   ...over,
 });
 
@@ -214,8 +218,8 @@ test('featuredApps: a slug in _discoverKeep stays in the rail after it becomes y
 test('popularApps: _discoverKeep holds a card there too, and only that card', () => {
   const Home = makeHome();
   const apps = [
-    app({ slug: 'kept', active_users: 9, is_favorited: true }),
-    app({ slug: 'other', active_users: 8, is_favorited: true }),
+    pop({ slug: 'kept', member_count: 9, is_member: true }),
+    pop({ slug: 'other', member_count: 8, is_member: true }),
   ];
   assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), []);
   Home._discoverKeep.add('kept');
@@ -356,51 +360,92 @@ test('the create-widget shot paths pin both quota treatments', () => {
     'the locked review path stays deterministic too');
 });
 
-// ── popularApps selection (#949) ──────────────────────────────────
+// ── popularApps selection (#949, re-aimed by #4532) ───────────────
 //
-// The desktop widget's second lane: what everyone else is using, from the
-// `active_users` count GET /api/apps already serves. The ranking mirrors
-// Browse.sortApps' non-featured tail so the widget and the directory can't
-// disagree about what is popular.
+// The second half of the one Discover lane: public communities the viewer
+// has NOT joined, the most-membered first. Everything it reads —
+// member_count, is_member, audience — rides along on every row GET
+// /api/apps already serves.
 
-const pop = (over) => app({ active_users: 3, ...over });
+const pop = (over) => app({ active_users: 3, member_count: 5, ...over });
 
-test('popularApps: ranks non-featured apps by active users, most first', () => {
+test('popularApps: ranks public communities by members, most first', () => {
   const Home = makeHome();
   const apps = [
-    pop({ slug: 'few', active_users: 2 }),
-    pop({ slug: 'most', active_users: 11 }),
-    pop({ slug: 'some', active_users: 5 }),
+    pop({ slug: 'few', member_count: 2 }),
+    pop({ slug: 'most', member_count: 11 }),
+    pop({ slug: 'some', member_count: 5 }),
   ];
   assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['most', 'some', 'few']);
 });
 
-test('popularApps: the count is coerced — the API sends it as a string', () => {
+test('popularApps: active users break member-count ties', () => {
+  const Home = makeHome();
+  const apps = [
+    pop({ slug: 'quiet', member_count: 9, active_users: 1 }),
+    pop({ slug: 'busy', member_count: 9, active_users: 7 }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['busy', 'quiet']);
+});
+
+test('popularApps: the counts are coerced — the API sends them as strings', () => {
   const Home = makeHome();
   // Postgres COUNT(*) is a bigint, so the serializer hands the client "9",
   // not 9. A lexicographic sort would rank "9" above "10".
-  const apps = [pop({ slug: 'nine', active_users: '9' }), pop({ slug: 'ten', active_users: '10' })];
+  const apps = [pop({ slug: 'nine', member_count: '9' }), pop({ slug: 'ten', member_count: '10' })];
   assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['ten', 'nine']);
-  assert.deepEqual(Home.popularApps([pop({ slug: 'n', active_users: 4 })]).map((a) => a.slug),
+  assert.deepEqual(Home.popularApps([pop({ slug: 'n', member_count: 4 })]).map((a) => a.slug),
     ['n'], 'and a real number works too');
 });
 
 test('popularApps: ties keep the order the server returned', () => {
   const Home = makeHome();
-  const apps = ['a', 'b', 'c'].map((slug) => pop({ slug, active_users: 4 }));
+  const apps = ['a', 'b', 'c'].map((slug) => pop({ slug, member_count: 4, active_users: 4 }));
   assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['a', 'b', 'c']);
 });
 
-test('popularApps: excludes featured, yours, errored, self-hosted and unused apps', () => {
+test('popularApps: only public communities — solo and invited never qualify', () => {
   const Home = makeHome();
   const apps = [
-    pop({ slug: 'keep', active_users: 9 }),
-    pop({ slug: 'featured', featured: true, active_users: 20 }),
-    pop({ slug: 'mine', is_favorited: true, active_users: 20 }),
-    pop({ slug: 'broken', status: 'error', active_users: 20 }),
-    pop({ slug: 'platform', self_hosted: true, active_users: 20 }),
-    pop({ slug: 'unused', active_users: 0 }),
-    pop({ slug: 'never-counted', active_users: null }),
+    pop({ slug: 'open-keep', audience: 'open' }),
+    pop({ slug: 'just-me', audience: 'solo' }),
+    pop({ slug: 'private', audience: 'invited' }),
+    pop({ slug: 'no-audience', audience: undefined }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['open-keep']);
+});
+
+test('popularApps: joined communities drop out, favourites and collaborations do not', () => {
+  const Home = makeHome();
+  const apps = [
+    pop({ slug: 'keep', member_count: 9 }),
+    pop({ slug: 'member', member_count: 20, is_member: true }),
+    pop({ slug: 'fav-not-member', member_count: 20, is_favorited: true }),
+    pop({ slug: 'collab-not-member', member_count: 20, is_collaborator: true }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['fav-not-member', 'collab-not-member', 'keep'],
+    'membership is the gate now, not having the app on Home');
+});
+
+test('popularApps: a public community with members but no active users now qualifies', () => {
+  const Home = makeHome();
+  const apps = [
+    pop({ slug: 'idle-but-membered', member_count: 4, active_users: 0 }),
+    pop({ slug: 'never-counted', member_count: 2, active_users: null }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['idle-but-membered', 'never-counted'],
+    'members are the popularity measure; the one-active-user floor is gone');
+});
+
+test('popularApps: excludes featured, errored, self-hosted, iconless and unreviewed apps', () => {
+  const Home = makeHome();
+  const apps = [
+    pop({ slug: 'keep', member_count: 9 }),
+    pop({ slug: 'featured', featured: true, member_count: 20 }),
+    pop({ slug: 'broken', status: 'error', member_count: 20 }),
+    pop({ slug: 'platform', self_hosted: true, member_count: 20 }),
+    pop({ slug: 'no-icon', icon_emoji: null, member_count: 20 }),
+    pop({ slug: 'unreviewed', directory: { state: 'unreviewed', tier: 'unreviewed' }, member_count: 20 }),
   ];
   assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['keep']);
 });
@@ -409,10 +454,10 @@ test('popularApps: capped at POPULAR_LIMIT; empty / missing input is safe', () =
   const Home = makeHome();
   assert.equal(Home.POPULAR_LIMIT, 6);
   const many = Array.from({ length: 20 }, (_, i) => pop({
-    slug: `p${i}`, active_users: 100 - i,
+    slug: `p${i}`, member_count: 100 - i,
   }));
   assert.deepEqual(Home.popularApps(many).map((a) => a.slug),
-    ['p0', 'p1', 'p2', 'p3', 'p4', 'p5'], 'the six most-used');
+    ['p0', 'p1', 'p2', 'p3', 'p4', 'p5'], 'the six most-membered');
   assert.equal(Home.popularApps([]).length, 0);
   assert.equal(Home.popularApps(undefined).length, 0);
 });
