@@ -277,7 +277,7 @@
   },
   "firstSession.template.game.board.sentence": {
     "text": "A new game we build together. For the first version, <0>a board game where</0> {{words}}",
-    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"Board game\" chip are picked. On screen it is shown up to {{words}}, with an ellipsis there; the maker types the rest in a box below. With their words in place of {{words}} (a full stop is added if they left one off) it is sent as the description of what to make. <0>…</0> wraps the starter, which is shown highlighted."
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"Board game\" chip are picked. On screen the whole sentence is shown with a mark (an ellipsis in English) where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it. <0>…</0> wraps the starter, which is shown highlighted."
   },
   "firstSession.template.game.board.name": {
     "text": "Board Game Night",
@@ -297,7 +297,7 @@
   },
   "firstSession.template.game.shooter.sentence": {
     "text": "A new game we build together. For the first version, <0>an arcade space shooter where</0> {{words}}",
-    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"Space shooter\" chip are picked. On screen it is shown up to {{words}}, with an ellipsis there; the maker types the rest in a box below. With their words in place of {{words}} (a full stop is added if they left one off) it is sent as the description of what to make. <0>…</0> wraps the starter, which is shown highlighted."
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"Space shooter\" chip are picked. On screen the whole sentence is shown with a mark (an ellipsis in English) where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it. <0>…</0> wraps the starter, which is shown highlighted."
   },
   "firstSession.template.game.shooter.name": {
     "text": "Space Shooter",
@@ -317,7 +317,7 @@
   },
   "firstSession.template.game.blocks.sentence": {
     "text": "A new game we build together. For the first version, <0>a 3D block game where</0> {{words}}",
-    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"3D blocks\" chip are picked. On screen it is shown up to {{words}}, with an ellipsis there; the maker types the rest in a box below. With their words in place of {{words}} (a full stop is added if they left one off) it is sent as the description of what to make. <0>…</0> wraps the starter, which is shown highlighted."
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"3D blocks\" chip are picked. On screen the whole sentence is shown with a mark (an ellipsis in English) where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it. <0>…</0> wraps the starter, which is shown highlighted."
   },
   "firstSession.template.game.blocks.name": {
     "text": "Block World",
@@ -337,7 +337,7 @@
   },
   "firstSession.template.game.trivia.sentence": {
     "text": "A new game we build together. For the first version, <0>a trivia game where</0> {{words}}",
-    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"Trivia\" chip are picked. On screen it is shown up to {{words}}, with an ellipsis there; the maker types the rest in a box below. With their words in place of {{words}} (a full stop is added if they left one off) it is sent as the description of what to make. <0>…</0> wraps the starter, which is shown highlighted."
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"Trivia\" chip are picked. On screen the whole sentence is shown with a mark (an ellipsis in English) where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it. <0>…</0> wraps the starter, which is shown highlighted."
   },
   "firstSession.template.game.trivia.name": {
     "text": "Trivia Night",
@@ -353,7 +353,15 @@
   },
   "firstSession.template.game.own.sentence": {
     "text": "A new game we build together. For the first version, {{words}}",
-    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile is picked with the \"Your own…\" chip. On screen it is shown up to {{words}}; the maker types the rest in a box below. With their words in place of {{words}} (a full stop is added if they left one off) it is sent as the description of what to make."
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile is picked with the \"Your own…\" chip. On screen the whole sentence is shown with nothing where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it."
+  },
+  "firstSession.make.wordsBlank": {
+    "text": "…",
+    "description": "The mark shown in a game sentence on the \"What do you want to make?\" screen where the maker's own words will go, beside the highlighted starter (\"… a board game where …\"). In English an ellipsis; use whatever your language writes for words left out."
+  },
+  "firstSession.make.wordsWithStop": {
+    "text": "{{words}}.",
+    "description": "The maker's own words with the punctuation that ends a sentence, used in the description sent for a new game when they typed their words without any. {{words}} is exactly what they typed. Only the closing punctuation is translated, for example a different full stop."
   },
   "firstSession.template.game.own.example": {
     "text": "For example, a drawing game where one of us draws and everyone guesses",

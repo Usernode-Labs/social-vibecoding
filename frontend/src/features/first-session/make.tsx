@@ -567,7 +567,7 @@ export function MakeScreen({
                   <p data-make-sentence={template.key} className="pt-1 text-[17px] leading-7 text-zinc-900 dark:text-zinc-100">
                     {said.head}
                     {template.finish
-                      ? (said.fill ? <><span className={BLANK}>{said.fill}</span>{' …'}</> : null)
+                      ? (said.fill ? <span className={BLANK}>{said.fill}</span> : null)
                       : choice === OWN
                         ? (
                           <input

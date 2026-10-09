@@ -191,17 +191,30 @@ export type Sentence = {
 /**
  * The description a template, a choice and the maker's own words make, in
  * the language on screen. A finishing template's is its sentence with their
- * words where `{{words}}` stands, with a full stop if they left one off.
+ * words where `{{words}}` stands, closed by the catalog's own punctuation if
+ * they left it off. Nothing the catalog writes around the blank is dropped.
  */
 export function sentence(t: Template, key: string, words: string): Sentence {
   const c = key === OWN ? null : choiceOf(t, key);
   const own = tidy(words);
   const { before, held, after } = parts(c ? c.sentence : t.own.sentence);
   if (t.finish) {
-    const end = own && !/[.!?]$/.test(own) ? '.' : '';
-    // What is drawn stops where their words begin; the box under it holds them.
-    const head = before.split(WORDS)[0];
-    return { head, fill: held, tail: '', text: `${before}${held}${after}`.replace(WORDS, `${own}${end}`), blank: !own };
+    // Their words end the sentence. Where they left the punctuation off, the
+    // catalog supplies it (a language closes a sentence its own way).
+    const ended = !own || /[.!?。！？…]$/u.test(own)
+      ? own : translate('onboarding:firstSession.make.wordsWithStop', { words: own });
+    // What is drawn is the WHOLE message: everything the catalog puts before
+    // and after `{{words}}` stays, and where their words will go stands the
+    // catalog's own mark for it, beside a highlighted starter. The box under
+    // the sentence holds what they type.
+    const mark = held ? translate('onboarding:firstSession.make.wordsBlank') : '';
+    return {
+      head: before.replace(WORDS, mark),
+      fill: held,
+      tail: after.replace(WORDS, mark),
+      text: `${before}${held}${after}`.replace(WORDS, ended),
+      blank: !own,
+    };
   }
   const fill = c ? held : own;
   return { head: before, fill, tail: after, text: `${before}${fill}${after}`, blank: !fill };

@@ -91,3 +91,40 @@ test('the remaining-literals report finds interface English and leaves identifie
   assert.equal(looksLikeProse('platform-tabs'), false);
   assert.equal(looksLikeProse('Could not load that language. Try again.'), true);
 });
+
+test('a game sentence keeps everything the catalog writes around the maker\'s words', async (t) => {
+  const DIR = 'frontend/src/features/first-session';
+  // English, as it reads today: the starter highlighted, then the mark.
+  {
+    // eslint-disable-next-line global-require
+    const { loadTsx } = require('./lib/render-tsx');
+    const { TEMPLATES, OWN, sentence } = loadTsx(`${DIR}/examples.ts`);
+    const game = TEMPLATES.find((x) => x.key === 'game');
+    const board = sentence(game, 'board', 'we roll dice');
+    assert.deepEqual([board.head, board.fill, board.tail],
+      ['A new game we build together. For the first version, ', 'a board game where', ' …']);
+    assert.equal(board.text, 'A new game we build together. For the first version, a board game where we roll dice.');
+    const own = sentence(game, OWN, 'we draw and guess!');
+    assert.deepEqual([own.head, own.fill, own.tail], ['A new game we build together. For the first version, ', '', '']);
+    assert.equal(own.text, 'A new game we build together. For the first version, we draw and guess!');
+  }
+  // A language that puts words AFTER the blank, marks the blank its own way
+  // and closes a sentence with its own full stop.
+  const { module: examples } = await loadInSpanish(t, `${DIR}/examples.ts`, {
+    'onboarding:firstSession.template.game.board.sentence': 'Intro <0>TABLERO</0> {{words}} FINAL OBLIGATORIO',
+    'onboarding:firstSession.template.game.own.sentence': 'Propio {{words}} DESPUÉS',
+    'onboarding:firstSession.make.wordsBlank': '___',
+    'onboarding:firstSession.make.wordsWithStop': '{{words}}。',
+  });
+  const game = examples.TEMPLATES.find((x) => x.key === 'game');
+  const board = examples.sentence(game, 'board', 'tiramos dados');
+  assert.deepEqual([board.head, board.fill, board.tail], ['Intro ', 'TABLERO', ' ___ FINAL OBLIGATORIO'],
+    'the text after the blank is drawn, with the language\'s own mark in the blank');
+  assert.equal(board.text, 'Intro TABLERO tiramos dados。 FINAL OBLIGATORIO',
+    'and sent, with the catalog\'s punctuation, not an English full stop');
+  assert.equal(examples.sentence(game, 'board', 'tiramos dados!').text, 'Intro TABLERO tiramos dados! FINAL OBLIGATORIO',
+    'their own punctuation is left alone');
+  const own = examples.sentence(game, examples.OWN, 'dibujamos');
+  assert.deepEqual([own.head, own.tail], ['Propio  DESPUÉS', '']);
+  assert.equal(own.text, 'Propio dibujamos。 DESPUÉS');
+});
