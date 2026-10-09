@@ -74,6 +74,9 @@ test('resident memory is split into fixed classes of process, never named', (t) 
 
   assert.equal(memory.processClass('/usr/bin/chromium --type=gpu-process'), 'browser');
   assert.equal(memory.processClass('node /usr/local/lib/node_modules/@playwright/mcp/cli.js'), 'mcp');
+  // A phone browser's server and its Playwright are counted with the others.
+  assert.equal(memory.processClass('node /usr/local/bin/shots-browser-observer.js member_phone --device iPhone 15'), 'mcp');
+  assert.equal(memory.processClass('mcp-server-playwright --browser chromium --device iPhone 15'), 'mcp');
   assert.equal(memory.processClass('node /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js'), 'agent');
   assert.equal(memory.processClass('sh -c /usr/local/bin/run-cc.sh'), 'other');
   assert.deepEqual(memory.processMemory(path.join(root, 'missing')), { rssMb: null, browserProcesses: null });

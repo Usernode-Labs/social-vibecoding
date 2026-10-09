@@ -124,7 +124,7 @@ function savedScreenshotPath(text) {
 }
 
 function createObserver({
-  persona, origins, hints = {}, emit, now = () => performance.now(),
+  persona, phone = false, origins, hints = {}, emit, now = () => performance.now(),
   outputDir = null, provenance = boundary,
 }) {
   // What the shots bridge needs to publish only shots of the app: the site
@@ -146,6 +146,8 @@ function createObserver({
   const routes = new Map();
   let callOrdinal = 0;
   const safePersona = ['admin', 'full_admin', 'guest'].includes(persona) ? persona : 'member';
+  // A persona's phone browser reports as that persona, marked as the phone.
+  const browser = { persona: safePersona, ...(phone === true ? { phone: true } : {}) };
   const originList = Array.isArray(origins) ? origins.map((value) => {
     try { return new URL(value).origin; } catch { return null; }
   }) : [];
@@ -175,7 +177,7 @@ function createObserver({
       if (message?.method !== 'tools/call' || message.id == null) return;
       const safeTool = TOOLS.has(tool) ? tool : 'other';
       const call = {
-        persona: safePersona, tool: safeTool, callOrdinal: ++callOrdinal,
+        ...browser, tool: safeTool, callOrdinal: ++callOrdinal,
         ...(safeTool === 'browser_navigate' ? navigation(message.params.arguments) : {}),
         startedAt: now(),
       };
@@ -233,7 +235,7 @@ function createObserver({
           durationMs: Math.max(0, Math.round(now() - startedAt)) });
       }
       active.clear();
-      emit({ kind: 'browser_server_exit', persona: safePersona,
+      emit({ kind: 'browser_server_exit', ...browser,
         outcome: code === 0 ? 'ok' : 'error',
         ...(Number.isInteger(code) ? { exitCode: code } : {}),
         ...(signal === 'SIGTERM' || signal === 'SIGINT' ? { signal } : {}),
@@ -254,7 +256,7 @@ function browserCommand(value = process.env.SHOTS_BROWSER_MCP_COMMAND) {
   return ['mcp-server-playwright'];
 }
 
-function start({ persona, args, binary = null,
+function start({ persona, phone = false, args, binary = null,
   stdin = process.stdin, stdout = process.stdout, stderr = process.stderr,
   diagnosticFile = process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE,
   origins = JSON.parse(process.env.SHOTS_ALLOWED_ORIGINS || '[]'),
@@ -268,7 +270,7 @@ function start({ persona, args, binary = null,
   const list = args || [];
   const outputAt = list.indexOf('--output-dir');
   const outputDir = outputAt >= 0 ? list[outputAt + 1] || null : null;
-  const observer = createObserver({ persona, origins, hints, emit, outputDir });
+  const observer = createObserver({ persona, phone, origins, hints, emit, outputDir });
   const [command, ...prefix] = binary ? [binary] : browserCommand();
   const child = spawn(command, [...prefix, ...list], { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => { /* Child exit is reported by the close handler. */ });
@@ -299,12 +301,19 @@ function start({ persona, args, binary = null,
   return child;
 }
 
+// The browser this wrapper observes: a persona's (its output directory's
+// name), or its phone browser's, `<persona>_phone` (write-shots-mcp-config.js).
+function browserName(value) {
+  const match = /^(member|admin|full_admin|guest)(_phone)?$/.exec(String(value || ''));
+  return match ? { persona: match[1], phone: !!match[2] } : null;
+}
+
 if (require.main === module) {
-  const persona = process.argv[2];
-  if (!['member', 'admin', 'full_admin', 'guest'].includes(persona)) process.exit(2);
-  start({ persona, args: process.argv.slice(3) });
+  const browser = browserName(process.argv[2]);
+  if (!browser) process.exit(2);
+  start({ ...browser, args: process.argv.slice(3) });
 }
 
 module.exports = {
-  MARKER, lineTap, createObserver, start, reportedPageUrl, savedScreenshotPath, browserCommand,
+  MARKER, lineTap, createObserver, start, reportedPageUrl, savedScreenshotPath, browserCommand, browserName,
 };
