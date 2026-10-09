@@ -314,6 +314,30 @@ CREATE INDEX IF NOT EXISTS idx_phone_sign_in_tokens_expires
   ON phone_sign_in_tokens (expires_at);
 COMMENT ON TABLE phone_sign_in_tokens IS 'staging:private';
 
+-- One row per failed phone linking/verification attempt (routes/phone-auth.js
+-- fail(), services/phone-failure-log.js): what was attempted (kind), whose
+-- account it was (null before a sign-in exists, and for the code-request
+-- legs), Firebase's own code beside this API's mapped one, and the message
+-- the caller saw. The number is kept as its last four digits only — enough
+-- to tell attempts apart, without a second copy of the PII its identity
+-- table already holds. Read by Admin → SMS delivery
+-- (routes/admin.js GET /api/admin/sms/failures); reaped by
+-- firebase-phone-auth.js cleanupExpired after 30 days.
+CREATE TABLE IF NOT EXISTS phone_auth_failures (
+  id            BIGSERIAL PRIMARY KEY,
+  kind          TEXT NOT NULL CHECK (kind IN
+                  ('code_request', 'verify', 'link_request', 'link_verify')),
+  user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  phone_last4   VARCHAR(4) CHECK (phone_last4 ~ '^[0-9]{4}$'),
+  error_code    TEXT NOT NULL,
+  provider_code TEXT,
+  message       TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_phone_auth_failures_created
+  ON phone_auth_failures (created_at DESC);
+COMMENT ON TABLE phone_auth_failures IS 'staging:private';
+
 -- Global CLI device authorization and opaque access tokens. These are
 -- deliberately independent from browser sessions and iframe/app identity.
 CREATE TABLE IF NOT EXISTS cli_device_authorizations (

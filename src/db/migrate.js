@@ -202,6 +202,7 @@ async function migrate(config) {
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
+  await seedStagingPhoneFailures(pool);
   await seedStagingPlatformMail(pool);
   finishPhase('stagingFixturesMs');
   await sweepInterruptedDbExports(pool);
@@ -13387,6 +13388,37 @@ async function migrateAppDbsToPerRole(pool, config) {
 // resolve) and all are visibly named staging-demo-*, so nobody mistakes
 // one for a real signup. The waitlist row exists so a tester can exercise
 // the confirm link end to end against a known token.
+// A few rows for Admin → SMS delivery's "Recent failures" table. The table
+// is staging:private, so a preview would otherwise show only its empty
+// state and nobody could review the populated one. One row per failure
+// shape the table exists to answer, all obviously fake, the demo user for
+// the one signed-in row; idempotent (only when the table is empty), and
+// strictly a no-op outside staging.
+async function seedStagingPhoneFailures(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows } = await pool.query('SELECT count(*)::int AS n FROM phone_auth_failures');
+    if (!rows[0] || rows[0].n > 0) return;
+    await pool.query(
+      `INSERT INTO phone_auth_failures
+         (kind, user_id, phone_last4, error_code, provider_code, message, created_at)
+       VALUES
+         ('link_verify', 900001, '0101', 'phone_in_use', NULL,
+          'Staging demo: that phone number already has an account.',
+          NOW() - INTERVAL '2 days'),
+         ('verify', NULL, NULL, 'invalid_or_expired_code', 'INVALID_CODE',
+          'Staging demo: the code was mistyped or had expired.',
+          NOW() - INTERVAL '1 day'),
+         ('code_request', NULL, '9001', 'too_many_attempts', 'TOO_MANY_ATTEMPTS_TRY_LATER',
+          'Staging demo: too many attempts. Try again later.',
+          NOW() - INTERVAL '3 hours')`
+    );
+    log.info('db', 'Staging phone failure log seeded', { rows: 3 });
+  } catch (err) {
+    log.warn('db', 'Staging phone failure log seeding failed', { message: err.message });
+  }
+}
+
 async function seedStagingPlatformMail(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 

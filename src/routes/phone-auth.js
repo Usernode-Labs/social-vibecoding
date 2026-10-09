@@ -37,11 +37,20 @@
  * Like the OAuth finish route, verify and finish mint sessions, so they
  * sit in routes/auth.js's SESSION_MINT_PATHS and are refused 409
  * logout_required over a live session before any credential is consumed.
+ *
+ * Every failure these four endpoints answer (the PhoneAuthError refusals
+ * and the unexpected 500s alike) is recorded in phone_auth_failures —
+ * timestamp, kind, account, the number's last four digits, this API's code
+ * and Firebase's own — and read back in Admin → SMS delivery
+ * (routes/admin.js GET /api/admin/sms/failures). The username step
+ * (/finish) is account setup after a verification that already succeeded,
+ * so its field refusals are not failure-log material.
  */
 
 const express = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const failureLog = require('../services/phone-failure-log');
 const phoneAuth = require('../services/firebase-phone-auth');
 const providers = require('../services/sign-in-providers');
 const communityInvites = require('../services/community-invites');
@@ -77,17 +86,47 @@ function clearPrivateCookie(res, name) {
   res.clearCookie(name, { path: PHONE_COOKIE_PATH });
 }
 
-function fail(res, error, what) {
-  if (error instanceof phoneAuth.PhoneAuthError) {
-    return res.status(error.status).json({ error: error.message, code: error.code });
-  }
-  log.error('phone-auth', `${what} failed`, { message: error.message });
-  return res.status(500).json({ error: 'Internal server error' });
+// The number's last four digits for the failure log. Only ever called with
+// an E.164 string (normalized by the service, or claims.phoneNumber), so the
+// digits are digits — a leading zero among them is ordinary.
+function last4Of(phone) {
+  return typeof phone === 'string' && /^[0-9]{4}$/.test(phone.slice(-4))
+    ? phone.slice(-4) : null;
 }
 
 function phoneAuthRoutes(config) {
   const pool = getPool(config);
   const router = express.Router();
+
+  // Every refusal these endpoints answer lands in the failure log as well as
+  // the caller's response: kind and account say WHO was doing WHAT, the two
+  // codes say WHY, and the message is what the person was told. ctx.kind is
+  // set by the four endpoints below; without it (the reCAPTCHA site key read)
+  // recordFailure writes nothing. Lives inside phoneAuthRoutes because it
+  // writes through that router's own pool.
+  async function fail(res, error, what, ctx = {}) {
+    if (error instanceof phoneAuth.PhoneAuthError) {
+      await failureLog.recordFailure(pool, {
+        kind: ctx.kind,
+        userId: ctx.userId,
+        phoneLast4: last4Of(ctx.phone),
+        errorCode: error.code,
+        providerCode: error.providerCode || null,
+        message: error.message,
+      });
+      return res.status(error.status).json({ error: error.message, code: error.code });
+    }
+    log.error('phone-auth', `${what} failed`, { message: error.message });
+    await failureLog.recordFailure(pool, {
+      kind: ctx.kind,
+      userId: ctx.userId,
+      phoneLast4: last4Of(ctx.phone),
+      errorCode: 'internal',
+      providerCode: null,
+      message: error.message,
+    });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 
   function requireOffered(req, res, next) {
     if (!phoneAuth.offered(config)) {
@@ -136,18 +175,24 @@ function phoneAuthRoutes(config) {
         );
         return res.json({ ok: true, sessionInfo: sent.sessionInfo });
       } catch (error) {
-        return fail(res, error, 'Phone code request');
+        return fail(res, error, 'Phone code request', {
+          kind: 'code_request',
+          phone: phoneAuth.normalizePhone(req.body?.phoneNumber),
+        });
       }
     }
   );
 
   router.post('/api/auth/phone/verify', requireOffered, phoneVerifyLimiter, async (req, res) => {
+    // Hoisted so the catch can attach the number once the claims are in
+    // hand: before that, a sessionInfo or ID token is opaque to the server.
+    let claims = null;
     try {
       // Either leg lands on the same claims: the server-side exchange
       // (sessionInfo + code from this browser's own /request), or an ID
       // token a client's own Firebase SDK earned. Same verifier, same
       // spent-once guard.
-      const claims = req.body?.idToken
+      claims = req.body?.idToken
         ? await phoneAuth.verifyIdToken(pool, config, req.body.idToken)
         : await (async () => {
             // The pool spends a test number's one-time admin code.
@@ -161,6 +206,16 @@ function phoneAuthRoutes(config) {
           })();
       const result = await phoneAuth.signIn(pool, claims, { createSession });
       if (result.refuse) {
+        // A refused sign-in is still a failed verification, with the account
+        // and number known: logged, the one refuse the flow produces.
+        await failureLog.recordFailure(pool, {
+          kind: 'verify',
+          userId: result.userId,
+          phoneLast4: last4Of(claims?.phoneNumber),
+          errorCode: result.refuse,
+          providerCode: null,
+          message: 'Admin accounts sign in with their password.',
+        });
         return res.status(422).json({
           error: 'Admin accounts sign in with their password.',
           code: result.refuse,
@@ -243,7 +298,10 @@ function phoneAuthRoutes(config) {
         ...(invite ? { invite } : {}),
       });
     } catch (error) {
-      return fail(res, error, 'Phone verification');
+      return fail(res, error, 'Phone verification', {
+        kind: 'verify',
+        phone: claims?.phoneNumber,
+      });
     }
   });
 
@@ -303,7 +361,11 @@ function phoneAuthRoutes(config) {
         const sent = await phoneAuth.requestCode(config, req.body?.phoneNumber, req.body?.recaptchaToken);
         return res.json({ ok: true, sessionInfo: sent.sessionInfo });
       } catch (error) {
-        return fail(res, error, 'Phone link code request');
+        return fail(res, error, 'Phone link code request', {
+          kind: 'link_request',
+          userId: req.user.id,
+          phone: phoneAuth.normalizePhone(req.body?.phoneNumber),
+        });
       }
     }
   );
@@ -315,9 +377,13 @@ function phoneAuthRoutes(config) {
     sameOriginBrowserOnly,
     signedIn,
     async (req, res) => {
+      // Hoisted for the catch, as in /verify above: phone_in_use and
+      // phone_already_linked are decided after the claims are known, and
+      // the number is the first thing an operator asks about those.
+      let claims = null;
       try {
         const exchanged = await phoneAuth.exchangeCode(config, req.body?.sessionInfo, req.body?.code, { pool });
-        const claims = await phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
+        claims = await phoneAuth.verifyIdToken(pool, config, exchanged.idToken);
         const linked = await phoneAuth.linkPhone(pool, claims, req.user.id);
         const joined = await communityInvites.joinQueued(pool, req.user.id);
         if (joined.length) await challengeScorer.scoreOnJoin(pool, config);
@@ -326,7 +392,11 @@ function phoneAuthRoutes(config) {
         });
         return res.json({ ok: true, joined, privateMember: joined.length > 0 });
       } catch (error) {
-        return fail(res, error, 'Phone link');
+        return fail(res, error, 'Phone link', {
+          kind: 'link_verify',
+          userId: req.user.id,
+          phone: claims?.phoneNumber,
+        });
       }
     }
   );
