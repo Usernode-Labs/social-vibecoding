@@ -6378,10 +6378,16 @@ const AppView = {
       return { name: 'Testing', figure: 'Not started', tone: 'muted', done: false, segments: [{ weight: 1, pct: 0, state: 'moving' }], label: 'Testing: not started', note: ['Testing starts once its preview is built.'], actions };
     }
     if (phase === 'queued' || phase === 'deferred') {
+      const copy = AppView._checksPhaseCopy(phase, item);
       return {
         name: 'Testing', figure: phase === 'queued' ? 'Waiting for a slot' : 'Waiting', tone: 'muted', done: false,
         segments: [{ weight: est ? est.buildMs : 1, pct: 100, state: 'moving' }, { weight: est ? est.checksMs : 3, pct: 0, state: 'moving' }],
-        label: 'Testing: waiting', note: [AppView._checksPhaseCopy(phase, item).title], actions,
+        // The deferred line carries its why as the note's tooltip, the same
+        // sentence the board's Checks deferred chip shows on hover (#4502).
+        label: 'Testing: waiting',
+        note: [copy.title],
+        noteTitle: phase === 'deferred' ? copy.detail : undefined,
+        actions,
       };
     }
     // Where the run is: how much of the build, then how much of the checks.

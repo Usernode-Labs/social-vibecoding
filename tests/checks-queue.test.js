@@ -355,6 +355,19 @@ test('the card says "Waiting for a checks slot (2 ahead)", offers no re-run, and
   assert.equal(AppView._changeTestingView(QUEUED).done, false);
 });
 
+// #4502 — the deferred card's note explains itself on hover, the same
+// sentence the board's Checks deferred chip shows. Queued shares the branch
+// and must gain no tooltip: waiting for a slot is not a why.
+test('the Testing card\'s deferred line carries its why as the note\'s tooltip, and queued stays untitled', () => {
+  const AppView = makeAppView();
+  const deferred = { ...QUEUED, check_phase: 'deferred' };
+  const v = AppView._changeTestingView(deferred);
+  assert.equal(v.note.join(' '), 'Checks deferred');
+  assert.equal(v.figure, 'Waiting');
+  assert.equal(v.noteTitle, AppView.CHECKS_PHASE_COPY.deferred.detail);
+  assert.equal(AppView._changeTestingView(QUEUED).noteTitle, undefined, 'queued gains no tooltip');
+});
+
 test('the status pill says the run is waiting, with its place, and keeps the running treatment', () => {
   const MergeStatus = require('../public/js/merge-status.js');
   const pill = MergeStatus.lifecycle(QUEUED);
@@ -426,6 +439,35 @@ test('the proposal page itself says where a waiting run is in line, without open
   assert.ok(text.includes(want), `the page says "${declared.expectText}"; it read: ${text.slice(0, 600)}`);
   assert.match(page, /data-change-gate="testing" data-done="false"[\s\S]*?<p class="dev-change-gate-note">Waiting for a checks slot \(2 ahead\)<\/p>/,
     'on the Testing card\'s line');
+});
+
+// #4502 — the same page with the run deferred: the note line carries the
+// reason as its title, the browser's own tooltip, as the board chip does.
+test('the drawn Testing card puts the deferred reason on the note line\'s title', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const src = read('src/routes/votes.js');
+  const start = src.indexOf('function stagingMockProposals(viewer)');
+  let depth = 0; let end = -1;
+  for (let j = src.indexOf('{', start); j < src.length; j++) {
+    if (src[j] === '{') depth += 1;
+    else if (src[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
+  }
+  const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
+  const deferred = JSON.parse(JSON.stringify(ctx.__rows('me').find((r) => r.id === 9000054)));
+  deferred.check_phase = 'deferred';
+  deferred.mergeRequirements = JSON.parse(JSON.stringify(mergeRequirements.readRequirements(deferred)));
+
+  const AppView = makeAppView();
+  AppView.appData = { slug: 'usernode-2d5619', can_collaborate: true };
+  const v = AppView._topicViewFor('proposal', deferred);
+  const page = renderToHtml(createElement(ChangeDetail, { card: v.card, body: v.body, item: deferred }));
+  const detail = AppView.CHECKS_PHASE_COPY.deferred.detail;
+  assert.match(page, new RegExp(`data-change-gate="testing"[\\s\\S]*?<p class="dev-change-gate-note" title="${detail}">Checks deferred</p>`),
+    'the note line\'s title carries the deferred reason');
 });
 
 test('the Helm chart passes the cap through, documented beside CAPTURE_CPUS', () => {
