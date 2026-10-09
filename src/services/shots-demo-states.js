@@ -26,6 +26,7 @@
 // belongs in its staging seeds (src/db/migrate.js), which each side runs for
 // its own revision.
 
+const dbRetry = require('./db-retry');
 const shotsFixtures = require('./shots-fixtures');
 
 const IDS = Object.freeze({
@@ -892,15 +893,29 @@ async function inspectDemoStates({ databaseUrl, slug, runId, side, selfAppSlug }
  * that fails on either side is rolled back on both and left out (`skipped`),
  * so a revision whose schema moved under a state costs that state, never the
  * run, and never leaves it on one side only.
+ *
+ * The booted copies are running against these databases meanwhile, so a
+ * write can lose a deadlock or a serialization conflict to the app's own
+ * work. Rolling back to the savepoint would not help: this transaction still
+ * holds what the other session waits for. So the whole write is rolled back
+ * on both sides and run again, a bounded number of times; on the last
+ * attempt such a state is left out like any other. Once COMMIT has been sent
+ * nothing is run again, since one side may already hold the states.
  */
-async function installDemoStates({ base, head }, stateIds) {
+async function installDemoStates({ base, head }, stateIds, { retry = {} } = {}) {
   for (const [side, input] of [['base', base], ['head', head]]) {
     shotsFixtures.assertShotsDatabase(input.databaseUrl, input.slug, input.runId, side);
   }
   const wanted = new Set(stateIds || []);
   const states = STATES.filter((state) => wanted.has(state.id));
   if (!states.length) return { installed: [], skipped: [] };
-  return shotsFixtures.withClient(base.databaseUrl, (baseClient) =>
+  return installInStep({ base, head }, states, { retry });
+}
+
+async function installInStep({ base, head }, states, { retry = {} } = {}) {
+  const attempts = retry.attempts || dbRetry.DB_RETRY_ATTEMPTS;
+  let committing = false;
+  return dbRetry.withDbRetry((attempt) => shotsFixtures.withClient(base.databaseUrl, (baseClient) =>
     shotsFixtures.withClient(head.databaseUrl, async (headClient) => {
       const clients = [baseClient, headClient];
       const all = (sql) => Promise.all(clients.map((client) => client.query(sql)));
@@ -923,17 +938,24 @@ async function installDemoStates({ base, head }, stateIds) {
             await all('RELEASE SAVEPOINT shots_demo_state');
             installed.push({ id: state.id, persona: state.persona, ...(alsoFor.length ? { alsoFor } : {}), shows });
           } catch (error) {
+            if (attempt < attempts && dbRetry.isTransientLockError(error)) throw error;
             await all('ROLLBACK TO SAVEPOINT shots_demo_state');
             skipped.push({ id: state.id, code: String(error?.code || 'install_failed').slice(0, 40) });
           }
         }
+        committing = true;
         await all('COMMIT');
         return { installed, skipped };
       } catch (error) {
         await Promise.all(clients.map((client) => client.query('ROLLBACK').catch(() => {})));
         throw error;
       }
-    }));
+    })), {
+    label: 'Shots demo states',
+    ...retry,
+    attempts,
+    retryable: (error) => !committing && dbRetry.isTransientLockError(error),
+  });
 }
 
 module.exports = {
@@ -943,4 +965,6 @@ module.exports = {
   STATE_IDS: Object.freeze(STATES.map((state) => state.id)),
   inspectDemoStates,
   installDemoStates,
+  // Tests: install hand-made states through the same two-sided write.
+  _installInStepForTest: installInStep,
 };
