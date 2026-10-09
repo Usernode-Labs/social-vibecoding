@@ -765,7 +765,7 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
 const BOT_THREAD = [
   { id: 3001, user: { login: 'reporter' }, body: 'Dark mode please.', created_at: '2026-10-02T18:20:00Z' },
   { id: 3002, user: { login: 'usernode-bot' }, body: 'Homeroom bot is looking at this request.', created_at: '2026-10-02T18:24:00Z' },
-  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a spec for this request.', created_at: '2026-10-02T18:27:00Z' },
+  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a plan for this request.', created_at: '2026-10-02T18:27:00Z' },
   { id: 3004, user: { login: 'usernode-bot' }, body: 'Thanks for the report.', created_at: '2026-10-02T18:30:00Z' },
 ];
 

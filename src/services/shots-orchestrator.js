@@ -387,10 +387,39 @@ const GUEST_WHO = Object.freeze({
   unavailable: 'a visitor who is not signed in, with no identity here: guests are not available on these copies, so this app shows what it shows a signed-out visitor outside Homeroom, which can send the browser away from these two addresses; if it does, skip the change and say so',
 });
 
+// Who the signed-in browsers are to an app built on Homeroom. Its identity
+// token says who is signed in ({ id, username, usernode_pubkey, locale }),
+// never a role in the app: there is no creator or admin claim, and no
+// platform call answers "is this the owner?". The two administrator
+// personas are Homeroom's, which the app is never told, and none of the
+// browsers is any of the app's own people. So a screen the app keeps for
+// particular accounts refuses every browser on the copies. Three runs on
+// one app's Creator Studio (QuestVerse's PRs 7 to 9) tried all three
+// browsers before giving up; appRoles says so up front, so the agent skips
+// such a change at once. Fixed words only.
+const CHILD_APP_WHO = Object.freeze({
+  member: 'an ordinary signed-in person with no role in this app',
+  read_only_admin: 'a Homeroom administrator with read-only rights; this app is not told that, so it sees an ordinary signed-in person with no role in it',
+  full_admin: 'a Homeroom administrator that exists only in these two throwaway copies; this app is not told that, so it sees an ordinary signed-in person with no role in it',
+});
+const CHILD_APP_ROLES = Object.freeze({
+  heldByAnyBrowser: false,
+  note: 'No browser here is this app\'s creator, owner or one of its admins: Homeroom tells an app who is '
+    + 'signed in, never their role in it, and these copies sign in only fixture accounts, never the app\'s own '
+    + 'people. So a screen the app keeps for particular accounts (its creator, an allowlist of '
+    + 'usernames or ids, a page private to one account) refuses every browser here. When the after address '
+    + 'refuses a browser that way, call skip_change for that change at once, saying the app keeps that screen '
+    + 'for particular accounts, and do not try the other browsers. A role a signed-in person gets through the '
+    + 'app itself is different: when hints.setup says how to get it, do that first.',
+});
+
 // What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
-function shotsBrief({ run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null }) {
+// `childApp` is an app built on Homeroom rather than Homeroom itself.
+function shotsBrief({
+  run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, childApp = false,
+}) {
   const testingPaths = testingPathsForSession(session);
   // A change that only shows at certain times declares the moment to see it
   // at (services/preview-clock.js). Both copies run as staging, so each opens
@@ -409,17 +438,22 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
       after: revision.headSha.slice(0, 12),
     },
     browsers: {
-      member: { tool: 'browser_member', who: 'an ordinary member' },
-      read_only_admin: { tool: 'browser_admin', who: 'an administrator with read-only rights' },
+      member: { tool: 'browser_member', who: childApp ? CHILD_APP_WHO.member : 'an ordinary member' },
+      read_only_admin: {
+        tool: 'browser_admin',
+        who: childApp ? CHILD_APP_WHO.read_only_admin : 'an administrator with read-only rights',
+      },
       full_admin: {
         tool: 'browser_full_admin',
-        who: 'a full administrator that exists only in these two throwaway copies',
+        who: childApp ? CHILD_APP_WHO.full_admin
+          : 'a full administrator that exists only in these two throwaway copies',
       },
       guest: {
         tool: 'browser_guest',
         who: GUEST_WHO[guestKind] || 'a visitor who is not signed in',
       },
     },
+    ...(childApp ? { appRoles: { ...CHILD_APP_ROLES } } : {}),
     changedFiles: {
       items: revision.files.slice(0, 200),
       complete: revision.filesComplete && revision.files.length <= 200,
@@ -1135,6 +1169,7 @@ async function executeRun(config, options, injected = {}) {
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
+      childApp: app.slug !== config.selfAppSlug,
     });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),

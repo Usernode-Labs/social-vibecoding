@@ -185,6 +185,12 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /call browser_close again, then\s+call save_clip/);
   assert.match(prompt, /skip_change with that change id and what\s+you saw/);
   assert.match(prompt, /You do not need to judge whether a change is\s+good/);
+  // An app built on Homeroom is never told a role: three runs on one app's
+  // Creator Studio tried every browser before giving up (QuestVerse's PRs 7 to 9).
+  assert.match(prompt, /When the brief has appRoles, the app is one built on Homeroom and no browser\s+holds a role in it/);
+  assert.match(prompt, /kept for particular accounts \(its creator, an allowlist, a page\s+private to one account\), every other browser is refused the same way/);
+  assert.match(prompt, /call\s+skip_change for that change at once, with the default outcome/);
+  assert.match(prompt, /do not try the other browsers/);
   assert.match(prompt, /do not end with only\s+prose/);
   assert.match(agent.TASK_PROMPT, /get_brief/);
   assert.match(agent.TASK_PROMPT, /before and an\s+after shot of every declared change/);

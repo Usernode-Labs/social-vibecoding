@@ -792,6 +792,9 @@ test('a view-public child app\'s guest token reaches only the agent dispatch, an
     tool: 'browser_guest',
     who: 'a visitor who is not signed in, whom this public app shows as a guest, as it does at its own address',
   });
+  assert.equal(brief.appRoles.heldByAnyBrowser, false,
+    'a child app\'s brief says no browser holds a role in it');
+  assert.match(brief.browsers.full_admin.who, /^a Homeroom administrator .*this app is not told that/);
   assert.doesNotMatch(JSON.stringify(brief), /guest\.jwt/, 'the brief carries no token');
   const trace = fixture.transitions.at(-1).patch.traceSummary;
   assert.doesNotMatch(JSON.stringify(fixture.transitions), /guest\.jwt/, 'no durable trace carries it');
@@ -821,6 +824,54 @@ test('Homeroom\'s own shots tell the guest lookup so, and the guest carries noth
   assert.deepEqual(lookup, { selfApp: true });
   assert.deepEqual(dispatchTokens, TOKENS, 'no guest token without one');
   assert.match(brief.browsers.guest.who, /^a visitor who is not signed in: Homeroom shows it its signed-out pages/);
+  assert.equal('appRoles' in brief, false, 'on Homeroom\'s own copies the administrators are its administrators');
+  assert.equal(brief.browsers.full_admin.who, 'a full administrator that exists only in these two throwaway copies');
+});
+
+// An app built on Homeroom is told who is signed in, never their role in
+// it, so no browser is its creator or one of its admins. Three runs on one
+// app's Creator Studio tried every browser before giving up (QuestVerse's PRs 7 to 9):
+// the brief says so up front, in fixed words, so the agent skips at once.
+test('a child app\'s brief says no browser holds a role in the app, and to skip an owner-only screen at once', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-app-roles-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'Seasonal theme picker' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/app.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    const child = briefFor({ childApp: true });
+    assert.deepEqual(Object.keys(child.browsers).sort(), ['full_admin', 'guest', 'member', 'read_only_admin']);
+    assert.equal(child.browsers.member.who, 'an ordinary signed-in person with no role in this app');
+    for (const persona of ['read_only_admin', 'full_admin']) {
+      assert.match(child.browsers[persona].who,
+        /^a Homeroom administrator .*; this app is not told that, so it sees an ordinary signed-in person with no role in it$/);
+    }
+    assert.equal(child.browsers.full_admin.tool, 'browser_full_admin');
+    assert.equal(child.appRoles.heldByAnyBrowser, false);
+    assert.match(child.appRoles.note, /^No browser here is this app's creator, owner or one of its admins/);
+    assert.match(child.appRoles.note, /never their role in it/);
+    assert.match(child.appRoles.note, /never the app's own\s+people/);
+    assert.match(child.appRoles.note, /an allowlist of usernames or ids/);
+    assert.match(child.appRoles.note, /call skip_change for that change at once/);
+    assert.match(child.appRoles.note, /do not try the other browsers/);
+    assert.match(child.appRoles.note, /when hints\.setup says how to get it, do that first/);
+
+    const homeroom = briefFor({});
+    assert.equal('appRoles' in homeroom, false);
+    assert.equal(homeroom.browsers.member.who, 'an ordinary member');
+    assert.equal(homeroom.browsers.read_only_admin.who, 'an administrator with read-only rights');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
 });
 
 test('slow paired environment provisioning does not consume the agent budget', async () => {

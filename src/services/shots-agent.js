@@ -146,6 +146,14 @@ you saw: nothing saved for that change is published. Then carry on with the
 others. You do not need to judge whether a change is good. Finish once every
 change is saved or skipped, and do not end with only prose.
 
+When the brief has appRoles, the app is one built on Homeroom and no browser
+holds a role in it: none is its creator, owner or one of its admins, whatever
+the persona is called. So when the after address refuses a browser because
+the screen is kept for particular accounts (its creator, an allowlist, a page
+private to one account), every other browser is refused the same way: call
+skip_change for that change at once, with the default outcome and what the
+app said, and do not try the other browsers.
+
 Tell apart a change you could not reach from one that does not work. When you
 carried out the steps on the after address and the app itself broke (an
 action answered a server error: check browser_network_requests for an HTTP

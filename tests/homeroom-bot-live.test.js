@@ -1003,8 +1003,10 @@ test('runTriage acts only through the live module, and only when the app is live
   const shadow = BOT_SRC.slice(BOT_SRC.indexOf('async function shadowBuild('), BOT_SRC.indexOf('/**', BOT_SRC.indexOf('async function shadowBuild(')));
   assert.match(shadow, /propose: false,?\s*\}\);/);
   assert.doesNotMatch(shadow, /live\.post\(|promoteAsBot|advanceSeen/, 'a shadow build says nothing anywhere');
-  assert.match(BOT_SRC, /\} else if \(parsed\.verdict === 'ready' && shadowBuildsApply\(settings, app, config\)\) \{/,
+  assert.match(BOT_SRC, /\} else if \(parsed\.verdict === 'ready'\) \{\n\s+const skip = shadowBuildSkipReason\(settings, app, config\);/,
     'and it is queued only where the live branch does not run');
+  assert.match(BOT_SRC, /if \(!skip\) \{\n(?:\s+\/\/.*\n)+\s+if \(await queueShadowBuild\(pool, runId\)\) acted = 'shadow_queued';/,
+    'only when nothing rules it out; otherwise the run says why (build_error "skipped: …")');
   assert.equal(bot.shadowBuildSkipReason({ mode: 'shadow', liveApps: ['todo'], shadowBuilds: true }, { slug: 'todo' }),
     'the app is live now', 'a live app is never also shadow built');
   assert.match(BOT_SRC, /const liveMode = live\.isLiveFor\(settings, app\);/);

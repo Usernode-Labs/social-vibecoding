@@ -2154,7 +2154,7 @@ async function runMcp(args, launcherPath) {
           .describe('What you learned reaching this state: data to create first, short text that shows it was reached, and the element to point at. Guidance only; never executed.'),
       }).strict(),
     }).strict()).max(3),
-  }).strict().describe('Version-1 before & after shots declaration. Use impact ui or motion with 1-3 real user flows; use none with a concrete rationale and no stories. Never include credentials or screenshot-only application routes.');
+  }).strict().describe('Version-1 before & after shots declaration. Use impact ui or motion with 1-3 real user flows; use none with a concrete rationale and no stories. On an app built on Homeroom no persona is the app\'s creator or one of its admins (an app is told who is signed in, never their role), so a screen it keeps for particular accounts cannot be shot. Never include credentials or screenshot-only application routes.');
   // chat_sessions.id is PostgreSQL INTEGER. Keep the MCP contract aligned
   // with the HTTP route's canonical-ID parser so an accepted tool argument
   // cannot later turn into a misleading 404.

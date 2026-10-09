@@ -28,7 +28,7 @@ const story = z.object({
   claim: z.string().min(1).max(1000)
     .describe('The change in plain words, as a person reading the proposal would say it.'),
   persona: z.enum(['member', 'read_only_admin', 'full_admin', 'guest'])
-    .describe('Who is signed in. Use full_admin only for Homeroom controls that are hidden from read-only administrators; that identity exists only inside the disposable before/after builds. Use guest, a visitor who is not signed in, for what signed-out people see (a landing or sign-in page, a public app\'s guest view).'),
+    .describe('Who is signed in. Use full_admin only for Homeroom controls that are hidden from read-only administrators; that identity exists only inside the disposable before/after builds. Use guest, a visitor who is not signed in, for what signed-out people see (a landing or sign-in page, a public app\'s guest view). On an app built on Homeroom no persona is the app\'s creator or one of its admins: the app is told who is signed in, never their role, so a screen it keeps for particular accounts cannot be shot.'),
   viewports: z.array(viewport).min(1).max(2),
   intent: z.object({
     startPath: z.string().min(1).max(512)

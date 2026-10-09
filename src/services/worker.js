@@ -3479,6 +3479,13 @@ async function execInWorker(sessionId, {
     safeEnv.AGENT_MODEL_MAX_OUTPUT_TOKENS = agentModelMetadata?.maxOutputTokens != null
       ? String(agentModelMetadata.maxOutputTokens)
       : '';
+    // The catalog's context window, which the adapter hands Claude Code with
+    // the window it compacts at (claudeChildEnv): an OpenRouter model is one
+    // Claude Code does not know, and without them a build resent its whole
+    // history, up to 1.2 MB, on every request.
+    safeEnv.AGENT_MODEL_CONTEXT_WINDOW = agentModelMetadata?.contextWindow != null
+      ? String(agentModelMetadata.contextWindow)
+      : '';
     // The thinking level, which the adapter sends as output_config.effort.
     safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
     // #3426: '1' lets the adapter pass image blocks through to a model the
