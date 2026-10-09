@@ -699,7 +699,7 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
     let artifacts = [];
     if (next.state === 'verified') {
       const artifactResult = await client.query(
-        `SELECT id, story_id AS "storyId", viewport, side, variant, media,
+        `SELECT id, story_id AS "storyId", viewport, side, variant, media, color_scheme AS "colorScheme",
                 content_type AS "contentType", width, height, bytes, sha256,
                 focus_rect AS "focusRect", stage_labels AS "stageLabels"
            FROM shot_artifacts
@@ -961,6 +961,7 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
               SELECT jsonb_agg(jsonb_build_object(
                 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport,
                 'side', a.side, 'variant', a.variant, 'media', a.media,
+                  'colorScheme', a.color_scheme,
                 'contentType', a.content_type, 'width', a.width,
                 'height', a.height, 'bytes', a.bytes,
                 'sha256', a.sha256,
@@ -1075,13 +1076,14 @@ async function storeArtifacts(pool, runId, artifacts, { headSha, planHash } = {}
       await client.query(
         `INSERT INTO shot_artifacts
            (id, run_id, story_id, viewport, side, variant, media, content_type,
-            data, width, height, bytes, sha256, focus_rect, stage_labels)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb)`,
+            data, width, height, bytes, sha256, focus_rect, stage_labels, color_scheme)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16)`,
         [newId(), runId, artifact.storyId, artifact.viewport,
          artifact.side, artifact.variant, artifact.media, artifact.contentType, artifact.data,
          artifact.width, artifact.height, artifact.bytes, artifact.sha256,
          artifact.focusRect ? JSON.stringify(artifact.focusRect) : null,
-         artifact.stageLabels ? JSON.stringify(artifact.stageLabels) : null]
+         artifact.stageLabels ? JSON.stringify(artifact.stageLabels) : null,
+         artifact.colorScheme || 'light']
       );
     }
     return artifacts.length;

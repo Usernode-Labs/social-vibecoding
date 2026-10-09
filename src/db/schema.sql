@@ -9558,6 +9558,29 @@ CREATE TABLE IF NOT EXISTS shot_artifacts (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(run_id, story_id, viewport, side, variant, media)
 );
+-- Photo appearance is independent of viewport and comparison side. Existing
+-- shots remain the ordinary/light variant; a new run can retain both modes.
+ALTER TABLE shot_artifacts ADD COLUMN IF NOT EXISTS color_scheme VARCHAR(5) NOT NULL DEFAULT 'light'
+  CHECK (color_scheme IN ('light', 'dark'));
+-- Older installs retain the original five-column slot constraint even
+-- though later CREATE TABLE definitions include media. Identify both legacy
+-- shapes by their columns, rather than guessing PostgreSQL's generated name.
+DO $$
+DECLARE old_constraint TEXT;
+BEGIN
+  FOR old_constraint IN
+    SELECT conname FROM pg_constraint
+     WHERE conrelid = 'shot_artifacts'::regclass AND contype = 'u'
+       AND pg_get_constraintdef(oid) IN (
+         'UNIQUE (run_id, story_id, viewport, side, variant)',
+         'UNIQUE (run_id, story_id, viewport, side, variant, media)'
+       )
+  LOOP
+    EXECUTE format('ALTER TABLE shot_artifacts DROP CONSTRAINT %I', old_constraint);
+  END LOOP;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shot_artifacts_mode_slot
+  ON shot_artifacts(run_id, story_id, viewport, side, variant, media, color_scheme);
 CREATE INDEX IF NOT EXISTS idx_shot_artifacts_run
   ON shot_artifacts(run_id, story_id, viewport);
 COMMENT ON TABLE shot_artifacts IS 'staging:private';

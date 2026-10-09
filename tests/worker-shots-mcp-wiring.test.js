@@ -471,7 +471,7 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
     'the run\'s own addresses come from its brief');
   const [sent] = uploads(bridge);
   assert.equal(sent.method, 'POST');
-  assert.deepEqual(sent.query, { ...shot, kind: 'screen' });
+  assert.deepEqual(sent.query, { ...shot, kind: 'screen', colorScheme: 'light' });
   assert.equal(sent.headers['content-type'], 'application/octet-stream');
   assert.ok(Buffer.from(sent.body).equals(image));
 
@@ -696,4 +696,47 @@ test('a shots turn samples the worker\'s memory through the proxy, which the ima
   const asked = runner.indexOf('export SHOTS_MEMORY_SAMPLE_MS=5000');
   assert.ok(asked > 0, 'the runner sets the interval');
   assert.ok(asked < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'), 'before the proxy starts');
+});
+
+ test('photo modes have fixed media emulation, shell preferences, and separate shot directories', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-modes-'));
+  try {
+    const { config } = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1' });
+    for (const [server, mode] of [['browser_member', 'light']]) {
+      const args = config.mcpServers[server].args;
+      const appearance = JSON.parse(fs.readFileSync(args[args.indexOf('--config') + 1], 'utf8'));
+      assert.equal(appearance.browser.contextOptions.colorScheme, mode);
+      const script = fs.readFileSync(appearance.browser.initScript[0], 'utf8');
+      assert.match(script, new RegExp(`localStorage.setItem\\('theme', "${mode}"\\)`));
+      assert.match(script, /location.origin/);
+      assert.match(script, /history.replaceState/);
+      assert.equal(args[args.indexOf('--output-dir') + 1], path.join(dir, 'shots', 'member', ...(mode === 'dark' ? ['dark'] : [])));
+      assert.equal(config.mcpServers[server].env.SHOTS_PAIR_PHOTOS, '1');
+      assert.ok(fs.existsSync(path.join(dir, 'shots', 'member', 'dark')), 'same persona stores its second image; no second server');
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('one final screenshot save publishes its trusted light and dark slots automatically', async (t) => {
+  const bridge = bridgeFixture(t);
+  const pairing = require('../worker/shots-appearance-pair');
+  const directory = path.join(bridge.shotsDir, 'member');
+  const filename = 'pair-invite-desktop-after.png';
+  const state = { preference: null, storage: true, shell: true, shellMode: 'system' };
+  await pairing.photoPair({ directory, filename, origins: [HEAD],
+    page: { url: () => `${HEAD}/invite`, emulateMedia: async () => {},
+      evaluate: async (fn, value) => value === undefined ? state : undefined },
+    capture: async (name, dark) => {
+      fs.mkdirSync(path.dirname(path.join(directory, name)), { recursive: true });
+      fs.writeFileSync(path.join(directory, name), Buffer.from(dark ? 'dark-png' : 'light-png'));
+    },
+  });
+  const saved = await bridge.call('save_shot', { shots: [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', file: filename }] });
+  assert.equal(saved.value.saved, 2);
+  assert.deepEqual(uploads(bridge).map((r) => r.query.colorScheme), ['light', 'dark']);
+  assert.deepEqual(uploads(bridge).map((r) => r.body.toString()), ['light-png', 'dark-png']);
+  fs.writeFileSync(path.join(directory, 'dark', filename), 'changed-after-capture');
+  const refusedPair = await bridge.call('save_shot', { shots: [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', file: filename }] });
+  assert.equal(refusedPair.value.saved, 0);
+  assert.equal(uploads(bridge).length, 2, 'a changed pair never starts another upload');
 });

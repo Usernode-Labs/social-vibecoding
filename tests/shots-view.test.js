@@ -364,3 +364,17 @@ test('a note or reason the agent wrote with escaped quotation marks reads with p
   assert.equal(results[0].note, 'The old "Continue" heading could not be shown.');
   assert.equal(results[1].reason, 'No "Invite" button for a member.');
 });
+
+test('public artifacts and diff screens retain only supported photo appearances', () => {
+  const source = run();
+  source.artifactSummary[0].colorScheme = 'dark';
+  source.screens = [{ viewport: 'desktop', shot: 'dialog', stories: ['dialog'], colorScheme: 'dark', width: 1280, heightBefore: 800, heightAfter: 800, regions: [] }];
+  const result = view.serialize(source, session(), 'demo', HEAD);
+  assert.equal(result.artifacts[0].colorScheme, 'dark');
+  assert.equal(result.screens[0].colorScheme, 'dark');
+  source.artifactSummary[0].colorScheme = '<script>';
+  source.screens[0].colorScheme = '<script>';
+  const safe = view.serialize(source, session(), 'demo', HEAD);
+  assert.ok(!Object.hasOwn(safe.artifacts[0], 'colorScheme'));
+  assert.ok(!Object.hasOwn(safe.screens[0], 'colorScheme'));
+});

@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { hostedAppSlugs } = require('./shots-hosted-origins');
 const boundary = require('./shots-boundary');
+const appearances = require('./shots-appearance-pair');
 
 const platform = String(process.env.PLATFORM_URL || '').replace(/\/$/, '');
 const runId = String(process.env.SHOTS_RUN_ID || '');
@@ -75,20 +76,22 @@ function refused(code, message) {
 // A screenshot the browser saved under the given name. Only a plain .png
 // directly inside one persona's directory is readable: the agent names it and
 // cannot point this bridge at browser storage state or any other file.
-function savedScreenshot(file) {
+function savedScreenshot(file, colorScheme = 'light', sourceDirectory = null) {
   if (!shotsDir) throw refused('shots_not_configured', 'Saving shots is not set up for this turn.');
   const name = path.basename(String(file || ''));
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.png$/.test(name)) {
     throw refused('invalid_shot_file', 'Name the .png file browser_take_screenshot saved, e.g. "invite-desktop-after.png".');
   }
-  for (const persona of PERSONA_DIRS) {
-    const candidate = path.join(shotsDir, persona, name);
+  for (const directory of sourceDirectory ? [sourceDirectory] : PERSONA_DIRS.map((p) => path.join(shotsDir, p))) {
+    const dir = colorScheme === 'dark' ? path.join(directory, 'dark') : directory;
+    const candidate = path.join(dir, name);
     try {
       if (fs.lstatSync(candidate).isFile()) {
         // The site the browser observer stamped this image with: the page it
         // was taken on (shots-boundary.js).
         const image = fs.readFileSync(candidate);
-        return { image, origin: boundary.screenshotOrigin(path.join(shotsDir, persona), name, image) };
+        const proof = boundary.screenshotProof(dir, name, image);
+        return { image, directory: dir, name, proof, origin: proof?.origin || null };
       }
     } catch { /* try the next persona's directory */ }
   }
@@ -163,13 +166,14 @@ server.registerTool('get_brief', {
 });
 
 server.registerTool('save_shot', {
-  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
+  description: 'Save screenshots for declared changes, several in one call. For final photos use a pair-prefixed filename: both appearances are captured and saved automatically from the same page. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
   inputSchema: {
     shots: z.array(z.object({
       change: z.string().min(1).max(96),
       screen: z.string().min(1).max(32),
       side: z.enum(['before', 'after']),
       kind: z.enum(['screen', 'element']).optional(),
+      colorScheme: z.enum(['light', 'dark']).default('light'),
       file: z.string().min(1).max(512),
     })).min(1).max(24),
   },
@@ -179,17 +183,32 @@ server.registerTool('save_shot', {
   // not these requests. A refused file does not stop the others.
   const results = [];
   let pair = null;
-  for (const { change, screen, side, kind = 'screen', file } of shots) {
+  // One image may serve several declared changes in this batch. Verify its
+  // bytes once, then reuse the trusted buffer for each existing slot write.
+  const pictures = new Map();
+  const picture = (file, mode, directory = null) => {
+    const key = JSON.stringify([file, mode, directory]);
+    if (!pictures.has(key)) pictures.set(key, savedScreenshot(file, mode, directory));
+    return pictures.get(key);
+  };
+  for (const { change, screen, side, kind = 'screen', file, colorScheme = 'light' } of shots) {
     try {
-      const { image, origin } = savedScreenshot(file);
+      const primary = picture(file, colorScheme);
+      const automatic = appearances.pairedName(primary.name) && colorScheme === 'light';
+      const dark = automatic ? picture(file, 'dark', primary.directory) : null;
+      if (automatic && !appearances.readPair(primary.directory, primary.name, { light: primary.proof, dark: dark.proof })) {
+        throw refused('photo_pair_missing', 'This final photo has no complete trusted appearance pair. Retake the paired screenshot once.');
+      }
       pair = pair || await pairOrigins();
-      requireOnApp(side, [origin], pair);
-      const query = new URLSearchParams({ change, screen, side, kind });
-      const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
-      results.push({ change, screen, side, kind, file, saved: true, result });
+      for (const mode of automatic ? ['light', 'dark'] : [colorScheme]) {
+        const { image, origin } = mode === colorScheme ? primary : dark;
+        requireOnApp(side, [origin], pair);
+        const query = new URLSearchParams({ change, screen, side, kind, colorScheme: mode });
+        const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
+        results.push({ change, screen, side, kind, file, colorScheme: mode, saved: true, result });
+      }
     } catch (error) {
-      results.push({
-        change, screen, side, kind, file, saved: false,
+      results.push({ change, screen, side, kind, file, saved: false,
         error: { code: error.code || 'save_failed', message: String(error.message || error).slice(0, 500) },
       });
     }

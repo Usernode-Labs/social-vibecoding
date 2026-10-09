@@ -233,16 +233,21 @@ const areaOf = (region) => Math.max(
 );
 
 // The screens a run's card shows. Changes on one screen size whose before
-// screens are the same image share one screen, with an area for each; the
+// screens are the same image in every appearance share one screen, with an
+// area for each. Use one grouping across modes so their claim identities and
+// representative shots stay the same when one mode has extra differences. The
 // first change's after screen is the one shown, since the agent may have
 // hovered something different for each. `stories` are the ready ones, in the
 // declaration's order. It yields between screens and between element shots:
 // each step takes about a tenth of a second, and this runs in the platform's
 // own process.
 async function screensFor(stories, files) {
-  const find = (storyId, viewport, side, variant) => files.find((file) => file.storyId === storyId
-    && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png');
+  const find = (storyId, viewport, side, variant, colorScheme) => files.find((file) => file.storyId === storyId
+    && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png'
+    && (file.colorScheme || 'light') === colorScheme);
   const cache = new Map();
+  const comparisons = new Map();
+  const locations = new Map();
   const pixelsOf = (file) => {
     if (!file) return null;
     if (!cache.has(file.sha256)) cache.set(file.sha256, decode(file.data));
@@ -255,30 +260,56 @@ async function screensFor(stories, files) {
     }
   }
   const screens = [];
-  for (const viewport of viewports) {
+  const modes = [...new Set(files.filter((file) => file.media === 'png').map((file) => file.colorScheme || 'light'))];
+  for (const colorScheme of modes) for (const viewport of viewports) {
     const groups = [];
     for (const story of stories) {
-      const base = find(story.id, viewport, 'base', 'context');
-      const head = find(story.id, viewport, 'head', 'context');
+      const base = find(story.id, viewport, 'base', 'context', colorScheme);
+      const head = find(story.id, viewport, 'head', 'context', colorScheme);
       if (!base || !head) continue;
-      const group = groups.find((entry) => entry.baseSha === base.sha256);
+      const appearanceKey = JSON.stringify(modes.map((mode) => {
+        const before = find(story.id, viewport, 'base', 'context', mode);
+        const after = find(story.id, viewport, 'head', 'context', mode);
+        return before && after ? before.sha256 : null;
+      }));
+      const group = groups.find((entry) => entry.appearanceKey === appearanceKey);
       if (group) group.stories.push(story);
-      else groups.push({ baseSha: base.sha256, stories: [story], base, head });
+      else groups.push({ appearanceKey, stories: [story], base, head });
     }
     for (const group of groups) {
       await new Promise((resolve) => setImmediate(resolve));
+      // Dark is an additional photo only: keep the historical light pixel
+      // comparison, without a second decode/diff/focus-search pipeline or
+      // pretending light outlines were measured on dark pixels.
+      if (colorScheme === 'dark') {
+        const dimensions = (file) => ({
+          w: file.width || file.data.readUInt32BE(16),
+          h: file.height || file.data.readUInt32BE(20),
+        });
+        const before = dimensions(group.base); const after = dimensions(group.head);
+        screens.push({ viewport, colorScheme, stories: group.stories.map((story) => story.id),
+          shot: group.stories[0].id, width: before.w, heightBefore: before.h, heightAfter: after.h, regions: [] });
+        continue;
+      }
       const before = pixelsOf(group.base);
       const after = pixelsOf(group.head);
-      const found = regions(before, after).map((region) => ({ ...region, story: null }));
+      // Appearance grouping can split identical light pixels into separate
+      // logical screens. Reuse their measurement instead of comparing them
+      // again; claim attribution below remains local to each group.
+      const pairKey = JSON.stringify([group.base.sha256, group.head.sha256]);
+      if (!comparisons.has(pairKey)) comparisons.set(pairKey, regions(before, after));
+      const found = comparisons.get(pairKey).map((region) => ({ ...region, story: null }));
       for (const story of group.stories) {
         // Each element shot is found in its change's own screen shot, which
         // may differ from the one shown only by what the agent hovered.
         const rects = {};
         for (const side of ['base', 'head']) {
-          const crop = find(story.id, viewport, side, 'focus');
-          const own = find(story.id, viewport, side, 'context');
+          const crop = find(story.id, viewport, side, 'focus', colorScheme);
+          const own = find(story.id, viewport, side, 'context', colorScheme);
           if (crop && own) await new Promise((resolve) => setImmediate(resolve));
-          const places = crop && own ? locateAll(pixelsOf(own), pixelsOf(crop)) : [];
+          const locationKey = crop && own ? JSON.stringify([own.sha256, crop.sha256]) : null;
+          if (locationKey && !locations.has(locationKey)) locations.set(locationKey, locateAll(pixelsOf(own), pixelsOf(crop)));
+          const places = locationKey ? locations.get(locationKey) : [];
           const boxOf = (region) => (side === 'head' ? region.a : region.b);
           rects[side] = places.find((place) => found.some((region) => overlaps(boxOf(region), place)))
             || places[0] || null;
@@ -302,6 +333,7 @@ async function screensFor(stories, files) {
         .map(({ region }) => region);
       screens.push({
         viewport,
+        ...(group.base.colorScheme ? { colorScheme } : {}),
         stories: group.stories.map((story) => story.id),
         shot: group.stories[0].id,
         width: before.w,

@@ -136,3 +136,54 @@ test('unchangedStories names the changes whose every screen shows no difference'
   assert.deepEqual([...diff.unchangedStories([])], []);
   assert.deepEqual([...diff.unchangedStories(undefined)], []);
 });
+
+test('screens pair and outline photos within their own appearance only', async () => {
+  const stories = [{ id: 'change', viewports: [{ name: 'desktop' }] }];
+  const modes = ['light', 'dark'];
+  const files = modes.flatMap((colorScheme, i) => ['base', 'head'].map((side) => ({
+    ...file('change', 'desktop', side, 'context', screen(120, 80, side === 'head' ? [[20 + i * 40, 20, 10, 15, [100, 20, 30]]] : [], i ? [20, 20, 20] : [245, 245, 247])),
+    colorScheme,
+  })));
+  const screens = await diff.screensFor(stories, files);
+  assert.equal(screens.length, 2);
+  assert.deepEqual(screens.map((s) => s.colorScheme), modes);
+  assert.ok(screens[0].regions.length > 0, 'historical light comparison retains its measured difference');
+  assert.deepEqual(screens[1].regions, [], 'dark photos do not trigger another pixel comparison or reuse light outlines');
+  const mismatched = await diff.screensFor(stories, [files[0], files[3]]);
+  assert.equal(mismatched.length, 0, 'a light before never pairs with a dark after');
+});
+
+
+test('both viewers keep claim groups consistent when only light captures are identical', async () => {
+  const AppView = require('../public/js/app-view');
+  const stories = ['first', 'second'].map((id) => ({ id, claim: id, persona: 'member', viewports: [{ name: 'desktop' }] }));
+  const files = stories.flatMap((story, i) => ['light', 'dark'].flatMap((colorScheme) => ['base', 'head'].map((side) => ({
+    ...file(story.id, 'desktop', side, 'context', screen(120, 80, [
+      ...glyphs(5, 5, 5),
+      ...(colorScheme === 'dark' && i ? [[80, 5, 10, 10, [150, 80, 20]]] : []),
+      ...(side === 'head' ? [[20 + i * 40, 40, 10, 15, [100, 20, 30]]] : []),
+    ], colorScheme === 'dark' ? [20, 20, 20] : [245, 245, 247])), colorScheme,
+  }))));
+  assert.equal(files[0].sha256, files[4].sha256, 'the light before images coincide');
+  assert.notEqual(files[2].sha256, files[6].sha256, 'the dark before images differ');
+  const screens = await diff.screensFor(stories, files);
+  assert.equal(screens.length, 4, 'split the light group as well, instead of losing the second dark screen');
+  for (const mode of ['light', 'dark']) {
+    const own = screens.filter((s) => s.colorScheme === mode);
+    assert.deepEqual(own.map((s) => [s.shot, s.stories]), [['first', ['first']], ['second', ['second']]]);
+    if (mode === 'light') assert.ok(own.every((s) => s.regions.length > 0), 'light groups retain measured outlines');
+    else assert.ok(own.every((s) => s.regions.length === 0), 'additional dark photos stay plain');
+  }
+  const shots = { state: 'verified', claims: stories.map((s) => ({ ...s, viewports: ['desktop'] })), screens, artifacts: files.map((f) => ({
+    ...f, id: f.sha256.slice(0, 32), url: `/api/apps/demo/proposals/42/shots/${f.sha256.slice(0, 32)}`,
+  })) };
+  const html = AppView.shotsHtml(shots, { sessionId: 42 });
+  assert.equal((html.match(/<figure class="shots-view"/g) || []).length, 2, 'two logical screens, not a stranded third dark screen');
+  assert.equal((html.match(/class="shots-photo-mode shots-photo-light"/g) || []).length, 4);
+  assert.equal((html.match(/class="shots-photo-mode shots-photo-dark"/g) || []).length, 4);
+  const preview = AppView._workshopVisuals(null, shots);
+  for (const changes of [[1], [2]]) {
+    const family = preview.screens.filter((s) => s.changes.join(',') === changes.join(','));
+    assert.deepEqual(family.map((s) => s.colorScheme), ['light', 'dark'], 'React preview can select either mode with identical claim identity');
+  }
+});

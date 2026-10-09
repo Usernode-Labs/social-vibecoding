@@ -494,6 +494,11 @@ test('the observer stamps each screenshot with the site it was taken on, and eac
   shot('lists-after.png', 'head pixels');
   assert.equal(origin('lists-after.png', 'head pixels'), 'http://head.internal:3000');
 
+  // Final pairs carry their own actual-page proof. Do not hash or overwrite
+  // it a second time with the observer's last reported URL.
+  shot('pair-lists-after.png', 'paired pixels');
+  assert.equal(origin('pair-lists-after.png', 'paired pixels'), null);
+
   call('browser_navigate', pageState('https://example.com/'));
   shot('elsewhere.png', 'other pixels');
   assert.equal(origin('elsewhere.png', 'other pixels'), 'https://example.com');

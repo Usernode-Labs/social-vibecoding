@@ -42,7 +42,16 @@ visitor who is not signed in sees, and the brief says what that is here.
 Do not sign in (the guest stays signed out too), expose storage, leave the
 two addresses, or change or add a change.
 
-For each declared change and each of its screen sizes (viewports):
+Keep the original before/after workflow: navigate and perform the steps only
+once at each declared state and screen size. For final screen and element
+photos, give browser_take_screenshot a filename starting with "pair-", such
+as "pair-invite-phone-after.png". The browser automatically captures light
+and dark in the SAME page at that point, then restores its appearance. Save
+that one filename normally: save_shot publishes both slots automatically.
+Do not repeat navigation, setup, steps, screenshots or tool calls by theme.
+Ordinary inspection screenshots without "pair-" and motion clips are unchanged.
+
+For each declared change and each screen size (viewport):
 1. Call browser_resize with that width and height. Then open the start path
    again, even when the page is already open: some apps choose their layout
    once, when the page loads, so a page loaded at another size keeps the
@@ -67,17 +76,17 @@ For each declared change and each of its screen sizes (viewports):
    change and from any button or link, unless the hover state is itself the
    change.
 4. Call browser_take_screenshot with a filename such as
-   "<change>-<screen>-after.png" and look at it: it should show what the
+   "pair-<change>-<screen>-after.png" and look at it: it should show what the
    checkpoint describes.
 5. Shoot the changed element on its own as well: call
    browser_take_screenshot with its element and ref from a snapshot and a
-   filename. The element shot leads the change on the proposal, so take one
+   filename starting with "pair-". The element shot leads the change on the proposal, so take one
    whenever intent.focus or hints.focusTarget names something you can find.
    Pick the smallest element that holds the whole change, including anything
    drawn over its edges such as a badge on a corner; for a change only a few
    pixels across, pick the bar or card around it.
 6. Save both in one save_shot call: list each file with the change id, the
-   screen name, side "after", and kind "screen" or "element". When the same
+   screen name, side "after", kind "screen" or "element", with that one paired filename. When the same
    screen also shows another declared change at this size, list the
    screenshot again for that change in the same call instead of shooting it
    twice.
@@ -108,7 +117,7 @@ state), and save everything for a state together.
 
 If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
-differ only by the change.
+differ only by the change. Create this data only once per address, without repeating it for appearance.
 
 If the brief has previewAt, the change only shows at certain times, and
 previewAt.label says when in plain words. Open both copies at that moment:

@@ -556,6 +556,7 @@ export interface DevWorkshopView {
        */
       screens?: {
         viewport: string;
+        colorScheme?: 'light' | 'dark';
         width: number;
         before: { url: string; height: number };
         after: { url: string; height: number };

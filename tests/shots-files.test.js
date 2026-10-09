@@ -412,3 +412,22 @@ test('an element shot must fit the screen it was taken on', () => {
   // Screen shots and clips are not element shots.
   assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile', 'screen'), size(390, 5000)));
 });
+
+test('light and dark photos retain independent slots and a dual-mode run needs both pairs', () => {
+  const intent = stillIntent();
+  const saved = new Map();
+  const raw = { change: intent.stories[0].id, screen: 'desktop', side: 'before', colorScheme: 'light' };
+  for (const side of ['before', 'after']) save(saved, intent, { ...raw, side }, sideShot(side));
+  assert.equal(shots.summarize(intent, saved).readyCount, 1, 'older one-mode callers stay compatible');
+  const pending = shots.summarize(intent, saved, new Map(), { photoModes: ['light', 'dark'] });
+  assert.equal(pending.readyCount, 0);
+  assert.match(pending.stories[0].reason, /dark mode/);
+  for (const side of ['before', 'after']) save(saved, intent, { ...raw, side, colorScheme: 'dark' }, sideShot(side));
+  const ready = shots.summarize(intent, saved, new Map(), { photoModes: ['light', 'dark'] });
+  assert.equal(ready.readyCount, 1);
+  assert.equal(ready.files.length, 4);
+  assert.equal(new Set(ready.files.map(shots.slotKey)).size, 4);
+  assert.throws(() => shots.shotTarget(intent, { ...raw, colorScheme: 'blue' }), refusal('invalid_color_scheme'));
+  const lightHash = shots.summarize(intent, saved).manifestHash;
+  assert.notEqual(ready.manifestHash, lightHash, 'the manifest fences both appearance variants');
+});

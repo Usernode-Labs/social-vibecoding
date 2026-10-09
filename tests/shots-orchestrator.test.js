@@ -123,10 +123,10 @@ test('a stuck shots cleanup fails at the extended deadline with diagnostics', as
 // change, as the shots bridge does after browser_take_screenshot.
 function saveStills(control, change) {
   const story = control.intent.stories.find((candidate) => candidate.id === change);
-  for (const viewport of story.viewports) {
-    control.saveShot({ change, screen: viewport.name, side: 'before', kind: 'screen' },
+  for (const viewport of story.viewports) for (const colorScheme of ['light', 'dark']) {
+    control.saveShot({ change, screen: viewport.name, side: 'before', kind: 'screen', colorScheme },
       fixtures.png({ shade: 10 }));
-    control.saveShot({ change, screen: viewport.name, side: 'after', kind: 'screen' },
+    control.saveShot({ change, screen: viewport.name, side: 'after', kind: 'screen', colorScheme },
       fixtures.png({ shade: 200 }));
   }
 }
@@ -356,8 +356,8 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.deepEqual(verdict, {
     passed: true, mode: shots.SHOTS_MODE, runs: 1,
     stories: [
-      { id: 'invite-suggestions', status: 'ready', files: 3 },
-      { id: 'invite-empty', status: 'ready', files: 2 },
+      { id: 'invite-suggestions', status: 'ready', files: 5 },
+      { id: 'invite-empty', status: 'ready', files: 4 },
     ],
   });
   // Where each change's before and after differ, worked out as the shots
@@ -367,11 +367,13 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.equal(shots.isShotsVerdict(reviewing.hardVerdict), true);
 
   assert.equal(stored.runId, RUN_ID);
-  assert.deepEqual(stored.artifacts.map(({ storyId, side, variant, media }) =>
-    `${storyId}:${side}:${variant}:${media}`).sort(), [
-    'invite-empty:base:context:png', 'invite-empty:head:context:png',
-    'invite-suggestions:base:context:png', 'invite-suggestions:head:context:png',
-    'invite-suggestions:head:focus:png',
+  assert.deepEqual(stored.artifacts.map(({ storyId, side, variant, media, colorScheme = 'light' }) =>
+    `${storyId}:${side}:${variant}:${media}:${colorScheme}`).sort(), [
+    'invite-empty:base:context:png:dark', 'invite-empty:base:context:png:light',
+    'invite-empty:head:context:png:dark', 'invite-empty:head:context:png:light',
+    'invite-suggestions:base:context:png:dark', 'invite-suggestions:base:context:png:light',
+    'invite-suggestions:head:context:png:dark', 'invite-suggestions:head:context:png:light',
+    'invite-suggestions:head:focus:png:light',
   ]);
   for (const file of stored.artifacts) {
     assert.equal(file.contentType, 'image/png');
@@ -381,7 +383,7 @@ test('every declared change saved publishes the ready files, tears the builds do
   // The plan hash is the manifest hash: it fences storage and names exactly
   // the files that were published.
   const manifest = stored.artifacts
-    .map(({ storyId, viewport, side, variant, sha256 }) => ({ storyId, viewport, side, variant, sha256 }))
+    .map(({ storyId, viewport, side, variant, colorScheme, sha256 }) => ({ storyId, viewport, side, variant, ...(colorScheme ? { colorScheme } : {}), sha256 }))
     .sort((a, b) => shots.slotKey(a).localeCompare(shots.slotKey(b)));
   const manifestHash = crypto.createHash('sha256').update(contract.canonicalJson({
     mode: shots.SHOTS_MODE, intent: fixture.run.intent, manifest,
@@ -415,10 +417,12 @@ test('a change whose screens differ only by noise is published with a note sayin
       const control = controlFor(options);
       // Two images whose bytes differ but whose colours are within the
       // comparison's tolerance: antialiasing, not a change.
-      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen' },
-        fixtures.png({ shade: 10 }));
-      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' },
-        fixtures.png({ shade: 12 }));
+      for (const colorScheme of ['light', 'dark']) {
+        control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen', colorScheme },
+          fixtures.png({ shade: 10 }));
+        control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen', colorScheme },
+          fixtures.png({ shade: 12 }));
+      }
       saveStills(control, 'invite-empty');
       return { backend: 'claude_code', threadId: 'shots-thread' };
     },
@@ -429,8 +433,8 @@ test('a change whose screens differ only by noise is published with a note sayin
   assert.equal(result.state, 'verified', 'people still judge the shots');
   const verified = fixture.transitions.find((entry) => entry.next === 'verified').patch;
   assert.deepEqual(verified.hardVerdict.stories, [
-    { id: 'invite-suggestions', status: 'ready', files: 2, unchanged: true, note: shots.UNCHANGED_NOTE },
-    { id: 'invite-empty', status: 'ready', files: 2 },
+    { id: 'invite-suggestions', status: 'ready', files: 4, unchanged: true, note: shots.UNCHANGED_NOTE },
+    { id: 'invite-empty', status: 'ready', files: 4 },
   ]);
 });
 
@@ -464,11 +468,11 @@ test('one change saved and another skipped still publishes, with the skip and it
   const verdict = fixture.transitions.find((entry) => entry.next === 'reviewing').patch.hardVerdict;
   assert.equal(verdict.passed, true);
   assert.deepEqual(verdict.stories, [
-    { id: 'invite-suggestions', status: 'ready', files: 2 },
+    { id: 'invite-suggestions', status: 'ready', files: 4 },
     { id: 'invite-empty', status: 'skipped', reason: 'The member fixture has no list to search.' },
   ]);
-  assert.deepEqual(stored.map(({ storyId, side }) => `${storyId}:${side}`).sort(),
-    ['invite-suggestions:base', 'invite-suggestions:head']);
+  assert.deepEqual(stored.map(({ storyId, side, colorScheme }) => `${storyId}:${side}:${colorScheme}`).sort(),
+    ['invite-suggestions:base:dark', 'invite-suggestions:base:light', 'invite-suggestions:head:dark', 'invite-suggestions:head:light']);
   assert.deepEqual(fixture.transitions.at(-1).patch.traceSummary.stories, verdict.stories);
 });
 
@@ -535,7 +539,7 @@ test('one change ready and another failed still publishes, with the failure in t
   assert.equal(result.state, 'verified');
   const verdict = fixture.transitions.find((entry) => entry.next === 'reviewing').patch.hardVerdict;
   assert.deepEqual(verdict.stories, [
-    { id: 'invite-suggestions', status: 'ready', files: 2 },
+    { id: 'invite-suggestions', status: 'ready', files: 4 },
     { id: 'invite-empty', status: 'failed', reason: 'Searching answered a 500.' },
   ]);
 });
@@ -619,7 +623,7 @@ test('a motion change with stills but no clips is skipped for its missing clips'
   assert.equal(dispatchOptions.recordClips, true, 'the browsers record only when a change is motion');
   assert.equal(dispatchOptions.clipSize, '1280x800', 'at the motion change\'s own screen size');
   const verdict = fixture.transitions.find((entry) => entry.next === 'reviewing').patch.hardVerdict;
-  assert.deepEqual(verdict.stories[0], { id: 'invite-suggestions', status: 'ready', files: 2 });
+  assert.deepEqual(verdict.stories[0], { id: 'invite-suggestions', status: 'ready', files: 4 });
   assert.equal(verdict.stories[1].id, 'saved-toast');
   assert.equal(verdict.stories[1].status, 'skipped');
   assert.match(verdict.stories[1].reason, /did not save the before clip on desktop, the after clip on desktop/);
@@ -663,7 +667,7 @@ test('an agent opinion cannot veto a complete before/after set meant for people 
   const result = await execute(fixture);
   assert.equal(result.state, 'verified');
   assert.deepEqual(fixture.transitions.at(-1).patch.hardVerdict.stories,
-    [{ id: 'invite-suggestions', status: 'ready', files: 2 }]);
+    [{ id: 'invite-suggestions', status: 'ready', files: 4 }]);
 });
 
 test('a refused save stays diagnosable after the agent ends its turn', async () => {
@@ -1941,6 +1945,10 @@ test('a shots agent whose process died is dispatched once more, keeping what it 
       assert.equal(control.saved.size, 1, 'the second dispatch finds the first one\'s shot');
       control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' },
         fixtures.png({ shade: 200 }));
+      for (const side of ['before', 'after']) {
+        control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side, kind: 'screen', colorScheme: 'dark' },
+          fixtures.png({ shade: side === 'before' ? 10 : 200 }));
+      }
       return { backend: 'claude_code', threadId: 'shots-thread' };
     },
   });
