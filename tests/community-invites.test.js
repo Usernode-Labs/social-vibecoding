@@ -265,8 +265,10 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(pane.linkDetail({ ...fresh, maxUses: null, uses: 2 }, now), '2 joined · 7 days left');
   const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');
   assert.match(paneSrc, /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
-  assert.match(paneSrc, /'Until you turn it off'/);
-  assert.match(paneSrc, /'Anyone with the link'/);
+  assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.untilOff'\)/);
+  assert.equal(message('agent:appContext.invite.option.untilOff'), 'Until you turn it off');
+  assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.anyone'\)/);
+  assert.equal(message('agent:appContext.invite.option.anyone'), 'Anyone with the link');
   assert.match(paneSrc, /\{state\.joiningRule\}/);
   assert.equal(pane.newcomerLine(), 'Someone new to Homeroom joins straight away and goes right into this project.');
   assert.doesNotMatch(pane.newcomerLine.toString(), /skip/, 'no skips past the waitlist to count');

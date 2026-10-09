@@ -85,7 +85,7 @@ test('#3577: the session bar\'s pills are one row that never wraps; the naming p
   for (const cls of ['basis-0', 'grow', 'max-w-fit', 'min-w-[2.75rem]', 'whitespace-nowrap']) {
     assert.ok(focus.includes(cls), `focus pill: ${cls}`);
   }
-  assert.match(bar, /<span className="min-w-0 max-w-\[7rem\] truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/,
+  assert.match(bar, /<span className="min-w-0 max-w-\[7rem\] truncate">\{about\?\.focusApp\?\.name \|\| t\('agent:session\.bar\.anyApp'\)\}<\/span>/,
     'its name truncates; the pill\'s old 10rem cap, less its mark');
 
   // The change pill: no grow, a floor, a truncating label; the PR number
@@ -101,8 +101,9 @@ test('#3577: the session bar\'s pills are one row that never wraps; the naming p
   assert.ok(classOf('data-agent-session-changes-button').includes('shrink-0'));
   assert.match(panel, /data-agent-session-menu\s+className="inline-flex h-7 w-7 shrink-0 /);
   // Open app keeps its mark and drops its words in a narrow row.
-  assert.match(panel, /<span className="truncate \[@container\(max-width:32rem\)\]:hidden">Open app<\/span>/);
-  assert.match(panel, /aria-label="Open app"/, 'and keeps its name when the words are hidden');
+  assert.match(panel, /<span className="truncate \[@container\(max-width:32rem\)\]:hidden">\{t\('agent:session\.bar\.openApp'\)\}<\/span>/);
+  assert.match(panel, /aria-label=\{t\('agent:session\.bar\.openApp'\)\}/, 'and keeps its name when the words are hidden');
+  assert.equal(message('agent:session.bar.openApp'), 'Open app');
 });
 
 test('#3577: rendered, Open app keeps its accessible name and narrows its padding in a narrow row', () => {

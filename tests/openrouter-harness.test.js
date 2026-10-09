@@ -624,5 +624,7 @@ test('pickers mark the Claude Code models and keep their thinking level', () => 
   const choice = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'model-choice.ts'), 'utf8');
   assert.match(choice, /return !model \|\| model\.supportsReasoning !== false;/);
   assert.ok(!/harness !== 'claude'/.test(choice), 'no model loses its thinking level for running in Claude Code');
-  assert.match(choice, /'Runs on your OpenRouter key, in Claude Code'/);
+  assert.match(choice, /OPENROUTER_CLAUDE_TITLE = 'agent:session\.model\.title\.openRouterClaudeCode'/);
+  assert.equal(require('./lib/platform-i18n').message('agent:session.model.title.openRouterClaudeCode'),
+    'Runs on your OpenRouter key, in Claude Code');
 });

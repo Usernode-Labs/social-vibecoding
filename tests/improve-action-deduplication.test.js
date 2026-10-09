@@ -13,6 +13,7 @@
 // menu keeps its row): the same method, Improve.startSession, from both.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -245,7 +246,8 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
   // ONE method, whichever surface it is on.
   const MENU = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.equal(PANEL.split('id="improve-row-feedback"').length - 1, 1, 'the button is here');
-  assert.match(PANEL, /id="improve-row-feedback"\s+label="Suggest an improvement"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
+  assert.match(PANEL, /id="improve-row-feedback"\s+label=\{t\('agent:menu\.suggestImprovement'\)\}\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
+  assert.equal(message('agent:menu.suggestImprovement'), 'Suggest an improvement');
   assert.equal(PANEL.split('id="improve-row-new-session"').length - 1, 0, 'and it is alone in its well');
   assert.equal(MENU.split('id="improve-row-feedback"').length - 1, 0,
     'and not in two places — that id is what the outbox dot\'s writer selects');
@@ -253,7 +255,8 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
     'the menu does not keep a second caller of the same method');
   assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 1);
   // B8: the row is Build it now, beside Suggest an improvement going to Homeroom bot.
-  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label="Build it now"/);
+  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label=\{t\('agent:appContext\.agentChats\.buildNow'\)\}/);
+  assert.equal(message('agent:appContext.agentChats.buildNow'), 'Build it now');
   // A read-only viewer may not start a change, as the button's gate was.
   assert.match(MENU, /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and
@@ -339,6 +342,8 @@ function improveHarness(currentApp = 'demo') {
   const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
+      // The module reads its words through the language runtime: the real one, in English.
+      '../../lib/i18n/runtime': englishPlatformI18n(),
       '../apps/app-card.js': { iconViewFor() {} },
       // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
       // Improve panel's root through lib/kit-surface and swept the other

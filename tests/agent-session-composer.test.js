@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -309,12 +310,15 @@ test('the composer keeps what was typed per conversation, and the drafts list of
   assert.equal(renderToHtml(createElement(SavedDrafts, { drafts: [], busy: false, onSend() {}, onEdit() {} })), '', 'no drafts, no row');
 
   const panel = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(panel, /data-agent-session-send="save"[\s\S]*?aria-label="Save as draft"/, 'the one button turns into Save');
+  assert.match(panel, /data-agent-session-send="save"[\s\S]*?aria-label=\{t\('agent:session\.composer\.saveAsDraft'\)\}/, 'the one button turns into Save');
+  assert.equal(message('agent:session.composer.saveAsDraft'), 'Save as draft');
   assert.match(panel, /const saving = running && !snapshot\.stopping && !!value\.trim\(\);/,
     'Save only with something typed, and never while stopping: Stop fills the box under its own click');
   assert.match(panel, /key="save"\s+type="submit"/, 'Save and Stop are different buttons, so a type flip never lands on one click');
   assert.match(panel, /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Enter mid-turn parks, never sends');
-  assert.match(panel, /The agent is working\. Type your next message and save it for later\./);
+  assert.match(panel, /const BUSY_PLACEHOLDER = 'agent:session\.composer\.busyPlaceholder';/);
+  assert.match(panel, /running \? t\(BUSY_PLACEHOLDER\)/);
+  assert.equal(message('agent:session.composer.busyPlaceholder'), 'The agent is working. Type your next message and save it for later.');
 });
 
 // ── 4. What a typical change costs ─────────────────────────────────────
@@ -375,10 +379,14 @@ test('each model says what a typical change costs on it, never as a bare amount'
 
 test('a reply says what it cost, and a turn that did not finish offers to try again', () => {
   const transcript = loadTsx('frontend/src/features/agent-session/transcript.ts');
-  assert.equal(transcript.replyCostLabel({ costCents: 1.2, metadata: {} }), 'reply $0.012');
-  assert.equal(transcript.replyCostLabel({ costCents: '0.5', metadata: { costEstimated: true } }), 'reply ~$0.005', 'an estimate says so');
-  assert.equal(transcript.replyCostLabel({ costCents: 0, metadata: {} }), '');
-  assert.equal(transcript.replyCostLabel({ costCents: null, metadata: {} }), '');
+  // The amount is the model's; the words around it ("reply $0.012") are one
+  // catalog message, the reply's label.
+  assert.equal(transcript.replyCostAmount({ costCents: 1.2, metadata: {} }), '$0.012');
+  assert.equal(transcript.replyCostAmount({ costCents: '0.5', metadata: { costEstimated: true } }), '~$0.005', 'an estimate says so');
+  assert.equal(transcript.replyCostAmount({ costCents: 0, metadata: {} }), '');
+  assert.equal(transcript.replyCostAmount({ costCents: null, metadata: {} }), '');
+  assert.equal(message('agent:session.reply.agentWithCost', { cost: '$0.012' }), 'Agent<0> · reply $0.012</0>');
+  assert.match(read('frontend/src/features/agent-session/index.tsx'), /id="agent:session\.reply\.agentWithCost"\s+values=\{\{ cost: item\.cost \}\}/);
 
   const row = (id, role, content, metadata = {}, extra = {}) => ({ id, role, content, metadata, changeId: null, createdAt: null, ...extra });
   const items = transcript.buildTranscript([
@@ -386,7 +394,7 @@ test('a reply says what it cost, and a turn that did not finish offers to try ag
     row(2, 'assistant', 'Hello', { quickReplies: ['Make it blue'] }, { costCents: 1.25 }),
   ]);
   const mayor = items.find((i) => i.kind === 'mayor');
-  assert.equal(mayor.cost, 'reply $0.013');
+  assert.equal(mayor.cost, '$0.013');
   assert.equal(mayor.ended, null);
   assert.deepEqual(transcript.latestReplies(items), ['Make it blue'], 'its own suggestions first');
 
@@ -420,7 +428,8 @@ test('the outline is the card\'s in every engine; the Mayor at work is three dot
   assert.match(panel, /className="agent-session-composer-input /);
   assert.doesNotMatch(panel, /rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700/, 'the full-width bubble is gone');
   assert.match(panel, /<TypingDots \/>/);
-  assert.match(panel, /<span className="sr-only">The agent is thinking<\/span>/, 'said to a screen reader when the dots say it alone');
+  assert.match(panel, /<span className="sr-only">\{t\('agent:session\.live\.thinking'\)\}<\/span>/, 'said to a screen reader when the dots say it alone');
+  assert.equal(message('agent:session.live.thinking'), 'The agent is thinking');
 
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /\|\| \(DevChat\._agentSessionThinking \? 'thinking' : null\)/, 'one title writer, one marker');

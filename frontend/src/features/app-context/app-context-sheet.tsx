@@ -136,6 +136,7 @@ import { offeringGoToHomeroom } from './about-data';
 import { InvitePane } from './invite-pane';
 import { useHomeScreenOffer } from '../mobile-install/home-screen-offer';
 import { InstallStepsSheet } from '../mobile-install/install-steps-sheet';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { ImproveQuickActions, UpdateStatus } from '../improve/actions';
 import { openReport } from '../dialogs/report';
@@ -353,6 +354,7 @@ function MenuRow({
  * the list and its slot goes with it.
  */
 function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactNode {
+  const t = useMessages('agent');
   const rowRef = useRef<HTMLAnchorElement | null>(null);
   const [round, setRound] = useState(0);
   useEffect(() => {
@@ -361,7 +363,7 @@ function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactN
     if (!el || !ui?.isTouch() || !ui.swipeActions) return undefined;
     const swipe = ui.swipeActions(el, {
       actions: [{
-        label: 'Archive',
+        label: t('agent:appContext.agentChats.archive'),
         destructive: true,
         handler: () => {
           void archiveListedSession(row.sessionId).then((archived) => {
@@ -389,7 +391,7 @@ function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactN
         label={row.title}
         sub={row.sub}
         lead={row.activity
-          ? <span className="sr-only">{ACTIVITY_LABEL[row.activity]}</span>
+          ? <span className="sr-only">{t(ACTIVITY_LABEL[row.activity])}</span>
           : null}
       />
     </div>
@@ -430,9 +432,10 @@ export function AgentChats({ readOnly, continuing }: {
   readOnly: boolean;
   continuing: ContinueList;
 }): ReactNode {
+  const t = useMessages('agent');
   return (
     <div id="app-menu-sessions">
-      <div className={SECTION}>Agent chats</div>
+      <div className={SECTION}>{t('agent:appContext.agentChats.heading')}</div>
       {readOnly ? null : (
         <button
           id="improve-row-new-session"
@@ -444,7 +447,7 @@ export function AgentChats({ readOnly, continuing }: {
               is building it yourself, with a coding agent. */}
           <RowBody
             icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}
-            label="Build it now"
+            label={t('agent:appContext.agentChats.buildNow')}
           />
         </button>
       )}
@@ -475,7 +478,7 @@ export function AgentChats({ readOnly, continuing }: {
                 followThenDismiss(e, '#messages');
               }}
             >
-              Show more
+              {t('agent:appContext.agentChats.showMore')}
               <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
             </a>
           ) : null}
@@ -487,6 +490,7 @@ export function AgentChats({ readOnly, continuing }: {
 
 
 export function AppsSwitcherSheet(): ReactNode {
+  const t = useMessages('agent');
   const { open, adopted, view } = useStoreState(appContextStore);
   // Everything this sheet says about the app comes from ONE store, published
   // by the classic writers that already owned those facts. #2718 adds the
@@ -561,7 +565,8 @@ export function AppsSwitcherSheet(): ReactNode {
   // write when you do not have it. It falls back to the slug and then to a
   // bare "this app", because the menu opens on Home too — where the context
   // is the platform's own self-hosted row and the name may not have landed.
-  const appLabel = name || slug || 'this app';
+  const appName = name || slug || null;
+  const appLabel = appName || t('agent:appContext.thisApp');
 
   const close = useCallback(() => AppContext.close(), []);
 
@@ -678,7 +683,7 @@ export function AppsSwitcherSheet(): ReactNode {
       <div
         id="apps-switcher-sheet"
         role="dialog"
-        aria-label="Menu"
+        aria-label={t('agent:appContext.sheetLabel')}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
         className="fixed z-50 flex flex-col dc-lift dc-lift-panel app-context-transition"
@@ -708,7 +713,7 @@ export function AppsSwitcherSheet(): ReactNode {
               <button
                 id="app-about-back"
                 type="button"
-                aria-label={`Back to ${appLabel}'s menu`}
+                aria-label={appName ? t('agent:appContext.backToMenu', { app: appName }) : t('agent:appContext.backToThisAppMenu')}
                 className={BACK_DISC}
                 onClick={() => AppContext.showMenu()}
               >
@@ -732,7 +737,7 @@ export function AppsSwitcherSheet(): ReactNode {
             id="apps-switcher-close"
             type="button"
             className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 un-touch-target"
-            aria-label="Close"
+            aria-label={t('core:common.close')}
             onClick={close}
           >
             <XIcon className="w-5 h-5" />
@@ -862,8 +867,8 @@ export function AppsSwitcherSheet(): ReactNode {
                   />
                 </span>
                 <span className="flex-1 min-w-0">
-                  <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">Go to Homeroom</span>
-                  <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">Your Home, your communities and Homeroom bot</span>
+                  <span className="block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.goToHomeroom.title')}</span>
+                  <span className="block truncate text-[13px] text-zinc-500 dark:text-zinc-400">{t('agent:appContext.goToHomeroom.sub')}</span>
                 </span>
                 <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
               </button>
@@ -881,7 +886,7 @@ export function AppsSwitcherSheet(): ReactNode {
                     <span className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200" aria-hidden="true">
                       <PhonePlusIcon className="w-5 h-5" aria-hidden="true" />
                     </span>
-                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">Add Homeroom to your home screen</span>
+                    <span className="flex-1 min-w-0 block truncate text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">{t('agent:appContext.addHomeroomToHomeScreen')}</span>
                     <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
                   </button>
                   {open && homeScreenSteps ? (
@@ -975,15 +980,15 @@ export function AppsSwitcherSheet(): ReactNode {
             elRef={workshopRowRef}
             href={slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#'}
             icon={<UserGroupIcon />}
-            label="Go to community"
+            label={t('agent:appContext.row.community')}
             trailing={owed ? (
               <span
                 id="app-menu-workshop-owed"
-                title={`${owed} to vote`}
-                aria-label={`${owed} to vote`}
+                title={t('agent:appContext.row.toVote', { count: owed })}
+                aria-label={t('agent:appContext.row.toVote', { count: owed })}
                 className="shrink-0 text-[0.8125rem] font-semibold text-violet-700 dark:text-violet-300"
               >
-                {`${owed} to vote`}
+                {t('agent:appContext.row.toVote', { count: owed })}
               </span>
             ) : null}
             // It says community, so it opens the hub, not whichever tab
@@ -1014,7 +1019,7 @@ export function AppsSwitcherSheet(): ReactNode {
               id="improve-row-terminal"
               href="#"
               icon={<TerminalIcon />}
-              label="Developer terminal"
+              label={t('agent:appContext.row.terminal')}
               onClick={(e) => {
                 e.preventDefault();
                 void AppContext.dismissForNav().then(() => {
@@ -1043,7 +1048,7 @@ export function AppsSwitcherSheet(): ReactNode {
             className={`${ROW} w-full text-left`}
             onClick={() => AppContext.showAbout()}
           >
-            <RowBody icon={<InfoCircleIcon />} label={`About ${appLabel}`} />
+            <RowBody icon={<InfoCircleIcon />} label={appName ? t('agent:appContext.row.about', { app: appName }) : t('agent:appContext.row.aboutThisApp')} />
           </button>
           {/* AGENT CHATS, for somebody who has built something
               themselves: see AgentChats above. */}
@@ -1066,7 +1071,7 @@ export function AppsSwitcherSheet(): ReactNode {
                 }}
               >
                 <FlagIcon className="w-3.5 h-3.5" aria-hidden="true" />
-                Report app
+                {t('agent:appContext.reportApp')}
               </button>
             </div>
           ) : null}

@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -129,7 +130,9 @@ test('beside from 1024px up, decided after mount; the list steps aside; the divi
     'beside when there is room, the sheet otherwise');
   assert.match(panel, /data-agent-session-chat>[\s\S]*<ChangesDrawer[\s\S]*<\/div>\s*\{beside \?/,
     'the changes drawer covers the chat, not the pane beside it');
-  assert.match(panel, /role="separator"\s+aria-orientation="vertical"\s+aria-label=\{showing === 'preview' \? 'Resize the preview' : 'Resize the spec'\}/);
+  assert.match(panel, /role="separator"\s+aria-orientation="vertical"\s+aria-label=\{showing === 'preview' \? t\('agent:session\.sidePane\.resizePreview'\) : t\('agent:session\.sidePane\.resizeSpec'\)\}/);
+  assert.equal(message('agent:session.sidePane.resizePreview'), 'Resize the preview');
+  assert.equal(message('agent:session.sidePane.resizeSpec'), 'Resize the spec');
   assert.match(panel, /\$\{preview \? 'min-w-\[320px\]' : 'min-w-\[280px\]'\} max-w-\[calc\(100%-324px\)\]/,
     'CSS holds the same bounds (320px of chat, 4px of divider) when the window narrows; a preview\'s floor is 320px');
   assert.match(panel, /className="w-1 shrink-0 cursor-col-resize/, 'the divider is the 4px the ceiling allows for');

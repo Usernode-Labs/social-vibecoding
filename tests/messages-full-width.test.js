@@ -116,7 +116,7 @@ test('an agent chat and a Mayor session: handed to their panels, drawn at the en
   // other panes.
   assert.match(SESSION, /export function AgentSessionPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
   assert.match(SESSION, /<SessionBar session=\{snapshot\.session\} about=\{about\} embedded=\{embedded\} action=\{headerAction\} \/>/);
-  assert.match(SESSION, /Changes · \{count\}\s*<\/button>\s*<OpenAppButton target=\{target\} \/>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
+  assert.match(SESSION, /\{t\('agent:session\.bar\.changes', \{ count \}\)\}\s*<\/button>\s*<OpenAppButton target=\{target\} \/>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
 });
 
 test('the list folds for an agent thread too; a reply thread still belongs to a chat', () => {

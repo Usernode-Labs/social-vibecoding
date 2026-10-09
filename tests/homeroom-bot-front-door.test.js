@@ -9,6 +9,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -29,7 +30,8 @@ test('B8: Suggest an improvement is gated on membership and hands its request to
 });
 
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /label="Build it now"/);
+  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /label=\{t\('agent:appContext\.agentChats\.buildNow'\)\}/);
+  assert.equal(message('agent:appContext.agentChats.buildNow'), 'Build it now');
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.ok(row.indexOf('data-plus="issue"') < row.indexOf('data-plus="new-change"'), 'Suggest an improvement leads the hub\'s ⋯');
   assert.match(row, /title=\{t\('project:menu\.build\.title'\)\}\s+sub=\{t\('project:menu\.build\.sub'\)\}/);

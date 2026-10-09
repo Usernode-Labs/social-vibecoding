@@ -2759,7 +2759,8 @@ test('the Workshop is a menu row, and an anchor at its route (#2761)', () => {
   assert.ok(!/data-context-row="board"|dataContextRow="board"/.test(SHEET_TSX),
     'and the Board segment after it — the Workshop and the kanban are one '
     + 'screen in two layouts, so the layout is not a destination in the menu');
-  assert.match(SHEET_TSX, /label="Go to community"/);
+  assert.match(SHEET_TSX, /label=\{t\('agent:appContext\.row\.community'\)\}/);
+  assert.equal(message('agent:appContext.row.community'), 'Go to community');
 });
 
 test('the declared checks cover the lander, its strips and an unfolded row', () => {

@@ -18,9 +18,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
-const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -64,7 +64,8 @@ test('no user-facing copy says "Ask for a change" any more', () => {
 
 test('every door to filing a request says Suggest an improvement', () => {
   assert.match(read('frontend/src/features/improve/actions.tsx'),
-    /id="improve-row-feedback"\s+label="Suggest an improvement"/, 'the Homeroom menu\'s one button');
+    /id="improve-row-feedback"\s+label=\{t\('agent:menu\.suggestImprovement'\)\}/, 'the Homeroom menu\'s one button');
+  assert.equal(message('agent:menu.suggestImprovement'), 'Suggest an improvement');
   assert.match(read('frontend/src/features/dialogs/feedback.tsx'),
     /<h2 className="text-lg font-bold">\s*\{t\('dialogs:feedback\.heading'\)\}\s*<\/h2>/);
   assert.equal(message('dialogs:feedback.heading'), 'Suggest an improvement', 'the dialog it opens, from every way in');

@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -402,7 +403,7 @@ test('a sent message is one row: its outbox copy goes the moment the server\'s r
       .map((r) => [r.id, r.content]), [[1, ''], [2, 'edited'], [3, '']], 'a read since a rev merges edits and new rows by id');
 
     const src = read('frontend/src/features/agent-session/store.ts');
-    assert.match(src, /const outbox = markStranded\(withoutLanded\(current\.outbox, messages\), inFlight\(\), STRANDED_TEXT\);/,
+    assert.match(src, /const outbox = markStranded\(withoutLanded\(current\.outbox, messages\), inFlight\(\), t\(STRANDED_TEXT\)\);/,
       'every read settles it, not only the turn\'s own end');
 
     // The streamed words stay until the read that brings their saved row.
@@ -444,8 +445,9 @@ test('the attach button draws a paperclip and says it attaches files (#3080)', (
   const panel = read('frontend/src/features/agent-session/index.tsx');
   const button = panel.match(/<button[^>]*?data-agent-session-attach[\s\S]*?<\/button>/);
   assert.ok(button, 'the attach button is still marked data-agent-session-attach');
-  assert.match(button[0], /aria-label="Attach photos or files"/);
-  assert.match(button[0], /title="Attach photos or files"/);
+  assert.match(button[0], /aria-label=\{t\('agent:session\.composer\.attach'\)\}/);
+  assert.match(button[0], /title=\{t\('agent:session\.composer\.attach'\)\}/);
+  assert.equal(message('agent:session.composer.attach'), 'Attach photos or files');
   assert.match(button[0], /<PaperclipIcon className="h-5 w-5" aria-hidden="true" \/>/);
   assert.doesNotMatch(button[0], /PlusIcon/);
 });

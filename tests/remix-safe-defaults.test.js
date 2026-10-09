@@ -101,7 +101,9 @@ test('the allowance line names remixing among what shares it', () => {
 
 test('the four doors say "Remix", and keep their ids and data attributes', () => {
   const about = read('frontend/src/features/app-context/about-pane.tsx');
-  assert.match(about, /id="app-about-fork"[\s\S]{0,120}label="Remix"\s+sub="Make your own copy"/);
+  assert.match(about, /id="app-about-fork"[\s\S]{0,120}label=\{t\('agent:appContext\.about\.remix'\)\}\s+sub=\{t\('agent:appContext\.about\.remixSub'\)\}/);
+  assert.equal(message('agent:appContext.about.remix'), 'Remix');
+  assert.equal(message('agent:appContext.about.remixSub'), 'Make your own copy');
 
   const plus = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.match(plus, /data-plus="fork"[\s\S]{0,140}title=\{t\('project:menu\.remix\.title'\)\}\s+sub=\{t\('project:menu\.remix\.sub'\)\}/);
@@ -129,7 +131,8 @@ test('lineage reads "Remixed from" wherever people see it', () => {
       ['discover:detail.remixedFrom.line', 'discover:detail.remixedFrom.openOriginal']],
     ['frontend/src/features/home/home.js', ['home:grid.tile.remixedFrom']],
     ['frontend/src/features/home/app-grid.tsx', ['home:grid.tile.remixedFrom']],
-    ['frontend/src/features/app-context/about-pane.tsx', []],
+    ['frontend/src/features/app-context/about-pane.tsx',
+      ['agent:appContext.about.lineage.remixedFrom', 'agent:appContext.about.lineage.linkTitle']],
   ]) {
     const src = read(file);
     if (ids.length) {

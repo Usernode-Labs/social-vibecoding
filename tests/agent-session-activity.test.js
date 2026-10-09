@@ -78,7 +78,7 @@ test('#3028: while a session works, its spinner replaces the row\'s icon rather 
 
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /icon=\{row\.activity\s*\? <AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>\s*: <SparklesIcon \/>\}/);
-  assert.match(sheet, /lead=\{row\.activity\s*\? <span className="sr-only">\{ACTIVITY_LABEL\[row\.activity\]\}<\/span>\s*: null\}/,
+  assert.match(sheet, /lead=\{row\.activity\s*\? <span className="sr-only">\{t\(ACTIVITY_LABEL\[row\.activity\]\)\}<\/span>\s*: null\}/,
     'the icon slot is aria-hidden, so the row still says "Working" or "Finished" in words');
   assert.match(sheet, /<span className="shrink-0 \[&>svg\]:h-5 \[&>svg\]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">/,
     'the slot sizes the spinner like the icon it replaces');

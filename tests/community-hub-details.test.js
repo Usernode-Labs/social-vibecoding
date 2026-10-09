@@ -17,6 +17,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -380,7 +381,9 @@ test('a Mayor card refused for membership offers Join, then asks the Mayor to tr
   const screen = read('frontend/src/features/agent-session/index.tsx');
   const join = screen.slice(screen.indexOf('function JoinToRetry('), screen.indexOf('function Card('));
   assert.match(join, /home\.setMembership\(join\.slug, true, undefined, \{ name: join\.name \}\)/, 'the one join path');
-  assert.match(join, /void sendAgentMessage\(`I joined \$\{join\.name\}\. Please try "\$\{card\.title\}" again\.`\);/);
+  assert.match(join, /void sendAgentMessage\(t\('agent:session\.join\.joinedMessage', \{ community: join\.name, action: card\.title \}\)\);/);
+  assert.equal(message('agent:session.join.joinedMessage', { community: 'Notes', action: 'File a request' }),
+    'I joined Notes. Please try "File a request" again.');
   assert.match(screen, /\{card\.status === 'failed' && card\.join \? \(\s*<JoinToRetry card=\{card\} join=\{card\.join\} \/>/);
   // No prose from the Mayor under the Join button: the card asks.
   const routes = read('src/routes/agent-sessions.js');

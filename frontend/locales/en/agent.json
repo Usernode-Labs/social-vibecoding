@@ -1,0 +1,2290 @@
+{
+  "activity.working": {
+    "text": "Working",
+    "description": "Tooltip and screen-reader text of the spinner beside an agent session in a list (Messages, the Homeroom menu): the coding agent is working on that conversation right now."
+  },
+  "activity.finished": {
+    "text": "Finished",
+    "description": "Tooltip and screen-reader text of the green dot beside an agent session in a list: the agent finished a turn the person has not looked at yet."
+  },
+  "session.attach.imageTooBig": {
+    "text": "\"{{file}}\" is too big. Images max {{megabytes}} MB.",
+    "description": "Error under the message box of an agent session when a picked image is over the size limit. {{file}} is the file's name, {{megabytes}} the limit as a whole number of megabytes."
+  },
+  "session.attach.zipTooBig": {
+    "text": "\"{{file}}\" is too big. Zip archives max {{megabytes}} MB.",
+    "description": "Error under the message box of an agent session when a picked zip archive is over the size limit. {{file}} is the file's name, {{megabytes}} the limit as a whole number of megabytes."
+  },
+  "session.attach.fileTooBig": {
+    "text": "\"{{file}}\" is too big. Files max {{megabytes}} MB.",
+    "description": "Error under the message box of an agent session when a picked file (not an image or a zip) is over the size limit. {{file}} is the file's name, {{megabytes}} the limit as a whole number of megabytes."
+  },
+  "session.attach.empty": {
+    "text": "\"{{file}}\" is empty.",
+    "description": "Error under the message box of an agent session when a picked file has no content and cannot be attached. {{file}} is the file's name."
+  },
+  "session.attach.tooMany_one": {
+    "text": "You can attach up to {{count}} file to one message.",
+    "description": "Error under the message box of an agent session when more files were picked than one message may carry. {{count}} is the limit (4 today)."
+  },
+  "session.attach.tooMany_other": {
+    "text": "You can attach up to {{count}} files to one message.",
+    "description": "Error under the message box of an agent session when more files were picked than one message may carry. {{count}} is the limit (4 today)."
+  },
+  "session.fixChecks.headingPr_one": {
+    "text": "{{count}} check failed on PR #{{number}}",
+    "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number. PR is the abbreviation of pull request."
+  },
+  "session.fixChecks.headingPr_other": {
+    "text": "{{count}} checks failed on PR #{{number}}",
+    "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number. PR is the abbreviation of pull request."
+  },
+  "session.fixChecks.headingChange_one": {
+    "text": "{{count}} check failed on this change",
+    "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed. Used before the change has a pull request; \"change\" is a noun, the code change the agent is building."
+  },
+  "session.fixChecks.headingChange_other": {
+    "text": "{{count}} checks failed on this change",
+    "description": "Heading of the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many checks failed. Used before the change has a pull request; \"change\" is a noun, the code change the agent is building."
+  },
+  "session.fixChecks.askPr_one": {
+    "text": "Please fix the failing check on PR #{{number}}.",
+    "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number."
+  },
+  "session.fixChecks.askPr_other": {
+    "text": "Please fix the {{count}} failing checks on PR #{{number}}.",
+    "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number."
+  },
+  "session.fixChecks.askChange_one": {
+    "text": "Please fix the failing check on this change.",
+    "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed. Used before the change has a pull request; \"change\" is a noun."
+  },
+  "session.fixChecks.askChange_other": {
+    "text": "Please fix the {{count}} failing checks on this change.",
+    "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed. Used before the change has a pull request; \"change\" is a noun."
+  },
+  "session.fixChecks.askLine": {
+    "text": "- \"{{check}}\"",
+    "description": "One list line in the message that \"Fix it\" sends to the coding agent: a failing check that reported nothing. {{check}} is the check's name. Keep the leading hyphen and the quotation marks."
+  },
+  "session.fixChecks.askLineReason": {
+    "text": "- \"{{check}}\", which reported: {{reason}}",
+    "description": "One list line in the message that \"Fix it\" sends to the coding agent: a failing check and what it reported. {{check}} is the check's name, {{reason}} the check's own failure output. Keep the leading hyphen."
+  },
+  "session.fixChecks.askMore_one": {
+    "text": "- and {{count}} more",
+    "description": "Last list line in the message that \"Fix it\" sends to the coding agent, when more checks failed than the lines above name. {{count}} is how many failing checks are not listed. Keep the leading hyphen."
+  },
+  "session.fixChecks.askMore_other": {
+    "text": "- and {{count}} more",
+    "description": "Last list line in the message that \"Fix it\" sends to the coding agent, when more checks failed than the lines above name. {{count}} is how many failing checks are not listed. Keep the leading hyphen."
+  },
+  "session.requestSeed.titled": {
+    "text": "Work on request #{{number}}: \"{{title}}\"",
+    "description": "Message offered in the message box of a new agent session that was started from a request (a member's filed suggestion or bug report for an app). The person sends it to the agent as their own words. {{number}} is the request's number, {{title}} its title."
+  },
+  "session.requestSeed.untitled": {
+    "text": "Work on request #{{number}}",
+    "description": "Message offered in the message box of a new agent session that was started from a request (a member's filed suggestion or bug report) that has no title. {{number}} is the request's number."
+  },
+  "session.userMessage.showLess": {
+    "text": "Show less",
+    "description": "Button at the end of the person's own long message in an agent session, once it is unfolded: folds the message back to its first lines."
+  },
+  "session.userMessage.showMore": {
+    "text": "Show more",
+    "description": "Button on the person's own long message in an agent session, shown folded to its first lines: unfolds the whole message."
+  },
+  "session.effort.minimal": {
+    "text": "Minimal",
+    "description": "One of the thinking levels offered for a model in the agent session's \"Build with\" sheet, also shown after the model's name on the model button: how much reasoning effort the model spends. The lowest level."
+  },
+  "session.effort.low": {
+    "text": "Low",
+    "description": "One of the thinking levels offered for a model in the agent session's \"Build with\" sheet, also shown after the model's name on the model button: how much reasoning effort the model spends. The second lowest level."
+  },
+  "session.effort.medium": {
+    "text": "Medium",
+    "description": "One of the thinking levels offered for a model in the agent session's \"Build with\" sheet, also shown after the model's name on the model button: how much reasoning effort the model spends. The middle level."
+  },
+  "session.effort.high": {
+    "text": "High",
+    "description": "One of the thinking levels offered for a model in the agent session's \"Build with\" sheet, also shown after the model's name on the model button: how much reasoning effort the model spends. The second highest level."
+  },
+  "session.effort.xhigh": {
+    "text": "Extra high",
+    "description": "One of the thinking levels offered for a model in the agent session's \"Build with\" sheet, also shown after the model's name on the model button: how much reasoning effort the model spends. The highest level."
+  },
+  "session.effort.default": {
+    "text": "Default",
+    "description": "First option in the list of thinking levels in the agent session's \"Build with\" sheet, when the server names no default level: the model uses whatever level the platform is set to."
+  },
+  "session.model.title.openRouter": {
+    "text": "Runs on your OpenRouter key",
+    "description": "Tooltip of a model in the agent session's model list: this model is paid for with the person's own OpenRouter API key. OpenRouter is a company name."
+  },
+  "session.model.title.openRouterClaudeCode": {
+    "text": "Runs on your OpenRouter key, in Claude Code",
+    "description": "Tooltip of a model in the agent session's model list: paid for with the person's own OpenRouter API key and run by the Claude Code coding tool. OpenRouter and Claude Code are product names."
+  },
+  "session.model.title.anthropic": {
+    "text": "Runs on the platform Claude allowance, or your own Anthropic key",
+    "description": "Tooltip of a Claude model in the agent session's model list: it is paid from the allowance Homeroom gives, or from the person's own Anthropic API key. Claude and Anthropic are names."
+  },
+  "session.model.cost": {
+    "text": "about {{amount}} for a typical change",
+    "description": "Estimate under a model's name in the agent session's model list. {{amount}} is a price in US dollars with its sign, for example $1.55 or <$0.01. \"change\" is a noun: one code change built by the agent. Starts lower case; it follows the model's name."
+  },
+  "session.model.costWithNote": {
+    "text": "{{note}} · about {{amount}} for a typical change",
+    "description": "Line under a model's name in the agent session's model list: a short note about the model, then the estimate. {{note}} is the platform's own note, for example \"general coding work\"; {{amount}} is a price in US dollars with its sign. Keep the middle dot between them."
+  },
+  "session.credits.left": {
+    "text": "{{amount}} left",
+    "description": "Text of the credits button beside the message box of an agent session: how much of the person's AI allowance remains. {{amount}} is a dollar amount such as $38 or $4.10."
+  },
+  "session.credits.noneLeft": {
+    "text": "None left",
+    "description": "Text of the credits button beside the message box of an agent session when the person's AI allowance is used up: no credits remain."
+  },
+  "session.credits.wideLeft": {
+    "text": "{{amount}} left / {{allowance}}",
+    "description": "Text of the credits button beside the message box when there is room for the allowance too: what remains, then the whole allowance after a slash. {{amount}} and {{allowance}} are dollar amounts such as $38 and $50."
+  },
+  "session.credits.wideNoneLeft": {
+    "text": "None left / {{allowance}}",
+    "description": "Text of the credits button beside the message box when nothing remains and there is room for the allowance too. {{allowance}} is the whole allowance as a dollar amount such as $50."
+  },
+  "session.credits.pillWideLeft": {
+    "text": "{{amount}} left<0> / {{allowance}}</0>",
+    "description": "Text of the credits button beside the message box on a wide screen: what remains, then the whole allowance in a muted colour. {{amount}} and {{allowance}} are dollar amounts such as $38 and $50. Keep the <0> tags around the slash and the allowance."
+  },
+  "session.credits.pillWideNoneLeft": {
+    "text": "None left<0> / {{allowance}}</0>",
+    "description": "Text of the credits button beside the message box on a wide screen when nothing remains. {{allowance}} is the whole allowance as a dollar amount. Keep the <0> tags around the slash and the allowance."
+  },
+  "session.credits.describeWeek": {
+    "text": "{{remaining}} of this week’s {{allowance}} left",
+    "description": "Tooltip of the credits button and the line under the credits bar in the \"Build with\" sheet, for an allowance that renews weekly. {{remaining}} is what is left and {{allowance}} the week's whole allowance, both exact dollar amounts such as $38.40 and $50.00."
+  },
+  "session.credits.describeDay": {
+    "text": "{{remaining}} of today’s {{allowance}} left",
+    "description": "Tooltip of the credits button and the line under the credits bar in the \"Build with\" sheet, for an allowance that renews daily. {{remaining}} is what is left and {{allowance}} the day's whole allowance, both exact dollar amounts."
+  },
+  "session.credits.pillLabelWeek": {
+    "text": "Credits: {{remaining}} of this week’s {{allowance}} left",
+    "description": "Accessible name of the credits button beside the message box of an agent session, for a weekly allowance. {{remaining}} and {{allowance}} are exact dollar amounts such as $38.40 and $50.00."
+  },
+  "session.credits.pillLabelDay": {
+    "text": "Credits: {{remaining}} of today’s {{allowance}} left",
+    "description": "Accessible name of the credits button beside the message box of an agent session, for a daily allowance. {{remaining}} and {{allowance}} are exact dollar amounts."
+  },
+  "session.credits.headingWeek": {
+    "text": "This week’s credits",
+    "description": "Heading of the credits card in the agent session's \"Build with\" sheet when the AI allowance renews weekly."
+  },
+  "session.credits.headingDay": {
+    "text": "Today’s credits",
+    "description": "Heading of the credits card in the agent session's \"Build with\" sheet when the AI allowance renews daily."
+  },
+  "session.credits.meterLabel": {
+    "text": "Credits left",
+    "description": "Accessible name of the bar in the credits card of the \"Build with\" sheet: it shows how much of the AI allowance remains."
+  },
+  "session.credits.ownKeyToday": {
+    "text": "Your key: {{amount}} today",
+    "description": "Note in the credits card of the \"Build with\" sheet: how much the person spent today through their own API key, which does not count against Homeroom credits. {{amount}} is an exact dollar amount such as $1.20."
+  },
+  "session.model.pillLabel": {
+    "text": "Model: {{model}}",
+    "description": "Accessible name of the model button beside the message box of an agent session; pressing it opens the \"Build with\" sheet. {{model}} is the AI model's full name, for example Claude Opus 5.5."
+  },
+  "session.model.pillLabelThinking": {
+    "text": "Model: {{model}}, thinking {{level}}",
+    "description": "Accessible name of the model button beside the message box when the model has a thinking level. {{model}} is the AI model's full name; {{level}} is the thinking level as the button shows it, for example High."
+  },
+  "session.buildWith.homeroomIntro": {
+    "text": "The agent builds it here, on your Homeroom credits.",
+    "description": "First line of the Homeroom tab in the agent session's \"Build with\" sheet: choosing this tab means Homeroom's own coding agent builds the change, paid from the person's Homeroom AI allowance."
+  },
+  "session.model.listHeading": {
+    "text": "Model",
+    "description": "Small heading over the list of AI models in the agent session's \"Build with\" sheet."
+  },
+  "session.model.defaultTag": {
+    "text": "default",
+    "description": "Small lower-case tag after a model's name in the agent session's model list: the model a conversation uses when the person has not chosen one."
+  },
+  "session.effort.rowLabel": {
+    "text": "Thinking level",
+    "description": "Row in the agent session's \"Build with\" sheet; pressing it unfolds the list of thinking levels (how much reasoning effort the model spends). The current level is shown beside it."
+  },
+  "session.effort.defaultTag": {
+    "text": "default",
+    "description": "Small lower-case tag after a thinking level in the agent session's \"Build with\" sheet: the level used when the person has not chosen one."
+  },
+  "session.buildWith.heading": {
+    "text": "Build with",
+    "description": "Heading of the sheet opened from the model button in an agent session. Its tabs (Homeroom, Claude Code, Codex) are what the person can build a change with; \"Build\" is a verb."
+  },
+  "session.buildWith.tabsLabel": {
+    "text": "Build with",
+    "description": "Accessible name of the row of tabs (Homeroom, Claude Code, Codex) in the agent session's \"Build with\" sheet; \"Build\" is a verb."
+  },
+  "session.buildWith.dialogLabel": {
+    "text": "Build with",
+    "description": "Accessible name of the sheet opened from the model button in an agent session, where the person chooses what to build a change with; \"Build\" is a verb."
+  },
+  "session.handoff.lead.update": {
+    "text": "{{agent}} builds on your own {{product}} plan and pushes to your fork of the app; its work comes back as an update to this change. No Homeroom credits.",
+    "description": "First paragraph of a Claude Code or Codex tab in the agent session's \"Build with\" sheet: what handing the work to that outside tool means. {{agent}} is the coding tool, Claude Code or Codex; {{product}} is the account it runs on, Claude or ChatGPT. \"change\" is a noun, the code change being built; a fork is the person's own copy of the app's repository. Used when the conversation already has a change."
+  },
+  "session.handoff.lead.newChange": {
+    "text": "{{agent}} builds on your own {{product}} plan and pushes to your fork of the app; its work comes back as a new change. No Homeroom credits.",
+    "description": "First paragraph of a Claude Code or Codex tab in the agent session's \"Build with\" sheet: what handing the work to that outside tool means. {{agent}} is the coding tool, Claude Code or Codex; {{product}} is the account it runs on, Claude or ChatGPT. \"change\" is a noun, the code change being built; a fork is the person's own copy of the app's repository. Used when the work would start a new change."
+  },
+  "session.handoff.lead.newChangeOnApp": {
+    "text": "{{agent}} builds on your own {{product}} plan and pushes to your fork of the app; its work comes back as a new change on {{app}}. No Homeroom credits.",
+    "description": "First paragraph of a Claude Code or Codex tab in the agent session's \"Build with\" sheet: what handing the work to that outside tool means. {{agent}} is the coding tool, Claude Code or Codex; {{product}} is the account it runs on, Claude or ChatGPT. \"change\" is a noun, the code change being built; a fork is the person's own copy of the app's repository. Used when the work would start a new change; {{app}} is the app's name."
+  },
+  "session.handoff.check.github": {
+    "text": "GitHub linked",
+    "description": "One of three setup checks in the hand-off tab of the \"Build with\" sheet, with a tick when done: the person's GitHub account is linked to Homeroom."
+  },
+  "session.handoff.check.fork": {
+    "text": "Fork ready",
+    "description": "One of three setup checks in the hand-off tab of the \"Build with\" sheet, with a tick when done: the person's own copy (fork) of the app's repository exists."
+  },
+  "session.handoff.check.connector": {
+    "text": "Homeroom connected in {{product}}",
+    "description": "One of three setup checks in the hand-off tab of the \"Build with\" sheet, with a tick when done: the Homeroom connector is added to the person's account in {{product}}, which is Claude or ChatGPT."
+  },
+  "session.handoff.check.done": {
+    "text": "Done",
+    "description": "Screen-reader text after a setup check in the hand-off tab whose tick is shown: this step is complete."
+  },
+  "session.handoff.check.notDone": {
+    "text": "Not done yet",
+    "description": "Screen-reader text after a setup check in the hand-off tab that has no tick: this step is still to do."
+  },
+  "session.handoff.statusFailed": {
+    "text": "Could not check where the hand-off stands.",
+    "description": "Error in the hand-off tab of the \"Build with\" sheet when the request for the setup checks failed and the server gave no reason."
+  },
+  "session.handoff.unavailable": {
+    "text": "Handing work to Claude Code or Codex is unavailable right now.",
+    "description": "Note in the hand-off tab of the \"Build with\" sheet when this server cannot hand work to an outside coding tool. Claude Code and Codex are product names."
+  },
+  "session.handoff.copied": {
+    "text": "Copied. Paste it into the new {{agent}} session.",
+    "description": "Green confirmation in the hand-off tab after the instructions were copied to the clipboard and the tool opened in a new tab. {{agent}} is Claude Code or Codex."
+  },
+  "session.handoff.copyFailed": {
+    "text": "Could not copy. Copy the instructions below by hand, then paste them into the new session.",
+    "description": "Amber warning in the hand-off tab when copying the instructions to the clipboard failed; the instructions are shown unfolded underneath."
+  },
+  "session.handoff.nothingYet": {
+    "text": "There is nothing to hand over yet. Tell the agent which app to change first, then come back here.",
+    "description": "Shown in the hand-off tab of the \"Build with\" sheet when the conversation is not about any app yet, so there is no work to pass to Claude Code or Codex. \"change\" is a verb here."
+  },
+  "session.handoff.checking": {
+    "text": "Checking where you are…",
+    "description": "Status line in the hand-off tab while the setup checks (GitHub linked, fork ready, connector added) are loading."
+  },
+  "session.handoff.connector.heading": {
+    "text": "Add the Homeroom connector in {{product}}",
+    "description": "Heading of the setup steps in the hand-off tab for adding Homeroom as a connector. {{product}} is Claude or ChatGPT."
+  },
+  "session.handoff.connector.serverUrl": {
+    "text": "Your MCP server URL: <0>{{url}}</0>",
+    "description": "Line in the connector setup steps of the hand-off tab. {{url}} is the web address to paste into the other product; MCP is a protocol name and stays as it is. Keep the <0> tags around the address."
+  },
+  "session.handoff.connector.startNew": {
+    "text": "Then start a new {{product}} conversation: one you already had open will not see a connector added after it started.",
+    "description": "Small note under the connector setup steps in the hand-off tab. {{product}} is Claude or ChatGPT."
+  },
+  "session.handoff.connector.checkAgain": {
+    "text": "I’ve added it. Check again",
+    "description": "Button under the connector setup steps in the hand-off tab: the person says the connector is added and Homeroom checks the setup again."
+  },
+  "session.handoff.connector.moreSettings": {
+    "text": "More connector settings",
+    "description": "Link under the connector setup steps in the hand-off tab: opens the Connectors section of Settings."
+  },
+  "session.handoff.carried.heading": {
+    "text": "Handed over with the instructions",
+    "description": "Heading of the card in the hand-off tab, once setup is done, that says what the copied instructions carry to the outside coding tool."
+  },
+  "session.handoff.carried.specTitled": {
+    "text": "This chat's spec: \"{{title}}\"",
+    "description": "Line in the hand-off tab's \"Handed over with the instructions\" card: the instructions include the written plan (spec) from this conversation. {{title}} is the change's title."
+  },
+  "session.handoff.carried.spec": {
+    "text": "This chat's spec",
+    "description": "Line in the hand-off tab's \"Handed over with the instructions\" card: the instructions include the written plan (spec) from this conversation, which has no title to show."
+  },
+  "session.handoff.carried.noSpec": {
+    "text": "No spec yet, so {{agent}} will ask what to build.",
+    "description": "Line in the hand-off tab's \"Handed over with the instructions\" card when the conversation has no written plan (spec) yet. {{agent}} is Claude Code or Codex."
+  },
+  "session.handoff.copyAndOpen": {
+    "text": "Copy instructions and open {{agent}}",
+    "description": "Main button of the hand-off tab once setup is done: copies the instructions to the clipboard and opens the tool in a new browser tab. {{agent}} is Claude Code or Codex."
+  },
+  "session.handoff.pasteHint": {
+    "text": "Paste into the new session. It starts building straight away.",
+    "description": "Hint under the \"Copy instructions and open\" button in the hand-off tab: what to do in the tool that just opened."
+  },
+  "session.handoff.instructions": {
+    "text": "Instructions",
+    "description": "Label of the fold in the hand-off tab that shows the full text of the instructions for the outside coding tool, to read or copy by hand."
+  },
+  "session.creditsCard.usedUp": {
+    "text": "Your Homeroom credits are used up.",
+    "description": "Heading of the amber card in an agent session when a message was refused because the person's AI allowance ran out and the server gave no sentence of its own."
+  },
+  "session.propose.question": {
+    "text": "Put this up for the group’s vote?",
+    "description": "Question at the top of the small confirmation panel opened by \"Propose to group\" in an agent session: the change the agent built would go to the community's vote."
+  },
+  "session.propose.line.titled": {
+    "text": "“{{title}}” goes to the vote. Its preview and checks run again on the way.",
+    "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. {{title}} is the proposal title typed above. Keep the quotation marks around it."
+  },
+  "session.propose.line.titledPr": {
+    "text": "“{{title}}” (PR #{{number}}) goes to the vote. Its preview and checks run again on the way.",
+    "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. {{title}} is the proposal title typed above; {{number}} is the pull request's number (PR is its abbreviation)."
+  },
+  "session.propose.line.untitled": {
+    "text": "“This change” goes to the vote. Its preview and checks run again on the way.",
+    "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. Used when the title box is empty; \"change\" is a noun."
+  },
+  "session.propose.line.untitledPr": {
+    "text": "“This change” (PR #{{number}}) goes to the vote. Its preview and checks run again on the way.",
+    "description": "Line in the \"Propose to group\" confirmation panel of an agent session saying which change goes to the community's vote and that its preview build and automated checks run again first. Used when the title box is empty; {{number}} is the pull request's number. \"change\" is a noun."
+  },
+  "session.propose.titleLabel": {
+    "text": "Proposal title",
+    "description": "Label of the text box in the \"Propose to group\" confirmation panel: the title the proposal will carry in the vote. \"Proposal\" is a noun."
+  },
+  "session.propose.titlePlaceholder": {
+    "text": "This change",
+    "description": "Placeholder in the proposal title box of the \"Propose to group\" panel when the change has no title; \"change\" is a noun."
+  },
+  "session.propose.confirm": {
+    "text": "Propose",
+    "description": "Confirm button in the \"Propose to group\" panel of an agent session: a verb, puts the change up for the community's vote."
+  },
+  "session.propose.proposing": {
+    "text": "Proposing…",
+    "description": "Text of the \"Propose to group\" button on a change's preview card while the change is being put up for the vote."
+  },
+  "session.propose.button": {
+    "text": "Propose to group",
+    "description": "Button on a change's preview card in an agent session: opens the confirmation to put the change up for the community's vote. \"Propose\" is a verb."
+  },
+  "session.card.field.app": {
+    "text": "App",
+    "description": "Row label on a confirmation card in an agent session (the card lists what an action the agent wants to take will be run with, and the person confirms or dismisses it). The value beside it is the app the action is for."
+  },
+  "session.card.field.changeTitle": {
+    "text": "Change",
+    "description": "Row label on a confirmation card in an agent session (the card lists what an action the agent wants to take will be run with, and the person confirms or dismisses it). A noun: the value beside it is the title of the code change."
+  },
+  "session.card.field.change": {
+    "text": "Change",
+    "description": "Row label on a confirmation card in an agent session (the card lists what an action the agent wants to take will be run with, and the person confirms or dismisses it). A noun: the value beside it is the number of the code change, such as #88."
+  },
+  "session.card.field.proposal": {
+    "text": "Change",
+    "description": "Row label on a confirmation card in an agent session (the card lists what an action the agent wants to take will be run with, and the person confirms or dismisses it). A noun: the value beside it is the number of the change that is up for a vote, such as #88."
+  },
+  "session.card.field.request": {
+    "text": "Request",
+    "description": "Row label on a confirmation card in an agent session (the card lists what an action the agent wants to take will be run with, and the person confirms or dismisses it). A noun: the value beside it names a request, a member's filed suggestion or bug report."
+  },
+  "session.card.field.links": {
+    "text": "Links",
+    "description": "Row label on a confirmation card in an agent session (the card lists what an action the agent wants to take will be run with, and the person confirms or dismisses it). A noun: the value beside it lists the requests this action links the change to."
+  },
+  "session.card.field.details": {
+    "text": "Details",
+    "description": "Row label on a confirmation card in an agent session (the card lists what an action the agent wants to take will be run with, and the person confirms or dismisses it). The value beside it is the longer text of the request or change."
+  },
+  "session.card.value.request": {
+    "text": "Request #{{number}}",
+    "description": "Value on a confirmation card in an agent session, beside the label \"Request\": names one request (a member's filed suggestion or bug report) by its number. {{number}} is that number."
+  },
+  "session.card.value.linkedRequest": {
+    "text": "Request #{{number}}",
+    "description": "One item in the list of linked requests on a confirmation card in an agent session, beside the label \"Links\". A noun; {{number}} is the request's number."
+  },
+  "session.run.agentOnYourMachine": {
+    "text": "{{agent}} · your machine",
+    "description": "Small line on a run's row in an agent session saying which coding tool did the work when it ran on the person's own computer rather than on Homeroom. {{agent}} is the tool's name, for example Claude Code. Keep the middle dot."
+  },
+  "session.checks.skippedReason": {
+    "text": "Checks were skipped: {{reason}}. It can still go live.",
+    "description": "Sentence under a change's status in an agent session when its automated checks did not run. {{reason}} is the server's reason, a phrase without a final full stop. \"go live\" means the change can still be released."
+  },
+  "session.checks.skippedNothingToTest": {
+    "text": "Checks were skipped: there was nothing to test. It can still go live.",
+    "description": "Sentence under a change's status in an agent session when its automated checks did not run and no reason was recorded. \"go live\" means the change can still be released."
+  },
+  "session.checks.passing": {
+    "text": "Checks passing",
+    "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: all checks pass."
+  },
+  "session.checks.skipped": {
+    "text": "Checks skipped",
+    "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: the checks did not run, which does not block the change."
+  },
+  "session.checks.countFailing_one": {
+    "text": "{{count}} check failing",
+    "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: {{count}} is how many checks fail."
+  },
+  "session.checks.countFailing_other": {
+    "text": "{{count}} checks failing",
+    "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: {{count}} is how many checks fail."
+  },
+  "session.checks.failing": {
+    "text": "Checks failing",
+    "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: some checks fail and the number is not known."
+  },
+  "session.checks.running": {
+    "text": "Checks running",
+    "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: the checks are running now or waiting to start."
+  },
+  "session.checks.couldNotRun": {
+    "text": "Checks couldn’t run",
+    "description": "Short status of a change's automated checks, on its preview card and in the changes panel of an agent session: the checks hit an error and gave no verdict."
+  },
+  "session.run.spec.running": {
+    "text": "Writing the spec…",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). The agent is writing the plan (spec) for the change right now."
+  },
+  "session.run.sync.running": {
+    "text": "Syncing with main…",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). The change is being brought up to date with the app's main branch right now; \"main\" is the branch's name."
+  },
+  "session.run.build.running": {
+    "text": "Building the change…",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). The agent is writing the code of the change right now; \"change\" is a noun."
+  },
+  "session.run.spec.done": {
+    "text": "Wrote the spec",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). The agent finished writing the plan (spec) for the change."
+  },
+  "session.run.sync.done": {
+    "text": "Synced with main",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). The change was brought up to date with the app's main branch; \"main\" is the branch's name."
+  },
+  "session.run.build.done": {
+    "text": "Built the change",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). The agent finished writing the code of the change; \"change\" is a noun."
+  },
+  "session.run.noChanges": {
+    "text": "Made no changes",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). The agent finished and changed nothing in the code."
+  },
+  "session.run.spec.failed": {
+    "text": "The spec was not written",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). Writing the plan (spec) failed."
+  },
+  "session.run.sync.failed": {
+    "text": "Could not sync with main",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). Bringing the change up to date with the app's main branch failed; \"main\" is the branch's name."
+  },
+  "session.run.build.failed": {
+    "text": "The build did not finish",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). Writing the code of the change failed. \"build\" is a noun: the agent's work on the code."
+  },
+  "session.run.spec.stopped": {
+    "text": "Stopped writing the spec",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). The person stopped the agent while it was writing the plan (spec)."
+  },
+  "session.run.build.stopped": {
+    "text": "Stopped the build",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). The person stopped the agent while it was writing or syncing the code. \"build\" is a noun."
+  },
+  "session.run.spec.ended": {
+    "text": "Spec run ended",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). An older run that wrote the plan (spec) is over and its result is not known."
+  },
+  "session.run.sync.ended": {
+    "text": "Sync ended",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). An older run that synced the change with the main branch is over and its result is not known."
+  },
+  "session.run.build.ended": {
+    "text": "Build ended",
+    "description": "Heading of a run's row in an agent session's conversation (a run is one piece of work by the coding agent). An older run that wrote code is over and its result is not known. \"Build\" is a noun."
+  },
+  "session.run.duration.seconds": {
+    "text": "{{seconds}}s",
+    "description": "How long a finished run took, when under a minute, shown small beside the run's heading in an agent session. {{seconds}} is a whole number; \"s\" abbreviates seconds."
+  },
+  "session.run.duration.minutes": {
+    "text": "{{minutes}}m {{seconds}}s",
+    "description": "How long a finished run took, a minute or more, shown small beside the run's heading in an agent session. {{minutes}} and {{seconds}} are whole numbers; \"m\" and \"s\" abbreviate minutes and seconds."
+  },
+  "session.replies.tryAgain": {
+    "text": "Try that again",
+    "description": "Suggested reply offered as a chip under a turn of the agent that failed or was stopped. Pressing it sends these words to the agent as the person's message."
+  },
+  "session.replies.whatWentWrong": {
+    "text": "What went wrong?",
+    "description": "Suggested reply offered as a chip under a turn of the agent that failed or was stopped. Pressing it sends this question to the agent as the person's message."
+  },
+  "session.activity.listApps": {
+    "text": "Looking at apps",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: reading the list of apps."
+  },
+  "session.activity.getApp": {
+    "text": "Reading the app",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: reading one app's details."
+  },
+  "session.activity.listRequests": {
+    "text": "Reading requests",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: reading the list of requests (members' filed suggestions and bug reports)."
+  },
+  "session.activity.getRequest": {
+    "text": "Reading a request",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: reading one request (a member's filed suggestion or bug report)."
+  },
+  "session.activity.getDiscussion": {
+    "text": "Reading a discussion",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: reading a discussion thread."
+  },
+  "session.activity.getProposal": {
+    "text": "Reading a change",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: reading one proposed code change; \"change\" is a noun."
+  },
+  "session.activity.listMyProposals": {
+    "text": "Checking your proposals",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: looking up the changes the person has put up for a vote."
+  },
+  "session.activity.getChange": {
+    "text": "Checking the change",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: looking up where the current code change stands; \"change\" is a noun."
+  },
+  "session.activity.getConventions": {
+    "text": "Reading the platform rules",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: reading Homeroom's conventions for building apps."
+  },
+  "session.activity.webFetch": {
+    "text": "Reading a web page",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: fetching a page from the web."
+  },
+  "session.activity.recheckChange": {
+    "text": "Re-running the checks",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: starting the change's automated checks again."
+  },
+  "session.activity.switchChange": {
+    "text": "Switching changes",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: moving the conversation to another code change; \"changes\" is a noun."
+  },
+  "session.activity.setFocusApp": {
+    "text": "Changing the focus",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: moving the conversation to another app."
+  },
+  "session.activity.getProdStatus": {
+    "text": "Reading production status",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: checking the state of the live, released app."
+  },
+  "session.activity.dispatchScout": {
+    "text": "The coding agent is writing the spec",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: the coding agent has started writing the plan (spec) for the change."
+  },
+  "session.activity.dispatchCodingAgent": {
+    "text": "The coding agent is building",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: the coding agent has started writing the code."
+  },
+  "session.activity.preparingConfirmation": {
+    "text": "Preparing a confirmation",
+    "description": "Live status line at the end of an agent session while the agent works, naming what it is doing right now: it is about to ask the person to confirm an action."
+  },
+  "session.changeStatus.building": {
+    "text": "Building",
+    "description": "State of a code change, in the small pill in an agent session's header and changes panel: the coding agent is working on it right now."
+  },
+  "session.changeStatus.inProgress": {
+    "text": "In progress",
+    "description": "State of a code change, in the small pill in an agent session's header and changes panel: it is being worked on and has not been put up for a vote."
+  },
+  "session.changeStatus.waitingForApproval": {
+    "text": "Waiting for approval",
+    "description": "State of a code change, in the small pill in an agent session's header and changes panel: it is up for the community's vote."
+  },
+  "session.changeStatus.goingLive": {
+    "text": "Going live",
+    "description": "State of a code change, in the small pill in an agent session's header and changes panel: it was approved and is being released."
+  },
+  "session.changeStatus.live": {
+    "text": "Live",
+    "description": "State of a code change, in the small pill in an agent session's header and changes panel: it has been released; an adjective."
+  },
+  "session.changeStatus.closed": {
+    "text": "Closed",
+    "description": "State of a code change, in the small pill in an agent session's header and changes panel: it was archived without being released; an adjective."
+  },
+  "session.changeStatus.none": {
+    "text": "No active change",
+    "description": "State of a code change, in the small pill in an agent session's header and changes panel: the conversation has no change it is working on."
+  },
+  "session.error.startFailed": {
+    "text": "Could not start an agent session.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: sending the first message could not create the conversation."
+  },
+  "session.error.loadFailed": {
+    "text": "Could not load this agent session.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the conversation could not be loaded."
+  },
+  "session.error.modelFailed": {
+    "text": "Could not change the model.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the chosen AI model could not be saved for this conversation."
+  },
+  "session.error.draftsLoadFailed": {
+    "text": "Could not load your saved drafts.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the messages the person saved for later could not be loaded."
+  },
+  "session.error.draftSaveFailed": {
+    "text": "Could not save that draft.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: a message could not be saved for later."
+  },
+  "session.error.draftDeleteFailed": {
+    "text": "Could not delete that draft.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: a saved message could not be deleted."
+  },
+  "session.error.renameFailed": {
+    "text": "Could not rename this session.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the conversation's new name could not be saved."
+  },
+  "session.error.archiveFailed": {
+    "text": "Could not archive this session.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the conversation could not be archived."
+  },
+  "session.error.unarchiveFailed": {
+    "text": "Could not unarchive this session.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the conversation could not be brought back from the archive."
+  },
+  "session.error.handoffStatusFailed": {
+    "text": "Could not check where the hand-off stands.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the setup checks for handing work to Claude Code or Codex could not be loaded."
+  },
+  "session.error.listFailed": {
+    "text": "Could not load agent sessions.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the list of the person's conversations with the agent could not be loaded."
+  },
+  "session.error.messagesFailed": {
+    "text": "Could not load the conversation.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the conversation's messages could not be loaded."
+  },
+  "session.error.actionsFailed": {
+    "text": "Could not load confirmations.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the confirmation cards (actions waiting for the person's yes) could not be loaded."
+  },
+  "session.error.confirmFailed": {
+    "text": "That confirmation did not go through.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: confirming an action on a confirmation card failed."
+  },
+  "session.error.dismissFailed": {
+    "text": "Could not dismiss that confirmation.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: dismissing a confirmation card failed."
+  },
+  "session.error.switchFailed": {
+    "text": "Could not switch to that change.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the conversation could not be moved to another code change; \"change\" is a noun."
+  },
+  "session.error.stopFailed": {
+    "text": "Could not stop the agent. Try again.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the request to stop the working agent failed."
+  },
+  "session.error.stopCaptureFailed": {
+    "text": "Could not stop capturing previews.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the request to stop taking preview screenshots failed."
+  },
+  "session.error.specFailed": {
+    "text": "Could not load the spec.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the written plan (spec) of the change could not be loaded."
+  },
+  "session.error.proposeFailed": {
+    "text": "Could not put this change up for the vote.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the change could not be put up for the community's vote; \"change\" is a noun."
+  },
+  "session.error.titleFailed": {
+    "text": "Could not change the title.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the change's new title could not be saved; \"change\" is a verb here."
+  },
+  "session.error.rebuildFailed": {
+    "text": "Could not rebuild the preview.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the preview build of the change could not be started again."
+  },
+  "session.error.specVersionFailed": {
+    "text": "Could not load that version of the spec.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: an earlier version of the written plan (spec) could not be loaded."
+  },
+  "session.error.turnRefused": {
+    "text": "The agent could not take that message.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the server refused the message the person sent to the agent."
+  },
+  "session.error.turnFailed": {
+    "text": "The agent could not finish this turn.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: the agent's reply stopped with an error."
+  },
+  "session.error.retryFailed": {
+    "text": "Could not try that again.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: re-running a turn that had not finished failed."
+  },
+  "session.error.actionFailed": {
+    "text": "That did not go through.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: confirming or dismissing a confirmation card failed."
+  },
+  "session.error.turnRefusedNotSent": {
+    "text": "The agent could not take this, so it was not sent.",
+    "description": "Error shown in an agent session when the server gave no sentence of its own: shown under the person's own unsent message: the server refused it."
+  },
+  "session.error.attachFailed": {
+    "text": "Could not attach {{file}}.",
+    "description": "Error shown in an agent session when uploading a file to attach to a message failed and the server gave no reason. {{file}} is the file's name."
+  },
+  "session.newSessionTitle": {
+    "text": "New session",
+    "description": "Title in the header bar of an agent session that has no title yet: a conversation with the coding agent that was just started."
+  },
+  "session.outbox.notSentUnreachable": {
+    "text": "Could not reach Homeroom, so this was not sent.",
+    "description": "Line under the person's own message in an agent session that failed to send, beside a Retry button: the connection to Homeroom failed."
+  },
+  "session.outbox.notSentBusy": {
+    "text": "The agent was still answering, so this was not sent.",
+    "description": "Line under the person's own message in an agent session that failed to send, beside a Retry button: the agent was in the middle of a reply and could not take another message."
+  },
+  "session.outbox.notSent": {
+    "text": "This was not sent.",
+    "description": "Line under the person's own message in an agent session that failed to send, beside a Retry button: the message never reached the server and the reason is not known."
+  },
+  "session.outbox.attachFailedNotSent": {
+    "text": "Could not attach {{file}}, so this was not sent.",
+    "description": "Line under the person's own message in an agent session that failed to send, beside a Retry button: uploading one of its files failed. {{file}} is the file's name."
+  },
+  "session.outbox.notSentNoCredits": {
+    "text": "Not sent: you are out of credits for now.",
+    "description": "Line under the person's own message in an agent session that failed to send, beside a Retry button: the person's AI allowance is used up until it renews."
+  },
+  "session.outbox.attachedFile": {
+    "text": "Attached {{file}}",
+    "description": "Stands in for the text of the person's own message in an agent session when they sent one file and typed nothing. {{file}} is the file's name."
+  },
+  "session.outbox.attachedFiles_one": {
+    "text": "Attached {{count}} file",
+    "description": "Stands in for the text of the person's own message in an agent session when they sent files and typed nothing. {{count}} is how many files (two or more in practice)."
+  },
+  "session.outbox.attachedFiles_other": {
+    "text": "Attached {{count}} files",
+    "description": "Stands in for the text of the person's own message in an agent session when they sent files and typed nothing. {{count}} is how many files (two or more in practice)."
+  },
+  "session.activity.codingAgentWorking": {
+    "text": "The coding agent is working",
+    "description": "Live status line at the end of an agent session while the coding agent (the tool that writes the code) is running."
+  },
+  "session.run.progress.working": {
+    "text": "The coding agent is working",
+    "description": "Line in a run's progress log in an agent session, shown in place of a technical phase marker: the coding agent is running."
+  },
+  "session.rename.title": {
+    "text": "Rename this session",
+    "description": "Title of the small dialog that asks for a new name for the agent session (the conversation with the coding agent)."
+  },
+  "session.rename.placeholder": {
+    "text": "What this conversation is about",
+    "description": "Placeholder in the text box of the dialog that renames an agent session."
+  },
+  "session.rename.confirm": {
+    "text": "Rename",
+    "description": "Confirm button of the dialog that renames an agent session: a verb, saves the typed name."
+  },
+  "session.archive.title": {
+    "text": "Archive this session?",
+    "description": "Title of the confirmation dialog shown before an agent session is archived. \"Archive\" is a verb."
+  },
+  "session.archive.message": {
+    "text": "It leaves your lists and its change is paused. A change waiting for approval keeps its approvals, and you can unarchive the session at any time.",
+    "description": "Body of the confirmation dialog shown before an agent session is archived: what archiving does to the conversation and its code change. \"change\" is a noun."
+  },
+  "session.archive.confirm": {
+    "text": "Archive",
+    "description": "Confirm button of the dialog shown before an agent session is archived: a verb."
+  },
+  "session.drafts.full_one": {
+    "text": "That's {{count}} saved draft. Send or delete one first",
+    "description": "Toast in an agent session when the person tries to save a message for later and the list of saved drafts is full. {{count}} is the limit. No final full stop."
+  },
+  "session.drafts.full_other": {
+    "text": "That's {{count}} saved drafts. Send or delete one first",
+    "description": "Toast in an agent session when the person tries to save a message for later and the list of saved drafts is full. {{count}} is the limit. No final full stop."
+  },
+  "session.drafts.saved": {
+    "text": "Draft saved. Send it whenever you're ready",
+    "description": "Toast in an agent session after the person saved a typed message for later while the agent was busy. No final full stop."
+  },
+  "session.drafts.keptTyped": {
+    "text": "Kept what you had typed as another draft",
+    "description": "Toast in an agent session when the person opened a saved draft while other text was in the message box: that text was saved as a draft of its own. No final full stop."
+  },
+  "session.rebuild.stillRunning": {
+    "text": "The rebuild is still running. Its result will appear in this conversation.",
+    "description": "Toast in an agent session after \"Rebuild preview\" was pressed and the build has not finished within the wait."
+  },
+  "session.rebuild.unavailable": {
+    "text": "This preview can't be rebuilt right now. Ask the agent to look at the build.",
+    "description": "Toast in an agent session when \"Rebuild preview\" was pressed and the server cannot rebuild the change's preview. \"build\" is a noun."
+  },
+  "session.bar.openApp": {
+    "text": "Open app",
+    "description": "Button in the bar at the top of an agent session (the conversation with Homeroom's coding agent): a verb, opens the app the conversation is about, with this chat docked beside it. Also its accessible name."
+  },
+  "session.bar.openAppTitle": {
+    "text": "Open {{app}} with this chat docked beside it",
+    "description": "Tooltip of the \"Open app\" button in the bar at the top of an agent session (the conversation with Homeroom's coding agent). {{app}} is the app's name. \"Open\" is a verb."
+  },
+  "session.changeRef.pr": {
+    "text": "PR #{{number}}",
+    "description": "How a code change is named in an agent session when it has no title: by its pull request. {{number}} is the pull request's number; PR is the abbreviation of pull request."
+  },
+  "session.changeRef.change": {
+    "text": "Change {{number}}",
+    "description": "How a code change is named in an agent session when it has neither a title nor a pull request. A noun; {{number}} is the change's own number."
+  },
+  "session.bar.focusTitle": {
+    "text": "The app this conversation is about when a request does not name one. The agent moves it when you ask.",
+    "description": "Tooltip of the app pill in the bar at the top of an agent session (the conversation with Homeroom's coding agent), when no app is chosen yet. \"request\" here means something the person asks the agent for."
+  },
+  "session.bar.focusTitleNamed": {
+    "text": "{{app}}. The app this conversation is about when a request does not name one. The agent moves it when you ask.",
+    "description": "Tooltip of the app pill in the bar at the top of an agent session (the conversation with Homeroom's coding agent). {{app}} is the app's name, said first. \"request\" here means something the person asks the agent for."
+  },
+  "session.bar.noChangeYet": {
+    "text": "No change yet",
+    "description": "Text and tooltip of the status pill in the bar at the top of an agent session (the conversation with Homeroom's coding agent) when the conversation has not started a code change. \"change\" is a noun."
+  },
+  "session.bar.newSession": {
+    "text": "New session",
+    "description": "Heading of an agent session shown in the side panel when the conversation has no title yet."
+  },
+  "session.bar.kind": {
+    "text": "Agent session",
+    "description": "Small line under the heading of an agent session shown in the side panel: says what kind of conversation this is (one with the coding agent)."
+  },
+  "session.bar.kindStartedFrom": {
+    "text": "Agent session · started from {{app}}",
+    "description": "Small line under the heading of an agent session shown in the side panel: what kind of conversation this is and which app it was opened from. {{app}} is the app's name. Keep the middle dot."
+  },
+  "session.bar.anyApp": {
+    "text": "Any app",
+    "description": "Text of the app pill in the bar at the top of an agent session (the conversation with Homeroom's coding agent) when the conversation is not about one particular app."
+  },
+  "session.bar.changes_one": {
+    "text": "Changes · {{count}}",
+    "description": "Button in the bar at the top of an agent session (the conversation with Homeroom's coding agent): opens the list of code changes this conversation has made. \"Changes\" is a noun; {{count}} is how many there are. Keep the middle dot."
+  },
+  "session.bar.changes_other": {
+    "text": "Changes · {{count}}",
+    "description": "Button in the bar at the top of an agent session (the conversation with Homeroom's coding agent): opens the list of code changes this conversation has made. \"Changes\" is a noun; {{count}} is how many there are. Keep the middle dot."
+  },
+  "session.menu.label": {
+    "text": "Session actions",
+    "description": "Tooltip and accessible name of the ⋯ button in the bar at the top of an agent session (the conversation with Homeroom's coding agent): opens a menu with Rename and Archive."
+  },
+  "session.menu.rename": {
+    "text": "Rename…",
+    "description": "Item in the ⋯ menu of an agent session: a verb, opens a dialog to rename the conversation."
+  },
+  "session.menu.unarchive": {
+    "text": "Unarchive",
+    "description": "Item in the ⋯ menu of an archived agent session: a verb, brings the conversation back."
+  },
+  "session.menu.unarchiveTitle": {
+    "text": "Bring this session back to your lists",
+    "description": "Tooltip of \"Unarchive\" in the ⋯ menu of an agent session."
+  },
+  "session.menu.archive": {
+    "text": "Archive",
+    "description": "Item in the ⋯ menu of an agent session: a verb, archives the conversation."
+  },
+  "session.menu.archiveTitle": {
+    "text": "Hide this session from your lists and pause its change",
+    "description": "Tooltip of \"Archive\" in the ⋯ menu of an agent session. \"change\" is a noun, the code change the conversation is working on."
+  },
+  "session.join.joinedMessage": {
+    "text": "I joined {{community}}. Please try \"{{action}}\" again.",
+    "description": "Message sent to the agent in the person's own name after they pressed Join on a confirmation card in an agent session whose action failed because only members of a community may do it. {{community}} is the community's name, {{action}} the card's title (what the agent tried to do)."
+  },
+  "session.join.membersOnly": {
+    "text": "Only members of {{community}} can do this. Join it, and the agent will try again.",
+    "description": "Explanation on a confirmation card in an agent session whose action failed because only members of a community may do it. {{community}} is the community's name."
+  },
+  "session.join.joined": {
+    "text": "Joined. Asked the agent to try again.",
+    "description": "Shown beside a check mark on a confirmation card in an agent session whose action failed because only members of a community may do it, after the person joined it."
+  },
+  "session.join.button": {
+    "text": "Join {{community}}",
+    "description": "Button on a confirmation card in an agent session whose action failed because only members of a community may do it: a verb, makes the person a member. {{community}} is the community's name."
+  },
+  "session.join.failed": {
+    "text": "That did not work. Try again.",
+    "description": "Red note beside the Join button on a confirmation card in an agent session whose action failed because only members of a community may do it, when joining failed."
+  },
+  "session.card.label": {
+    "text": "Confirm: {{action}}",
+    "description": "Accessible name of a confirmation card in an agent session. {{action}} is the card's title, what the agent wants to do."
+  },
+  "session.card.needsOk": {
+    "text": "Needs your OK",
+    "description": "Small label at the top of a card on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines) while it waits for the person's answer."
+  },
+  "session.card.confirm": {
+    "text": "Confirm",
+    "description": "Button on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines): a verb, lets the agent go ahead with the action."
+  },
+  "session.card.notNow": {
+    "text": "Not now",
+    "description": "Button on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines): declines the action for now; nothing is changed."
+  },
+  "session.card.waiting": {
+    "text": "Waiting for the agent to finish…",
+    "description": "Small note on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines) shown while the agent is still writing its reply, before the buttons appear."
+  },
+  "session.card.running": {
+    "text": "Running…",
+    "description": "Status beside a spinner on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines) after the person confirmed: the action is being carried out."
+  },
+  "session.card.confirmed": {
+    "text": "Confirmed",
+    "description": "Status beside a check mark on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines): the action was carried out."
+  },
+  "session.card.confirmedOutcome": {
+    "text": "Confirmed · {{outcome}}",
+    "description": "Status beside a check mark on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines): the action was carried out. {{outcome}} is the server's one-line result. Keep the middle dot."
+  },
+  "session.card.failed": {
+    "text": "Did not go through.",
+    "description": "Red status on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines): the confirmed action failed and no reason is known."
+  },
+  "session.card.failedOutcome": {
+    "text": "Did not go through: {{outcome}}",
+    "description": "Red status on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines): the confirmed action failed. {{outcome}} is the server's reason."
+  },
+  "session.card.dismissed": {
+    "text": "Dismissed. Nothing was changed.",
+    "description": "Grey status on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines) after the person pressed \"Not now\"."
+  },
+  "session.card.expired": {
+    "text": "This confirmation expired. Ask again for a fresh one.",
+    "description": "Grey status on a confirmation card in an agent session (the agent asks before it takes an action, and the person confirms or declines) that waited too long and can no longer be confirmed."
+  },
+  "session.reply.agent": {
+    "text": "Agent",
+    "description": "Small green label above each reply of the coding agent in an agent session: who is speaking."
+  },
+  "session.reply.agentWithCost": {
+    "text": "Agent<0> · reply {{cost}}</0>",
+    "description": "Small label above each reply of the coding agent in an agent session: who is speaking, then what that reply cost in AI credits, in muted ink. {{cost}} is a dollar amount such as $0.012, or ~$0.012 for an estimate. \"reply\" is a noun, lower case. Keep the <0> tags around the dot and the cost."
+  },
+  "session.run.took": {
+    "text": "(took {{duration}})",
+    "description": "Shown after the heading of a finished run in an agent session. {{duration}} is how long it took, already worded, for example 45s or 1m 20s. Keep the parentheses."
+  },
+  "session.run.starting": {
+    "text": "Starting…",
+    "description": "Body of a run's card in an agent session while the coding agent has started and written nothing yet."
+  },
+  "session.run.noOutput": {
+    "text": "No output.",
+    "description": "Body of a finished run's card in an agent session when the coding agent wrote nothing."
+  },
+  "session.preview.failed": {
+    "text": "The preview failed to build",
+    "description": "Red heading on a change's preview card in an agent session (the preview is a test build of the app with the change in it): the test build failed."
+  },
+  "session.preview.ready": {
+    "text": "Preview ready",
+    "description": "Heading on a change's preview card in an agent session (the preview is a test build of the app with the change in it): the test build is ready to open."
+  },
+  "session.preview.failedSuperseded": {
+    "text": "The preview failed to build · Superseded by a newer preview",
+    "description": "Grey line that replaces an older preview card whose build had failed, once a newer preview exists. Keep the middle dot."
+  },
+  "session.preview.readySuperseded": {
+    "text": "Preview ready · Superseded by a newer preview",
+    "description": "Grey line that replaces an older preview card whose build was ready, once a newer preview exists. Keep the middle dot."
+  },
+  "session.preview.status.live": {
+    "text": "Live",
+    "description": "Small pill on a change's preview card in an agent session (the preview is a test build of the app with the change in it): the change has been released; an adjective."
+  },
+  "session.preview.status.waiting": {
+    "text": "Waiting for approval",
+    "description": "Small pill on a change's preview card in an agent session (the preview is a test build of the app with the change in it): the change is up for the community's vote."
+  },
+  "session.preview.checksTitle": {
+    "text": "See each check and its result",
+    "description": "Tooltip of the checks status on a change's preview card in an agent session (the preview is a test build of the app with the change in it); pressing it opens the list of automated checks."
+  },
+  "session.preview.retrying": {
+    "text": "Retrying…",
+    "description": "Text of the Retry button on a change's preview card in an agent session (the preview is a test build of the app with the change in it) while the failed build is being started again."
+  },
+  "session.preview.retry": {
+    "text": "Retry",
+    "description": "Button on a change's preview card in an agent session (the preview is a test build of the app with the change in it) whose build failed: a verb, builds the preview again."
+  },
+  "session.preview.open": {
+    "text": "Open preview",
+    "description": "Button on a change's preview card in an agent session (the preview is a test build of the app with the change in it): a verb, shows the test build of the app."
+  },
+  "session.preview.viewChange": {
+    "text": "View change",
+    "description": "Link on a change's preview card in an agent session (the preview is a test build of the app with the change in it) once the change is in a vote or released: opens the change's page. \"change\" is a noun."
+  },
+  "session.preview.openDraft": {
+    "text": "Open draft change",
+    "description": "Link on a change's preview card in an agent session (the preview is a test build of the app with the change in it) while the change is still a draft: opens the change's page. \"Open\" is a verb, \"change\" a noun."
+  },
+  "session.preview.recheckTitle": {
+    "text": "Rebuild the preview if needed and run the automated checks again, on the same commit",
+    "description": "Tooltip of the \"Re-run checks\" button on a change's preview card in an agent session (the preview is a test build of the app with the change in it). A commit is a saved version of the code."
+  },
+  "session.preview.rechecking": {
+    "text": "Re-running…",
+    "description": "Text of the \"Re-run checks\" button on a change's preview card in an agent session (the preview is a test build of the app with the change in it) while the checks are being started again."
+  },
+  "session.preview.recheck": {
+    "text": "Re-run checks",
+    "description": "Button on a change's preview card in an agent session (the preview is a test build of the app with the change in it) whose automated checks failed or could not run: runs them again."
+  },
+  "session.fixChecks.label": {
+    "text": "Failing checks",
+    "description": "Accessible name of the card at the end of an agent session that lists a change's failing automated checks and offers to fix them."
+  },
+  "session.fixChecks.more_one": {
+    "text": "And {{count}} more.",
+    "description": "Line under the list of failing checks on the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many more checks failed than are listed."
+  },
+  "session.fixChecks.more_other": {
+    "text": "And {{count}} more.",
+    "description": "Line under the list of failing checks on the card at the end of an agent session that offers to fix a change's failing automated checks. {{count}} is how many more checks failed than are listed."
+  },
+  "session.fixChecks.explain": {
+    "text": "Checks have to pass before the change can merge. The agent can read what failed and fix it.",
+    "description": "Explanation on the card at the end of an agent session that offers to fix a change's failing automated checks. \"change\" is a noun; \"merge\" means the change being accepted into the app."
+  },
+  "session.fixChecks.fix": {
+    "text": "Fix it",
+    "description": "Main button on the card at the end of an agent session that offers to fix a change's failing automated checks: asks the agent to fix the failing checks."
+  },
+  "session.fixChecks.see": {
+    "text": "See checks",
+    "description": "Second button on the card at the end of an agent session that offers to fix a change's failing automated checks: opens the list of checks and their results."
+  },
+  "session.specCard.title": {
+    "text": "Spec",
+    "description": "Title of the small spec card in an agent session's conversation (the spec is the written plan of a change), when neither its version nor its length is known."
+  },
+  "session.specCard.titleVersion": {
+    "text": "Spec v{{version}}",
+    "description": "Title of the small spec card in an agent session's conversation (the spec is the written plan of a change). {{version}} is the spec's version number, after the letter v."
+  },
+  "session.specCard.titleLines_one": {
+    "text": "Spec · {{count}} line",
+    "description": "Title of the small spec card in an agent session's conversation (the spec is the written plan of a change). {{count}} is how many lines the spec has. Keep the middle dot."
+  },
+  "session.specCard.titleLines_other": {
+    "text": "Spec · {{count}} lines",
+    "description": "Title of the small spec card in an agent session's conversation (the spec is the written plan of a change). {{count}} is how many lines the spec has. Keep the middle dot."
+  },
+  "session.specCard.titleVersionLines_one": {
+    "text": "Spec v{{version}} · {{count}} line",
+    "description": "Title of the small spec card in an agent session's conversation (the spec is the written plan of a change). {{version}} is the spec's version number, after the letter v. {{count}} is how many lines the spec has. Keep the middle dot."
+  },
+  "session.specCard.titleVersionLines_other": {
+    "text": "Spec v{{version}} · {{count}} lines",
+    "description": "Title of the small spec card in an agent session's conversation (the spec is the written plan of a change). {{version}} is the spec's version number, after the letter v. {{count}} is how many lines the spec has. Keep the middle dot."
+  },
+  "session.specCard.open": {
+    "text": "Open Spec",
+    "description": "Accessible name of the small spec card in an agent session's conversation (the spec is the written plan of a change), which opens the full spec when pressed. \"Open\" is a verb."
+  },
+  "session.specCard.openVersion": {
+    "text": "Open Spec v{{version}}",
+    "description": "Accessible name of the small spec card in an agent session's conversation (the spec is the written plan of a change), which opens the full spec when pressed. \"Open\" is a verb. {{version}} is the spec's version number, after the letter v."
+  },
+  "session.specCard.openLines_one": {
+    "text": "Open Spec · {{count}} line",
+    "description": "Accessible name of the small spec card in an agent session's conversation (the spec is the written plan of a change), which opens the full spec when pressed. \"Open\" is a verb. {{count}} is how many lines the spec has."
+  },
+  "session.specCard.openLines_other": {
+    "text": "Open Spec · {{count}} lines",
+    "description": "Accessible name of the small spec card in an agent session's conversation (the spec is the written plan of a change), which opens the full spec when pressed. \"Open\" is a verb. {{count}} is how many lines the spec has."
+  },
+  "session.specCard.openVersionLines_one": {
+    "text": "Open Spec v{{version}} · {{count}} line",
+    "description": "Accessible name of the small spec card in an agent session's conversation (the spec is the written plan of a change), which opens the full spec when pressed. \"Open\" is a verb. {{version}} is the spec's version number, after the letter v. {{count}} is how many lines the spec has."
+  },
+  "session.specCard.openVersionLines_other": {
+    "text": "Open Spec v{{version}} · {{count}} lines",
+    "description": "Accessible name of the small spec card in an agent session's conversation (the spec is the written plan of a change), which opens the full spec when pressed. \"Open\" is a verb. {{version}} is the spec's version number, after the letter v. {{count}} is how many lines the spec has."
+  },
+  "session.specCard.viewFull": {
+    "text": "View full spec →",
+    "description": "Call to action at the right of the small spec card in an agent session: opens the whole written plan. Keep the arrow last."
+  },
+  "session.spec.sectionsLabel": {
+    "text": "Spec sections",
+    "description": "Accessible name of the two tabs (User-facing, Technical) in the spec viewer of an agent session (the spec is the written plan of a change)."
+  },
+  "session.spec.tab.userFacing": {
+    "text": "User-facing",
+    "description": "Tab in the spec viewer of an agent session (the spec is the written plan of a change): the part of the plan that describes what people will see."
+  },
+  "session.spec.tab.technical": {
+    "text": "Technical",
+    "description": "Tab in the spec viewer of an agent session (the spec is the written plan of a change): the part of the plan that describes how the code will change."
+  },
+  "session.spec.emptySection": {
+    "text": "Nothing in this section.",
+    "description": "Shown in the spec viewer of an agent session (the spec is the written plan of a change) when the chosen tab (User-facing or Technical) has no text."
+  },
+  "session.spec.heading": {
+    "text": "Spec",
+    "description": "Heading of the spec viewer of an agent session: the written plan of a change. Short for specification."
+  },
+  "session.spec.subtitleWithApp": {
+    "text": "{{change}} · {{app}}",
+    "description": "Small line under the heading of the spec viewer: which change the plan belongs to and its app. {{change}} is the change's title, or a reference such as PR #12; {{app}} is the app's name. Keep the middle dot."
+  },
+  "session.spec.versionLabel": {
+    "text": "Spec version",
+    "description": "Accessible name of the drop-down in the spec viewer of an agent session (the spec is the written plan of a change) that picks which version of the plan to read."
+  },
+  "session.spec.none": {
+    "text": "This change has no spec yet.",
+    "description": "Shown in the spec viewer of an agent session (the spec is the written plan of a change) when the change has no written plan. \"change\" is a noun."
+  },
+  "session.spec.dialogLabel": {
+    "text": "Spec",
+    "description": "Accessible name of the sheet that shows a change's written plan (spec) over an agent session."
+  },
+  "session.sidePane.tabsLabel": {
+    "text": "Side pane",
+    "description": "Accessible name of the two tabs (Spec, Preview) of the pane docked beside an agent session's conversation on a wide screen."
+  },
+  "session.sidePane.tab.spec": {
+    "text": "Spec",
+    "description": "Tab of the pane docked beside an agent session's conversation on a wide screen: shows the change's written plan."
+  },
+  "session.sidePane.tab.preview": {
+    "text": "Preview",
+    "description": "Tab of the pane docked beside an agent session's conversation on a wide screen: shows the test build of the app with the change in it. A noun."
+  },
+  "session.sidePane.resizePreview": {
+    "text": "Resize the preview",
+    "description": "Accessible name of the draggable divider between the conversation and the docked preview in an agent session."
+  },
+  "session.sidePane.resizeSpec": {
+    "text": "Resize the spec",
+    "description": "Accessible name of the draggable divider between the conversation and the docked spec (written plan) in an agent session."
+  },
+  "session.sidePane.previewLabel": {
+    "text": "Preview",
+    "description": "Accessible name of the pane docked beside an agent session's conversation on a wide screen while it shows the test build of the app. A noun."
+  },
+  "session.sidePane.specLabel": {
+    "text": "Spec",
+    "description": "Accessible name of the pane docked beside an agent session's conversation on a wide screen while it shows the change's written plan."
+  },
+  "session.outbox.retryBusyTitle": {
+    "text": "The agent is still working. You can send this when it finishes",
+    "description": "Tooltip of the disabled Retry button under an unsent message in an agent session, while the agent is busy. No final full stop."
+  },
+  "session.outbox.retryTitle": {
+    "text": "Send this again",
+    "description": "Tooltip of the Retry button under an unsent message in an agent session."
+  },
+  "session.outbox.edit": {
+    "text": "Edit",
+    "description": "Button under the person's own unsent message in an agent session: a verb, puts the text back in the message box to change it."
+  },
+  "session.outbox.discard": {
+    "text": "Discard",
+    "description": "Button under the person's own unsent message in an agent session: a verb, throws the unsent message away."
+  },
+  "session.live.stopping": {
+    "text": "Stopping…",
+    "description": "Live status line at the end of an agent session after the person pressed Stop, while the agent winds down."
+  },
+  "session.live.wrappingUp": {
+    "text": "Wrapping up",
+    "description": "Live status line at the end of an agent session while the agent writes its closing reply after the coding work finished."
+  },
+  "session.live.thinking": {
+    "text": "The agent is thinking",
+    "description": "Screen-reader text beside the animated dots at the end of an agent session while the agent prepares its reply."
+  },
+  "session.elapsed": {
+    "text": "{{minutes}}m {{seconds}}s",
+    "description": "Running clock beside the live status line in an agent session: how long the current work has taken. {{minutes}} and {{seconds}} are whole numbers; \"m\" and \"s\" abbreviate minutes and seconds."
+  },
+  "session.capture.heading": {
+    "text": "<0>Capturing previews</0>",
+    "description": "Status line in an agent session while Homeroom takes before-and-after screenshots of a change. Keep the <0> tags around the first words, which are shown stronger. Used when the current step is not known."
+  },
+  "session.capture.provisioning": {
+    "text": "<0>Capturing previews</0> · Preparing the before and after builds",
+    "description": "Status line in an agent session while Homeroom takes before-and-after screenshots of a change. Keep the <0> tags around the first words, which are shown stronger; after the dot, the current step: both versions of the app are being started."
+  },
+  "session.capture.exploring": {
+    "text": "<0>Capturing previews</0> · Finding the screens to capture",
+    "description": "Status line in an agent session while Homeroom takes before-and-after screenshots of a change. Keep the <0> tags around the first words, which are shown stronger; after the dot, the current step: looking for the screens the change affects."
+  },
+  "session.capture.replaying": {
+    "text": "<0>Capturing previews</0> · Replaying the flow on both builds",
+    "description": "Status line in an agent session while Homeroom takes before-and-after screenshots of a change. Keep the <0> tags around the first words, which are shown stronger; after the dot, the current step: the same steps are repeated on the old and new versions of the app."
+  },
+  "session.capture.reviewing": {
+    "text": "<0>Capturing previews</0> · Saving the captures",
+    "description": "Status line in an agent session while Homeroom takes before-and-after screenshots of a change. Keep the <0> tags around the first words, which are shown stronger; after the dot, the current step: the screenshots are being saved."
+  },
+  "session.capture.stopping": {
+    "text": "Stopping…",
+    "description": "Text of the Stop button beside the \"Capturing previews\" status line in an agent session while the capture is being stopped."
+  },
+  "session.capture.stop": {
+    "text": "Stop",
+    "description": "Button beside the \"Capturing previews\" status line in an agent session: a verb, stops taking the screenshots."
+  },
+  "session.empty.requestHeading": {
+    "text": "Request #{{number}}",
+    "description": "Heading in the empty state of a new agent session that was started from a request (a member's filed suggestion or bug report). A noun; {{number}} is the request's number."
+  },
+  "session.empty.requestBody": {
+    "text": "Send the message below to start. The agent reads the request, plans the change with you, and asks the group for approval when you say so.",
+    "description": "Paragraph in the empty state of a new agent session that was started from a request (a member's filed suggestion or bug report). \"change\" is a noun; \"the group\" is the app's community."
+  },
+  "session.empty.requestBodyOnApp": {
+    "text": "On <0>{{app}}</0>. Send the message below to start. The agent reads the request, plans the change with you, and asks the group for approval when you say so.",
+    "description": "Paragraph in the empty state of a new agent session that was started from a request on a known app. {{app}} is the app's name, shown in bold: keep the <0> tags around it. \"change\" is a noun; \"the group\" is the app's community."
+  },
+  "session.empty.heading": {
+    "text": "New agent session",
+    "description": "Heading in the empty state of a new agent session: a conversation with Homeroom's coding agent in which nothing has been said yet."
+  },
+  "session.empty.body": {
+    "text": "Start a change on any app. The agent plans it, builds it, and asks the group for approval when you say so.",
+    "description": "Paragraph in the empty state of a new agent session. \"change\" is a noun, a change to an app's code; \"the group\" is the app's community."
+  },
+  "session.empty.bodyFromApp": {
+    "text": "Started from <0>{{app}}</0>. Start a change on any app. The agent plans it, builds it, and asks the group for approval when you say so.",
+    "description": "Paragraph in the empty state of a new agent session that was opened from an app. {{app}} is that app's name, shown in bold: keep the <0> tags around it. \"change\" is a noun; \"the group\" is the app's community."
+  },
+  "session.starter.aboutChange": {
+    "text": "Tell me about this change",
+    "description": "Suggested first message offered as a chip above the message box of a new agent session; pressing it puts these words in the box as the person's own message. Offered when the session was opened from a proposed change; \"change\" is a noun."
+  },
+  "session.starter.openOnApp": {
+    "text": "What's open on {{app}}?",
+    "description": "Suggested first message offered as a chip above the message box of a new agent session; pressing it puts these words in the box as the person's own message: asks what requests and changes are in progress on the app. {{app}} is the app's name."
+  },
+  "session.starter.whatToWorkOn": {
+    "text": "What could I work on?",
+    "description": "Suggested first message offered as a chip above the message box of a new agent session; pressing it puts these words in the box as the person's own message. Offered when the session is not about one app."
+  },
+  "session.starter.addFeature": {
+    "text": "Add a feature",
+    "description": "Suggested first message offered as a chip above the message box of a new agent session; pressing it puts these words in the box as the person's own message."
+  },
+  "session.starter.fixBug": {
+    "text": "Fix a bug",
+    "description": "Suggested first message offered as a chip above the message box of a new agent session; pressing it puts these words in the box as the person's own message."
+  },
+  "session.model.fallbackLabel": {
+    "text": "Model",
+    "description": "Text of the model button beside the message box of an agent session when the chosen AI model has no name to show."
+  },
+  "session.composer.busyPlaceholder": {
+    "text": "The agent is working. Type your next message and save it for later.",
+    "description": "Placeholder of the message box of an agent session while the agent is busy: a message typed now is saved as a draft, not sent."
+  },
+  "session.composer.saveTitle": {
+    "text": "Save this as a draft (Enter). It stays here until you send it",
+    "description": "Tooltip of the \"Save draft\" button of the message box of an agent session while the agent is busy. Enter is the keyboard key. No final full stop."
+  },
+  "session.composer.archivedPlaceholder": {
+    "text": "This session is archived.",
+    "description": "Placeholder of the message box of an agent session when the conversation is archived and cannot take messages."
+  },
+  "session.composer.placeholder": {
+    "text": "Describe a change to any app in plain English. No coding needed.",
+    "description": "Placeholder of the message box of an agent session: what to type to the coding agent. \"change\" is a noun."
+  },
+  "session.composer.archivedNote": {
+    "text": "This session is archived. Unarchive it to keep going.",
+    "description": "Note above the message box of an archived agent session, beside an Unarchive button."
+  },
+  "session.composer.unarchive": {
+    "text": "Unarchive",
+    "description": "Button in the note above the message box of an archived agent session: a verb, brings the conversation back so it can continue."
+  },
+  "session.composer.saveNote": {
+    "text": "The agent is still working, so this will be <0>saved as a draft, not sent</0>. Send it from your drafts when it finishes.",
+    "description": "Note above the message box of an agent session when the person types while the agent is busy. Keep the <0> tags around the emphasised words."
+  },
+  "session.composer.label": {
+    "text": "Message the agent",
+    "description": "Accessible name of the message box of an agent session: the person writes to the coding agent here. \"Message\" is a verb."
+  },
+  "session.composer.attach": {
+    "text": "Attach photos or files",
+    "description": "Tooltip and accessible name of the paperclip button beside the message box of an agent session: opens the file chooser."
+  },
+  "session.composer.stop": {
+    "text": "Stop",
+    "description": "Tooltip and accessible name of the square button beside the message box of an agent session while the agent works: a verb, stops the agent."
+  },
+  "session.composer.saveAsDraft": {
+    "text": "Save as draft",
+    "description": "Accessible name of the button that takes Send's place beside the message box while the agent is busy: saves the typed message for later."
+  },
+  "session.composer.saveDraft": {
+    "text": "Save draft",
+    "description": "Visible text of the button that takes Send's place beside the message box while the agent is busy: a verb, saves the typed message for later."
+  },
+  "session.composer.sendWaitingLabel": {
+    "text": "Send (waiting for files to upload)",
+    "description": "Accessible name of the disabled Send button beside the message box of an agent session while attached files are still uploading."
+  },
+  "session.composer.send": {
+    "text": "Send",
+    "description": "Tooltip and accessible name of the arrow button beside the message box of an agent session: a verb, sends the message to the agent."
+  },
+  "session.composer.stopUnavailableTitle": {
+    "text": "The wrap-up cannot be stopped",
+    "description": "Tooltip of the disabled Stop button beside the message box while the agent writes its closing reply."
+  },
+  "session.composer.sendWaitingTitle": {
+    "text": "Waiting for your files to upload",
+    "description": "Tooltip of the disabled Send button beside the message box of an agent session while attached files are still uploading."
+  },
+  "session.drafts.label": {
+    "text": "Saved drafts",
+    "description": "Accessible name of the list of saved drafts above the message box of an agent session: messages typed while the agent was busy and kept for later."
+  },
+  "session.drafts.heading_one": {
+    "text": "<0>Saved drafts ({{count}})</0><1>· on all your devices</1>",
+    "description": "Line at the top of the list of saved drafts above the message box of an agent session (messages typed while the agent was busy and kept for later). The <0> part is a small upper-case heading; {{count}} is how many drafts are saved. The <1> part is a note beside it: the drafts are stored with the account, so they show on every device the person uses. Keep both pairs of tags, and the middle dot that opens the note."
+  },
+  "session.drafts.heading_other": {
+    "text": "<0>Saved drafts ({{count}})</0><1>· on all your devices</1>",
+    "description": "Line at the top of the list of saved drafts above the message box of an agent session (messages typed while the agent was busy and kept for later). The <0> part is a small upper-case heading; {{count}} is how many drafts are saved. The <1> part is a note beside it: the drafts are stored with the account, so they show on every device the person uses. Keep both pairs of tags, and the middle dot that opens the note."
+  },
+  "session.drafts.locked": {
+    "text": "sending unlocks when the agent finishes",
+    "description": "Note at the right of the \"Saved drafts\" heading while the agent is busy: drafts cannot be sent yet. Lower case, no full stop."
+  },
+  "session.drafts.ready": {
+    "text": "Ready to send",
+    "description": "Note at the right of the \"Saved drafts\" heading once the agent has finished: the drafts can be sent now."
+  },
+  "session.drafts.send": {
+    "text": "Send this draft",
+    "description": "Accessible name of the send button on one row in the list of saved drafts above the message box of an agent session (messages typed while the agent was busy and kept for later)."
+  },
+  "session.drafts.sendBusyTitle": {
+    "text": "The agent is still working. You can send this when it finishes",
+    "description": "Tooltip of the disabled send button on a saved draft while the agent is busy. No final full stop."
+  },
+  "session.drafts.sendTitle": {
+    "text": "Send this draft now",
+    "description": "Tooltip of the send button on one row in the list of saved drafts above the message box of an agent session (messages typed while the agent was busy and kept for later)."
+  },
+  "session.drafts.edit": {
+    "text": "Edit this draft",
+    "description": "Accessible name of the pencil button on one row in the list of saved drafts above the message box of an agent session (messages typed while the agent was busy and kept for later)."
+  },
+  "session.drafts.editTitle": {
+    "text": "Put this draft back in the box to edit",
+    "description": "Tooltip of the pencil button on a saved draft: the text returns to the message box."
+  },
+  "session.drafts.delete": {
+    "text": "Delete this draft",
+    "description": "Tooltip and accessible name of the bin button on one row in the list of saved drafts above the message box of an agent session (messages typed while the agent was busy and kept for later)."
+  },
+  "session.stop.slow": {
+    "text": "Stopping is taking longer than expected.",
+    "description": "Status line above the message box of an agent session a few seconds after Stop was pressed and the agent has not stopped yet."
+  },
+  "session.stop.stopping": {
+    "text": "Stopping the agent…",
+    "description": "Status line above the message box of an agent session right after Stop was pressed."
+  },
+  "session.stop.retry": {
+    "text": "Retry stop",
+    "description": "Button beside the stopping status line in an agent session: sends the stop request again."
+  },
+  "session.drawer.heading": {
+    "text": "Changes in this session",
+    "description": "Heading and accessible name of the panel opened by the \"Changes\" button of an agent session. \"Changes\" is a noun: the code changes this conversation made."
+  },
+  "session.drawer.active": {
+    "text": "Active",
+    "description": "Small upper-case heading in the panel that lists the code changes made in an agent session, over the change the conversation is working on now."
+  },
+  "session.drawer.activeLinePr": {
+    "text": "{{app}} · PR #{{number}} (change {{change}})",
+    "description": "Small line under the active change's title in the panel that lists the code changes made in an agent session. {{app}} is the app's name, {{number}} the pull request's number, {{change}} the change's own number. \"change\" is a noun."
+  },
+  "session.drawer.linePr": {
+    "text": "{{app}} · PR #{{number}}",
+    "description": "Small line under an earlier change's title in the panel that lists the code changes made in an agent session. {{app}} is the app's name, {{number}} the pull request's number."
+  },
+  "session.drawer.lineChange": {
+    "text": "{{app}} · Change {{number}}",
+    "description": "Small line under a change's title in the panel that lists the code changes made in an agent session, when it has no pull request. {{app}} is the app's name; \"Change\" is a noun and {{number}} its number."
+  },
+  "session.drawer.checks": {
+    "text": "Checks: {{state}}",
+    "description": "Line on the active change in the panel that lists the code changes made in an agent session: where its automated checks stand. {{state}} is the server's status word in English, such as passing, failing or running."
+  },
+  "session.drawer.openPreview": {
+    "text": "Open preview",
+    "description": "Button on the active change in the panel that lists the code changes made in an agent session: a verb, shows the test build of the app with the change in it."
+  },
+  "session.drawer.spec": {
+    "text": "Spec",
+    "description": "Button on the active change in the panel that lists the code changes made in an agent session: opens the change's written plan."
+  },
+  "session.drawer.proposalPage": {
+    "text": "Proposal page",
+    "description": "Link on the active change in the panel that lists the code changes made in an agent session: goes to the change's own page in the app's workshop. \"Proposal\" is a noun."
+  },
+  "session.drawer.none": {
+    "text": "No active change. Ask the agent to start one.",
+    "description": "Shown in the panel that lists the code changes made in an agent session when the conversation is not working on any change. \"change\" is a noun."
+  },
+  "session.drawer.earlier": {
+    "text": "Earlier in this session",
+    "description": "Small upper-case heading in the panel that lists the code changes made in an agent session, over the changes the conversation worked on before the current one."
+  },
+  "session.drawer.switchTo": {
+    "text": "Switch to",
+    "description": "Button on an earlier change in the panel that lists the code changes made in an agent session: makes that change the one the conversation works on."
+  },
+  "session.screenLabel": {
+    "text": "Agent session",
+    "description": "Accessible name of the full-screen agent session: the conversation with Homeroom's coding agent."
+  },
+  "menu.suggestImprovement": {
+    "text": "Suggest an improvement",
+    "description": "The one button at the top of the Homeroom menu (the sheet opened from the Homeroom mark): opens the dialog for sending a suggestion or bug report about the app on screen."
+  },
+  "menu.update.platformReady": {
+    "text": "There is a new version available. Click here to get the new version.",
+    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when a new version of Homeroom itself is ready; pressing it reloads the page."
+  },
+  "menu.update.appReady": {
+    "text": "This app has a new version. Click here to reload it.",
+    "description": "Row in the Homeroom menu (the sheet opened from the Homeroom mark) when the app on screen has a new released version; pressing it reloads the app."
+  },
+  "menu.update.platformDownloading": {
+    "text": "A new version of the platform is downloading. The reload appears once it is ready.",
+    "description": "Small note with a spinner in the Homeroom menu (the sheet opened from the Homeroom mark) while a new version of Homeroom is being downloaded. \"The reload\" is the row that will let the person reload."
+  },
+  "menu.update.platformBuilding": {
+    "text": "A new version of the platform is being built.",
+    "description": "Small note with a spinner in the Homeroom menu (the sheet opened from the Homeroom mark) while a new version of Homeroom is being deployed."
+  },
+  "menu.update.appBuilding": {
+    "text": "A new version of this app is being built.",
+    "description": "Small note with a spinner in the Homeroom menu (the sheet opened from the Homeroom mark) while a new version of the app on screen is being deployed."
+  },
+  "menu.row.state.working": {
+    "text": "Working",
+    "description": "State pill on a row of the person's changes in progress, in the Homeroom menu: the coding agent is working on this change right now."
+  },
+  "menu.row.state.handedOff": {
+    "text": "Handed off",
+    "description": "State pill on a row of the person's changes in progress, in the Homeroom menu: the work was handed to a coding tool on the person's own machine, so Homeroom cannot see its progress."
+  },
+  "menu.row.state.needsYou": {
+    "text": "Needs you",
+    "description": "State pill on a row of the person's changes in progress, in the Homeroom menu: the agent is waiting for the person's answer."
+  },
+  "menu.row.state.ready": {
+    "text": "Ready",
+    "description": "State pill on a row of the person's changes in progress, in the Homeroom menu: the agent is idle and the change is ready for the person to continue."
+  },
+  "menu.row.unread": {
+    "text": "Unread activity",
+    "description": "Accessible name of the small dot on a row of the person's changes in progress, in the Homeroom menu: something happened on that change that the person has not seen."
+  },
+  "menu.row.status.working": {
+    "text": "Working…",
+    "description": "Status word in the small grey caption under the title of a change in progress, in the Homeroom menu and the app menu: the coding agent is working on it right now."
+  },
+  "menu.row.status.needsYou": {
+    "text": "Needs you",
+    "description": "Status word in the small grey caption under the title of a change in progress, in the Homeroom menu and the app menu: the agent is waiting for the person's answer."
+  },
+  "menu.row.status.handedOff": {
+    "text": "Handed off",
+    "description": "Status word in the small grey caption under the title of a change in progress, in the Homeroom menu and the app menu: the work was handed to a coding tool on the person's own machine and it is not known which one."
+  },
+  "menu.row.caption": {
+    "text": "{{app}} · {{status}}",
+    "description": "Small grey caption under the title of a change in progress, in the Homeroom menu's list of changes on other apps: which app the change belongs to, then where it stands. {{app}} is the app's name; {{status}} is a short status already worded (\"Working…\", \"Needs you\", \"Handed off\") or the name of the coding tool that holds the work (Claude Code, Codex). Keep the middle dot between them."
+  },
+  "menu.row.sessionFallback": {
+    "text": "Session #{{number}}",
+    "description": "Title of a change in progress in the Homeroom menu when it has no title, pull request or branch name. \"Session\" is a working session with the coding agent; {{number}} is its number."
+  },
+  "menu.row.workOrderFallback": {
+    "text": "Work order #{{number}}",
+    "description": "Title, in the Homeroom menu, of work handed to a coding tool on the person's own machine when it has no title. A work order is that hand-off; {{number}} is its number."
+  },
+  "topicBack.messages": {
+    "text": "Messages",
+    "description": "Text of the back chip at the top of a request's or proposal's page when it was opened from a conversation: it returns to the Messages screen. The name of that screen."
+  },
+  "topicBack.workshop": {
+    "text": "Workshop",
+    "description": "Text of the back chip at the top of a request's or proposal's page: it returns to the project's Workshop, the board of its changes and requests. The name of that tab, a noun."
+  },
+  "appContext.about.note.thisApp": {
+    "text": "This app’s community builds it together.",
+    "description": "Line in the About pane of the app menu (the sheet opened from the app's name in the header) when the app's name is not known: the app is built by the people who joined it."
+  },
+  "appContext.about.note.app": {
+    "text": "{{app}}’s community builds it together.",
+    "description": "Line in the About pane of the app menu (the sheet opened from the app's name in the header): the app is built by the people who joined it. {{app}} is the app's name."
+  },
+  "appContext.about.note.platform": {
+    "text": "{{name}}’s community builds it together, the same way as the apps on it.",
+    "description": "Line in the About pane for Homeroom itself: the platform is built by its own community, like the apps it hosts. {{name}} is the platform's name, Homeroom."
+  },
+  "appContext.about.note.platformRestricted": {
+    "text": "{{name}}’s community builds it together, the same way as the apps on it. On this server its workshop is open to admins only.",
+    "description": "Line in the About pane for Homeroom itself, on a server where only admins may open the platform's Workshop (the board of its changes and requests). {{name}} is the platform's name, Homeroom."
+  },
+  "appContext.about.members_one": {
+    "text": "{{formatted}} member",
+    "description": "Pill beside the builders' avatars in the About pane of the app menu (the sheet opened from the app's name in the header): how many people are in the app's community. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
+  },
+  "appContext.about.members_other": {
+    "text": "{{formatted}} members",
+    "description": "Pill beside the builders' avatars in the About pane of the app menu (the sheet opened from the app's name in the header): how many people are in the app's community. {{formatted}} is that number written with digit grouping, for example 1,284; {{count}} is the same number and only selects the plural form."
+  },
+  "appContext.about.version.app": {
+    "text": "App version: {{version}}",
+    "description": "Plain line at the foot of the About pane naming the running version. {{version}} is a short code such as a1b2c3d. Used for an app."
+  },
+  "appContext.about.version.appDeploying": {
+    "text": "App version: {{version}} (deploying…)",
+    "description": "Plain line at the foot of the About pane naming the running version. {{version}} is a short code such as a1b2c3d. Used for an app while a newer version is being deployed."
+  },
+  "appContext.about.version.appDeployingOnly": {
+    "text": "App version: deploying…",
+    "description": "Plain line at the foot of an app's About pane while its first version is being deployed and there is no version code to show yet."
+  },
+  "appContext.about.version.platform": {
+    "text": "Version: {{version}}",
+    "description": "Plain line at the foot of the About pane naming the running version. {{version}} is a short code such as a1b2c3d. Used for Homeroom itself."
+  },
+  "appContext.about.version.platformDeploying": {
+    "text": "Version: {{version}} (deploying…)",
+    "description": "Plain line at the foot of the About pane naming the running version. {{version}} is a short code such as a1b2c3d. Used for Homeroom itself while a newer version is being deployed."
+  },
+  "appContext.about.version.platformDeployingOnly": {
+    "text": "Version: deploying…",
+    "description": "Plain line at the foot of Homeroom's own About pane while a version is being deployed and there is no version code to show."
+  },
+  "appContext.about.stat.apps_one": {
+    "text": "app",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the apps on Homeroom."
+  },
+  "appContext.about.stat.apps_other": {
+    "text": "apps",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the apps on Homeroom."
+  },
+  "appContext.about.stat.members_one": {
+    "text": "member",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the people on Homeroom."
+  },
+  "appContext.about.stat.members_other": {
+    "text": "members",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the people on Homeroom."
+  },
+  "appContext.about.stat.live_one": {
+    "text": "live",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the changes that have been released; an adjective."
+  },
+  "appContext.about.stat.live_other": {
+    "text": "live",
+    "description": "Label under a large number on one of the three cards in Homeroom's own About pane. The number is drawn above it; {{count}} only selects the plural form. Lower case. Counts the changes that have been released; an adjective."
+  },
+  "appContext.about.contributor.unknown": {
+    "text": "unknown",
+    "description": "Stands in for a contributor's username in the About pane's list when the server sent none. Lower case; it is shown after an @ sign."
+  },
+  "appContext.about.open.resume": {
+    "text": "Resume",
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": a verb, goes back to this app, which is still open in the background."
+  },
+  "appContext.about.open.open": {
+    "text": "Open",
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": a verb, opens the app."
+  },
+  "appContext.about.open.spinningUp": {
+    "text": "Spinning up…",
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled while the app is being created and cannot be opened yet."
+  },
+  "appContext.about.open.notRunning": {
+    "text": "Not running",
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled when the app failed to start."
+  },
+  "appContext.about.open.unavailable": {
+    "text": "Unavailable",
+    "description": "Main button in the About pane of the app menu (the sheet opened from the app's name in the header), beside \"Add to My apps\": shown disabled when the app cannot be opened and its state is not known."
+  },
+  "appContext.continue.detail.session": {
+    "text": "Agent session",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the conversation has no code change yet. Used when no app can be named."
+  },
+  "appContext.continue.detail.approval": {
+    "text": "Waiting for approval",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change is up for the community's vote. Used when no app can be named."
+  },
+  "appContext.continue.detail.goingLive": {
+    "text": "Going live",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change was approved and is being released. Used when no app can be named."
+  },
+  "appContext.continue.detail.live": {
+    "text": "Live",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change has been released; an adjective. Used when no app can be named."
+  },
+  "appContext.continue.detail.inProgress": {
+    "text": "In progress",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): its change is being worked on. Used when no app can be named."
+  },
+  "appContext.continue.sub.session": {
+    "text": "{{app}} · agent session",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (the conversation has no code change yet). {{app}} is the app's name. Keep the middle dot."
+  },
+  "appContext.continue.sub.approval": {
+    "text": "{{app}} · waiting for approval",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change is up for the community's vote). {{app}} is the app's name. Keep the middle dot."
+  },
+  "appContext.continue.sub.goingLive": {
+    "text": "{{app}} · going live",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change was approved and is being released). {{app}} is the app's name. Keep the middle dot."
+  },
+  "appContext.continue.sub.live": {
+    "text": "{{app}} · live",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change has been released; an adjective). {{app}} is the app's name. Keep the middle dot."
+  },
+  "appContext.continue.sub.inProgress": {
+    "text": "{{app}} · in progress",
+    "description": "Second line of a row under \"Agent chats\" in the app menu (one of the person's conversations with the coding agent): the app's name, then where the work stands (its change is being worked on). {{app}} is the app's name. Keep the middle dot."
+  },
+  "appContext.continue.untitled": {
+    "text": "Agent session",
+    "description": "Title of a row under \"Agent chats\" in the app menu when the conversation with the coding agent has no title."
+  },
+  "appContext.invite.error.generic": {
+    "text": "Something went wrong. Try again.",
+    "description": "Error in the Invite pane of the app menu when making, reading or turning off an invite link failed and the server gave no reason."
+  },
+  "appContext.invite.sentence.build.untilOff": {
+    "text": "Anyone with this link can join and build with you. It works until you turn it off.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. The link has no end date and no limit of people."
+  },
+  "appContext.invite.sentence.build.withinDay": {
+    "text": "Anyone with this link can join and build with you. It expires within a day.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. The link ends in less than a day and has no limit of people."
+  },
+  "appContext.invite.sentence.build.inDays_one": {
+    "text": "Anyone with this link can join and build with you. It expires in {{count}} day.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many days the link still works (2 or more in practice); it has no limit of people."
+  },
+  "appContext.invite.sentence.build.inDays_other": {
+    "text": "Anyone with this link can join and build with you. It expires in {{count}} days.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many days the link still works (2 or more in practice); it has no limit of people."
+  },
+  "appContext.invite.sentence.build.noEndFor_one": {
+    "text": "Anyone with this link can join and build with you. It has no end date and works for {{count}} person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many people may use the link; nobody has used it yet."
+  },
+  "appContext.invite.sentence.build.noEndFor_other": {
+    "text": "Anyone with this link can join and build with you. It has no end date and works for {{count}} people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many people may use the link; nobody has used it yet."
+  },
+  "appContext.invite.sentence.build.noEndForMore_one": {
+    "text": "Anyone with this link can join and build with you. It has no end date and works for {{count}} more person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many more people may still use the link, after those who already did."
+  },
+  "appContext.invite.sentence.build.noEndForMore_other": {
+    "text": "Anyone with this link can join and build with you. It has no end date and works for {{count}} more people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many more people may still use the link, after those who already did."
+  },
+  "appContext.invite.sentence.build.withinDayFor_one": {
+    "text": "Anyone with this link can join and build with you. It expires within a day and works for {{count}} person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many people may use the link; nobody has used it yet."
+  },
+  "appContext.invite.sentence.build.withinDayFor_other": {
+    "text": "Anyone with this link can join and build with you. It expires within a day and works for {{count}} people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many people may use the link; nobody has used it yet."
+  },
+  "appContext.invite.sentence.build.withinDayForMore_one": {
+    "text": "Anyone with this link can join and build with you. It expires within a day and works for {{count}} more person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many more people may still use the link, after those who already did."
+  },
+  "appContext.invite.sentence.build.withinDayForMore_other": {
+    "text": "Anyone with this link can join and build with you. It expires within a day and works for {{count}} more people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many more people may still use the link, after those who already did."
+  },
+  "appContext.invite.sentence.build.inDaysFor_one": {
+    "text": "Anyone with this link can join and build with you. It expires in {{days}} days and works for {{count}} person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many people may use it, and nobody has yet."
+  },
+  "appContext.invite.sentence.build.inDaysFor_other": {
+    "text": "Anyone with this link can join and build with you. It expires in {{days}} days and works for {{count}} people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many people may use it, and nobody has yet."
+  },
+  "appContext.invite.sentence.build.inDaysForMore_one": {
+    "text": "Anyone with this link can join and build with you. It expires in {{days}} days and works for {{count}} more person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many more people may still use it."
+  },
+  "appContext.invite.sentence.build.inDaysForMore_other": {
+    "text": "Anyone with this link can join and build with you. It expires in {{days}} days and works for {{count}} more people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many more people may still use it."
+  },
+  "appContext.invite.sentence.join.untilOff": {
+    "text": "Anyone with this link can join. It works until you turn it off.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. The link has no end date and no limit of people."
+  },
+  "appContext.invite.sentence.join.withinDay": {
+    "text": "Anyone with this link can join. It expires within a day.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. The link ends in less than a day and has no limit of people."
+  },
+  "appContext.invite.sentence.join.inDays_one": {
+    "text": "Anyone with this link can join. It expires in {{count}} day.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many days the link still works (2 or more in practice); it has no limit of people."
+  },
+  "appContext.invite.sentence.join.inDays_other": {
+    "text": "Anyone with this link can join. It expires in {{count}} days.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many days the link still works (2 or more in practice); it has no limit of people."
+  },
+  "appContext.invite.sentence.join.noEndFor_one": {
+    "text": "Anyone with this link can join. It has no end date and works for {{count}} person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many people may use the link; nobody has used it yet."
+  },
+  "appContext.invite.sentence.join.noEndFor_other": {
+    "text": "Anyone with this link can join. It has no end date and works for {{count}} people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many people may use the link; nobody has used it yet."
+  },
+  "appContext.invite.sentence.join.noEndForMore_one": {
+    "text": "Anyone with this link can join. It has no end date and works for {{count}} more person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many more people may still use the link, after those who already did."
+  },
+  "appContext.invite.sentence.join.noEndForMore_other": {
+    "text": "Anyone with this link can join. It has no end date and works for {{count}} more people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many more people may still use the link, after those who already did."
+  },
+  "appContext.invite.sentence.join.withinDayFor_one": {
+    "text": "Anyone with this link can join. It expires within a day and works for {{count}} person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many people may use the link; nobody has used it yet."
+  },
+  "appContext.invite.sentence.join.withinDayFor_other": {
+    "text": "Anyone with this link can join. It expires within a day and works for {{count}} people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many people may use the link; nobody has used it yet."
+  },
+  "appContext.invite.sentence.join.withinDayForMore_one": {
+    "text": "Anyone with this link can join. It expires within a day and works for {{count}} more person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many more people may still use the link, after those who already did."
+  },
+  "appContext.invite.sentence.join.withinDayForMore_other": {
+    "text": "Anyone with this link can join. It expires within a day and works for {{count}} more people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many more people may still use the link, after those who already did."
+  },
+  "appContext.invite.sentence.join.inDaysFor_one": {
+    "text": "Anyone with this link can join. It expires in {{days}} days and works for {{count}} person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many people may use it, and nobody has yet."
+  },
+  "appContext.invite.sentence.join.inDaysFor_other": {
+    "text": "Anyone with this link can join. It expires in {{days}} days and works for {{count}} people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many people may use it, and nobody has yet."
+  },
+  "appContext.invite.sentence.join.inDaysForMore_one": {
+    "text": "Anyone with this link can join. It expires in {{days}} days and works for {{count}} more person.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many more people may still use it."
+  },
+  "appContext.invite.sentence.join.inDaysForMore_other": {
+    "text": "Anyone with this link can join. It expires in {{days}} days and works for {{count}} more people.",
+    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many more people may still use it."
+  },
+  "appContext.invite.detail.joined_one": {
+    "text": "{{count}} joined",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many people joined through this link, which has no limit. {{count}} is that number."
+  },
+  "appContext.invite.detail.joined_other": {
+    "text": "{{count}} joined",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many people joined through this link, which has no limit. {{count}} is that number."
+  },
+  "appContext.invite.detail.used": {
+    "text": "{{used}} of {{max}} used",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many of the link's uses are taken. {{used}} is how many people joined through it, {{max}} how many it allows."
+  },
+  "appContext.invite.detail.noEnd": {
+    "text": "no end date",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: the link never expires. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.underDay": {
+    "text": "under a day left",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: the link expires in less than a day. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.daysLeft_one": {
+    "text": "{{count}} day left",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many days until the link expires. {{count}} is that number. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.daysLeft_other": {
+    "text": "{{count}} days left",
+    "description": "One of two facts on a row of the list of invite links in the Invite pane of the app menu, joined by a middle dot: how many days until the link expires. {{count}} is that number. Lower case; it follows the first fact."
+  },
+  "appContext.invite.detail.pair": {
+    "text": "{{uses}} · {{expiry}}",
+    "description": "The line on a row of the list of invite links in the Invite pane of the app menu: two facts about one link, side by side. {{uses}} is how much the link has been used, already worded, for example \"3 of 25 used\" or \"4 joined\"; {{expiry}} is how long it still works, already worded, for example \"7 days left\" or \"no end date\". Keep the middle dot between them, or use the separator this language puts between two short facts."
+  },
+  "appContext.invite.newcomer": {
+    "text": "Someone new to Homeroom joins straight away and goes right into this project.",
+    "description": "Small note under the invite link in the Invite pane of the app menu: a person without a Homeroom account who follows the link is let in at once and lands in the project."
+  },
+  "appContext.invite.title": {
+    "text": "Invite people to {{project}}",
+    "description": "Title of the Invite pane of the app menu. {{project}} is the project's (app's) name."
+  },
+  "appContext.invite.making": {
+    "text": "Making your link",
+    "description": "Screen-reader text for the placeholder shown in the Invite pane of the app menu while the person's invite link is being created."
+  },
+  "appContext.invite.copyFailed": {
+    "text": "Could not copy. Press and hold the link to copy it.",
+    "description": "Error in the Invite pane of the app menu when copying the invite link to the clipboard failed."
+  },
+  "appContext.invite.shareTitle": {
+    "text": "Join {{project}} on Homeroom",
+    "description": "Title handed to the device's share sheet when the person shares an invite link. {{project}} is the project's (app's) name. \"Join\" is a verb."
+  },
+  "appContext.invite.noProject": {
+    "text": "Open a project to invite people to it.",
+    "description": "Shown in the Invite pane of the app menu when it is opened with no project in context. \"Open\" is a verb."
+  },
+  "appContext.invite.buildersOnly": {
+    "text": "Only the people building {{project}} can invite others to it.",
+    "description": "Shown in the Invite pane of the app menu to someone who may not make invite links, on a project where building is by invitation. {{project}} is the project's name."
+  },
+  "appContext.invite.joinFirst": {
+    "text": "Join {{project}} to invite people to it.",
+    "description": "Shown in the Invite pane of the app menu to someone who is not a member yet and so may not make invite links. {{project}} is the project's name. \"Join\" is a verb."
+  },
+  "appContext.invite.linkLabel": {
+    "text": "Invite link",
+    "description": "Accessible name of the read-only box in the Invite pane of the app menu that holds the invite link's address."
+  },
+  "appContext.invite.copied": {
+    "text": "Copied",
+    "description": "Text of the \"Copy link\" button in the Invite pane of the app menu for a moment after the link was copied."
+  },
+  "appContext.invite.copyLink": {
+    "text": "Copy link",
+    "description": "Main button in the Invite pane of the app menu: a verb, copies the invite link to the clipboard."
+  },
+  "appContext.invite.share": {
+    "text": "Share",
+    "description": "Second button in the Invite pane of the app menu: a verb, opens the device's share sheet with the invite link."
+  },
+  "appContext.invite.expiresAfter": {
+    "text": "Expires after",
+    "description": "Label of the drop-down in the Invite pane of the app menu that sets how long a new invite link works. Its options follow it: 1 day, 7 days, Until you turn it off."
+  },
+  "appContext.invite.option.untilOff": {
+    "text": "Until you turn it off",
+    "description": "Option in the \"Expires after\" drop-down in the Invite pane of the app menu: the new link never expires."
+  },
+  "appContext.invite.option.days_one": {
+    "text": "{{count}} day",
+    "description": "Option in the \"Expires after\" drop-down in the Invite pane of the app menu. {{count}} is the number of days the new link works."
+  },
+  "appContext.invite.option.days_other": {
+    "text": "{{count}} days",
+    "description": "Option in the \"Expires after\" drop-down in the Invite pane of the app menu. {{count}} is the number of days the new link works."
+  },
+  "appContext.invite.worksFor": {
+    "text": "Works for",
+    "description": "Label of the drop-down in the Invite pane of the app menu that sets how many people a new invite link lets in. Its options follow it: 1 person, 25 people, Anyone with the link."
+  },
+  "appContext.invite.option.anyone": {
+    "text": "Anyone with the link",
+    "description": "Option in the \"Works for\" drop-down in the Invite pane of the app menu: the new link has no limit of people."
+  },
+  "appContext.invite.option.people_one": {
+    "text": "{{count}} person",
+    "description": "Option in the \"Works for\" drop-down in the Invite pane of the app menu. {{count}} is how many people the new link lets in."
+  },
+  "appContext.invite.option.people_other": {
+    "text": "{{count}} people",
+    "description": "Option in the \"Works for\" drop-down in the Invite pane of the app menu. {{count}} is how many people the new link lets in."
+  },
+  "appContext.invite.makeNew": {
+    "text": "Make new link",
+    "description": "Button in the Invite pane of the app menu, under the two drop-downs: creates a new invite link with the chosen duration and limit, replacing the person's current one."
+  },
+  "appContext.invite.change": {
+    "text": "Change how long or how many",
+    "description": "Row in the Invite pane of the app menu: a verb, unfolds the two drop-downs that set how long a link works and for how many people."
+  },
+  "appContext.invite.liveLinks": {
+    "text": "Live links",
+    "description": "Small heading in the Invite pane of the app menu over the list of every invite link that still works, shown to someone who manages the project."
+  },
+  "appContext.invite.yourLinks": {
+    "text": "Your links",
+    "description": "Small heading in the Invite pane of the app menu over the list of the person's own invite links."
+  },
+  "appContext.invite.madeBy": {
+    "text": "by @{{username}}",
+    "description": "Small line on a row of the list of invite links in the Invite pane of the app menu: who made the link. {{username}} is that person's username; keep the @ before it."
+  },
+  "appContext.invite.turnOff": {
+    "text": "Turn off",
+    "description": "Button on a row of the list of invite links in the Invite pane of the app menu: revokes that link so it stops working."
+  },
+  "appContext.about.contributor.live_one": {
+    "text": "{{count}} live",
+    "description": "Shown at the right of a contributor's row in the About pane of the app menu: how many of that person's changes have been released. {{count}} is that number; \"live\" is an adjective."
+  },
+  "appContext.about.contributor.live_other": {
+    "text": "{{count}} live",
+    "description": "Shown at the right of a contributor's row in the About pane of the app menu: how many of that person's changes have been released. {{count}} is that number; \"live\" is an adjective."
+  },
+  "appContext.about.contributors.showFewer": {
+    "text": "Show fewer",
+    "description": "Button under the contributors list in the About pane of the app menu, once the whole list is shown: folds it back to the first five."
+  },
+  "appContext.about.contributors.showAll_one": {
+    "text": "Show all {{count}} contributor",
+    "description": "Button under the contributors list in the About pane of the app menu: unfolds the whole list. {{count}} is how many contributors there are (more than five in practice)."
+  },
+  "appContext.about.contributors.showAll_other": {
+    "text": "Show all {{count}} contributors",
+    "description": "Button under the contributors list in the About pane of the app menu: unfolds the whole list. {{count}} is how many contributors there are (more than five in practice)."
+  },
+  "appContext.about.lineage.linkTitle": {
+    "text": "Remixed from {{app}}: open the original",
+    "description": "Tooltip of the \"Remixed from\" link in the About pane of the app menu. A remix is an app made as a copy of another; {{app}} is the original app's name. \"open\" is a verb."
+  },
+  "appContext.about.lineage.remixedFrom": {
+    "text": "⑂ Remixed from {{app}}",
+    "description": "Amber line under an app's description in the About pane of the app menu: this app was made as a copy (a remix) of another. {{app}} is the original app's name. Keep the fork sign first."
+  },
+  "appContext.about.lineage.goneTitle": {
+    "text": "The original app no longer exists",
+    "description": "Tooltip of the \"Remixed from\" line in the About pane of the app menu when the app it was copied from has been deleted."
+  },
+  "appContext.about.added": {
+    "text": "Added",
+    "description": "Text of the disabled button in the About pane of the app menu, beside a check mark, once the app is in the person's My apps list."
+  },
+  "appContext.about.addToMyApps": {
+    "text": "Add to My apps",
+    "description": "Button in the About pane of the app menu: adds this app to the person's own list of apps on Home. \"My apps\" is that list's name."
+  },
+  "appContext.about.noteHow.app": {
+    "text": "{{app}}’s community builds it together. <0>How changes work</0>",
+    "description": "Line in the About pane of the app menu: the app is built by the people who joined it. {{app}} is the app's name. The sentence is followed by a link to the app's Workshop, where the voting rules are explained: keep the <0> tags around the link's words. \"changes\" is a noun."
+  },
+  "appContext.about.noteHow.thisApp": {
+    "text": "This app’s community builds it together. <0>How changes work</0>",
+    "description": "Line in the About pane of the app menu when the app's name is not known: the app is built by the people who joined it. The sentence is followed by a link to the app's Workshop, where the voting rules are explained: keep the <0> tags around the link's words. \"changes\" is a noun."
+  },
+  "appContext.about.noteHow.platform": {
+    "text": "{{name}}’s community builds it together, the same way as the apps on it. <0>How changes work</0>",
+    "description": "Line in the About pane for Homeroom itself: the platform is built by its own community, like the apps it hosts. {{name}} is the platform's name, Homeroom. The sentence is followed by a link to the app's Workshop, where the voting rules are explained: keep the <0> tags around the link's words. \"changes\" is a noun."
+  },
+  "appContext.about.contributors.heading": {
+    "text": "Contributors",
+    "description": "Heading and accessible name of the section in the About pane of the app menu that lists the people whose changes went into the app."
+  },
+  "appContext.about.contributors.loading": {
+    "text": "Loading contributors…",
+    "description": "Shown under the Contributors heading in the About pane of the app menu while the list loads."
+  },
+  "appContext.about.contributors.failed": {
+    "text": "Couldn’t load contributors.",
+    "description": "Shown under the Contributors heading in the About pane of the app menu when the list could not be loaded."
+  },
+  "appContext.about.contributors.none": {
+    "text": "No contributors yet.",
+    "description": "Shown under the Contributors heading in the About pane of the app menu when nobody's change has gone into the app yet."
+  },
+  "appContext.about.more": {
+    "text": "More",
+    "description": "Heading and accessible name of the last section in the About pane of the app menu, which holds Share, Add to home screen, Code, Remix and the version."
+  },
+  "appContext.row.share": {
+    "text": "Share",
+    "description": "Row under More in the About pane of the app menu: a verb, shares a link to this app (or to Homeroom itself)."
+  },
+  "appContext.about.share.copied": {
+    "text": "Link copied",
+    "description": "Replaces the word Share on its row in the About pane of the app menu for a moment after the link to Homeroom was copied to the clipboard."
+  },
+  "appContext.about.share.failed": {
+    "text": "Could not copy the link",
+    "description": "Replaces the word Share on its row in the About pane of the app menu for a moment when copying the link to Homeroom failed."
+  },
+  "appContext.about.addToHomeScreen": {
+    "text": "Add to home screen",
+    "description": "Row under More in the About pane of the app menu: puts an icon for this app (or for Homeroom) on the phone's home screen, or shows how."
+  },
+  "appContext.about.code": {
+    "text": "Code",
+    "description": "Row under More in the About pane of the app menu: a noun, a link to the app's source code on GitHub."
+  },
+  "appContext.about.codePublic": {
+    "text": "Public on GitHub",
+    "description": "Small note at the right of the Code row in the About pane of the app menu: the source code is publicly readable on GitHub."
+  },
+  "appContext.about.remix": {
+    "text": "Remix",
+    "description": "Row under More in the About pane of the app menu: a verb, makes the person their own copy of this app to change."
+  },
+  "appContext.about.remixSub": {
+    "text": "Make your own copy",
+    "description": "Second line of the Remix row in the About pane of the app menu."
+  },
+  "appContext.about.liveSince": {
+    "text": "Live since {{when}}",
+    "description": "Tooltip of the version line in the About pane of the app menu. {{when}} is the date and time the running version was released, already formatted."
+  },
+  "appContext.agentChats.archive": {
+    "text": "Archive",
+    "description": "Action revealed by swiping left on a row under \"Agent chats\" in the app menu (the sheet opened from the app's name in the header), on a phone: a verb, archives that conversation with the coding agent."
+  },
+  "appContext.agentChats.heading": {
+    "text": "Agent chats",
+    "description": "Small heading in the app menu (the sheet opened from the app's name in the header) over the person's recent conversations with the coding agent."
+  },
+  "appContext.agentChats.buildNow": {
+    "text": "Build it now",
+    "description": "Row under \"Agent chats\" in the app menu (the sheet opened from the app's name in the header): starts a new conversation with the coding agent to make a change to this app oneself, rather than suggesting it to others."
+  },
+  "appContext.agentChats.showMore": {
+    "text": "Show more",
+    "description": "Small link under the rows of \"Agent chats\" in the app menu (the sheet opened from the app's name in the header), followed by a chevron: opens the full list of agent conversations in Messages."
+  },
+  "appContext.thisApp": {
+    "text": "this app",
+    "description": "Stands in for the app's name at the top of the app menu, and where a pane names the app, when the name has not loaded. Lower case."
+  },
+  "appContext.sheetLabel": {
+    "text": "Menu",
+    "description": "Accessible name of the app menu: the sheet opened from the app's name in the header. A noun."
+  },
+  "appContext.backToMenu": {
+    "text": "Back to {{app}}'s menu",
+    "description": "Accessible name of the back button at the top of the About and Invite panes of the app menu: returns to the menu's first page. {{app}} is the app's name."
+  },
+  "appContext.backToThisAppMenu": {
+    "text": "Back to this app's menu",
+    "description": "Accessible name of the back button at the top of the About and Invite panes of the app menu, when the app's name is not known."
+  },
+  "appContext.goToHomeroom.title": {
+    "text": "Go to Homeroom",
+    "description": "Row in the app menu (the sheet opened from the app's name in the header) shown to someone who arrived through an app's invite link: leaves the app for Homeroom's own Home screen."
+  },
+  "appContext.goToHomeroom.sub": {
+    "text": "Your Home, your communities and Homeroom bot",
+    "description": "Second line of the \"Go to Homeroom\" row in the app menu (the sheet opened from the app's name in the header): what is there. Home is the Home screen; Homeroom bot is Homeroom's assistant, a name."
+  },
+  "appContext.addHomeroomToHomeScreen": {
+    "text": "Add Homeroom to your home screen",
+    "description": "Row in the app menu (the sheet opened from the app's name in the header) shown to a newcomer on a phone: opens the steps for putting Homeroom's icon on the phone's home screen."
+  },
+  "appContext.row.community": {
+    "text": "Go to community",
+    "description": "Row in the app menu (the sheet opened from the app's name in the header): opens the hub page of the community that owns this app."
+  },
+  "appContext.row.toVote_one": {
+    "text": "{{count}} to vote",
+    "description": "Shown at the right of the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many proposals wait for this person's vote. {{count}} is that number."
+  },
+  "appContext.row.toVote_other": {
+    "text": "{{count}} to vote",
+    "description": "Shown at the right of the \"Go to community\" row in the app menu (the sheet opened from the app's name in the header), also its tooltip and accessible name: how many proposals wait for this person's vote. {{count}} is that number."
+  },
+  "appContext.row.terminal": {
+    "text": "Developer terminal",
+    "description": "Row in the app menu (the sheet opened from the app's name in the header), shown to developers: opens a command-line terminal for this app."
+  },
+  "appContext.row.about": {
+    "text": "About {{app}}",
+    "description": "Row in the app menu (the sheet opened from the app's name in the header): opens the About pane, with the app's description, contributors and version. {{app}} is the app's name."
+  },
+  "appContext.row.aboutThisApp": {
+    "text": "About this app",
+    "description": "Row in the app menu (the sheet opened from the app's name in the header) when the app's name is not known: opens the About pane."
+  },
+  "appContext.reportApp": {
+    "text": "Report app",
+    "description": "Small link at the foot of the app menu, beside a flag: a verb, reports this app to Homeroom's moderators."
+  },
+  "sidePanel.expandLabel": {
+    "text": "Open full width, leaving the app",
+    "description": "Accessible name of the expand button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page): shows the panel's page on the whole screen instead of beside the app. \"Open\" is a verb."
+  },
+  "sidePanel.expand": {
+    "text": "Open full width",
+    "description": "Tooltip of the expand button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page). \"Open\" is a verb."
+  },
+  "sidePanel.close": {
+    "text": "Close panel",
+    "description": "Tooltip and accessible name of the ✕ button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page): a verb, closes the panel."
+  },
+  "sidePanel.frameTitle": {
+    "text": "Side panel",
+    "description": "Accessible title of the embedded page inside the side panel, the pane docked beside an app on a wide screen."
+  },
+  "sidePanel.resize": {
+    "text": "Resize panel",
+    "description": "Accessible name of the draggable edge of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page)."
+  },
+  "sidePanel.resizeTitle": {
+    "text": "Drag to resize · double-click to reset",
+    "description": "Tooltip of the draggable edge of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page). Keep the middle dot between the two hints."
+  },
+  "sidePanel.title.workshop": {
+    "text": "Workshop",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows a project's Workshop, the board of its changes and requests. The name of that tab, a noun."
+  },
+  "sidePanel.title.proposal": {
+    "text": "Proposal",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows one proposal, a change put up for the community's vote. A noun."
+  },
+  "sidePanel.title.request": {
+    "text": "Request",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows one request, a member's filed suggestion or bug report. A noun."
+  },
+  "sidePanel.title.change": {
+    "text": "Change",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows one code change that is being worked on. A noun."
+  },
+  "sidePanel.title.newChange": {
+    "text": "New change",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows the page where a new code change is started. \"change\" is a noun."
+  },
+  "sidePanel.title.thread": {
+    "text": "Messages",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows a conversation whose own name has not loaded. The name of the Messages screen."
+  },
+  "sidePanel.title.chat": {
+    "text": "Chat",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows a chat with Homeroom's assistant whose own title has not loaded. A noun."
+  },
+  "sidePanel.title.agent": {
+    "text": "Agent session",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows a conversation with the coding agent whose own title has not loaded."
+  },
+  "sidePanel.title.messages": {
+    "text": "Messages",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows the inbox. The name of the Messages screen."
+  },
+  "appFrame.cover.opening": {
+    "text": "Opening…",
+    "description": "Note under an app's icon and name on the cover shown while the app is being opened."
+  },
+  "install.banner.getOnAppStore": {
+    "text": "Get the app on the App Store",
+    "description": "Second line of the install banner, the strip at the top of Homeroom in a phone's browser that offers the Homeroom app, when the link goes to Apple's App Store. \"the App Store\" is Apple's name for it."
+  },
+  "install.banner.getOnGooglePlay": {
+    "text": "Get the app on Google Play",
+    "description": "Second line of the install banner, the strip at the top of Homeroom in a phone's browser that offers the Homeroom app, when the link goes to Google Play. Google Play is a name."
+  },
+  "install.banner.getOnTestFlight": {
+    "text": "Get the app on TestFlight",
+    "description": "Second line of the install banner, the strip at the top of Homeroom in a phone's browser that offers the Homeroom app, when the link is an invitation to Apple's TestFlight beta programme. TestFlight is a name."
+  },
+  "install.sentence.ios": {
+    "text": "Tap Share, then Add to Home Screen.",
+    "description": "One-line instruction in Homeroom's About pane on an iPhone or iPad: how to put Homeroom on the home screen. Share and Add to Home Screen are the names Safari shows; use the names the device shows in this language."
+  },
+  "install.sentence.android": {
+    "text": "Open the browser menu, then Add to Home screen.",
+    "description": "One-line instruction in Homeroom's About pane on an Android phone: how to put Homeroom on the home screen. Add to Home screen is the browser's own menu item; use the name the browser shows in this language."
+  },
+  "install.ios.step1": {
+    "text": "Tap Share in Safari's toolbar",
+    "description": "Step 1 of 3 in the \"Add Homeroom to your home screen\" sheet on an iPhone or iPad; the Share icon is drawn beside it. Share is the name Safari gives the button."
+  },
+  "install.ios.step2": {
+    "text": "Choose Add to Home Screen",
+    "description": "Step 2 of 3 in the \"Add Homeroom to your home screen\" sheet on an iPhone or iPad. Add to Home Screen is the item in Safari's share menu; use the name the device shows in this language."
+  },
+  "install.ios.step3": {
+    "text": "Open Homeroom from its icon",
+    "description": "Step 3 of 3 in the \"Add Homeroom to your home screen\" sheet on an iPhone or iPad: after adding it, start Homeroom from the new icon. \"Open\" is a verb."
+  },
+  "install.android.step1": {
+    "text": "Tap the menu in your browser's toolbar",
+    "description": "Step 1 of 3 in the \"Add Homeroom to your home screen\" sheet on an Android phone; the three-dot menu icon is drawn beside it."
+  },
+  "install.android.step2": {
+    "text": "Choose Add to Home screen",
+    "description": "Step 2 of 3 in the \"Add Homeroom to your home screen\" sheet on an Android phone. Add to Home screen is the browser's own menu item; use the name the browser shows in this language."
+  },
+  "install.android.step3": {
+    "text": "Open Homeroom from its icon",
+    "description": "Step 3 of 3 in the \"Add Homeroom to your home screen\" sheet on an Android phone: after adding it, start Homeroom from the new icon. \"Open\" is a verb."
+  },
+  "install.banner.getApp": {
+    "text": "Get the app",
+    "description": "Second line of the install banner, the strip at the top of Homeroom in a phone's browser that offers the Homeroom app, before it is known whether a store listing exists."
+  },
+  "install.banner.addToHomeScreen": {
+    "text": "Add it to your home screen",
+    "description": "Second line of the install banner, the strip at the top of Homeroom in a phone's browser that offers the Homeroom app, when there is no store listing: \"it\" is Homeroom, which can be added to the phone's home screen from the browser."
+  },
+  "install.banner.how": {
+    "text": "How",
+    "description": "Button on the install banner when Homeroom is added from the browser: opens the steps. Short for \"How do I do that?\"."
+  },
+  "install.banner.get": {
+    "text": "Get",
+    "description": "Button on the install banner: a verb, opens the app's store listing to download Homeroom."
+  },
+  "install.banner.dismiss": {
+    "text": "Dismiss install banner",
+    "description": "Accessible name of the ✕ on the install banner, the strip at the top of Homeroom in a phone's browser: hides the strip."
+  },
+  "install.steps.title": {
+    "text": "Add Homeroom to your home screen",
+    "description": "Title of the sheet that lists the three steps for putting Homeroom's icon on the phone's home screen."
+  },
+  "install.steps.done": {
+    "text": "Got it",
+    "description": "Button at the foot of the \"Add Homeroom to your home screen\" sheet: closes it once the steps are read."
+  },
+  "session.attach.badgeFile": {
+    "text": "FILE",
+    "description": "Small upper-case tag on an attached file's chip in an agent session when the file has no extension to show (other files show theirs, such as PDF or ZIP). Keep it short and in capitals."
+  }
+}

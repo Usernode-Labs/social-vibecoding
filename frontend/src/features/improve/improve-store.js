@@ -31,6 +31,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { t } from '../../lib/i18n/runtime';
 
 /**
  * The Dev screen's board, as an href, in the LAYOUT named.
@@ -96,10 +97,15 @@ export function topicBackHref({ slug, tab, subTab, boardView, topicOrigin = null
  * screen.
  *
  * @param {string|null} href
- * @returns {'Messages'|'Workshop'}
+ * @returns {string} "Messages" or "Workshop", in the language on screen
  */
 export function topicBackLabel(href) {
-  return typeof href === 'string' && href.startsWith('#messages') ? 'Messages' : 'Workshop';
+  return backsToMessages(href) ? t('agent:topicBack.messages') : t('agent:topicBack.workshop');
+}
+
+/** Whether `href` goes back to a Messages conversation rather than a board. */
+function backsToMessages(href) {
+  return typeof href === 'string' && href.startsWith('#messages');
 }
 
 /**
@@ -121,7 +127,7 @@ export function topicBackLabel(href) {
  */
 export function topicWorkshopHref(route) {
   const back = topicBackHref(route);
-  if (!back || topicBackLabel(back) !== 'Messages') return null;
+  if (!back || !backsToMessages(back)) return null;
   return boardHref(route.slug, route.boardView);
 }
 
