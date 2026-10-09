@@ -117,7 +117,7 @@
   },
   "imageSave.saved_one": {
     "text": "Image downloaded",
-    "description": "Brief confirmation after pictures from a message were saved to the phone. {{count}} is how many pictures."
+    "description": "Brief confirmation after pictures from a message were saved to the phone. {{count}} is how many pictures. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "imageSave.saved_other": {
     "text": "{{count}} images downloaded",
@@ -129,7 +129,7 @@
   },
   "imageSave.menuDownload_one": {
     "text": "Download image",
-    "description": "Item in a message's actions menu: saves the pictures attached to that message to the device. {{count}} is how many pictures the message has."
+    "description": "Item in a message's actions menu: saves the pictures attached to that message to the device. {{count}} is how many pictures the message has. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "imageSave.menuDownload_other": {
     "text": "Download {{count}} images",
@@ -257,7 +257,7 @@
   },
   "thread.activity.what_one": {
     "text": "Replied in thread",
-    "description": "Heading of the card in a conversation that shows new replies made inside a thread under an older message. {{count}} is how many replies the card shows."
+    "description": "Heading of the card in a conversation that shows new replies made inside a thread under an older message. {{count}} is how many replies the card shows. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "thread.activity.what_other": {
     "text": "{{count}} replies in thread",
@@ -273,7 +273,7 @@
   },
   "thread.activity.open_one": {
     "text": "Replied in thread: {{message}}, {{time}}. Open thread",
-    "description": "Accessible name of the thread-replies card: pressing it opens the thread. {{count}} is the number of replies, {{message}} is the text of the thread's first message and {{time}} is the time of the latest reply."
+    "description": "Accessible name of the thread-replies card: pressing it opens the thread. {{count}} is the number of replies, {{message}} is the text of the thread's first message and {{time}} is the time of the latest reply. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "thread.activity.open_other": {
     "text": "{{count}} replies in thread: {{message}}, {{time}}. Open thread",
@@ -281,7 +281,7 @@
   },
   "thread.activity.openDeleted_one": {
     "text": "Replied in thread: Message deleted, {{time}}. Open thread",
-    "description": "Accessible name of the thread-replies card when the thread's first message was deleted: pressing it opens the thread. {{count}} is the number of replies and {{time}} is the time of the latest reply."
+    "description": "Accessible name of the thread-replies card when the thread's first message was deleted: pressing it opens the thread. {{count}} is the number of replies and {{time}} is the time of the latest reply. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "thread.activity.openDeleted_other": {
     "text": "{{count}} replies in thread: Message deleted, {{time}}. Open thread",
@@ -289,7 +289,7 @@
   },
   "thread.activity.openNoText_one": {
     "text": "Replied in thread: a message, {{time}}. Open thread",
-    "description": "Accessible name of the thread-replies card when the thread's first message has no words: pressing it opens the thread. {{count}} is the number of replies and {{time}} is the time of the latest reply."
+    "description": "Accessible name of the thread-replies card when the thread's first message has no words: pressing it opens the thread. {{count}} is the number of replies and {{time}} is the time of the latest reply. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "thread.activity.openNoText_other": {
     "text": "{{count}} replies in thread: a message, {{time}}. Open thread",
@@ -393,7 +393,7 @@
   },
   "approval.needs_one": {
     "text": "Needs one approval from {{people}}",
-    "description": "Status line on a change that is ready: how many approvals it still needs and who can give them. {{count}} is the number of approvals; {{people}} is a list of people joined with \"or\", such as \"@ada or @ben\"."
+    "description": "Status line on a change that is ready: how many approvals it still needs and who can give them. {{count}} is the number of approvals; {{people}} is a list of people joined with \"or\", such as \"@ada or @ben\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "approval.needs_other": {
     "text": "Needs {{count}} approvals from {{people}}",
@@ -401,7 +401,7 @@
   },
   "approval.needsMore_one": {
     "text": "Needs one more approval from {{people}}",
-    "description": "Status line on a change that already has some approvals: how many more it needs and who can give them. {{count}} is the number still missing; {{people}} is a list of people joined with \"or\"."
+    "description": "Status line on a change that already has some approvals: how many more it needs and who can give them. {{count}} is the number still missing; {{people}} is a list of people joined with \"or\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "approval.needsMore_other": {
     "text": "Needs {{count}} more approvals from {{people}}",
@@ -989,7 +989,7 @@
   },
   "bot.ready.broken_one": {
     "text": "One thing isn’t working yet: {{problems}}",
-    "description": "Red line on Homeroom bot's \"ready to try\" card listing what in the built change does not work yet. {{count}} is how many things; {{problems}} is the description of them, as written by the checks."
+    "description": "Red line on Homeroom bot's \"ready to try\" card listing what in the built change does not work yet. {{count}} is how many things; {{problems}} is the description of them, as written by the checks. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.broken_other": {
     "text": "{{count}} things aren’t working yet: {{problems}}",
@@ -1105,23 +1105,23 @@
   },
   "bot.ready.approved.approvals.none_one": {
     "text": "You approved it. It goes live after one more approval from {{people}}.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"). {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"). {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.approvals.today_one": {
     "text": "You approved it. It goes live after one more approval from {{people}}, or later today if nobody objects.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them. The fallback moment is later the same day."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them. The fallback moment is later the same day. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.approvals.tomorrow_one": {
     "text": "You approved it. It goes live after one more approval from {{people}}, or tomorrow if nobody objects.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them. The fallback moment is the next day."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them. The fallback moment is the next day. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.approvals.weekday_one": {
     "text": "You approved it. It goes live after one more approval from {{people}}, or on {{weekday}} if nobody objects.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them. {{weekday}} is the name of a day within the coming week, for example \"Wednesday\"."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them. {{weekday}} is the name of a day within the coming week, for example \"Wednesday\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.approvals.date_one": {
     "text": "You approved it. It goes live after one more approval from {{people}}, or on {{date}} if nobody objects.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them. {{date}} is a day and month, for example \"October 12\"."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more approvals are needed; {{people}} is a list, joined with \"or\", of people who can give them. {{date}} is a day and month, for example \"October 12\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.approvals.none_other": {
     "text": "You approved it. It goes live after {{count}} more approvals from {{people}}.",
@@ -1145,23 +1145,23 @@
   },
   "bot.ready.approved.anyone.none_one": {
     "text": "You approved it. It goes live when one more person approves.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"). {{count}} is how many more people must approve."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"). {{count}} is how many more people must approve. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.anyone.today_one": {
     "text": "You approved it. It goes live when one more person approves, or later today if nobody objects.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more people must approve. The fallback moment is later the same day."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more people must approve. The fallback moment is later the same day. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.anyone.tomorrow_one": {
     "text": "You approved it. It goes live when one more person approves, or tomorrow if nobody objects.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more people must approve. The fallback moment is the next day."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more people must approve. The fallback moment is the next day. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.anyone.weekday_one": {
     "text": "You approved it. It goes live when one more person approves, or on {{weekday}} if nobody objects.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more people must approve. {{weekday}} is the name of a day within the coming week, for example \"Wednesday\"."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more people must approve. {{weekday}} is the name of a day within the coming week, for example \"Wednesday\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.anyone.date_one": {
     "text": "You approved it. It goes live when one more person approves, or on {{date}} if nobody objects.",
-    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more people must approve. {{date}} is a day and month, for example \"October 12\"."
+    "description": "Line on Homeroom bot's card after the reader approved a change: says whose approval it still needs before it is put into use (\"goes live\"), and when it goes live anyway if nobody objects. {{count}} is how many more people must approve. {{date}} is a day and month, for example \"October 12\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "bot.ready.approved.anyone.none_other": {
     "text": "You approved it. It goes live when {{count}} more people approve.",

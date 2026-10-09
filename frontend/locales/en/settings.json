@@ -2269,7 +2269,7 @@
   },
   "connectors.hint.sent_one": {
     "text": "Homeroom sent you this tip in chat once in the last {{days}} days, most recently {{when}}.",
-    "description": "Status line under the \"stop the permission prompts\" advice in Settings > Connectors, about the tip Homeroom adds to its answers in a chat app (Claude, ChatGPT) telling the person how to stop those prompts. How often it was sent. {{count}} is the number of times (1 here), {{days}} the length of the window in days, {{when}} a date and time."
+    "description": "Status line under the \"stop the permission prompts\" advice in Settings > Connectors, about the tip Homeroom adds to its answers in a chat app (Claude, ChatGPT) telling the person how to stop those prompts. How often it was sent. {{count}} is the number of times (1 here), {{days}} the length of the window in days, {{when}} a date and time. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "connectors.hint.sent_other": {
     "text": "Homeroom sent you this tip in chat {{count}} times in the last {{days}} days, most recently {{when}}.",
@@ -2277,7 +2277,7 @@
   },
   "connectors.hint.sentWhenUnknown_one": {
     "text": "Homeroom sent you this tip in chat once in the last {{days}} days, most recently recently.",
-    "description": "Status line under the \"stop the permission prompts\" advice in Settings > Connectors, about the tip Homeroom adds to its answers in a chat app (Claude, ChatGPT) telling the person how to stop those prompts. How often it was sent, when the time of the last one is not known. {{count}} is the number of times (1 here), {{days}} the length of the window in days. The English repeats \"recently\" by accident of the fallback; write a natural sentence."
+    "description": "Status line under the \"stop the permission prompts\" advice in Settings > Connectors, about the tip Homeroom adds to its answers in a chat app (Claude, ChatGPT) telling the person how to stop those prompts. How often it was sent, when the time of the last one is not known. {{count}} is the number of times (1 here), {{days}} the length of the window in days. The English repeats \"recently\" by accident of the fallback; write a natural sentence. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "connectors.hint.sentWhenUnknown_other": {
     "text": "Homeroom sent you this tip in chat {{count}} times in the last {{days}} days, most recently recently.",

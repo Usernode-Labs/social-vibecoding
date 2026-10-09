@@ -155,14 +155,24 @@ function requiredMessages(source, language) {
   return { required, groups };
 }
 
-/** 'missing' | 'stale' | 'invalid' for an entry that cannot be used, or null. */
-function translationProblem(entry, english) {
+/**
+ * 'missing' | 'stale' | 'invalid' for an entry that cannot be used, or null.
+ *
+ * A translation carries exactly the English text's parameters, with one
+ * exception for a form of a counted message (`counted`): the number the form
+ * was chosen by, `{{count}}`, is always handed to it, so a translation may
+ * show it where English spells the number out ("an hour ago"), and may leave
+ * it out where its own form already says it. Russian's `one` form is also
+ * used for 21, 31 and 101: it has to be able to print the number.
+ */
+function translationProblem(entry, english, counted = false) {
   if (entry === undefined) return 'missing';
   if (!isObject(entry) || typeof entry.text !== 'string' || !entry.text.trim()) return 'invalid';
   if (Object.keys(entry).some((field) => !['text', 'source', 'locked'].includes(field))) return 'invalid';
   if ('locked' in entry && typeof entry.locked !== 'boolean') return 'invalid';
   if (entry.source !== hash(english)) return 'stale';
-  if (!sameList(parameters(entry.text), parameters(english))) return 'invalid';
+  const named = (text) => parameters(text).filter((name) => !(counted && name === 'count'));
+  if (!sameList(named(entry.text), named(english))) return 'invalid';
   try {
     if (!sameList(componentTags(entry.text), componentTags(english))) return 'invalid';
   } catch { return 'invalid'; }
@@ -197,9 +207,10 @@ function collectCatalogs(root) {
       const { required, groups } = requiredMessages(english[namespace], language);
       const messages = {};
       const unusable = new Set();
+      const countedKeys = new Set([...groups.values()].flat());
       for (const [key, text] of Object.entries(required)) {
         tally.total += 1;
-        const problem = translationProblem(translation[key], text);
+        const problem = translationProblem(translation[key], text, countedKeys.has(key));
         if (problem) { tally[problem].push(`${namespace}:${key}`); unusable.add(key); } else messages[key] = translation[key].text;
       }
       // A counted message is used whole or not at all: half a plural set

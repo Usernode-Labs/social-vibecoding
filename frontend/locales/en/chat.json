@@ -225,7 +225,7 @@
   },
   "group.botCard.approval.needs_one": {
     "text": "Needs one approval from {{people}}.",
-    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many approvals the built change still needs and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number of approvals; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\"."
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many approvals the built change still needs and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number of approvals; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "group.botCard.approval.needs_other": {
     "text": "Needs {{count}} approvals from {{people}}.",
@@ -233,7 +233,7 @@
   },
   "group.botCard.approval.needsMore_one": {
     "text": "Needs one more approval from {{people}}.",
-    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many more approvals the built change needs, once it has some, and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number still missing; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\"."
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many more approvals the built change needs, once it has some, and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number still missing; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "group.botCard.approval.needsMore_other": {
     "text": "Needs {{count}} more approvals from {{people}}.",
@@ -761,7 +761,7 @@
   },
   "group.weekly.waiting_one": {
     "text": "One change is waiting for approval",
-    "description": "Subheading on the weekly summary card posted in a project's channel, above the list of changes waiting for the community's vote, when there is exactly one."
+    "description": "Subheading on the weekly summary card posted in a project's channel, above the list of changes waiting for the community's vote, when there is exactly one. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "group.weekly.waiting_other": {
     "text": "{{count}} changes are waiting for approval",

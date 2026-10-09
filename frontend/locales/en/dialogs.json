@@ -1369,7 +1369,7 @@
   },
   "feedback.image.onlyFirst_one": {
     "text": "You can attach up to {{max}} images, so only the first one was added.",
-    "description": "Status line of the \"Suggest an improvement\" dialog when more images were picked than still fit. {{max}} is the most a request may carry; {{count}} is how many were added."
+    "description": "Status line of the \"Suggest an improvement\" dialog when more images were picked than still fit. {{max}} is the most a request may carry; {{count}} is how many were added. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "feedback.image.onlyFirst_other": {
     "text": "You can attach up to {{max}} images, so only the first {{count}} were added.",
@@ -1577,7 +1577,7 @@
   },
   "feedback.queue.stillWaiting_one": {
     "text": "Still couldn't send it. It's kept on this device and will try again by itself.",
-    "description": "Status line of the \"Suggest an improvement\" dialog after \"Try again\" failed. {{count}} is how many saved messages are still unsent; this form is for exactly one."
+    "description": "Status line of the \"Suggest an improvement\" dialog after \"Try again\" failed. {{count}} is how many saved messages are still unsent; this form is for exactly one. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "feedback.queue.stillWaiting_other": {
     "text": "Still couldn't send them. All {{count}} are kept on this device and will try again by themselves.",
@@ -1585,7 +1585,7 @@
   },
   "feedback.queue.flushed_one": {
     "text": "Your saved feedback has been sent.",
-    "description": "Brief message at the bottom of the screen when a message saved while offline was sent. {{count}} is how many were sent; this form is for exactly one."
+    "description": "Brief message at the bottom of the screen when a message saved while offline was sent. {{count}} is how many were sent; this form is for exactly one. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "feedback.queue.flushed_other": {
     "text": "Your {{count}} saved feedback messages have been sent.",

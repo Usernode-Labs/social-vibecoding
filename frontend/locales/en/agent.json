@@ -49,7 +49,7 @@
   },
   "session.fixChecks.askPr_one": {
     "text": "Please fix the failing check on PR #{{number}}.",
-    "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number."
+    "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed; {{number}} is the pull request's number. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "session.fixChecks.askPr_other": {
     "text": "Please fix the {{count}} failing checks on PR #{{number}}.",
@@ -57,7 +57,7 @@
   },
   "session.fixChecks.askChange_one": {
     "text": "Please fix the failing check on this change.",
-    "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed. Used before the change has a pull request; \"change\" is a noun."
+    "description": "First line of the message that the \"Fix it\" button sends to the coding agent in the person's own name, asking it to fix failing automated checks. {{count}} is how many checks failed. Used before the change has a pull request; \"change\" is a noun. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "session.fixChecks.askChange_other": {
     "text": "Please fix the {{count}} failing checks on this change.",

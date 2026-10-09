@@ -37,7 +37,10 @@ person's locale through the bridge (`usernode.getUserLocale()`), unchanged.
   does ("Button: signs the person out"). A translator sees the entry alone,
   and "Block", "Post" and "Leave" each mean several things.
 - **Plurals** are `key_one` and `key_other`; ask for `key` with a numeric
-  `count`.
+  `count`. English may spell the singular out ("an hour ago") and leave
+  `{{count}}` out of `key_one`; a translation of any form may still use
+  `{{count}}`, because other languages use their singular form for 21 and
+  101 too. Say so in the description.
 
 `node scripts/language-packs.js --check` validates the source, and every shell
 build and `tests/language-packs.test.js` run the same check. A mistake here is

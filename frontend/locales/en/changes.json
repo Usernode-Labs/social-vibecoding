@@ -165,7 +165,7 @@
   },
   "firstVersion.wait.more_one": {
     "text": "Waiting for one more person to approve.",
-    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\"."
+    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "firstVersion.wait.more_other": {
     "text": "Waiting for {{count}} more people to approve.",
@@ -173,7 +173,7 @@
   },
   "firstVersion.wait.moreOrToday_one": {
     "text": "Waiting for one more person to approve, or it goes live later today if nobody objects.",
-    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\". The second half says it is released automatically at that time unless somebody votes against it."
+    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\". The second half says it is released automatically at that time unless somebody votes against it. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "firstVersion.wait.moreOrToday_other": {
     "text": "Waiting for {{count}} more people to approve, or it goes live later today if nobody objects.",
@@ -181,7 +181,7 @@
   },
   "firstVersion.wait.moreOrTomorrow_one": {
     "text": "Waiting for one more person to approve, or it goes live tomorrow if nobody objects.",
-    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\". The second half says it is released automatically at that time unless somebody votes against it."
+    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\". The second half says it is released automatically at that time unless somebody votes against it. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "firstVersion.wait.moreOrTomorrow_other": {
     "text": "Waiting for {{count}} more people to approve, or it goes live tomorrow if nobody objects.",
@@ -189,7 +189,7 @@
   },
   "firstVersion.wait.moreOrWeekday_one": {
     "text": "Waiting for one more person to approve, or it goes live on {{weekday}} if nobody objects.",
-    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\". The second half says it is released automatically at that time unless somebody votes against it. {{weekday}} is the name of a day within the coming week, for example Wednesday."
+    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\". The second half says it is released automatically at that time unless somebody votes against it. {{weekday}} is the name of a day within the coming week, for example Wednesday. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "firstVersion.wait.moreOrWeekday_other": {
     "text": "Waiting for {{count}} more people to approve, or it goes live on {{weekday}} if nobody objects.",
@@ -197,7 +197,7 @@
   },
   "firstVersion.wait.moreOrDate_one": {
     "text": "Waiting for one more person to approve, or it goes live on {{date}} if nobody objects.",
-    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\". The second half says it is released automatically at that time unless somebody votes against it. {{date}} is a month and day, for example October 12."
+    "description": "Line on a new project's App tab, after \"You approved it.\", saying how many more approvals the first version still needs when the people cannot be named. {{count}} is that number; the singular form spells it out as \"one\". The second half says it is released automatically at that time unless somebody votes against it. {{date}} is a month and day, for example October 12. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "firstVersion.wait.moreOrDate_other": {
     "text": "Waiting for {{count}} more people to approve, or it goes live on {{date}} if nobody objects.",
@@ -6613,7 +6613,7 @@
   },
   "chips.workNote.workingWhen.you.hours_one": {
     "text": "You are working on this in an agent session, last active an hour ago.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.workingWhen.you.hours_other": {
     "text": "You are working on this in an agent session, last active {{count}} hours ago.",
@@ -6649,7 +6649,7 @@
   },
   "chips.workNote.workingWhen.named.hours_one": {
     "text": "{{name}} is working on this in an agent session, last active an hour ago.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.workingWhen.named.hours_other": {
     "text": "{{name}} is working on this in an agent session, last active {{count}} hours ago.",
@@ -6685,7 +6685,7 @@
   },
   "chips.workNote.workingWhen.someone.hours_one": {
     "text": "Someone is working on this in an agent session, last active an hour ago.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.workingWhen.someone.hours_other": {
     "text": "Someone is working on this in an agent session, last active {{count}} hours ago.",
@@ -6721,7 +6721,7 @@
   },
   "chips.workNote.pausedWhen.you.hours_one": {
     "text": "You started work on this and last worked on it an hour ago, so nobody is working on it at the moment.",
-    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request that the viewer began work on and then left. Used when the viewer last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.pausedWhen.you.hours_other": {
     "text": "You started work on this and last worked on it {{count}} hours ago, so nobody is working on it at the moment.",
@@ -6757,7 +6757,7 @@
   },
   "chips.workNote.pausedWhen.named.hours_one": {
     "text": "{{name}} started work on this and last worked on it an hour ago, so nobody is working on it at the moment.",
-    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request that someone, whose username is {{name}}, began work on and then left. Used when that person last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.pausedWhen.named.hours_other": {
     "text": "{{name}} started work on this and last worked on it {{count}} hours ago, so nobody is working on it at the moment.",
@@ -6793,7 +6793,7 @@
   },
   "chips.workNote.pausedWhen.someone.hours_one": {
     "text": "Someone started work on this and last worked on it an hour ago, so nobody is working on it at the moment.",
-    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request that a person whose name is not known began work on and then left. Used when that person last worked on it some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.pausedWhen.someone.hours_other": {
     "text": "Someone started work on this and last worked on it {{count}} hours ago, so nobody is working on it at the moment.",
@@ -6829,7 +6829,7 @@
   },
   "chips.workNote.claimedWhen.you.hours_one": {
     "text": "You said you'd work on this an hour ago but haven't started building it yet.",
-    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request that the viewer picked up (promised to work on) without starting. Used when the viewer said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.claimedWhen.you.hours_other": {
     "text": "You said you'd work on this {{count}} hours ago but haven't started building it yet.",
@@ -6865,7 +6865,7 @@
   },
   "chips.workNote.claimedWhen.named.hours_one": {
     "text": "{{name}} said they'd work on this an hour ago but hasn't started building it yet.",
-    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request that someone, whose username is {{name}}, picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.claimedWhen.named.hours_other": {
     "text": "{{name}} said they'd work on this {{count}} hours ago but hasn't started building it yet.",
@@ -6901,7 +6901,7 @@
   },
   "chips.workNote.claimedWhen.someone.hours_one": {
     "text": "Someone said they'd work on this an hour ago but hasn't started building it yet.",
-    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request that a person whose name is not known picked up (promised to work on) without starting. \"They\" is that one person. Used when that person said so some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.claimedWhen.someone.hours_other": {
     "text": "Someone said they'd work on this {{count}} hours ago but hasn't started building it yet.",
@@ -6937,7 +6937,7 @@
   },
   "chips.workNote.bot.itStartedReadingWhen.hours_one": {
     "text": "It started reading it an hour ago.",
-    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started reading some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.bot.itStartedReadingWhen.hours_other": {
     "text": "It started reading it {{count}} hours ago.",
@@ -6973,7 +6973,7 @@
   },
   "chips.workNote.bot.itStartedBuildingWhen.hours_one": {
     "text": "It started building it an hour ago.",
-    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Second sentence of the note on a request, after \"… asked Homeroom bot to build this.\" The first \"It\" is the Homeroom bot and the second \"it\" the request. Used when the bot started building some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.bot.itStartedBuildingWhen.hours_other": {
     "text": "It started building it {{count}} hours ago.",
@@ -7009,7 +7009,7 @@
   },
   "chips.workNote.bot.startedReadingWhen.hours_one": {
     "text": "The Homeroom bot started reading this request an hour ago.",
-    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is reading, when nobody in particular asked it to. Used when it started some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.bot.startedReadingWhen.hours_other": {
     "text": "The Homeroom bot started reading this request {{count}} hours ago.",
@@ -7045,7 +7045,7 @@
   },
   "chips.workNote.bot.startedBuildingWhen.hours_one": {
     "text": "The Homeroom bot started building this request an hour ago.",
-    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "description": "Note on a request the Homeroom bot (the platform's own building agent, a name) is building, when nobody in particular asked it to. Used when it started some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.bot.startedBuildingWhen.hours_other": {
     "text": "The Homeroom bot started building this request {{count}} hours ago.",
@@ -8245,7 +8245,7 @@
   },
   "page.testing.figure.broken_one": {
     "text": "One thing isn’t working",
-    "description": "The large figure on the Testing card of a change's page when the checks passed but the agent that takes the before and after screenshots found the app broken. {{count}} is how many of the declared changes broke."
+    "description": "The large figure on the Testing card of a change's page when the checks passed but the agent that takes the before and after screenshots found the app broken. {{count}} is how many of the declared changes broke. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "page.testing.figure.broken_other": {
     "text": "{{count}} things aren’t working",
