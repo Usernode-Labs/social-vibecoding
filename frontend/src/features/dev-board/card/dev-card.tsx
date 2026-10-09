@@ -63,6 +63,7 @@ import type {
   ActionSpec,
   BadgeSpec,
   CardIconSpec,
+  ChecksProgress,
   DevCardModel,
   ExtraSpec,
   MetaPart,
@@ -322,6 +323,27 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
   );
 }
 
+/**
+ * #4499: how far a check run is, as a thin bar inside its chip. It fills in
+ * the chip's own ink, so it reads in whichever tone the chip wears. The
+ * exact count is its accessible name and the chip's tooltip.
+ */
+export function ChecksBar({ progress }: { progress: ChecksProgress }): ReactNode {
+  const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  return (
+    <span
+      className="checks-chip-bar"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={progress.total}
+      aria-valuenow={progress.done}
+      aria-label={progress.text}
+    >
+      <span className="checks-chip-bar-fill" style={{ width: `${pct}%` }} />
+    </span>
+  );
+}
+
 /** One entry of the status band, dispatched over the tagged union. */
 export function Badge({ b }: { b: BadgeSpec }): ReactNode {
   switch (b.t) {
@@ -330,6 +352,7 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
         <span className={b.cls} title={b.title} {...(b.data || {})}>
           {b.spinner ? <Spinner /> : null}
           {b.label}
+          {b.progress ? <ChecksBar progress={b.progress} /> : null}
         </span>
       );
     case 'chipBtn':

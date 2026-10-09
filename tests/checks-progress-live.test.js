@@ -982,11 +982,37 @@ test('an integration supersedes a check run rather than queueing behind it', () 
 test('the board card and the running badge carry the live count', () => {
   const AppView = makeAppView();
   const badge = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 12, passed: 12, failed: 0, expected: 523 } });
-  assert.match(badge, /Checks running…\s12\/523</);
+  // #4499: the count is a bar inside the chip, with the exact count as the
+  // tooltip and the bar's accessible name; the x/y text is gone.
+  assert.doesNotMatch(badge, /12\/523/);
+  assert.match(badge, />Checks<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="523" aria-valuenow="12" aria-label="12 of 523 checks done"><span class="checks-chip-bar-fill" style="width:2%"><\/span><\/span><\/span>$/);
+  assert.match(badge, /title="12 of 523 checks done\. Automated tests/);
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
   assert.match(quiet, /Checks running…</, 'no count before the first frame');
-  const src = APP_VIEW_SRC;
-  assert.match(src, /label: p\.check_state === 'pending' \? `Checks running…\$\{count\}` : 'Checks starting…',/);
+  assert.doesNotMatch(quiet, /checks-chip-bar/, 'no bar before the total is known');
+  const noTotal = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } });
+  assert.match(noTotal, /Checks running…\s7</, 'without a total the words carry the count');
+
+  // The status-band chip the cards, the Workshop's rows and All items share.
+  const tag = (pr) => AppView.statusTagSpecs(pr, {}).find((t) => t.key === 'tag-checks-running');
+  const running = tag({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 619, passed: 619, failed: 0, expected: 732 } });
+  assert.equal(running.label, 'Checks');
+  assert.deepEqual({ ...running.progress }, { done: 619, total: 732, text: '619 of 732 checks done' });
+  assert.match(running.title, /^619 of 732 checks done\. /);
+  assert.equal(running.spinner, true);
+  const starting = tag({ status: 'promoted', check_state: null, console_check_state: null });
+  assert.equal(starting.label, 'Checks starting…');
+  assert.equal(starting.progress, undefined);
+  const early = tag({ status: 'promoted', check_state: 'pending', checks_progress: null });
+  assert.equal(early.label, 'Checks running…');
+  assert.equal(early.progress, undefined);
+
+  // Both React renderers draw the bar from the spec.
+  const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  assert.match(card, /\{b\.progress \? <ChecksBar progress=\{b\.progress\} \/> : null\}/);
+  assert.match(card, /role="progressbar"[\s\S]*aria-label=\{progress\.text\}/);
+  const row = read('frontend/src/features/dev-board/workshop/work-row.tsx');
+  assert.match(row, /\{t\.progress \? <ChecksBar progress=\{t\.progress\} \/> : null\}/);
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {
