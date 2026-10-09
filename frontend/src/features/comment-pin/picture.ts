@@ -1,6 +1,8 @@
 /**
  * The screenshot a C comment carries (#4289 follow-up): the page as the
- * person sees it, with the pin and the comment drawn where they put them.
+ * person sees it. #4482: what is uploaded is this CLEAN base, and the pin
+ * and the comment travel beside it as data; `finishPicture` below is the
+ * offline handover's baked copy only.
  *
  * ── No screen-share prompt ─────────────────────────────────────────────
  *
@@ -310,7 +312,9 @@ export const BUBBLE = { width: 280, padding: 10, font: 14, line: 19, radius: 12,
 
 /**
  * A copy of the page with the pin and the words drawn on it, where they
- * were on screen.
+ * were on screen. #4482: no longer the upload — the comment now sends the
+ * clean base with the pin as data — this is the offline handover's bake,
+ * whose dialog path cannot carry pin data.
  */
 export function finishPicture(base: Base, pin: Point, comment: string): HTMLCanvasElement {
   const { canvas: src, scale } = base;

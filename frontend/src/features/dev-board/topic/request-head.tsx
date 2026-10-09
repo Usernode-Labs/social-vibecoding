@@ -45,6 +45,7 @@ import {
 } from './request-model';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
+import { ShotComments, useShotComments } from './shot-comments';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -108,6 +109,10 @@ export function RequestWords({ html }: { html: string }): ReactNode {
   const [shown, setShown] = useState(false);
   const [folds, setFolds] = useState(false);
   const moving = useRef(false);
+  // #4482: a pinned screenshot's comment, as data, drawn over its clean
+  // picture. This container is the positioning context; the layer inside it
+  // is a React sibling of the innerHTML, never written into it.
+  const comments = useShotComments(html);
   useLayoutEffect(() => {
     const el = text.current;
     if (!el || open) return;
@@ -148,13 +153,15 @@ export function RequestWords({ html }: { html: string }): ReactNode {
     timer = window.setTimeout(() => done(), FOLD_MS + 80);
   };
   if (!html) return null;
+  const hasPins = comments.pins.size > 0;
   return (
-    <div className="dev-request-ask">
+    <div className={`dev-request-ask${hasPins ? ' relative' : ''}`}>
       {/* DevChat.renderMarkdown's output, sanitised where it is built. The
           clamp class is React's; the fold writes the node's height only for
           the length of the animation, and puts the clamp back as it ends so
           React's next render agrees with the DOM. */}
       <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} />
+      {hasPins ? <ShotComments comments={comments} containerRef={text} open={open} /> : null}
       {folds || open ? (
         <button
           type="button"

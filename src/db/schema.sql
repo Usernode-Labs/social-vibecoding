@@ -3906,6 +3906,14 @@ CREATE TABLE IF NOT EXISTS issue_screenshots (
 );
 CREATE INDEX IF NOT EXISTS idx_issue_screenshots_orphan
   ON issue_screenshots(created_at) WHERE issue_number IS NULL;
+-- #4482: a C comment's pin and words as DATA beside the clean picture,
+-- instead of baked into its pixels. Nullable everywhere: the dialog's own
+-- uploads and every screenshot filed before this change have none and
+-- render as they always did. Written at INSERT time and never updated
+-- (rows are immutable once linked).
+ALTER TABLE issue_screenshots ADD COLUMN IF NOT EXISTS pin_x INTEGER;
+ALTER TABLE issue_screenshots ADD COLUMN IF NOT EXISTS pin_y INTEGER;
+ALTER TABLE issue_screenshots ADD COLUMN IF NOT EXISTS pin_comment TEXT;
 -- Private: the bytea can contain anything visible on the reporter's
 -- screen; staging gets the schema only.
 COMMENT ON TABLE issue_screenshots IS 'staging:private';

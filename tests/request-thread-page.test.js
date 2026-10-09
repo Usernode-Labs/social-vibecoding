@@ -18,11 +18,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const MODEL = 'frontend/src/features/dev-board/topic/request-model.ts';
 const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
 const HEAD = 'frontend/src/features/dev-board/topic/request-head.tsx';
+const SHOTS = 'frontend/src/features/dev-board/topic/shot-comments.tsx';
 
 const row = (patch) => ({
   id: null, kind: 'message', username: 'maya', time: '09:05 AM',
@@ -139,6 +140,100 @@ test('voted in: every step is done, with no fill; a closed request says so inste
   const closed = renderComponent(HEAD, 'RequestHead', { r: requestView({ closed: 'This request was closed by vote.', action: null }) });
   assert.doesNotMatch(closed, /dev-request-steps/);
   assert.match(closed, /This request was closed by vote\./);
+});
+
+// ── #4482: the pinned comment as an overlay ───────────────────────────
+
+const PIN_BODY = '<div class="dev-issue-body"><p>Look at this.</p>'
+  + '<a class="dc-inline-img-link" href="https://app.example/issue-images/ab12cd34ab12cd34ab12cd34ab12cd34" target="_blank">'
+  + '<img class="dc-inline-img" src="https://app.example/issue-images/ab12cd34ab12cd34ab12cd34ab12cd34" alt="Screenshot"></a></div>';
+
+test('the overlay: pin, bubble and toggle over the measured image, hidden together', () => {
+  const { ShotCommentOverlay } = loadTsx(SHOTS);
+  const box = { left: 4, top: 6, width: 400, height: 225 };
+  const props = (shown) => ({
+    pin: { id: 'ab12cd34ab12cd34ab12cd34ab12cd34', pinX: 100, pinY: 50, comment: 'This drifts on mobile' },
+    box,
+    natural: { w: 800, h: 450 },
+    shown,
+    onToggle: () => {},
+  });
+  const html = renderToHtml(createElement(ShotCommentOverlay, props(true)));
+  // The layer takes no taps, so the picture's own link underneath still opens the viewer.
+  assert.match(html, /data-shot-comment-overlay=""/);
+  assert.match(html, /data-shot-comment-pin=""/);
+  // The pin by fraction: 100/800 of 400 = 50 across, 50/450 of 225 = 25
+  // down, from the image's own box at (4, 6) inside the container.
+  assert.match(html, /left:54px;top:31px/);
+  // The bubble with the stored words, as React text children.
+  assert.match(html, /data-shot-comment-bubble=""/);
+  assert.match(html, /This drifts on mobile/);
+  // The pill in the picture's corner, pressed while the comment shows.
+  assert.match(html, /data-shot-comment-toggle=""[^>]*aria-pressed="true"/);
+  assert.match(html, /Hide comment/);
+
+  const hidden = renderToHtml(createElement(ShotCommentOverlay, props(false)));
+  assert.doesNotMatch(hidden, /data-shot-comment-pin/);
+  assert.doesNotMatch(hidden, /data-shot-comment-bubble/);
+  assert.match(hidden, /data-shot-comment-toggle=""[^>]*aria-pressed="false"/);
+  assert.match(hidden, /Show comment/);
+});
+
+test('the overlay lands the pin right at any display size, by the image\'s fractions', () => {
+  const { ShotCommentOverlay } = loadTsx(SHOTS);
+  const render = (box) => renderToHtml(createElement(ShotCommentOverlay, {
+    pin: { id: 'x'.repeat(32), pinX: 320, pinY: 180, comment: '' },
+    box,
+    natural: { w: 640, h: 360 },
+    shown: true,
+    onToggle: () => {},
+  }));
+  // Half across, half down: the same fractions at any rendered size.
+  assert.match(render({ left: 0, top: 0, width: 400, height: 225 }), /left:200px;top:112.5px/);
+  assert.match(render({ left: 12, top: 9, width: 320, height: 180 }), /left:172px;top:99px/);
+});
+
+test('an unmeasured image draws nothing; a screenshot without words draws only the pin and the pill', () => {
+  const { ShotCommentOverlay } = loadTsx(SHOTS);
+  const nothing = renderToHtml(createElement(ShotCommentOverlay, {
+    pin: { id: 'x'.repeat(32), pinX: 1, pinY: 1, comment: 'words' },
+    box: null,
+    natural: null,
+    shown: true,
+    onToggle: () => {},
+  }));
+  assert.equal(nothing, '');
+  const pinOnly = renderToHtml(createElement(ShotCommentOverlay, {
+    pin: { id: 'x'.repeat(32), pinX: 10, pinY: 10, comment: null },
+    box: { left: 0, top: 0, width: 300, height: 169 },
+    natural: { w: 600, h: 338 },
+    shown: true,
+    onToggle: () => {},
+  }));
+  assert.match(pinOnly, /data-shot-comment-pin/);
+  assert.doesNotMatch(pinOnly, /data-shot-comment-bubble/);
+});
+
+test('the hook reads only the body\'s own /issue-images/ ids, deduped', () => {
+  const { shotIdsIn } = loadTsx(SHOTS);
+  const html = '<a href="https://app.example/issue-images/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"><img src="/issue-images/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"></a>'
+    + '<img src="https://github.com/user-attachments/assets/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">';
+  assert.deepEqual(shotIdsIn(html), ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'], 'a GitHub-hosted image is never looked up');
+  assert.deepEqual(shotIdsIn('<p>no pictures</p>'), []);
+  assert.deepEqual(shotIdsIn('/issue-images/cccccccccccccccccccccccccccccccc /issue-images/cccccccccccccccccccccccccccccccc'),
+    ['cccccccccccccccccccccccccccccccc'], 'one pin per picture, however often the id appears');
+});
+
+test('a request without a pinned screenshot renders exactly as it did', () => {
+  // renderToStaticMarkup runs no effects, so the pins map is empty here —
+  // which is precisely the unpinned state: no relative container, no overlay.
+  const withShot = { ...requestView(), bodyHtml: PIN_BODY };
+  const html = renderComponent(HEAD, 'RequestHead', { r: withShot });
+  assert.match(html, /class="dev-request-ask">/, 'no positioning class when nothing is pinned');
+  assert.doesNotMatch(html, /data-shot-comment-overlay/);
+  assert.match(html, /dc-inline-img-link/, 'the picture itself is untouched');
+  const plain = renderComponent(HEAD, 'RequestHead', { r: requestView() });
+  assert.match(plain, /class="dev-request-ask">/);
 });
 
 function appView(username = 'evan', globals = {}) {

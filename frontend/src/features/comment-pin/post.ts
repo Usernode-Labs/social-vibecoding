@@ -24,6 +24,15 @@ import type { ElementInfo } from './picture';
 
 export type Target = 'app' | 'platform';
 
+/** Where the pin sits, as data beside the clean picture (#4482). */
+export interface CommentPin {
+  /** In the image's own pixels: the CSS viewport position times the capture's scale. */
+  x: number;
+  y: number;
+  /** The comment's words, as the overlay's bubble shows them. */
+  comment: string;
+}
+
 export interface CommentPost {
   text: string;
   target: Target;
@@ -31,6 +40,8 @@ export interface CommentPost {
   picture: Blob | null;
   /** Where it was pinned, said in words under the comment. */
   where: string;
+  /** The pin as data, when the picture is the clean base (#4482). */
+  pin: CommentPin | null;
 }
 
 export type PostOutcome =
@@ -87,9 +98,14 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
 
   let screenshotId: string | null = null;
   if (post.picture) {
+    // The body is raw bytes, so the pin rides on the query string
+    // (#4482); encodeURIComponent escapes the words.
+    const pinQs = post.pin
+      ? `?pin_x=${post.pin.x}&pin_y=${post.pin.y}&comment=${encodeURIComponent(post.pin.comment)}`
+      : '';
     let res: Response;
     try {
-      res = await window.fetch('/api/feedback/screenshot', {
+      res = await window.fetch(`/api/feedback/screenshot${pinQs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
         body: post.picture,
@@ -133,7 +149,9 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
 
 /**
  * Give the comment to "Suggest an improvement": its words (with the where
- * line), its picture and its destination, already chosen.
+ * line), its picture and its destination, already chosen. The picture here
+ * is the baked copy (#4482): the dialog's upload path cannot carry pin
+ * data, so the handover goes back to today's picture with the pin drawn in.
  */
 export function handOver(post: CommentPost): void {
   const app = (window as unknown as { App?: { openFeedbackModal?: (opts: unknown) => void } }).App;

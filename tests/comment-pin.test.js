@@ -98,7 +98,7 @@ function withFetch(responses, fn) {
 }
 
 const blob = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' });
-const base = { text: 'Make it bigger', target: 'app', appSlug: 'demo', picture: blob, where: 'Pinned with C in the app at /.' };
+const base = { text: 'Make it bigger', target: 'app', appSlug: 'demo', picture: blob, where: 'Pinned with C in the app at /.', pin: null };
 
 test('a comment is the dialog\'s two requests: the picture, then the request naming it', () => withFetch([
   { status: 200, body: { id: 'a'.repeat(32) } },
@@ -114,6 +114,28 @@ test('a comment is the dialog\'s two requests: the picture, then the request nam
     description: 'Make it bigger\n\nPinned with C in the app at /.',
     target: 'app', appSlug: 'demo', screenshotIds: ['a'.repeat(32)],
   });
+}));
+
+test('a pin rides the screenshot upload\'s query string, percent-encoded (#4482)', () => withFetch([
+  { status: 200, body: { id: 'b'.repeat(32) } },
+  { status: 200, body: {} },
+], async (calls) => {
+  await post.postComment({ ...base, pin: { x: 640, y: 512, comment: 'words & symbols ?=' } });
+  const [path, query] = calls[0].url.split('?');
+  assert.equal(path, '/api/feedback/screenshot');
+  const q = new URLSearchParams(query);
+  assert.equal(q.get('pin_x'), '640');
+  assert.equal(q.get('pin_y'), '512');
+  assert.equal(q.get('comment'), 'words & symbols ?=');
+  assert.equal(calls[0].init.body, blob, 'the body is still the raw bytes alone');
+}));
+
+test('no pin, no query data: the dialog\'s uploads keep their bare URL', () => withFetch([
+  { status: 200, body: { id: 'c'.repeat(32) } },
+  { status: 200, body: {} },
+], async (calls) => {
+  await post.postComment(base);
+  assert.equal(calls[0].url, '/api/feedback/screenshot');
 }));
 
 test('Homeroom gets no app slug, and a comment without a picture makes one request', () => withFetch([
@@ -163,6 +185,27 @@ test('handing over opens the dialog with the words, the picture and the chosen d
   assert.match(fc, /feedbackText\.value = typed \? `\$\{typed\}\\n\\n\$\{opts\.description\}` : opts\.description;/,
     'added after anything already typed, never over it');
   assert.match(fc, /opts\.screenshotBlob instanceof Blob\s*\n\s*&& screenshots\.length < MAX_SCREENSHOTS\) \{\s*void attachScreenshotBlob\(opts\.screenshotBlob\);/);
+});
+
+// ── #4482: the clean upload, the data beside it ───────────────────────
+
+test('the comment uploads the CLEAN base and hands the baked copy only to the handover', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The upload encodes the base canvas; the pin travels as data beside it.
+  assert.match(src, /encodeUnder\(base\.canvas\)/);
+  assert.match(src, /x: Math\.round\(pin\.x \* base\.scale\), y: Math\.round\(pin\.y \* base\.scale\), comment: words/);
+  // finishPicture is the handover path's bake only.
+  assert.match(src, /handOver\(post\);/);
+  const post = read('frontend/src/features/comment-pin/post.ts');
+  assert.match(post, /screenshotBlob: post\.picture \|\| undefined/);
+  // The handover keeps the baked picture: its dialog path cannot carry pin data.
+  assert.match(src, /finishPicture/);
+});
+
+test('the shot line says the picture is the page, without the pin words', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /'Screenshot of this page'/);
+  assert.doesNotMatch(src, /with your pin/);
 });
 
 // ── 3. The app's picture ──────────────────────────────────────────────

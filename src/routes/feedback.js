@@ -32,6 +32,49 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024;
 const SCREENSHOT_ID_RE = /^[a-f0-9]{32}$/;
 
+// #4482: a C comment's pin and words travel beside the clean bytes as query
+// data (the body is raw bytes, so there is no other channel). `pin_x`/`pin_y`
+// are the pin in the image's own pixels — the CSS viewport position times the
+// capture's scale — and the cap is the viewport-position headroom the client
+// can produce at the largest scale it uses, far above any real screen.
+const MAX_PIN_COORD = 30000;
+const MAX_PIN_COMMENT_CHARS = 600;
+
+// Pure (exported for tests): the pin data a screenshot upload's query string
+// carries. `pin_x` and `pin_y` stand or fall together — a pin is a point —
+// and each is an integer from 0 to MAX_PIN_COORD; `comment` is optional,
+// trimmed, at most MAX_PIN_COMMENT_CHARS. Returns { ok: true, pin } where
+// pin is null for an unpinned upload, or { ok: false, error }.
+function validateScreenshotPin(query) {
+  const q = query || {};
+  const rawX = q.pin_x;
+  const rawY = q.pin_y;
+  if (rawX === undefined && rawY === undefined) return { ok: true, pin: null };
+  if (rawX === undefined || rawY === undefined) {
+    return { ok: false, error: 'pin_x and pin_y must be sent together' };
+  }
+  // Express gives query values as strings; anything else — including '' —
+  // is not a number we asked for.
+  const num = (v) => {
+    if (typeof v !== 'string' || !/^\d+$/.test(v)) return null;
+    const n = Number(v);
+    return n >= 0 && n <= MAX_PIN_COORD ? n : null;
+  };
+  const x = num(rawX);
+  const y = num(rawY);
+  if (x === null || y === null) {
+    return { ok: false, error: `pin_x and pin_y must be whole numbers from 0 to ${MAX_PIN_COORD}` };
+  }
+  let comment = null;
+  if (rawX !== undefined && q.comment !== undefined && q.comment !== null && String(q.comment).trim() !== '') {
+    comment = String(q.comment).trim();
+    if (comment.length > MAX_PIN_COMMENT_CHARS) {
+      return { ok: false, error: `Comment too long (max ${MAX_PIN_COMMENT_CHARS} chars)` };
+    }
+  }
+  return { ok: true, pin: { x, y, comment } };
+}
+
 // Pure (exported for tests): validate an uploaded screenshot body.
 // Returns { ok: true, contentType } or { ok: false, error }.
 function validateScreenshotUpload(data) {
@@ -545,12 +588,16 @@ function feedbackRoutes(config) {
         const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
         const verdict = validateScreenshotUpload(data);
         if (!verdict.ok) return res.status(400).json({ error: verdict.error });
+        // #4482: the pin travels on the query string — the body is raw bytes.
+        const pinVerdict = validateScreenshotPin(req.query);
+        if (!pinVerdict.ok) return res.status(400).json({ error: pinVerdict.error });
+        const pin = pinVerdict.pin;
 
         const id = crypto.randomBytes(16).toString('hex');
         await pool.query(
-          `INSERT INTO issue_screenshots (id, user_id, content_type, size_bytes, data)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [id, req.user.id, verdict.contentType, data.length, data]
+          `INSERT INTO issue_screenshots (id, user_id, content_type, size_bytes, data, pin_x, pin_y, pin_comment)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [id, req.user.id, verdict.contentType, data.length, data, pin ? pin.x : null, pin ? pin.y : null, pin ? pin.comment : null]
         );
         return res.json({ id });
       } catch (err) {
@@ -1056,6 +1103,10 @@ module.exports = {
   validateScreenshotUpload,
   buildScreenshotEmbed,
   MAX_SCREENSHOT_BYTES,
+  // #4482: the C comment's pin data on the screenshot upload's query string.
+  validateScreenshotPin,
+  MAX_PIN_COORD,
+  MAX_PIN_COMMENT_CHARS,
   // #3027: several images per submit — tests/feedback-multi-screenshot-server.test.js.
   parseScreenshotIds,
   buildScreenshotsEmbed,

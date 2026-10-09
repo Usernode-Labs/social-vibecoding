@@ -22,7 +22,10 @@
  *
  * Drawn the moment the box opens (./picture.ts), previewed in the box, and
  * removable: requests are public, and the person decides whether the
- * picture goes with the words.
+ * picture goes with the words. What goes up (#4482) is the CLEAN base; the
+ * pin and the words travel beside it as data, and the request's page draws
+ * them on top. The baked copy (`finishPicture`) is only the offline
+ * handover's picture, whose dialog cannot carry pin data.
  *
  * Mounted on demand through the shell's portal registry
  * (lib/legacy-portals.tsx) into a host appended to <body>; nothing of it is
@@ -38,7 +41,7 @@ import {
   describeElement, encodeUnder, finishPicture, inRect, pictureScale, placeBeside, takeBase, thumbnail,
   type Base, type ElementInfo, type Point, type Rect,
 } from './picture';
-import { handOver, postComment, whereLine, type CommentPost, type Target } from './post';
+import { handOver, postComment, whereLine, type CommentPin, type CommentPost, type Target } from './post';
 
 export const HOST_ID = 'comment-pin-host';
 const BOX_WIDTH = 300;
@@ -153,9 +156,16 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
       at = shellElementAt(pin, session.host);
     }
     const screen = pinInApp ? (base?.app?.path || '') : session.screen;
+    // #4482: the upload is the CLEAN base; the pin and the words travel
+    // beside it as data. The baked copy is kept only for the offline
+    // handover, whose dialog cannot carry pin data.
     let picture: Blob | null = null;
+    let pinData: CommentPin | null = null;
     if (keepShot && base) {
-      try { picture = await encodeUnder(finishPicture(base, pin, words)); } catch { picture = null; }
+      try { picture = await encodeUnder(base.canvas); } catch { picture = null; }
+      if (picture) {
+        pinData = { x: Math.round(pin.x * base.scale), y: Math.round(pin.y * base.scale), comment: words };
+      }
     }
     const post: CommentPost = {
       text: words,
@@ -163,6 +173,7 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
       appSlug: session.app?.slug ?? null,
       picture,
       where: whereLine({ inApp: pinInApp, screen, at }),
+      pin: pinData,
     };
     const outcome = await postComment(post);
     if (outcome.ok) {
@@ -201,7 +212,7 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
     : base === undefined
       ? 'Taking a screenshot…'
       : base
-        ? 'Screenshot of this page, with your pin'
+        ? 'Screenshot of this page'
         : "Couldn't take a screenshot. Your words still go.";
 
   return (
