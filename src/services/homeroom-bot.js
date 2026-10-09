@@ -3441,6 +3441,10 @@ async function runTriage(pool, config, {
         model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
         quietHold: item.reason === APP_AGAIN_REASON,
         proposalCeiling: botProposalCeiling(settings),
+        // #4530: a re-look repeats its question, person note or empty note
+        // only when somebody addressed the bot since its last post.
+        relook: item.reason === 'changed',
+        threadSeenAt: item.thread_seen_at || null,
         firstVersion: !!requester?.firstVersion,
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
@@ -6043,7 +6047,7 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, deps,
+  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, threadSeenAt = null, deps,
 }) {
   const { github, ws } = deps;
   const say = liveSayer({
@@ -6051,6 +6055,19 @@ async function actOnVerdict({
     notifications: deps.notifications || null, postedAt,
   });
   let acted = capSuppressed ? 'held' : parsed.verdict;
+  // #4530: on a re-look (the queue's 'changed' reason, people having talked
+  // on the request), the three notes the bot leaves when it is not building
+  // wait for somebody to have addressed the bot since its last post: a
+  // mention or a reply. People discussing among themselves must not bring
+  // the same note back, re-tagging the same people. A failed read counts as
+  // addressed, so the bot never goes quiet by accident. The first look, a
+  // held line, and a build or a plan are all said as before.
+  const repeatQuiet = !capSuppressed && relook
+    && (parsed.verdict === 'question' || parsed.verdict === 'person' || parsed.verdict === 'empty')
+    && !(await live.addressedSinceLastPost(pool, { appId: app.id, issueNumber, since: threadSeenAt }));
+  if (repeatQuiet) {
+    log.info('homeroom-bot', 'Repeat note left unsaid', { app: app.slug, issueNumber, verdict: parsed.verdict, runId });
+  }
   if (capSuppressed) {
     const kind = live.heldKind(capSuppressed);
     const already = await live.lastPostKind(pool, app.id, issueNumber) === kind;
@@ -6071,7 +6088,7 @@ async function actOnVerdict({
   } else if (parsed.verdict === 'question') {
     // #3624: `dm` carries the question to the requester's DM too, with the
     // answers they can tap (homeroom-bot-dm.js).
-    await say('question', live.questionText(parsed), {
+    if (!repeatQuiet) await say('question', live.questionText(parsed), {
       dm: {
         question: parsed.question, answers: parsed.questionAnswers || [],
         // B6: a read that asks two questions asks both at once.
@@ -6081,9 +6098,9 @@ async function actOnVerdict({
   } else if (parsed.verdict === 'person') {
     // #4239: about Homeroom itself, the requester's DM offers to move it to
     // Homeroom's own board (homeroom-bot-dm.js relayIssuePost).
-    await say('person', live.personText(parsed), { dm: { reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}) } });
+    if (!repeatQuiet) await say('person', live.personText(parsed), { dm: { reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}) } });
   } else if (parsed.verdict === 'empty') {
-    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason } });
+    if (!repeatQuiet) await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason } });
   } else if (parsed.verdict === 'ready') {
     // B6: a first version waits for its creator's Build it, under the plan
     // they are sent first. #4175: it is never built without it. A plan that

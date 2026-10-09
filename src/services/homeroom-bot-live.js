@@ -249,6 +249,42 @@ async function lastPostKind(pool, appId, issueNumber) {
   return rows[0]?.kind || null;
 }
 
+// #4530: whether somebody addressed the bot on the issue since it last spoke
+// there: a person's message naming @homeroom_bot, or a reply (a quote, ws.js
+// writes metadata.quote.refMsgId) to one of the bot's own thread messages.
+// The bound is the later of the newest post's created_at and `since` (the
+// run's thread_seen_at), so a mention a previous look already answered does
+// not count a second time. Never throws: a failed read answers "addressed",
+// so a broken check posts as today rather than silencing the bot.
+async function addressedSinceLastPost(pool, { appId, issueNumber, since = null }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT created_at, thread_message_id FROM homeroom_bot_posts
+        WHERE app_id = $1 AND issue_number = $2`,
+      [appId, issueNumber],
+    );
+    const times = rows.map((r) => Date.parse(r.created_at)).filter(Number.isFinite);
+    const sinceMs = Date.parse(since);
+    const boundMs = Math.max(...times, Number.isFinite(sinceMs) ? sinceMs : 0);
+    const own = rows.map((r) => r.thread_message_id).filter(Number.isInteger).map(String);
+    const { rows: newer } = await pool.query(
+      `SELECT m.id FROM chat_messages m
+        JOIN users u ON u.id = m.user_id
+       WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+         AND m.msg_type = 'message' AND m.deleted_at IS NULL
+         AND u.is_synthetic IS NOT TRUE
+         AND m.created_at > $3::timestamptz
+         AND (m.content ~* $4 OR (m.metadata->'quote'->>'refMsgId') = ANY($5::text[]))
+       LIMIT 1`,
+      [appId, issueNumber, new Date(boundMs || 0).toISOString(),
+        `(^|[^a-z0-9_])@${BOT_USERNAME}([^a-z0-9_-]|$)`, own],
+    );
+    return newer.length > 0;
+  } catch (err) {
+    return true;
+  }
+}
+
 // #4367: by its pull request's number once it has one.
 function proposalLink(domain, appSlug, sessionId, prNumber = null) {
   return `https://${domain}/${require('./change-destination').changeHref(appSlug, sessionId, prNumber)}`;
@@ -3093,6 +3129,7 @@ module.exports = {
   heldText,
   heldKind,
   lastPostKind,
+  addressedSinceLastPost,
   proposalLink,
   tagsPoster,
   issuePoster,

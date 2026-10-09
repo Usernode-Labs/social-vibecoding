@@ -721,12 +721,27 @@ function actHarness() {
   return { pool, deps, posts, queries };
 }
 
-async function act(h, parsed, { capSuppressed = null, quietHold = false } = {}) {
+async function act(h, parsed, { capSuppressed = null, quietHold = false, relook = false, threadSeenAt = null } = {}) {
   return bot.actOnVerdict({
     pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
     parsed, capSuppressed, runId: 900, seed: 'seed', seedReadAt: '2026-09-25T17:00:00Z', postedAt: [],
-    turnBudgetMs: 1000, model: 'm', quietHold, deps: h.deps,
+    turnBudgetMs: 1000, model: 'm', quietHold, relook, threadSeenAt, deps: h.deps,
   });
+}
+
+// The pool a re-look's gate reads: `posts` stand for the bot's own
+// homeroom_bot_posts rows, `messages` for what the thread holds newer than
+// the bound (the query's own mention and quote filters are what a real
+// database applies; the postgres test serves those).
+function addressedPool(h, { posts = [], messages = [], fail = false } = {}) {
+  h.pool.query = async (sql, params) => {
+    if (fail) throw new Error('the database is down');
+    h.queries.push({ sql: String(sql), params });
+    if (/FROM homeroom_bot_posts/.test(String(sql))) return { rows: posts };
+    if (/FROM chat_messages/.test(String(sql))) return { rows: messages };
+    return { rows: [] };
+  };
+  return h;
 }
 
 // A ready verdict's build, as the lane starts it (buildOne): the same arguments.
@@ -883,6 +898,90 @@ test('a backlog pass holds silently, and still speaks when it has something to s
   // Anything else held still says so once.
   await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'proposals_per_app' });
   assert.deepEqual(h.posts.map((p) => p.kind), ['question', 'held_proposals_per_app']);
+});
+
+// #4530: a re-look (the queue's 'changed' reason) repeats its question,
+// person note or empty note only when somebody addressed the bot since its
+// last post; a mention or a reply to one of its messages reopens the note.
+test('a re-look leaves its note unsaid when nobody addressed the bot since its last post', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind }); return { githubCreatedAt: '2026-10-09T17:00:05Z' }; };
+  // The bot posted at 17:52 and the thread has moved since (the run saw it
+  // at 18:00), but what people said was to each other: the gate reads no
+  // message addressed to it.
+  addressedPool(h, { posts: [{ created_at: '2026-10-09T17:52:00Z', thread_message_id: 77 }] });
+  assert.equal(await act(h, { verdict: 'person', reason: 'A governance decision.' },
+    { relook: true, threadSeenAt: '2026-10-09T18:00:00Z' }), 'person', 'the verdict is still what the look came to');
+  assert.deepEqual(h.posts, [], 'the note is not said again, and the DM relay is skipped with it');
+  const gate = h.queries.find((q) => /FROM chat_messages/.test(q.sql));
+  assert.equal(gate.params[2], '2026-10-09T18:00:00.000Z',
+    'the bound is the later of the newest post and the run\'s seen time');
+});
+
+test('a mention or a reply to the bot since its last post reopens the note', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind, text: args.text }); return { githubCreatedAt: '2026-10-09T17:00:05Z' }; };
+  const posts = [{ created_at: '2026-10-09T17:52:00Z', thread_message_id: 77 }];
+  const opts = { relook: true, threadSeenAt: '2026-10-09T18:00:00Z' };
+
+  // A newer message naming @homeroom_bot: the SQL's own filters found it.
+  addressedPool(h, { posts, messages: [{ id: 101 }] });
+  assert.equal(await act(h, { verdict: 'person', reason: 'A governance decision.' }, opts), 'person');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['person']);
+  const mention = h.queries.find((q) => /FROM chat_messages/.test(q.sql));
+  assert.equal(mention.params[3], '(^|[^a-z0-9_])@homeroom_bot([^a-z0-9_-]|$)', 'the mention is read off the message text');
+  assert.deepEqual(mention.params[4], ['77'], 'and a reply is read against the bot\'s own thread messages');
+
+  // A newer message quoting one of the bot's messages: same, a row came back.
+  h.posts.length = 0;
+  h.queries.length = 0;
+  addressedPool(h, { posts, messages: [{ id: 102 }] });
+  assert.equal(await act(h, { verdict: 'empty', reason: 'Nothing to build.' }, opts), 'empty');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['empty'], 'the empty note reopens the same way');
+});
+
+test('a first look is never gated, even when nobody has addressed the bot', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind }); return { githubCreatedAt: '2026-10-09T17:00:05Z' }; };
+  addressedPool(h, { posts: [] });
+  assert.equal(await act(h, { verdict: 'question', question: 'Which feed?' }, { threadSeenAt: '2026-10-09T18:00:00Z' }), 'question');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['question'], 'the first look says its question as today');
+  assert.ok(!h.queries.some((q) => /created_at, thread_message_id FROM homeroom_bot_posts/.test(q.sql)),
+    'the gate is not even consulted');
+});
+
+test('a re-look that comes to a build or a held line still acts as before', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  const realBuild = live.buildAndPropose;
+  t.after(() => { live.post = realPost; live.buildAndPropose = realBuild; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind }); return { githubCreatedAt: '2026-10-09T17:00:05Z' }; };
+  addressedPool(h, { posts: [{ created_at: '2026-10-09T17:52:00Z', thread_message_id: 77 }] });
+  const opts = { relook: true, threadSeenAt: '2026-10-09T18:00:00Z' };
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, opts), 'build_queued',
+    'a verdict that can build builds whether or not anybody addressed the bot');
+  assert.ok(!h.queries.some((q) => /FROM chat_messages/.test(q.sql)), 'the gate is not consulted for a build');
+  h.posts.length = 0;
+  assert.equal(await act(h, { verdict: 'person', reason: 'A governance decision.' },
+    { ...opts, capSuppressed: 'question_tripwire' }), 'held', 'a held line is not gated either');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['held_question_tripwire']);
+});
+
+test('the gate fails open: a broken read leaves the note said', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind }); return { githubCreatedAt: '2026-10-09T17:00:05Z' }; };
+  addressedPool(h, { fail: true });
+  assert.equal(await act(h, { verdict: 'person', reason: 'A governance decision.' },
+    { relook: true, threadSeenAt: '2026-10-09T18:00:00Z' }), 'person');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['person'], 'the bot posts as today rather than going quiet by accident');
 });
 
 test('a "Triage this app again" item is triaged without the "looking" post, and held quietly', () => {
