@@ -263,3 +263,37 @@ test('an app or an owner with no name gets an unnamed sentence that reads as the
   assert.doesNotMatch(src, /username \|\| \(App\.user \? App\.user\.username : ''\) \|\| PlatformI18n/, 'no stand-in word becomes an owner\'s name');
   assert.match(src, /PlatformI18n\.t\('changes:dialog\.permission\.titleUnnamed', \{ action: view\.blurb \}\)/);
 });
+
+test('the Workshop summary\'s two-count sentences read as before, with a plural form for each count', () => {
+  const noun = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  for (const open of [1, 2, 21]) {
+    for (const categories of [1, 2, 5, 21]) {
+      const parts = {
+        open: message('project:workshop.describe.fact.open', { count: open }),
+        categories: message('project:workshop.describe.fact.categories', { count: categories }),
+      };
+      const before = `${noun(open, 'open item', 'open items')} across ${noun(categories, 'category', 'categories')}`;
+      assert.equal(message('project:workshop.describe.openAcross', parts), `${before}.`);
+      assert.equal(message('project:workshop.describe.openAcrossBusiest', { ...parts, category: 'Sign-in' }),
+        `${before}, most of the movement in Sign-in.`);
+    }
+  }
+  for (const votes of [1, 2, 21]) {
+    for (const unclaimed of [1, 2, 21]) {
+      const before = `${votes === 1 ? '1 proposal is' : `${votes} proposals are`} waiting on votes and `
+        + `${unclaimed === 1 ? '1 open item has nobody on it' : `${unclaimed} open items have nobody on them`}.`;
+      assert.equal(message('project:workshop.describe.votesAndUnclaimed', {
+        votes: message('project:workshop.describe.fact.votesWaiting', { count: votes }),
+        unclaimed: message('project:workshop.describe.fact.unclaimed', { count: unclaimed }),
+      }), before);
+    }
+  }
+  // eslint-disable-next-line global-require
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
+  const from = src.indexOf('function describe(d: Dash)');
+  const describe = src.slice(from, src.indexOf('return sentences(parts);', from));
+  assert.ok(describe.length > 200);
+  assert.doesNotMatch(describe, /=== 1/, 'no number is tested for "one" to choose a wording');
+  assert.match(describe, /fact\.categories', \{ count: d\.themes \}/);
+  assert.match(describe, /fact\.unclaimed', \{ count: d\.unclaimed \}/);
+});

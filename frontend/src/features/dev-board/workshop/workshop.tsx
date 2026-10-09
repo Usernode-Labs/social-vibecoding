@@ -1011,27 +1011,28 @@ function summarise(d: Dash): string {
  */
 function describe(d: Dash): string {
   const parts: string[] = [];
-  // One whole sentence per shape: with or without the categories (one, or
-  // several), with or without the busiest of them.
-  const scale = { count: d.open, categories: d.themes, category: d.busiest || '' };
+  // One whole sentence per shape. A sentence that holds two counts places a
+  // counted phrase for each, so each number picks its own plural form in the
+  // language on screen; nothing here tests a number for "one".
   if (!d.themes) {
     parts.push(d.busiest
-      ? translate('project:workshop.describe.openBusiest', scale)
-      : translate('project:workshop.describe.open', scale));
-  } else if (d.themes === 1) {
-    parts.push(d.busiest
-      ? translate('project:workshop.describe.openOneCategoryBusiest', scale)
-      : translate('project:workshop.describe.openOneCategory', scale));
+      ? translate('project:workshop.describe.openBusiest', { count: d.open, category: d.busiest })
+      : translate('project:workshop.describe.open', { count: d.open }));
   } else {
+    const across = {
+      open: translate('project:workshop.describe.fact.open', { count: d.open }),
+      categories: translate('project:workshop.describe.fact.categories', { count: d.themes }),
+    };
     parts.push(d.busiest
-      ? translate('project:workshop.describe.openCategoriesBusiest', scale)
-      : translate('project:workshop.describe.openCategories', scale));
+      ? translate('project:workshop.describe.openAcrossBusiest', { ...across, category: d.busiest })
+      : translate('project:workshop.describe.openAcross', across));
   }
   parts.push(pace(d));
   if (d.votesWaiting && d.unclaimed) {
-    parts.push(d.unclaimed === 1
-      ? translate('project:workshop.describe.votesAndOneUnclaimed', { count: d.votesWaiting, unclaimed: d.unclaimed })
-      : translate('project:workshop.describe.votesAndUnclaimed', { count: d.votesWaiting, unclaimed: d.unclaimed }));
+    parts.push(translate('project:workshop.describe.votesAndUnclaimed', {
+      votes: translate('project:workshop.describe.fact.votesWaiting', { count: d.votesWaiting }),
+      unclaimed: translate('project:workshop.describe.fact.unclaimed', { count: d.unclaimed }),
+    }));
   } else if (d.votesWaiting) {
     parts.push(translate('project:workshop.describe.votesWaiting', { count: d.votesWaiting }));
   } else if (d.unclaimed) {

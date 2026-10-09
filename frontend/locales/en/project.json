@@ -387,37 +387,49 @@
     "text": "{{count}} open items, most of the movement in {{category}}.",
     "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open, and the category with the most activity. {{category}} is that category's name."
   },
-  "workshop.describe.openOneCategory_one": {
-    "text": "{{count}} open item across {{categories}} category.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open ({{count}}), when they are grouped into exactly one category. {{categories}} is always 1 here."
+  "workshop.describe.fact.open_one": {
+    "text": "{{count}} open item",
+    "description": "A counted phrase placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{open}} (\"3 open items across 2 categories.\"): how many requests and proposals are open. It starts the sentence. It has its own plural forms because the sentence also counts categories. No full stop."
   },
-  "workshop.describe.openOneCategory_other": {
-    "text": "{{count}} open items across {{categories}} category.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open ({{count}}), when they are grouped into exactly one category. {{categories}} is always 1 here."
+  "workshop.describe.fact.open_other": {
+    "text": "{{count}} open items",
+    "description": "A counted phrase placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{open}} (\"3 open items across 2 categories.\"): how many requests and proposals are open. It starts the sentence. It has its own plural forms because the sentence also counts categories. No full stop."
   },
-  "workshop.describe.openCategories_one": {
-    "text": "{{count}} open item across {{categories}} categories.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open ({{count}}) and how many categories they are grouped into ({{categories}}, always two or more here)."
+  "workshop.describe.fact.categories_one": {
+    "text": "{{count}} category",
+    "description": "A counted phrase placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{categories}} (\"3 open items across 2 categories.\"): how many categories the open items are grouped into. It follows \"across\", so use the form your language needs there. No full stop."
   },
-  "workshop.describe.openCategories_other": {
-    "text": "{{count}} open items across {{categories}} categories.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open ({{count}}) and how many categories they are grouped into ({{categories}}, always two or more here)."
+  "workshop.describe.fact.categories_other": {
+    "text": "{{count}} categories",
+    "description": "A counted phrase placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{categories}} (\"3 open items across 2 categories.\"): how many categories the open items are grouped into. It follows \"across\", so use the form your language needs there. No full stop."
   },
-  "workshop.describe.openOneCategoryBusiest_one": {
-    "text": "{{count}} open item across {{categories}} category, most of the movement in {{category}}.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open ({{count}}), grouped into exactly one category ({{categories}} is always 1), and the category with the most activity, named by {{category}}."
+  "workshop.describe.openAcross": {
+    "text": "{{open}} across {{categories}}.",
+    "description": "First sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists. {{open}} is a counted phrase for the open items (project:workshop.describe.fact.open, \"3 open items\") and {{categories}} one for the categories they are grouped into (project:workshop.describe.fact.categories, \"2 categories\"); each already carries its number in the right plural form."
   },
-  "workshop.describe.openOneCategoryBusiest_other": {
-    "text": "{{count}} open items across {{categories}} category, most of the movement in {{category}}.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open ({{count}}), grouped into exactly one category ({{categories}} is always 1), and the category with the most activity, named by {{category}}."
+  "workshop.describe.openAcrossBusiest": {
+    "text": "{{open}} across {{categories}}, most of the movement in {{category}}.",
+    "description": "First sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, when one category has seen the most activity. {{open}} and {{categories}} are counted phrases (project:workshop.describe.fact.open and .categories), each already in its own plural form; {{category}} is the name of the busiest category."
   },
-  "workshop.describe.openCategoriesBusiest_one": {
-    "text": "{{count}} open item across {{categories}} categories, most of the movement in {{category}}.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open ({{count}}), how many categories they are grouped into ({{categories}}, two or more), and the category with the most activity, named by {{category}}."
+  "workshop.describe.fact.votesWaiting_one": {
+    "text": "{{count}} proposal is waiting on votes",
+    "description": "A counted statement placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{votes}}: how many proposals (changes put up for a vote) are still waiting for votes. It starts the sentence. No full stop."
   },
-  "workshop.describe.openCategoriesBusiest_other": {
-    "text": "{{count}} open items across {{categories}} categories, most of the movement in {{category}}.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open ({{count}}), how many categories they are grouped into ({{categories}}, two or more), and the category with the most activity, named by {{category}}."
+  "workshop.describe.fact.votesWaiting_other": {
+    "text": "{{count}} proposals are waiting on votes",
+    "description": "A counted statement placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{votes}}: how many proposals (changes put up for a vote) are still waiting for votes. It starts the sentence. No full stop."
+  },
+  "workshop.describe.fact.unclaimed_one": {
+    "text": "{{count}} open item has nobody on it",
+    "description": "A counted statement placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{unclaimed}}: how many open items nobody has taken on. It follows \"and\". No full stop."
+  },
+  "workshop.describe.fact.unclaimed_other": {
+    "text": "{{count}} open items have nobody on them",
+    "description": "A counted statement placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{unclaimed}}: how many open items nobody has taken on. It follows \"and\". No full stop."
+  },
+  "workshop.describe.votesAndUnclaimed": {
+    "text": "{{votes}} and {{unclaimed}}.",
+    "description": "Sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists that joins two counted statements: {{votes}} (project:workshop.describe.fact.votesWaiting, \"2 proposals are waiting on votes\") and {{unclaimed}} (project:workshop.describe.fact.unclaimed, \"3 open items have nobody on them\"). Each already carries its number in the right plural form."
   },
   "workshop.describe.votesWaiting_one": {
     "text": "{{count}} proposal is waiting on votes.",
@@ -434,22 +446,6 @@
   "workshop.describe.unclaimed_other": {
     "text": "{{count}} open items have nobody on them.",
     "description": "Sentence of the fallback summary on a project's Workshop tab: how many open items nobody has taken on."
-  },
-  "workshop.describe.votesAndOneUnclaimed_one": {
-    "text": "{{count}} proposal is waiting on votes and {{unclaimed}} open item has nobody on it.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many proposals are waiting for votes ({{count}}), and that exactly one open item has nobody working on it ({{unclaimed}} is always 1 here)."
-  },
-  "workshop.describe.votesAndOneUnclaimed_other": {
-    "text": "{{count}} proposals are waiting on votes and {{unclaimed}} open item has nobody on it.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many proposals are waiting for votes ({{count}}), and that exactly one open item has nobody working on it ({{unclaimed}} is always 1 here)."
-  },
-  "workshop.describe.votesAndUnclaimed_one": {
-    "text": "{{count}} proposal is waiting on votes and {{unclaimed}} open items have nobody on them.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many proposals are waiting for votes ({{count}}), and how many open items have nobody working on them ({{unclaimed}}, two or more here)."
-  },
-  "workshop.describe.votesAndUnclaimed_other": {
-    "text": "{{count}} proposals are waiting on votes and {{unclaimed}} open items have nobody on them.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many proposals are waiting for votes ({{count}}), and how many open items have nobody working on them ({{unclaimed}}, two or more here)."
   },
   "workshop.pace.nonePartial": {
     "text": "Nothing has landed this week.",

@@ -1047,6 +1047,10 @@
     "text": "Submitted for review",
     "description": "Name of a step in the list of what a change still needs before it goes live, on the page of a change that is still being built. This step is done once the author puts the change up for a vote."
   },
+  "page.draft.gate.reviewDetail": {
+    "text": "submitted for review",
+    "description": "Short line under the headline \"Nothing needs you\" on the page of a change that has not been put up for a vote, naming the step that is under way or that Homeroom does on its own: the step \"Submitted for review\". Shown alone on its own line; lower case in English."
+  },
   "page.draft.gate.approvals": {
     "text": "Votes",
     "description": "Name of a step in the list of what a change still needs before it goes live, on the page of a change that is still being built. The group's votes on the change. A noun."
@@ -1055,13 +1059,25 @@
     "text": "No conflicts with main",
     "description": "Name of a step in the list of what a change still needs before it goes live, on the page of a change that is still being built. The change's code fits together with \"main\", the project's current code; \"main\" is the name of the code branch and stays in English."
   },
+  "page.draft.gate.integrationDetail": {
+    "text": "no conflicts with main",
+    "description": "Short line under the headline \"Nothing needs you\" on the page of a change that has not been put up for a vote, naming the step that is under way or that Homeroom does on its own: the step \"No conflicts with main\". Shown alone on its own line; lower case in English."
+  },
   "page.draft.gate.checks": {
     "text": "Checks",
     "description": "Name of a step in the list of what a change still needs before it goes live, on the page of a change that is still being built. The automated tests run on the change. A noun."
   },
+  "page.draft.gate.checksDetail": {
+    "text": "checks",
+    "description": "Short line under the headline \"Nothing needs you\" on the page of a change that has not been put up for a vote, naming the step that is under way or that Homeroom does on its own: the step \"Checks\". Shown alone on its own line; lower case in English."
+  },
   "page.draft.gate.github": {
     "text": "Merge",
     "description": "Name of a step in the list of what a change still needs before it goes live, on the page of a change that is still being built. The change is combined into the project's code. A noun."
+  },
+  "page.draft.gate.githubDetail": {
+    "text": "merge",
+    "description": "Short line under the headline \"Nothing needs you\" on the page of a change that has not been put up for a vote, naming the step that is under way or that Homeroom does on its own: the step \"Merge\". Shown alone on its own line; lower case in English."
   },
   "page.draft.line.submitting": {
     "text": "Submitting…",

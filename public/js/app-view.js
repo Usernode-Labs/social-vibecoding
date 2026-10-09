@@ -5858,13 +5858,13 @@ const AppView = {
     return [
       // Named as the state it reaches, like "No conflicts with main", so it
       // does not read as a second copy of the hero's Submit for review button.
-      { key: 'review', label: PlatformI18n.t('changes:page.draft.gate.review'), actor: 'author', state: submission.kind === 'pending' ? 'active' : 'waiting', detail: null },
+      { key: 'review', label: PlatformI18n.t('changes:page.draft.gate.review'), detailLabel: PlatformI18n.t('changes:page.draft.gate.reviewDetail'), actor: 'author', state: submission.kind === 'pending' ? 'active' : 'waiting', detail: null },
       { key: 'approvals', label: PlatformI18n.t('changes:page.draft.gate.approvals'), actor: 'group', state: 'pending', detail: null },
       // A conflict is not the draft's turn yet: the platform resolves it once
       // the change is up for a vote. The owner may still sync it now.
-      { key: 'integration', label: PlatformI18n.t('changes:page.draft.gate.integration'), actor: 'auto', state: clean && !conflict ? 'done' : 'pending', detail: null, conflict },
-      { key: 'checks', label: PlatformI18n.t('changes:page.draft.gate.checks'), actor: 'author', state: checks, detail: null },
-      { key: 'github', label: PlatformI18n.t('changes:page.draft.gate.github'), actor: 'auto', state: 'pending', detail: null },
+      { key: 'integration', label: PlatformI18n.t('changes:page.draft.gate.integration'), detailLabel: PlatformI18n.t('changes:page.draft.gate.integrationDetail'), actor: 'auto', state: clean && !conflict ? 'done' : 'pending', detail: null, conflict },
+      { key: 'checks', label: PlatformI18n.t('changes:page.draft.gate.checks'), detailLabel: PlatformI18n.t('changes:page.draft.gate.checksDetail'), actor: 'author', state: checks, detail: null },
+      { key: 'github', label: PlatformI18n.t('changes:page.draft.gate.github'), detailLabel: PlatformI18n.t('changes:page.draft.gate.githubDetail'), actor: 'auto', state: 'pending', detail: null },
     ];
   },
   _draftStepsView(item, body) {
@@ -15095,7 +15095,9 @@ const AppView = {
     if (current.actor === 'auto' || current.state === 'active') {
       return {
         headline: PlatformI18n.t('changes:step.headline.nothingNeedsYou'),
-        detail: noteOf(current) || String(current.label || '').toLowerCase(),
+        // A step this page worded itself carries its own line for here. A
+        // step the server sent is the server's English, lower-cased as before.
+        detail: noteOf(current) || current.detailLabel || String(current.label || '').toLowerCase(),
         done, total, needsViewer: false, current: current.key,
       };
     }
