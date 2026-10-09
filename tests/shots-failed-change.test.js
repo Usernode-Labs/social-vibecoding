@@ -32,6 +32,8 @@ const shotsState = require('../src/services/shots-state');
 const shotsView = require('../src/services/shots-view');
 const followup = require('../src/services/homeroom-bot-followup');
 const dm = require('../src/services/homeroom-bot-dm');
+// app-view.js is a classic script: it reads its text through the global the shell publishes.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const AppView = require('../public/js/app-view.js');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 

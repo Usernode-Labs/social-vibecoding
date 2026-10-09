@@ -117,8 +117,10 @@ test('app-view.js keeps a kudos spec in the folded list and draws it through the
   const item = APP.slice(APP.indexOf('  _kudosMenuItem(id) {'), APP.indexOf('  _foldedMenuItem(a) {'));
   assert.match(item, /document\.querySelector\(`\[data-kudos-host="\$\{id\}"\]`\)/, 'the slot, by its host');
   assert.match(item, /host\.querySelector\('\[data-kudos-action="give"\]'\)/);
-  assert.match(item, /label: label \? label\.textContent\.trim\(\) : \(retract \? 'Retract kudos' : 'Give kudos'\),/,
+  assert.match(item, /label: label \? label\.textContent\.trim\(\) : \(retract \? PlatformI18n\.t\('changes:card\.menu\.retractKudos'\) : PlatformI18n\.t\('changes:card\.menu\.giveKudos'\)\),/,
     'the slot\'s own line when it has one; the count pill\'s two verbs otherwise');
+  assert.equal(require('./lib/platform-i18n').message('changes:card.menu.retractKudos'), 'Retract kudos');
+  assert.equal(require('./lib/platform-i18n').message('changes:card.menu.giveKudos'), 'Give kudos');
   assert.match(item, /icon: 'kudos',/);
   assert.match(item, /act: \(\) => \{ if \(btn && !btn\.disabled\) btn\.click\(\); \},/, 'Kudos keeps every rule it has: the click is the slot\'s');
 });

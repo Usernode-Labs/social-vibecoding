@@ -907,6 +907,7 @@ function stagingRows() {
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   // What /promoted actually serves: every row passes through readIntegration

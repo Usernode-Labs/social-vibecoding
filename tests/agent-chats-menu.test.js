@@ -261,7 +261,9 @@ test('a newcomer still has every other door to building it themselves', () => {
   assert.match(row, /data-plus="new-change"[\s\S]{0,300}title=\{t\('project:menu\.build\.title'\)\}[\s\S]{0,200}Improve\.startSession\(\)/, 'the hub\'s ⋯');
   assert.equal(message('project:menu.build.title'), 'Build it now');
   const view = read('public/js/app-view.js');
-  assert.match(view, /label: 'Build it now',\s*title: 'Start an agent session on this request',\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
+  assert.match(view, /label: PlatformI18n\.t\('changes:issue\.action\.buildNow'\),\s*title: PlatformI18n\.t\('changes:issue\.action\.buildNowTitle'\),\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
+  assert.equal(message('changes:issue.action.buildNow'), 'Build it now');
+  assert.equal(message('changes:issue.action.buildNowTitle'), 'Start an agent session on this request');
   assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
   assert.equal(message('messages:inbox.new.agent.hint'), 'Plan and build a change with a coding agent');
   assert.match(read('frontend/src/features/messages/index.tsx'),

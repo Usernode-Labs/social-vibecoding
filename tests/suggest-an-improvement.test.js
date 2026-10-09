@@ -109,6 +109,7 @@ test('Ask for changes on a built change is a different action, and keeps its wor
   // It revises a change Homeroom bot already built (the viewer's chat with
   // the change attached), where Suggest an improvement files a new request.
   // #4455: a row of the change page's ⋯.
-  assert.match(read('public/js/app-view.js'), /label: 'Ask for changes', icon: 'generate',/);
+  assert.match(read('public/js/app-view.js'), /label: PlatformI18n\.t\('changes:page\.menu\.askForChanges'\), icon: 'generate',/);
+  assert.equal(require('./lib/platform-i18n').message('changes:page.menu.askForChanges'), 'Ask for changes');
   assert.match(read('src/services/homeroom-bot-dm.js'), /open it below and tap Ask for changes\./);
 });

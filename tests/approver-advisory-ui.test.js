@@ -45,6 +45,7 @@ function makeSandbox(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   return sandbox;
 }
@@ -77,7 +78,8 @@ test('voteCountPill: invited at-least row — approver-only pill + advisory chip
   assert.match(pill, /0 of 1 approval/);
   assert.match(pill, /gc-vote-advisory/);
   assert.match(pill, /\+2 advisory/);
-  assert.match(pill, /don't count toward merging/);
+  // The title is an attribute value, escaped whole (PlatformI18n.htmlText).
+  assert.match(pill, /don&#39;t count toward merging/);
 });
 
 test('voteCountPill: invited default-clock row — qualified headline + advisory chip', () => {
@@ -118,7 +120,8 @@ test('voteButtonsHtml: invited rows split the button tallies into Q✓ +A', () =
   assert.match(btns, /Yes \(0✓ \+2\)/);
   // Advisory suffix omitted when the surplus is zero.
   assert.match(btns, /No \(1✓\)/);
-  assert.match(btns, /advisory votes don't count toward merging/);
+  // The tooltip is an attribute, so its apostrophe is escaped.
+  assert.match(btns, /advisory votes don&#39;t count toward merging/);
 });
 
 test('voteButtonsHtml: default-policy rows keep the raw totals unchanged', () => {
@@ -182,7 +185,8 @@ test('_loadVoteRoster: invited roster splits the headline into Q✓ + A advisory
   assert.match(r.yes.label, /Yes \(1✓ \+ 1 advisory\)/);
   assert.match(r.no.label, /No \(0✓\)/);
   assert.match(r.yes.names, /@alice\u00a0✓/);
-  assert.match(r.needs, /only invited approvers/);
+  // The roster no longer carries a `needs` clause: nothing drew it.
+  assert.equal('needs' in r, false);
 });
 
 test('_loadVoteRoster: default policy keeps the plain totals', async () => {

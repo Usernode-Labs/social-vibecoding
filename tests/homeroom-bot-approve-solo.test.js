@@ -65,6 +65,7 @@ function makeAppView(over = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -113,7 +114,9 @@ test('B7: the button, the status, the step and ⋯ on a project that is just you
   AppView.appData = { slug: 'plant-pal', audience: 'invited' };
   assert.equal(AppView.statusPillState(change({ votes_required: 2 })).label, 'Vote · 0/2');
   assert.ok(!AppView._proposalMenuItems(change(), {}).some((i) => i.label === 'Don’t approve'));
-  assert.match(SRC, /const voteStep = AppView\._approveSolo\(item\) \? 'Your approval' : 'Vote';/);
+  assert.match(SRC, /const voteStep = AppView\._approveSolo\(item\) \? PlatformI18n\.t\('changes:page\.steps\.label\.yourApproval'\) : PlatformI18n\.t\('changes:page\.steps\.label\.vote'\);/);
+  assert.equal(message('changes:page.steps.label.yourApproval'), 'Your approval');
+  assert.equal(message('changes:page.steps.label.vote'), 'Vote');
   // B10a: the change page's eyebrow and the card's meta line say it the same way.
   AppView.appData = { slug: 'plant-pal', audience: 'solo' };
   assert.equal(AppView._waitingWords(change()), 'Waiting for your approval');

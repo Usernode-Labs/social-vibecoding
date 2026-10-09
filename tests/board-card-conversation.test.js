@@ -72,6 +72,7 @@ function makeAppView({ search = '' } = {}) {
     location: { search, hash: '', href: `http://localhost/${search}` }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;

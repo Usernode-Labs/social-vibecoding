@@ -220,7 +220,8 @@ test('a test account\'s vote on an app a real person made says, in one line, tha
   assert.match(SRC, /uncounted=\{!!yes\.uncounted\}/);
   const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
   assert.match(appView, /pr\.my_vote_uncounted === true \? \{ uncounted: true \} : \{\}/);
-  assert.match(appView, /Test account: this vote won’t count\./, 'the legacy vote rows carry the same words');
+  assert.match(appView, /data-vote-uncounted="">\$\{PlatformI18n\.htmlText\('changes:vote\.row\.uncounted'\)\}/, 'the legacy vote rows carry the same words');
+  assert.equal(message('changes:vote.row.uncounted'), 'Test account: this vote won’t count.');
   assert.match(CSS, /\.dev-vote-uncounted \{/);
   assert.match(CSS, /\.gc-vote-uncounted \{/);
 });

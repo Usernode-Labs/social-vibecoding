@@ -143,6 +143,7 @@ test('the row keeps its reason when it only passed because of a retry', () => {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
@@ -185,6 +186,7 @@ test('the unit suite\'s failure excerpts reach the verdict row and are drawn und
     location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`

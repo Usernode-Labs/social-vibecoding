@@ -34,6 +34,7 @@ const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -148,6 +149,7 @@ async function makeHarness() {
   // request for an overlay-owned node was made.
   const asked = [];
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console: { log() {}, warn() {}, error() {}, debug() {} },
     relTime: () => 'now',
     App: { user: { id: 1 }, currentTab: 'dev' },

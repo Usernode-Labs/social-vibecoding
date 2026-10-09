@@ -156,6 +156,7 @@ function appView(username = 'evan', globals = {}) {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8'), c);
   vm.runInContext('globalThis.av = AppView', c);

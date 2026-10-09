@@ -149,7 +149,8 @@ test('group-chat.js carries the change language from the mount to the shell and 
   assert.match(src, /const chat = !!\(opts && \(opts\.language === 'chat' \|\| opts\.language === 'change'\)\);/);
   assert.match(src, /meta\.stagingBuild === 'started' \|\| meta\.stagingBuild === 'ready'/);
   const view = read('public/js/app-view.js');
-  assert.match(view, /language: 'change',\n\s+placeholder: 'Reply…',/);
+  assert.match(view, /language: 'change',\n\s+placeholder: PlatformI18n\.t\('changes:page\.thread\.replyPlaceholder'\),/);
+  assert.equal(require('./lib/platform-i18n').message('changes:page.thread.replyPlaceholder'), 'Reply…');
 });
 
 test('a moving bar is the lit ink, a finished one green with its check, and AGENTS.md says a finished bar may be green', () => {

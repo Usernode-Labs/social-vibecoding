@@ -422,12 +422,12 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
           title={b.title}
           data-issue-chip={b.n}
           onClick={() => call({ fn: 'openTopic', args: ['issue', b.n] })}
-        >{`${b.prefix}#${b.n}`}</button>
+        >{b.label}</button>
       );
     case 'issueLink':
       return (
         <a href={b.href} target="_blank" rel="noopener" className={b.cls} title={b.title}>
-          {`${b.verb} #${b.n}`}
+          {b.label}
         </a>
       );
     case 'ms':

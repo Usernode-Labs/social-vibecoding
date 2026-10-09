@@ -345,7 +345,9 @@ test('session card and header display the same native provider after reload', ()
     const end = source.indexOf('\n  },', start);
     return source.slice(start + signature.length, end);
   };
-  const card = new Function('s', 'window', extract(APP_VIEW_SRC, '_sessionVenueChipSpec(s) {'));
+  // The chip's tooltip is a catalog message, so the body is handed the English runtime.
+  const cardBody = new Function('s', 'window', 'PlatformI18n', extract(APP_VIEW_SRC, '_sessionVenueChipSpec(s) {'));
+  const card = (s, window) => cardBody(s, window, englishPlatformI18n());
   const header = new Function('session', 'window', 'BuildVenues', 'DevChat', 'PlatformI18n',
     extract(DEV_CHAT_SRC, '_headerVenue(session) {'));
   for (const [agent, label] of [['codex', 'Codex'], ['claude-code', 'Claude Code'], [null, 'External agent']]) {

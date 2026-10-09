@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const AppView = require('../public/js/app-view.js');
 
 const ROOT = path.join(__dirname, '..');

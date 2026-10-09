@@ -128,6 +128,7 @@ function makeAppView(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -4528,7 +4529,8 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   // sent the first row's click to the wrong descriptor on a desktop.
   assert.match(appView, /_cardMenuItems\(key, own\)/);
   assert.match(appView, /_cardMenuItems\(open\.key, open\.own\)/);
-  assert.match(appView, /label: 'Open card',/);
+  assert.match(appView, /label: PlatformI18n\.t\('changes:card\.menu\.openCard'\),/);
+  assert.equal(message('changes:card.menu.openCard'), 'Open card');
 });
 
 test('the lander fills its scroller without a percentage in the floor', () => {
@@ -4945,7 +4947,8 @@ test('the read-only demo check names the pane its proposal is actually on', () =
   assert.match(p, /[?&]col=inreview(&|$)/, 'the column a promoted proposal buckets into');
   // The bucketing this leans on, pinned here so moving `promoted` to another
   // column fails locally rather than as a red check on somebody's proposal.
-  assert.match(APP_VIEW_SRC, /key: 'inreview', title: 'Waiting for approval'/);
+  assert.match(APP_VIEW_SRC, /key: 'inreview', title: PlatformI18n\.t\('changes:board\.column\.review'\)/);
+  assert.equal(message('changes:board.column.review'), 'Waiting for approval');
   assert.match(APP_VIEW_SRC, /rows: cardRows\(\s*kInReview,\s*\(x\) => \(x\.kind === 'proposal'/);
 });
 

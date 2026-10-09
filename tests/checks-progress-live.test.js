@@ -354,6 +354,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SESSION_TRANSCRIPT_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -827,6 +828,7 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   const rows = JSON.parse(JSON.stringify(ctx.__rows('me')));
@@ -979,7 +981,13 @@ test('the board card and the running badge carry the live count', () => {
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
   assert.match(quiet, /Checks running…</, 'no count before the first frame');
   const src = APP_VIEW_SRC;
-  assert.match(src, /label: p\.check_state === 'pending' \? `Checks running…\$\{count\}` : 'Checks starting…',/);
+  // The board tag's label is one whole message per case, read from the catalog.
+  assert.match(src, /if \(p\.check_state !== 'pending'\) runningLabel = PlatformI18n\.t\('changes:badge\.tag\.checksStarting'\);\s*else if \(live && live\.bar\.expected\) runningLabel = PlatformI18n\.t\('changes:badge\.tag\.checksRunningOf', \{ ran: live\.bar\.ran, expected: live\.bar\.expected \}\);\s*else if \(live && live\.bar\.ran\) runningLabel = PlatformI18n\.t\('changes:badge\.tag\.checksRunningCount', \{ ran: live\.bar\.ran \}\);\s*else runningLabel = PlatformI18n\.t\('changes:badge\.tag\.checksRunning'\);/);
+  const { message } = require('./lib/platform-i18n');
+  assert.equal(message('changes:badge.tag.checksRunningOf', { ran: 12, expected: 523 }), 'Checks running… 12/523');
+  assert.equal(message('changes:badge.tag.checksRunningCount', { ran: 12 }), 'Checks running… 12');
+  assert.equal(message('changes:badge.tag.checksRunning'), 'Checks running…');
+  assert.equal(message('changes:badge.tag.checksStarting'), 'Checks starting…');
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {

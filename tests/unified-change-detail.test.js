@@ -440,6 +440,7 @@ test('every change route mounts its thread, and an unshared change reads no disc
   const source = fs.readFileSync('public/js/app-view.js', 'utf8');
   const calls = [];
   const c = { AppView: av, document: { getElementById: () => ({}) },
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     GroupChat: { mountThread: (opts) => calls.push(opts), unmountThread: () => calls.push('detach') } };
   const method = source.slice(source.indexOf('  _mountTopicThread() {'), source.indexOf('\n  // Open a topic full-screen.', source.indexOf('  _mountTopicThread() {'))).trim().replace(/,$/, '');
   vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);

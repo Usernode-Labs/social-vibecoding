@@ -159,8 +159,9 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
     '// "Start session from proposal"',
   );
   assert.match(modal, /openrouterCredentialSource === 'usernode_managed'/);
-  assert.match(modal, /Uses your included OpenRouter credits/);
-  assert.match(modal, /Uses your OpenRouter account/);
+  assert.match(modal, /openrouterCredentialSource === 'usernode_managed'\s*\? PlatformI18n\.t\('changes:issue\.autoRun\.billing\.included'\)\s*: PlatformI18n\.t\('changes:issue\.autoRun\.billing\.openRouter'\)\)/);
+  assert.match(require('./lib/platform-i18n').message('changes:issue.autoRun.billing.included'), /Uses your included OpenRouter credits/);
+  assert.match(require('./lib/platform-i18n').message('changes:issue.autoRun.billing.openRouter'), /Uses your OpenRouter account/);
   assert.doesNotMatch(modal, /onFavorite|onRefresh|Experimental/);
 });
 

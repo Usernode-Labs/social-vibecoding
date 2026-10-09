@@ -2447,14 +2447,6 @@
     "text": "<0>Closed</0><1>·</1><2>by</2><3></3>",
     "description": "The whole text of the band at the top of a closed request's page (a request is a filed issue), when a merged change closed it and the date is not known: closed by this change. <0></0> is the status word, drawn bold; <1></1> is a separator dot hidden from screen readers; <2></2> holds the word that introduces the change; <3></3> is a link showing the change's number and title, which fills itself in: leave it empty and put it where the change's name belongs."
   },
-  "topic.request.closedBand.whenHow": {
-    "text": "<0>Closed</0><1>·</1><2>{{date}}</2><3>·</3><4>{{how}}</4>",
-    "description": "The whole text of the band at the top of a closed request's page (a request is a filed issue), when a vote or an admin closed it. {{date}} is a short date or relative time, for example Oct 5 or 3d ago. {{how}} is a short phrase saying how it was closed, such as \"by vote\" or \"by an admin\", supplied already worded. <0></0> is the status word, drawn bold; <1></1> and <3></3> are separator dots hidden from screen readers; <2></2> holds the date and <4></4> the phrase."
-  },
-  "topic.request.closedBand.how": {
-    "text": "<0>Closed</0><1>·</1><2>{{how}}</2>",
-    "description": "The whole text of the band at the top of a closed request's page (a request is a filed issue), when a vote or an admin closed it and the date is not known. {{how}} is a short phrase saying how it was closed, such as \"by vote\" or \"by an admin\", supplied already worded. <0></0> is the status word, drawn bold; <1></1> is a separator dot hidden from screen readers; <2></2> holds the phrase."
-  },
   "topic.request.closedBand.byChangeLabel": {
     "text": "Closed by {{change}}: {{title}}",
     "description": "Accessible name of the link, in the band at the top of a closed request, to the change that closed it. {{change}} is the change's reference, for example #10, and {{title}} its title."

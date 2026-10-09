@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { withStateRead } = require('./lib/agent-session-state-read');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -85,8 +86,12 @@ test('why checks were skipped is one sentence, the same fallback the panel and t
   assert.ok(read('public/js/merge-status.js').includes("t('session:merge.title.checksSkipped')"), 'merge-status.js 6b');
   assert.equal(require('./lib/platform-i18n').message('session:merge.title.checksSkipped'), fallback, 'merge-status.js 6b, in the catalog');
   const appView = read('public/js/app-view.js');
-  assert.ok(appView.includes(": 'there was nothing to test';")
-    && appView.includes('`Checks were skipped: ${reason}. It can still go live.`'), 'AppView._checksStatusNotes');
+  // AppView._checksStatusNotes reads both sentences from the catalog: the
+  // recorded reason in one, the fallback whole in the other.
+  assert.ok(appView.includes("parts: [reason ? PlatformI18n.t('changes:checks.skipped.withReason', { reason }) : PlatformI18n.t('changes:checks.skipped.nothingToTest')]"),
+    'AppView._checksStatusNotes');
+  assert.equal(message('changes:checks.skipped.nothingToTest'), fallback);
+  assert.equal(message('changes:checks.skipped.withReason', { reason: 'nothing to test' }), 'Checks were skipped: nothing to test. It can still go live.');
 });
 
 test('the card: its actions for each state, and nothing on a superseded one', () => {

@@ -847,8 +847,8 @@ function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
       : <RichMessage id="project:topic.request.closedBand.byChange" components={[k, dot, <span />, chip]} />)
     : b.how
       ? (b.when
-        ? <RichMessage id="project:topic.request.closedBand.whenHow" values={{ date: b.when, how: b.how }} components={[k, dot, when, dot, <span />]} />
-        : <RichMessage id="project:topic.request.closedBand.how" values={{ how: b.how }} components={[k, dot, <span />]} />)
+        ? <RichMessage id={b.how === 'admin' ? 'changes:request.closedBand.whenByAdmin' : 'changes:request.closedBand.whenByVote'} values={{ date: b.when }} components={[k, dot, when, dot, <span />]} />
+        : <RichMessage id={b.how === 'admin' ? 'changes:request.closedBand.byAdmin' : 'changes:request.closedBand.byVote'} components={[k, dot, <span />]} />)
       : b.when
         ? <RichMessage id="project:topic.request.closedBand.when" values={{ date: b.when }} components={[k, dot, when]} />
         : <RichMessage id="project:topic.request.closedBand.closed" components={[k]} />;
