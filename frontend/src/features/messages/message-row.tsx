@@ -17,6 +17,7 @@ import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
+import type { ChangeBlock } from './bot-shared';
 import { BotHeadWords, botHead, isHeadCard } from './bot-head-card';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
@@ -89,6 +90,7 @@ export const MessageRow = memo(function MessageRow({
   focused = false,
   planCardId = null,
   hidePrompts = false,
+  block = null,
 }: {
   message: ConversationMessage;
   conversationId: number;
@@ -108,6 +110,12 @@ export const MessageRow = memo(function MessageRow({
   planCardId?: number | null;
   /** #4046: a plan or a question offers its own answers, so questions to tap give way. */
   hidePrompts?: boolean;
+  /**
+   * #4564: this row's part of its change's outlined block, in the chat with
+   * Homeroom bot (./bot-shared.ts changeBlocks, ./index.tsx). Null anywhere
+   * else, and for a bot message about no request: those draw as before.
+   */
+  block?: ChangeBlock | null;
 }) {
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
@@ -254,6 +262,23 @@ export const MessageRow = memo(function MessageRow({
   // ./bot-head-card.tsx), which is then not drawn again under the words.
   const head = botHead(message.content, botMeta(message));
   const objects = head ? message.objects.filter((object) => !isHeadCard(head, object)) : message.objects;
+  // #4564: a row whose change block repeats the request drops its request
+  // card — the top of the block already shows that request — and its words
+  // carry the card's own label, spoken, in its place. Only on the plain
+  // words path: a card standing in place of the words (thanks, activity,
+  // plan, two questions, ready) keeps everything it draws, and the change's
+  // own card in `objects` is never a repeat.
+  const dropHead = !!block?.repeat && head?.kind === 'request' && !isThanksMessage(message)
+    && !isActivityMessage(message) && !isPlanMessage(message) && !isTwoQuestions(message) && !isReadyMessage(message);
+  // #4564: a repeated request's line goes without its card, and without the
+  // line either — the top of its block already shows that card. `head` is
+  // botHead's own fresh reading of this render's content, so the flag set
+  // here is this row's alone; after `objects`, which must still filter the
+  // card the message carries by it (a hidden head filters nothing).
+  if (dropHead && head) head.hidden = true;
+  const spokenLabel = dropHead && head
+    ? (head.title ? `Request #${head.issueNumber}: ${head.title}` : `Request #${head.issueNumber}`)
+    : null;
   const words = !message.content ? null : head
     ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
     : <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} />;
@@ -374,13 +399,23 @@ export const MessageRow = memo(function MessageRow({
     {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>Discard</button> : null}
   </div> : null;
 
+  // #4564: the change block this row belongs to, as classes and data its
+  // stylesheet draws its outline from. The article's own id, its
+  // data-message-id and its existing classes are unchanged.
+  const blockClass = block ? ` messages-bot-block messages-bot-block-${block.part}` : '';
+  const blockAttrs = block ? { 'data-bot-block': block.key, 'data-bot-block-part': block.part } : {};
+
   return (
-    <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${grouped ? 'messages-message-grouped' : ''} ${stateClasses}`} {...longPress}>
+    <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${grouped ? 'messages-message-grouped' : ''}${blockClass} ${stateClasses}`} {...blockAttrs} {...longPress}>
       {grouped
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : <UserAvatar user={message.sender} size="md" shape="square" />}
-      <div className="min-w-0 flex-1">
+      <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : 'min-w-0 flex-1'}>
         {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender)}</span>{message.sender.bot ? <span className="messages-bot-badge">AI</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {/* #4564: the dropped card's own label, spoken: a screen reader still
+            hears which request these words are about, as the block's top
+            shows. */}
+        {dropHead ? <span className="sr-only">{spokenLabel}</span> : null}
         {body}
         {extras}
         {grouped && message.editedAt && !message.deleted ? <div className="messages-message-meta">{status}</div> : null}

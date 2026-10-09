@@ -2267,6 +2267,9 @@ async function readyStates(pool, { user }) {
   const viewable = new Map();
   const approvals = new Map();
   const out = [];
+  // Cards going live, by their change: a merge of Homeroom itself says
+  // when the platform's next release carries it (below).
+  const goingLive = new Map();
   for (const row of rows) {
     const appId = Number(row.id);
     if (!viewable.has(appId)) viewable.set(appId, await appAccess.checkAppAccess(pool, row, user, 'view').catch(() => false));
@@ -2286,7 +2289,21 @@ async function readyStates(pool, { user }) {
       if (!read) continue;
       Object.assign(state, read);
     }
+    if (state.state === 'going_live' && row.status === 'merged' && row.self_hosted) {
+      goingLive.set(state, Number(row.session_id));
+    }
     out.push(state);
+  }
+  // Merged into the platform's own app and not live yet: it waits for the
+  // platform's next release (services/release-watch.js), and the card says
+  // when, "Merged; goes live in the next release (about 8 minutes)". A child
+  // app's merge goes live in a minute or two, and keeps "going live now".
+  if (goingLive.size) {
+    const releases = await require('./release-watch').releasesFor(pool, [...goingLive.values()]);
+    for (const [state, sessionId] of goingLive) {
+      const release = releases.get(sessionId);
+      if (release) state.release = release;
+    }
   }
   return out;
 }
@@ -3151,6 +3168,34 @@ async function botDoorFor(pool, app, user) {
   }
 }
 
+// #4530: what "Ask Homeroom bot to build this" answers while the bot is
+// waiting on people about the request, by the kind of its last note.
+const WAITING_TEXT = Object.freeze({
+  question: 'Homeroom bot asked a question here and is waiting for an answer. Answer it in the request\'s discussion, and it reads the request again.',
+  person: 'Homeroom bot said a person needs to decide this one. Reply to it in the request\'s discussion once that is settled, and it reads the request again.',
+  empty: 'Homeroom bot found nothing to build here yet. Reply to it in the request\'s discussion with more to go on, and it reads the request again.',
+});
+
+/**
+ * #4530: whether the bot is waiting on people about request `n` of `app`
+ * (homeroom-bot-addressed.js waitingOnRequest), or null. Never throws.
+ */
+async function botWaitingOn(pool, app, n, deps = {}) {
+  const bot = await botAccount(pool).catch(() => null);
+  if (!bot) return null;
+  const github = deps.github || require('./github');
+  let repoUrl = app.repo_url;
+  if (repoUrl === undefined) {
+    const { rows } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [app.id]).catch(() => ({ rows: [] }));
+    repoUrl = rows[0]?.repo_url || null;
+  }
+  const repo = repoUrl && typeof github.parseGithubUrl === 'function' && github.isEnabled?.() !== false
+    ? github.parseGithubUrl(repoUrl) : null;
+  return require('./homeroom-bot-addressed').waitingOnRequest(pool, {
+    appId: app.id, issueNumber: n, botId: bot.id, github, repo,
+  });
+}
+
 /**
  * B8: somebody pressed "Ask Homeroom bot to build this" on request
  * `issueNumber` of `app` (routes/issues.js): it goes first in the bot's
@@ -3158,8 +3203,16 @@ async function botDoorFor(pool, app, user) {
  * whoever it is recorded for keeps it, and its card and news reach them; a
  * request nobody is recorded for becomes this person's. Resolves
  * { ok: true, typicalMinutes, mine } or { ok: false, status, error, code }.
+ *
+ * #4530: not while the bot is waiting on people there: its last note is a
+ * question, "a person needs to decide", or "nothing to build", and nobody
+ * has answered it, replied to it, mentioned it or edited the request since
+ * (botWaitingOn). Asking then read the same request again and posted the
+ * same note again (number-guessing #52: one question three times). It
+ * answers 409 `awaiting_reply`, and the card offers to answer the bot
+ * instead (public/js/app-view.js).
  */
-async function askBotToBuild(pool, { app, user, issueNumber }) {
+async function askBotToBuild(pool, { app, user, issueNumber, deps = {} }) {
   const n = Number(issueNumber);
   if (!Number.isInteger(n) || n <= 0) return { ok: false, status: 400, error: 'Invalid request number' };
   if (!app?.id || !user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'forbidden' };
@@ -3170,6 +3223,10 @@ async function askBotToBuild(pool, { app, user, issueNumber }) {
   }
   const busy = (await require('./homeroom-bot-progress').botWorkByIssue(pool, app.id)).get(n);
   if (busy) return { ok: false, status: 409, error: 'Homeroom bot is already on it.', code: 'already_building' };
+  const waiting = await botWaitingOn(pool, app, n, deps);
+  if (waiting) {
+    return { ok: false, status: 409, error: WAITING_TEXT[waiting.kind] || WAITING_TEXT.question, code: 'awaiting_reply' };
+  }
   let requester = await requesterOf(pool, app.id, n);
   if (!requester) {
     const { rows } = await pool.query(
@@ -3196,6 +3253,18 @@ async function askBotToBuild(pool, { app, user, issueNumber }) {
   }
   log.info('homeroom-bot-dm', 'Asked to build a request from its page', { app: app.slug, issueNumber: n, userId: user.id });
   return { ok: true, typicalMinutes: await typicalMinutes(pool), mine: Number(requester?.userId) === Number(user.id) };
+}
+
+/**
+ * #4530: which of `issues` ({ number, updatedAt }) on `appId` Homeroom bot
+ * is waiting on people about, for the request list and a request's page
+ * (routes/issues.js `botAwaits`): Map(number → { kind, messageId }). Never
+ * throws.
+ */
+async function botWaitingByIssue(pool, appId, issues) {
+  const bot = await botAccount(pool).catch(() => null);
+  if (!bot) return new Map();
+  return require('./homeroom-bot-addressed').waitingByIssue(pool, { appId, botId: bot.id, issues });
 }
 
 /**
@@ -3868,6 +3937,8 @@ module.exports = {
   noteRequestFiled,
   botDoorFor,
   askBotToBuild,
+  WAITING_TEXT,
+  botWaitingByIssue,
   askersOf,
   MAKER_HELLO,
   joinerHello,

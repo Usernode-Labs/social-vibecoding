@@ -301,6 +301,16 @@ function stagingMockProposals(viewer) {
         4, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(60) }),
       pr_title_fallback: true,
     },
+    // A change with a description and no short summary, and no plan: its
+    // page folds the description under the line that says so ("The
+    // current description is below.") rather than pointing at a Details
+    // section the page does not draw.
+    {
+      ...mk(9000096, 900196,
+        '[Mock] No-summary test: a description but no short summary yet',
+        3, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(62) }),
+      pr_summary_md: null,
+    },
     // #1688: the viewer said yes to an EARLIER version of this one, and the
     // author has since pushed a new one. Their vote is on the row but no
     // longer counted, so the card's button asks "Still yes?" instead of
@@ -1283,6 +1293,9 @@ function stagingMockProposals(viewer) {
   });
 }
 
+// The ?demo=1 merged change that waits for the platform's next release.
+const DEMO_GOING_LIVE_ID = 9100035;
+
 // #194: staging demo rows for the Completed (merged) list, mirroring
 // stagingMockProposals. Lets ?demo=1 verify the new clickable Completed
 // rows, the chevron/hover affordance, and the 💬 badge against a
@@ -1436,7 +1449,20 @@ function stagingMockMerged(viewer) {
       '[Mock] Completed: legacy change with no recorded merge time', 95, 0),
     merged_at: null,
   };
-  return [autoMerged, inheritedAttrs, undone].concat(titles.map((t, i) => mk(
+  // A change merged into Homeroom itself a minute ago and not live yet: it
+  // goes live with the next release, which the gap puts eight minutes off
+  // (release-watch.js demoRelease). Its page says so where anyone can read
+  // it, "Merged; goes live in the next release (about 8 minutes)". The
+  // /merged demo block and the by-id read give it that release.
+  // 9100035 is DEMO_GOING_LIVE_ID, spelled out: this builder runs on its own
+  // (tests/staging-demo-id-ranges.test.js).
+  const goingLive = {
+    ...mk(9100035, 910135,
+      '[Mock] Going-live test: merged into Homeroom, live with the next release', 0, 0),
+    merged_at: new Date(Date.now() - 60 * 1000).toISOString(),
+    live_at: null,
+  };
+  return [autoMerged, goingLive, inheritedAttrs, undone].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
     `[Mock] Completed: ${t}`,
@@ -1608,6 +1634,21 @@ async function annotateDeploymentState(config, pool, app, rows) {
     }
   }
 
+  // When each change still going live does: the next release, worded by
+  // the board as "Merged; goes live in the next release (about 8 minutes)"
+  // (services/release-watch.js). The newest one's is the column's.
+  const deploying = prRows.filter((row) => row.deployment_state === 'deploying');
+  let newest = null;
+  if (deploying.length) {
+    const view = await releaseWatch.outlook(pool);
+    for (const row of deploying) {
+      const release = releaseWatch.releaseOf(view, { mergedAt: row.merged_at || row.created_at, id: row.id });
+      if (!release) continue;
+      row.release = release;
+      if (!newest || !isAfterDeploymentBoundary(newest, row)) newest = row;
+    }
+  }
+
   const pendingCount = Math.max(0, Number(boundary.pending_count) || 0);
   return {
     state: pendingCount > 0 ? (stall.stalled ? 'stalled' : 'deploying') : 'deployed',
@@ -1616,6 +1657,7 @@ async function annotateDeploymentState(config, pool, app, rows) {
     livePrNumber: Number(boundary.pr_number) || null,
     pendingCount,
     ...(stall.stalled ? { stall } : {}),
+    ...(pendingCount > 0 && !stall.stalled && newest ? { release: newest.release } : {}),
   };
 }
 
@@ -5015,6 +5057,12 @@ function voteRoutes(config) {
           unknownDemo.deployment_state = 'unknown';
           unknownDemo.deployment_kind = 'child';
         }
+        // The platform's own merge waiting for its next release.
+        const goingLiveDemo = rows.find((row) => row.row_type === 'pr' && Number(row.id) === DEMO_GOING_LIVE_ID);
+        if (goingLiveDemo) {
+          goingLiveDemo.deployment_state = 'deploying';
+          goingLiveDemo.release = require('../services/release-watch').demoRelease();
+        }
         deployment = {
           kind: 'child', state: 'pending',
           runningSha: 'dddddddddddddddddddddddddddddddddddddddd',
@@ -5222,6 +5270,21 @@ function voteRoutes(config) {
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
       if (IS_STAGING && req.query.demo === '1' && proposal.checks_estimate == null) {
         proposal = { ...proposal, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE };
+      }
+      // Merged into the platform's own app and not live yet: when the next
+      // release carries it (services/release-watch.js), which the page says
+      // as "Merged; goes live in the next release (about 8 minutes)". A
+      // child app's merge goes live with its own deploy and keeps its words.
+      if (proposal.status === 'merged' && proposal.live_at === null && !proposal.release) {
+        const releaseWatch = require('../services/release-watch');
+        if (IS_STAGING && req.query.demo === '1' && Number(proposal.id) === DEMO_GOING_LIVE_ID) {
+          proposal = { ...proposal, release: releaseWatch.demoRelease() };
+        } else if (gatedApp.self_hosted) {
+          const release = releaseWatch.releaseOf(await releaseWatch.outlook(pool), {
+            mergedAt: proposal.merged_at || proposal.created_at, id: proposal.id,
+          });
+          if (release) proposal = { ...proposal, release };
+        }
       }
       // `?results=failing`: the proposal page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).

@@ -5706,3 +5706,35 @@ test('#4031: the end card keeps its ring when the last vote takes the open count
   assert.equal(endRingTotal(0, 0, 0), 0);
   assert.match(WORKSHOP, /<DoneItem\s+total=\{endRingTotal\(total, votedHere, leftVotes\)\}/, 'the feed draws the end card with it');
 });
+
+// #4568: a no vote ("Voted no", "Not approved") reads in the blocked red,
+// not the ok green. The answer itself picks the tone, on the card's facts
+// line and the Description sheet (factsFor's two branches, which the
+// existing factTone/chipTone maps already take to the red classes), on the
+// confirmation line the eyebrow becomes, and on the rail's vote button —
+// each marked with data-ws-voted so app.css can paint the no case without
+// a second class. A yes keeps every class and colour it had.
+test('#4568: a no vote is the blocked red, not the ok green', () => {
+  const facts = WORKSHOP.slice(WORKSHOP.indexOf('function factsFor('), WORKSHOP.indexOf('function approves('));
+  assert.equal((facts.match(/tone: voted === 'no' \? 'blocked' : 'ok'/g) || []).length, 2,
+    'both branches — the project\'s card and the Communities feed\'s row');
+  // The confirmation line and the rail's vote button carry the answer.
+  assert.match(WORKSHOP, /className="dev-ws-item-done" data-ws-item-done="" data-ws-voted=\{voted\}/);
+  assert.match(WORKSHOP, /data-ws-rail-btn="vote"\s*\n\s*data-ws-voted=\{voted \|\| undefined\}/);
+  // The four red rules, beside the green ones they stand next to.
+  assert.match(CSS, /\.dev-ws-item-done\[data-ws-voted="no"\] \{ color: var\(--state-blocked\); \}/);
+  assert.match(CSS, /\.dev-ws-item-done\[data-ws-voted="no"\] \.dev-ws-item-tick \{ background: var\(--state-blocked\); \}/);
+  assert.match(CSS, /\.dev-ws-rail-vote\.is-on\[data-ws-voted="no"\] \.dev-ws-rail-ic \{ background-color: var\(--state-blocked\); border-color: var\(--state-blocked\); box-shadow: 0 2px 8px rgba\(220, 38, 38, \.28\); \}/);
+  assert.match(CSS, /\.dev-ws-rail-vote\.is-on\[data-ws-voted="no"\] \.dev-ws-rail-lab \{ color: var\(--state-blocked\); \}/);
+});
+
+test('a run that does not know its total yet says "Checks…" on a row, its full words the tooltip and what a screen reader reads', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const item = { id: 77, pr_number: 4577, status: 'promoted', check_state: 'pending', created_at: at(1), linked_issues: [] };
+  const running = AppView.statusTagSpecs(item).find((s) => s.data && s.data['data-status-tag'] === 'checks-running');
+  assert.ok(running && /^Checks running…/.test(running.label), 'the card’s status tag keeps its words');
+  const tag = AppView._workshopBrief('proposal', item, null).tags.find((t) => /^Checks running…/.test(t.label));
+  assert.ok(tag, 'the row carries the tag');
+  assert.equal(tag.short, 'Checks…');
+});
