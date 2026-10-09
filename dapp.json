@@ -265,6 +265,12 @@
       "description": "The workflow merge-followups machine (docs/workflows.md). true: what follows a merge is durable work, and a change reads live only once production runs it. false (default): the old merge tail runs. Merges accepted while it was on still finish after it is turned off. On Kubernetes, set by the Helm value platform.workflowMergeFollowupsEnabled."
     },
     {
+      "key": "WF_SESSION_ACTIVITY_ENABLED",
+      "group": "Proposals & retention",
+      "default": "false",
+      "description": "The workflow session-activity machine (docs/workflows.md). true: whatever uses a chat session (a turn, a branch move, a screenshot run's hold, a pause) asks the machine as well as this process's memory, so another process's work refuses it, and a Stop reaches the turn in whichever process runs it. false (default): each process decides from its own memory."
+    },
+    {
       "key": "WF_SLOTS",
       "group": "Proposals & retention",
       "description": "How many workflow events each platform process applies at once (pipeline slots). Unset: 4, or 1 on a staging preview. Only read while a workflow flag such as WF_GOVERNANCE_ENABLED is on."
@@ -272,7 +278,7 @@
     {
       "key": "WF_POOL_MAX",
       "group": "Proposals & retention",
-      "description": "Connections in the workflow runtime's own database pool, kept apart from request traffic. Unset: 6, or 2 on a staging preview. Keep it above WF_SLOTS. Only read while a workflow flag is on."
+      "description": "Connections in the workflow runtime's own database pool, kept apart from request traffic. Unset: 6, or 2 on a staging preview (8 and 3 with WF_SESSION_ACTIVITY_ENABLED on). Keep it above WF_SLOTS. Only read while a workflow flag is on."
     },
     {
       "key": "WF_OWNERSHIP_MODE",

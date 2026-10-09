@@ -52,7 +52,8 @@ test('the promote kick re-runs a pending verdict that nothing will settle', () =
 
 test('the promote kick consults the stranded-pending rule', () => {
   const votesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf8');
-  assert.match(votesSrc, /let needsKick = !session\.check_state \|\| strandedPendingChecks\(session\);/);
+  // Not stranded while another process's turn or operation holds it.
+  assert.match(votesSrc, /let needsKick = !session\.check_state\s*\|\| \(strandedPendingChecks\(session\) && !\(await require\('\.\.\/services\/session-activity'\)\.isBusy\(session\.id\)\)\);/);
 });
 
 test('no shots run on a change reads as none', () => {

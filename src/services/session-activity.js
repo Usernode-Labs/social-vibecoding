@@ -176,7 +176,8 @@ async function release(h, outcome) {
   clearInterval(h.timer);
   handles.delete(h.id);
   if (!h.lost) {
-    // Lost or not, a lease that is not renewed runs out; ending it says so now.
+    // A lease that is not renewed runs out anyway; ending it frees the session
+    // now. A lost one has nothing left to end.
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         await platform().endActivity(h.sessionId, h.id, outcome);
