@@ -1,6 +1,8 @@
 /**
  * The screenshot a C comment carries (#4289 follow-up): the page as the
- * person sees it, with the pin and the comment drawn where they put them.
+ * person sees it when they put the pin down. The pin itself is not drawn in
+ * (#4482): it is posted beside the picture as data (./pin-data.ts), so the
+ * request's page can show the page clean or with the comment over it.
  *
  * ── No screen-share prompt ─────────────────────────────────────────────
  *
@@ -21,12 +23,12 @@
  * only), and it is laid into the frame's rectangle. An app that does not
  * answer in time gets a plain panel saying so; the comment still goes.
  *
- * ── Two halves ─────────────────────────────────────────────────────────
+ * ── When ───────────────────────────────────────────────────────────────
  *
- * The page is drawn the moment the comment opens (`takeBase`), so it shows
- * the page as it was, and is ready by the time the words are; the pin and
- * the words are drawn on a copy when it is sent (`finishPicture`). The
- * layout helpers are pure and exported for tests.
+ * The page is drawn the moment a pin goes down (`takeBase`), so it shows the
+ * page as it was, and is ready by the time the words are. In comment mode
+ * every pin is drawn on its own, and the mode's layer never is. The layout
+ * helpers are pure and exported for tests.
  */
 
 export const LIB_SRC = '/usernode-bridge/v1/snapdom.js';
@@ -35,8 +37,6 @@ export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 export const SNAPSHOT_KEY = '__usernode_snapshot';
 /** How long the app gets to draw itself, the library's first load included. */
 export const APP_PICTURE_TIMEOUT_MS = 8000;
-/** The pin's fill: the shell's accent, violet-600 as tailwind.config.js remaps it. */
-export const PIN_FILL = '#0a6ee0';
 
 export interface Point { x: number; y: number }
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -106,8 +106,7 @@ export function inRect(p: Point, r: Rect | null | undefined): boolean {
 /**
  * Where a box of `size` goes beside the pin: right of it and below by
  * default, flipped left or up when it would leave the viewport, and kept
- * `margin` inside it. The comment box on screen and the bubble drawn into
- * the picture use the same rule, so the picture shows what was on screen.
+ * `margin` inside it. The comment box and an open marker's card use it.
  */
 export function placeBeside(pin: Point, size: Size, viewport: Size, gap = 14, margin = 8): Point {
   let x = pin.x + gap;
@@ -117,50 +116,6 @@ export function placeBeside(pin: Point, size: Size, viewport: Size, gap = 14, ma
   x = Math.max(margin, Math.min(x, viewport.width - margin - size.width));
   y = Math.max(margin, Math.min(y, viewport.height - margin - size.height));
   return { x, y };
-}
-
-/**
- * The comment, broken into lines no wider than `maxWidth` as `measure`
- * reports widths, at most `maxLines`; the last one ends in an ellipsis when
- * the words run past it. A word longer than a line is broken mid-word.
- */
-export function wrapLines(text: string, maxWidth: number, measure: (s: string) => number, maxLines = 6): string[] {
-  const out: string[] = [];
-  let truncated = false;
-  const push = (line: string) => {
-    if (out.length < maxLines) out.push(line);
-    else truncated = true;
-  };
-  for (const para of String(text || '').replace(/\r\n?/g, '\n').split('\n')) {
-    let line = '';
-    for (const raw of para.split(/\s+/).filter(Boolean)) {
-      if (truncated) break;
-      let word = raw;
-      // A word wider than a line is broken into pieces that fit.
-      while (measure(word) > maxWidth && word.length > 1) {
-        let cut = word.length - 1;
-        while (cut > 1 && measure(word.slice(0, cut)) > maxWidth) cut--;
-        if (line) { push(line); line = ''; }
-        push(word.slice(0, cut));
-        word = word.slice(cut);
-      }
-      const next = line ? `${line} ${word}` : word;
-      if (measure(next) <= maxWidth) {
-        line = next;
-      } else {
-        push(line);
-        line = word;
-      }
-    }
-    push(line);
-    if (truncated) break;
-  }
-  if (truncated && out.length) {
-    let last = out[out.length - 1];
-    while (last && measure(`${last}\u2026`) > maxWidth) last = last.slice(0, -1);
-    out[out.length - 1] = `${last.trimEnd()}\u2026`;
-  }
-  return out;
 }
 
 /**
@@ -303,75 +258,6 @@ async function layInApp(canvas: HTMLCanvasElement, scale: number, rect: Rect, pi
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText("The app's picture wasn't available", x + w / 2, y + h / 2);
-}
-
-/** The bubble drawn into the picture: the comment box's width and type. */
-export const BUBBLE = { width: 280, padding: 10, font: 14, line: 19, radius: 12, maxLines: 6 };
-
-/**
- * A copy of the page with the pin and the words drawn on it, where they
- * were on screen.
- */
-export function finishPicture(base: Base, pin: Point, comment: string): HTMLCanvasElement {
-  const { canvas: src, scale } = base;
-  const out = document.createElement('canvas');
-  out.width = src.width;
-  out.height = src.height;
-  const ctx = out.getContext('2d');
-  if (!ctx) return src;
-  ctx.drawImage(src, 0, 0);
-  const viewport = { width: src.width / scale, height: src.height / scale };
-
-  ctx.save();
-  ctx.scale(scale, scale);
-  const font = `${BUBBLE.font}px system-ui, -apple-system, "Segoe UI", sans-serif`;
-  ctx.font = font;
-  const inner = BUBBLE.width - BUBBLE.padding * 2;
-  const lines = wrapLines(comment, inner, (s) => ctx.measureText(s).width, BUBBLE.maxLines);
-  const size = { width: BUBBLE.width, height: BUBBLE.padding * 2 + Math.max(1, lines.length) * BUBBLE.line };
-  const at = placeBeside(pin, size, viewport);
-
-  // The bubble: white card, hairline, soft shadow.
-  ctx.shadowColor = 'rgba(0,0,0,0.18)';
-  ctx.shadowBlur = 12;
-  ctx.shadowOffsetY = 3;
-  ctx.fillStyle = '#ffffff';
-  roundRect(ctx, at.x, at.y, size.width, size.height, BUBBLE.radius);
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
-  ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  ctx.fillStyle = '#18181b';
-  ctx.textBaseline = 'top';
-  lines.forEach((line, i) => {
-    ctx.fillText(line, at.x + BUBBLE.padding, at.y + BUBBLE.padding + i * BUBBLE.line + 2);
-  });
-
-  // The pin: an accent dot in a white ring.
-  ctx.shadowColor = 'rgba(0,0,0,0.3)';
-  ctx.shadowBlur = 6;
-  ctx.beginPath();
-  ctx.arc(pin.x, pin.y, 11, 0, Math.PI * 2);
-  ctx.fillStyle = '#ffffff';
-  ctx.fill();
-  ctx.shadowColor = 'transparent';
-  ctx.beginPath();
-  ctx.arc(pin.x, pin.y, 8, 0, Math.PI * 2);
-  ctx.fillStyle = PIN_FILL;
-  ctx.fill();
-  ctx.restore();
-  return out;
-}
-
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
 }
 
 function toBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {
