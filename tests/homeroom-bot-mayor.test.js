@@ -72,7 +72,7 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
 test('the tools: fourteen lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
-      'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'withdraw_proposal', 'report_problem', 'reply']);
+      'comment_on_request', 'start_request', 'confirm_project', 'offer_request', 'offer_move_request', 'withdraw_proposal', 'report_problem', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -420,7 +420,7 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   assert.doesNotMatch(report.description, /last few messages of this chat[^.]*anyone can read/, 'the chat is never said to be public');
   assert.deepEqual(mayor.OFFER_ANSWERS, {
     file_request: ['File it', 'Not now'], withdraw_proposal: ['Withdraw it', 'Keep it'],
-    move_request: ['Move it to Homeroom', 'Keep it here'],
+    move_request: ['Move it to Homeroom', 'Keep it here'], confirm_project: ['Yes', 'No, another app'],
   });
   assert.equal(mayor.REPORT_SOURCE, 'homeroom_bot');
 });
@@ -631,4 +631,84 @@ test('#4239: moving a request about Homeroom itself, as the model and the person
   for (const text of [move.moveOfferText({ name: 'Ear Trainer', issueNumber: 6, title: 'Header', why: 'It is the frame' }), tool.description]) {
     assert.doesNotMatch(text, /\u2014/, 'no em dash');
   }
+});
+
+test('#4501: the closest projects to a typed name, closest first and never more than a few', () => {
+  const apps = [
+    { slug: 'gym-tracker-9de81f', name: 'Gym Tracker' },
+    { slug: 'run-tracker', name: 'Run Tracker' },
+    { slug: 'meal-planner', name: 'Meal Planner' },
+    { slug: 'seed-swap', name: 'Seed Swap' },
+  ];
+  const found = mayor.closestProjects('Gym Trackr', apps);
+  assert.equal(found[0].project, 'gym-tracker-9de81f', 'the close one first');
+  assert.equal(found[0].projectName, 'Gym Tracker');
+  assert.ok(found.length <= 3, 'at most three');
+  // The slug's hex suffix is ignored, so the short name is what is compared.
+  assert.deepEqual(mayor.closestProjects('gym tracker', apps).map((c) => c.project)[0], 'gym-tracker-9de81f');
+  // With a cutoff, only the genuinely close ones survive.
+  const close = mayor.closestProjects('Gym Trackr', apps, { cutoff: true });
+  assert.equal(close[0].project, 'gym-tracker-9de81f');
+  assert.ok(!close.some((c) => c.project === 'meal-planner' || c.project === 'seed-swap'),
+    'a name that reads nothing like what they typed is dropped');
+  // One name containing the other is close whatever the rest.
+  assert.equal(mayor.closestProjects('note', [{ slug: 'note-board', name: 'Note board' }], { cutoff: true })[0].project, 'note-board');
+  assert.deepEqual(mayor.closestProjects('', apps), [], 'nothing typed lists nothing');
+  // The far ones are still listed without a cutoff, three unless asked for more.
+  assert.equal(mayor.closestProjects('zzz', apps).length, 3);
+  assert.equal(mayor.closestProjects('zzz', apps, { limit: 10 }).length, 4);
+});
+
+test('#4501: their words name a project when its name or short name is in them', () => {
+  const app = { slug: 'gym-tracker-9de81f', name: 'Gym Tracker' };
+  for (const words of ['I have feedback for Gym Tracker: a rest timer', 'feedback for gym tracker please',
+    'about gym-tracker-9de81f', 'Gym-Tracker']) {
+    assert.equal(mayor.namedIn(words, app), true, words);
+  }
+  for (const words of ['I have feedback for Gym Trackr: a rest timer', 'my gym has a tracker', 'gym',
+    '']) {
+    assert.equal(mayor.namedIn(words, app), false, words);
+  }
+});
+
+test('#4501: what the Did you mean question asks, shows and answers', () => {
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'confirm_project').function;
+  assert.deepEqual(tool.parameters.required, ['name']);
+  assert.deepEqual(Object.keys(tool.parameters.properties), ['name']);
+  assert.match(tool.description, /exactly as they typed/);
+  assert.match(tool.description, /never say "the closest match is" and carry on/);
+  assert.doesNotMatch(tool.description, /—/);
+  // The offer_request tool points at it.
+  const offer = mayor.TOOLS.find((t) => t.function.name === 'offer_request').function;
+  assert.match(offer.description, /or confirmed it with confirm_project/);
+  assert.match(offer.description, /when the result says notExact, call confirm_project/);
+  // The prompt keeps the model from guessing: ask first, and never say
+  // "the closest match is" and carry on.
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /call confirm_project with exactly what they typed before you\n  offer, comment on, start or move anything on it/);
+  assert.match(prompt, /When it shows Did you mean,\n  your reply is only that question/);
+  assert.match(prompt, /Never say 'the closest match is' and carry on\./);
+  assert.match(prompt, /Confirm which project they mean first \(confirm_project, in the\n  rules below\)/);
+  const own = prompt.slice(0, prompt.indexOf('PLATFORM RULES'));
+  assert.doesNotMatch(own, /—/, 'no em dash in what this module writes');
+  // The words, and the buttons: the two answers, then the Open button beside
+  // them, unfilled, which opens the project and decides nothing.
+  assert.deepEqual(mayor.typedDecision('No, another app'), { yes: false, plain: false, kind: 'confirm_project' });
+  assert.deepEqual(mayor.typedDecision('another app.'), { yes: false, plain: false, kind: 'confirm_project' });
+  assert.deepEqual(mayor.typedDecision('yes that one'), { yes: true, plain: false, kind: 'confirm_project' });
+  // A bare yes and no decide it as plain words, while it is the newest bot
+  // message, exactly as they decide File it today.
+  assert.deepEqual(mayor.typedDecision('yes'), { yes: true, plain: true });
+  assert.deepEqual(mayor.typedDecision('no'), { yes: false, plain: true });
+  const app = { slug: 'gym-tracker-9de81f', name: 'Gym Tracker' };
+  assert.deepEqual(mayor.offerActions('confirm_project', app), [
+    { id: 'yes', label: 'Yes', style: 'primary', type: 'server' },
+    { id: 'no', label: 'No, another app', style: 'secondary', type: 'server' },
+    { id: 'open_app', label: 'Open Gym Tracker', style: 'secondary', type: 'open', target: '#app/gym-tracker-9de81f/app' },
+  ]);
+  // The other offers are unchanged, with or without a project to open.
+  assert.deepEqual(mayor.offerActions('file_request'), [
+    { id: 'yes', label: 'File it', style: 'primary', type: 'server' },
+    { id: 'no', label: 'Not now', style: 'secondary', type: 'server' },
+  ]);
 });

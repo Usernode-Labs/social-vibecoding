@@ -314,11 +314,41 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     const first = (await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [asked.messageId])).rows[0];
     // 5 Oct 2026: the shared normaliser (em-dashes.js): a new clause after the dash is a new sentence.
     assert.equal(first.content, 'Good idea. I can file a request for that. Want me to?', 'D: the em dash became a full stop');
-    const offered = await turn('Yes please', scripted([
-      [['offer_request', { project: 'Flat 4B Chores', title: 'Swap chore turns', details: 'Let two flatmates swap their turns on a chore.' }]],
-      [['reply', { text: 'Here it is.' }]],
+    // 9 Oct 2026 (#4501): "Yes please" confirms the bot's own suggestion, but
+    // she has not named the project, so the offer goes through the Did you
+    // mean question and a Yes tap before anything is filed.
+    const confirmTurn = await turn('Yes please', scripted([
+      [['confirm_project', { name: 'Flat 4B Chores' }]],
+      [['reply', { text: 'unused' }]],
     ]));
-    const tapped = await conversations.sendMessage(pool, maya, await chatOf(maya), { content: 'File it', reply_to_id: offered.messageId });
+    assert.equal(created.length, 0, 'the question comes before anything is filed');
+    const { rows: [confirmCard] } = await pool.query('SELECT id, content FROM conversation_messages WHERE id = $1', [confirmTurn.messageId]);
+    assert.match(confirmCard.content, /Did you mean \*\*Flat 4B Chores\*\*\?/);
+    const { rows: [confirmAction] } = await pool.query(
+      'SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1', [confirmCard.id],
+    );
+    const scheduled = [];
+    const yesTap = await mayor.decideOfferTap(pool, CONFIG, {
+      user: maya, actionId: confirmAction.id, choice: 'yes',
+      deps: {
+        bot, apiKey: 'sk-test', schedule: (work, ms) => scheduled.push({ work, ms }),
+        chat: scripted([
+          [['offer_request', { project: 'Flat 4B Chores', title: 'Swap chore turns', details: 'Let two flatmates swap their turns on a chore.' }]],
+          [['reply', { text: 'Here it is.' }]],
+        ]),
+      },
+    });
+    assert.deepEqual(yesTap, { ok: true, choice: 'yes', label: 'Yes' });
+    assert.equal(scheduled.length, 1, 'the offer turn is scheduled, not run on the tap');
+    await scheduled[0].work();
+    assert.equal(created.length, 0, 'the offer card is a promise; filing waits for her answer');
+    const { rows: [offerCard] } = await pool.query(
+      `SELECT id FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 ORDER BY id DESC LIMIT 1`,
+      [await chatOf(maya), bot.id],
+    );
+    assert.notEqual(offerCard.id, confirmCard.id, 'the offer card, not the question');
+    const tapped = await conversations.sendMessage(pool, maya, await chatOf(maya), { content: 'File it', reply_to_id: offerCard.id });
     const card = await mayor.decideOffer(pool, CONFIG, { bot, user: maya, settings, message: tapped.message, deps: {} });
     assert.equal(created.length, 1, 'filed');
     const { rows: [meta] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [card.messageId]);

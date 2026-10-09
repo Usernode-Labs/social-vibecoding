@@ -549,7 +549,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [['offer_request', { project: 'seed-swap', title: 'Trade history', details: 'A list of past swaps.' }]],
       [['reply', { text: 'File it?' }]],
     ]);
-    const offered = await turn('add trade history', chat);
+    const offered = await turn('add trade history to seed swap', chat);
     const tap = await say('Not now', { reply_to_id: offered.messageId });
     const ack = await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: {} });
     assert.equal((await read(ack)).content, 'OK, I won\'t file it.');
@@ -1463,6 +1463,158 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const declined = await mayor.decideTyped(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message: words, deps: {} });
     assert.equal((await read(declined.sent)).content, 'OK, I won\'t file it.');
     assert.equal((await read(second)).metadata.homeroomBot.answer, 'Not now');
+  });
+
+  await t.test('#4501: a project named without typing it exactly is asked about first', async () => {
+    // A project of hers the conversation has never named: no message so far
+    // holds "gym tracker", so only what she types in here can settle it.
+    const gym = await project('gym-tracker', ada);
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE user_id = $1', [ada.id]);
+    const before = created.length;
+    const { rows: [{ n: actionsBefore }] } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM homeroom_bot_dm_actions WHERE user_id = $1', [ada.id],
+    );
+
+    // "gym trackr" is not Gym tracker: the offer is refused, nothing waits,
+    // and the model is told to ask first.
+    await turn('feedback for gym trackr: a rest timer', scripted([
+      [['offer_request', { project: 'gym-tracker', title: 'Rest timer', details: 'A rest timer between sets.' }]],
+      (req) => {
+        const result = lastToolResult(req, 'offer_request');
+        assert.equal(result.ok, false);
+        assert.equal(result.notExact, true);
+        assert.ok(result.closest.includes('Gym tracker'), 'the close one is named for the model');
+        assert.match(result.error, /Call confirm_project with the name they typed and wait for their answer/);
+        return [['reply', { text: 'Which project do you mean? Tell me its name as it shows on its page.' }]];
+      },
+    ]));
+    const { rows: [{ n: afterRefusal }] } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM homeroom_bot_dm_actions WHERE user_id = $1', [ada.id],
+    );
+    assert.equal(afterRefusal, actionsBefore, 'a refused offer writes no action row');
+    assert.equal(created.length, before, 'and files nothing');
+
+    // The model asks instead: "Did you mean Gym tracker?" under Homeroom's
+    // own words, with Yes, No, another app and Open Gym tracker.
+    const card = await turn('please file it on gym trackr', scripted([
+      [['confirm_project', { name: 'gym trackr' }]],
+      (req) => {
+        const result = lastToolResult(req, 'confirm_project');
+        assert.equal(result.exact, false);
+        assert.equal(result.didYouMean, 'Gym tracker');
+        assert.match(result.shown, /They see Did you mean Gym tracker\? with Yes, No, another app and Open Gym tracker/);
+        return [['reply', { text: 'Something else entirely.' }]];
+      },
+    ]));
+    const cardMsg = await read(card);
+    assert.equal(cardMsg.content, 'Did you mean **Gym tracker**?', "the model's words are not used");
+    const meta = cardMsg.metadata.homeroomBot;
+    assert.equal(meta.kind, 'confirm');
+    assert.equal(meta.question, 'Did you mean Gym tracker?');
+    assert.deepEqual(meta.answers, ['Yes', 'No, another app']);
+    assert.deepEqual(meta.actions, [
+      { id: 'yes', label: 'Yes', style: 'primary', type: 'server' },
+      { id: 'no', label: 'No, another app', style: 'secondary', type: 'server' },
+      { id: 'open_app', label: 'Open Gym tracker', style: 'secondary', type: 'open', target: `#app/${gym.slug}/app` },
+    ], 'Yes first and filled, then No, then the Open button, which decides nothing');
+    assert.equal(meta.status, 'open');
+    const { rows: [action] } = await pool.query(
+      'SELECT id, kind, title, app_id, status FROM homeroom_bot_dm_actions WHERE message_id = $1', [card.messageId],
+    );
+    assert.equal(action.kind, 'confirm_project', 'the schema accepts the new kind');
+    assert.equal(action.title, 'gym trackr', 'the name as they typed it');
+    assert.equal(Number(action.app_id), Number(gym.id));
+    assert.equal(action.status, 'open');
+
+    // No, another app: the closest ones she is in, without the guessed one.
+    const noTap = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'no', deps: { bot } });
+    assert.deepEqual(noTap, { ok: true, choice: 'no', label: 'No, another app' });
+    const { rows: [noAck] } = await pool.query(
+      'SELECT content, metadata FROM conversation_messages WHERE idempotency_key = $1 ORDER BY id DESC LIMIT 1',
+      [`hrbot-offer-tap-${action.id}`],
+    );
+    assert.equal(noAck.content, 'Which project did you mean? These are the closest ones you\'re in.');
+    const labels = noAck.metadata?.homeroomBot?.actions?.map((a) => a.label) || [];
+    assert.deepEqual(labels, ['Note board', 'Seed swap'], 'the closest ones she is in, without Gym tracker');
+    const cardAfterNo = await read(card);
+    assert.deepEqual([cardAfterNo.metadata.homeroomBot.status, cardAfterNo.metadata.homeroomBot.answer],
+      ['answered', 'No, another app']);
+
+    // A second card, then Yes: the turn is asked again on her own words, with
+    // the project settled, and nothing is said twice.
+    const card2 = await turn('and a rest timer on gym trackr', scripted([
+      [['confirm_project', { name: 'gym trackr' }]],
+      [['reply', { text: 'unused' }]],
+    ]));
+    const { rows: [action2] } = await pool.query(
+      'SELECT id, message_id FROM homeroom_bot_dm_actions WHERE message_id = $1', [card2.messageId],
+    );
+    const seen = [];
+    const scheduled = [];
+    const { rows: [{ n: messagesBeforeYes }] } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
+    );
+    const yesTap = await mayor.decideOfferTap(pool, CONFIG, {
+      user: ada, actionId: action2.id, choice: 'yes',
+      deps: {
+        bot, apiKey: 'sk-test', schedule: (work, ms) => scheduled.push({ work, ms }),
+        chat: scripted([[['reply', { text: 'Right, Gym tracker it is. What should the rest timer do?' }]]], seen),
+      },
+    });
+    assert.deepEqual(yesTap, { ok: true, choice: 'yes', label: 'Yes' });
+    assert.equal(scheduled.length, 1, 'the turn is scheduled, not run on the tap');
+    assert.equal(scheduled[0].ms, 0);
+    const { rows: [{ n: messagesAfterYes }] } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [opened.conversationId],
+    );
+    assert.equal(messagesAfterYes, messagesBeforeYes, 'no ack: the next reply carries it');
+    await scheduled[0].work();
+    const { rows: [carryOn] } = await pool.query(
+      `SELECT idempotency_key, content FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 ORDER BY id DESC LIMIT 1`,
+      [opened.conversationId, bot.id],
+    );
+    assert.match(carryOn.content, /Gym tracker it is/);
+    assert.match(carryOn.idempotency_key, new RegExp(`-c${action2.id}$`), 'a key of its own, never the offer\'s');
+    const confirmedNote = seen[0].messages.find((m) => m.role === 'system' && /they tapped Yes/.test(m.content || ''));
+    assert.match(confirmedNote?.content || '', /\[Homeroom: they tapped Yes: they meant Gym tracker \(short name gym-tracker\)/);
+
+    const again = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action2.id, choice: 'yes', deps: { bot } });
+    assert.equal(again.status, 409, 'a second tap does nothing');
+
+    // Typed exactly, no question and no row: their words settle it.
+    const { rows: [{ n: beforeExact }] } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM homeroom_bot_dm_actions WHERE user_id = $1', [ada.id],
+    );
+    await turn('also a rest timer for gym tracker', scripted([
+      [['confirm_project', { name: 'Gym Tracker' }]],
+      (req) => {
+        const result = lastToolResult(req, 'confirm_project');
+        assert.deepEqual(result, { exact: true, project: gym.slug, projectName: 'Gym tracker' });
+        return [['reply', { text: 'What should the timer do?' }]];
+      },
+    ]));
+    const { rows: [{ n: afterExact }] } = await pool.query(
+      'SELECT COUNT(*)::int AS n FROM homeroom_bot_dm_actions WHERE user_id = $1', [ada.id],
+    );
+    assert.equal(afterExact, beforeExact, 'an exact name writes no row');
+
+    // A Yes decided within the hour counts, on its own, as naming it exactly:
+    // a project never typed right is filed on through the done row alone.
+    const water = await project('water-log', ada);
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, status, decided_at)
+       VALUES ($1, $2, $3, 'confirm_project', 'water logg', 'done', NOW())`,
+      [ada.id, opened.conversationId, water.id],
+    );
+    const filed = await turn('file it there', scripted([
+      [['offer_request', { project: 'water-log', title: 'Water log', details: 'Log each glass.' }]],
+      [['reply', { text: 'Here it is, ready to file.' }]],
+    ]));
+    const filedMsg = await read(filed);
+    assert.match(filedMsg.content, /Water log/, 'the offer went out on the done Yes alone');
+    assert.equal(created.length, before, 'still nothing filed until she taps File it');
   });
 
   await t.test('#3772: a reply that claims what nothing did is asked about, then cut', async () => {
