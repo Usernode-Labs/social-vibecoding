@@ -346,8 +346,10 @@ async function continueProvenEmail(client, email, { createSession } = {}) {
     created,
     // QA 2026-09-24 Q12: the account still owes a choice of handle, so the
     // password step asks for it rather than the person meeting a name
-    // they never chose in the waiting room. #3575: asked with an EMPTY
-    // field — there is no suggestion any more (see usernames.js).
+    // they never chose in the waiting room. #4596: the field arrives
+    // holding a suggestion from the address (`suggestedUsername`, below),
+    // which the person can change; set-password still takes only what
+    // the field sends.
     needsUsernameChoice: user.needs_username_choice === true,
   };
 }

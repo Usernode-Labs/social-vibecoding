@@ -658,6 +658,8 @@ test('an email code branches on the account it matches (#1586)', async (t) => {
         next: 'set-password',
         created: false,
         needsUsername: true,
+        // #4596: the field arrives holding a suggestion from the address.
+        suggestedUsername: 'owesname',
         waitlisted: true,
       });
       assert.equal((await pool.query(

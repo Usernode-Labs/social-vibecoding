@@ -183,12 +183,12 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
   const fetch = fakeFetch((url, init) => {
     if (url !== '/api/auth/release-link') return [404, {}];
     const { token } = JSON.parse(init.body);
-    if (token === key) return [200, { ok: true, next: 'set-password', email: 'ada@example.com', needsUsername: true }];
+    if (token === key) return [200, { ok: true, next: 'set-password', email: 'ada@example.com', needsUsername: true, suggestedUsername: 'ada' }];
     if (token === 'S'.repeat(43)) return [200, { ok: true, next: 'signed-in', email: 'ada@example.com', user: {} }];
     return [422, { error: 'This sign-in link has expired or was already used.', code: 'invalid_release_link' }];
   });
   await withGlobals({ window: {}, sessionStorage: memoryStorage(), fetch }, async () => {
-    assert.deepEqual(await sheet.spendReleaseLink(key), { next: 'set-password', email: 'ada@example.com', needsUsername: true });
+    assert.deepEqual(await sheet.spendReleaseLink(key), { next: 'set-password', email: 'ada@example.com', needsUsername: true, suggestedUsername: 'ada' });
     assert.equal((await sheet.spendReleaseLink('S'.repeat(43))).next, 'signed-in');
     assert.equal(await sheet.spendReleaseLink('U'.repeat(43)), null, 'expired, used or unknown: the fallback');
   });
@@ -196,7 +196,7 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
   const src = read(SHEET);
   // Spent: "Welcome <address>" over the account step; refused: the prefill and the code.
   assert.match(src, /if \(!spent\) \{ prefill\(\); return; \}/);
-  assert.match(src, /setWelcome\(spent\.email\);\s+setNeedsUsername\(spent\.needsUsername\);\s+setCooldownUntil\(0\);\s+setStep\('account'\);/);
+  assert.match(src, /setWelcome\(spent\.email\);\s+setNeedsUsername\(spent\.needsUsername\);\s+setSuggestedUsername\(spent\.suggestedUsername\);\s+setCooldownUntil\(0\);\s+setStep\('account'\);/);
   assert.match(src, /welcome \? `Welcome \$\{welcome\}` : 'Finish your account'/);
 });
 

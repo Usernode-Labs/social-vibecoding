@@ -394,7 +394,9 @@ export async function releaseArrival(token: string, now = Date.now()): Promise<R
 }
 
 /** A waitlist "you're in" link's one-time sign-in, spent (#4594). */
-export type ReleaseSpend = { next: 'signed-in' | 'set-password'; email: string; needsUsername: boolean };
+export type ReleaseSpend = {
+  next: 'signed-in' | 'set-password'; email: string; needsUsername: boolean; suggestedUsername: string;
+};
 
 /**
  * Spend the release mail's one-time sign-in link (src/services/release-links.js)
@@ -413,7 +415,12 @@ export async function spendReleaseLink(key: string): Promise<ReleaseSpend | null
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok || typeof data.email !== 'string') return null;
     if (data.next !== 'signed-in' && data.next !== 'set-password') return null;
-    return { next: data.next, email: data.email, needsUsername: data.needsUsername === true };
+    return {
+      next: data.next,
+      email: data.email,
+      needsUsername: data.needsUsername === true,
+      suggestedUsername: typeof data.suggestedUsername === 'string' ? data.suggestedUsername : '',
+    };
   } catch {
     return null;
   }
@@ -722,6 +729,7 @@ export function SignInSheet({
         if (spent.next === 'signed-in') { await finishRef.current('existing'); return; }
         setWelcome(spent.email);
         setNeedsUsername(spent.needsUsername);
+        setSuggestedUsername(spent.suggestedUsername);
         setCooldownUntil(0);
         setStep('account');
       });

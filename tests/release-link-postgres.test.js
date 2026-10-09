@@ -104,6 +104,7 @@ test('the release link signs its recipient in once, by POST, and only while it i
     assert.equal(body.email, 'new.person@example.test', 'the welcome names the address');
     assert.equal(body.created, true);
     assert.equal(body.needsUsername, true, 'straight to choose-a-username');
+    assert.equal(body.suggestedUsername, 'newperson', 'with the same suggestion a code gives (#4596)');
     assert.match(cookieValue(first.headers, 'usernode_signup'), /^[0-9a-f]{64}$/);
     const user = (await pool.query(
       `SELECT id, email_confirmed, password_set, has_platform_access FROM users
