@@ -118,6 +118,19 @@ keeping any query the path already has (for example
 "/rota?un-now=2026-10-08T18:00:00.000Z"). Do this for every change, screen
 and clip, so the two sides differ only by the change.
 
+Every change is shot in two looks, named by the brief's looks.values: first
+all of it in the light look, then all of it again in the dark look. The
+brief's looks.param names the query parameter that sets the app's look on
+its addresses. Light first: add looks.param=light to intent.startPath,
+keeping any query the path already has and previewAt's, and save each shot
+with look "light". Then the dark pass: reopen the start path with
+looks.param=dark and follow the steps again for every change and screen
+size, and record the clips of motion changes again too, saving everything
+with look "dark". A screen that looks the same in both looks is fine: when a
+dark save answers that it is the same image as the light one, leave it as it
+is. The light look is what the change is judged on, so if you run short of
+time, the light pass comes first and must be complete.
+
 The copies hold demo data for each persona. The brief's availableFixtures
 lists it: who it is for (persona, alsoFor), what it shows and its path. Look
 there for a state the steps need before you decide a change cannot be
@@ -158,8 +171,9 @@ reach the state: missing data, access, or an interaction you could not
 perform.`;
 
 const TASK_PROMPT = `Read your brief with get_brief, then save a before and an
-after shot of every declared change on each of its screens (plus a clip of
-each side for motion changes), or skip a change you cannot reach and say why.`;
+after shot of every declared change on each of its screens, in the light look
+first and then in the dark look (plus a clip of each side for motion
+changes), or skip a change you cannot reach and say why.`;
 
 function resultThreadId(result) {
   return result?.sessionId || result?.initSessionId || null;
@@ -265,7 +279,7 @@ async function dispatchClaude(config, options, deps) {
     onProgress,
     onShotsDiagnostic: options.onShotsDiagnostic,
   }), {
-    timeoutMs: options.timeoutMs || config.shots?.maxAgentMs || 480_000,
+    timeoutMs: options.timeoutMs || config.shots?.maxAgentMs || 840_000,
     onTimeout: async () => {
       reportDiagnostic(options, { kind: 'agent_deadline' });
       reportDiagnostic(options, { kind: 'worker_stop_requested' });

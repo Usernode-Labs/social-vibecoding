@@ -122,6 +122,39 @@ test('screens of different widths are shown without outlines rather than guessed
   assert.deepEqual(shown.regions, []);
 });
 
+test('each look is its own screen, and a dark-only screen cannot make a change unchanged', async () => {
+  const lit = screen(100, 60, glyphs(5, 5, 5));
+  const dim = screen(100, 60, glyphs(5, 5, 5, [200, 200, 210]));
+  const darkFile = (storyId, viewport, side, variant, px) => ({ ...file(storyId, viewport, side, variant, px),
+    theme: 'dark' });
+  const stories = [{ id: 'x', viewports: [{ name: 'desktop' }] }];
+  const files = [
+    file('x', 'desktop', 'base', 'context', lit), file('x', 'desktop', 'head', 'context', lit),
+    darkFile('x', 'desktop', 'base', 'context', dim), darkFile('x', 'desktop', 'head', 'context', dim),
+  ];
+  const screens = await diff.screensFor(stories, files);
+  assert.equal(screens.length, 2, 'the light screen and the dark screen');
+  assert.deepEqual(screens.map((shown) => shown.theme), ['light', 'dark']);
+  assert.deepEqual(screens.map((shown) => shown.regions.length), [0, 0], 'identical within each look');
+
+  // Only the light screen can call a change unchanged: a dark difference
+  // does not stop it, and a dark sameness does not grant it.
+  const lightOnly = await diff.screensFor(stories, [
+    file('x', 'desktop', 'base', 'context', lit),
+    file('x', 'desktop', 'head', 'context', screen(100, 60, glyphs(5, 5, 6))),
+    darkFile('x', 'desktop', 'base', 'context', dim), darkFile('x', 'desktop', 'head', 'context', dim),
+  ]);
+  assert.deepEqual([...diff.unchangedStories(lightOnly)], [],
+    'the dark screen shares the change, the light one shows it');
+  const darkOnly = await diff.screensFor(stories, [
+    file('x', 'desktop', 'base', 'context', lit), file('x', 'desktop', 'head', 'context', lit),
+    darkFile('x', 'desktop', 'base', 'context', dim),
+    darkFile('x', 'desktop', 'head', 'context', screen(100, 60, glyphs(5, 5, 7, [200, 200, 210]))),
+  ]);
+  assert.deepEqual([...diff.unchangedStories(darkOnly)], ['x'],
+    'what differs only in the dark look is not judged here');
+});
+
 test('unchangedStories names the changes whose every screen shows no difference', () => {
   const screens = [
     { viewport: 'desktop', shot: 'a', stories: ['a'], regions: [] },

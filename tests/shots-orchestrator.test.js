@@ -381,7 +381,7 @@ test('every declared change saved publishes the ready files, tears the builds do
   // The plan hash is the manifest hash: it fences storage and names exactly
   // the files that were published.
   const manifest = stored.artifacts
-    .map(({ storyId, viewport, side, variant, sha256 }) => ({ storyId, viewport, side, variant, sha256 }))
+    .map(({ storyId, viewport, theme, side, variant, sha256 }) => ({ storyId, viewport, theme, side, variant, sha256 }))
     .sort((a, b) => shots.slotKey(a).localeCompare(shots.slotKey(b)));
   const manifestHash = crypto.createHash('sha256').update(contract.canonicalJson({
     mode: shots.SHOTS_MODE, intent: fixture.run.intent, manifest,
@@ -989,6 +989,35 @@ test('a declared preview moment reaches the brief in a fixed shape, so both copi
     assert.deepEqual(brief.previewAt, {
       at: '2026-10-08T18:00:00.000Z', label: 'Thursday 8 Oct, 7 pm', zone: 'Europe/London', param: 'un-now',
     });
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('the brief names the look parameter: the platform\'s theme, a child app\'s un-theme', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-looks-param-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefArgs = {
+      run: { id: RUN_ID },
+      session: { pr_title: 'Spacing change', testing_md: '1. Open the screen.' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/app.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+    };
+    // Without a config the caller is a child app: its look rides un-theme.
+    assert.deepEqual(orchestrator.shotsBrief(briefArgs).looks, { param: 'un-theme', values: ['light', 'dark'] });
+    // The platform's own copy is themed through its theme parameter.
+    const platform = orchestrator.shotsBrief({
+      ...briefArgs,
+      session: { ...briefArgs.session, app_slug: 'social-vibecoding' },
+      config: { selfAppSlug: 'social-vibecoding' },
+    });
+    assert.deepEqual(platform.looks, { param: 'theme', values: ['light', 'dark'] });
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }

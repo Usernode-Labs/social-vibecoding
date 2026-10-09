@@ -52,7 +52,7 @@ test('a saved shot maps before/after to the stored sides and a retake replaces i
   const first = run.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before' },
     fixtures.png({ shade: 1 }));
   assert.deepEqual({ ...first, progress: undefined }, {
-    saved: true, change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen',
+    saved: true, change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen', look: 'light',
     bytes: fixtures.png({ shade: 1 }).length, width: 4, height: 3, progress: undefined,
   });
   assert.equal(run.saved.size, 1);

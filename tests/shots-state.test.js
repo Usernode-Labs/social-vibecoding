@@ -454,11 +454,11 @@ test('storeArtifacts publishes a reviewing run\'s files in one fenced transactio
 
   const [inserted] = statements.filter(({ sql }) => /^INSERT/.test(sql));
   assert.match(inserted.values[0], /^[0-9a-f]{32}$/);
-  assert.deepEqual(inserted.values.slice(1, 8),
-    [RUN_ID, 'invite-suggestions', 'desktop', 'base', 'context', 'png', 'image/png']);
-  assert.equal(inserted.values[8], files[0].data);
-  assert.equal(inserted.values[12], files[0].sha256);
-  assert.equal(inserted.values[13], null);
+  assert.deepEqual(inserted.values.slice(1, 9),
+    [RUN_ID, 'invite-suggestions', 'desktop', 'light', 'base', 'context', 'png', 'image/png']);
+  assert.equal(inserted.values[9], files[0].data);
+  assert.equal(inserted.values[13], files[0].sha256);
+  assert.equal(inserted.values[14], null);
   assert.equal(released(), 1);
 });
 

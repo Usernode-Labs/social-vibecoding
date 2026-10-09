@@ -188,7 +188,9 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /do not end with only\s+prose/);
   assert.match(agent.TASK_PROMPT, /get_brief/);
   assert.match(agent.TASK_PROMPT, /before and an\s+after shot of every declared change/);
-  assert.match(agent.TASK_PROMPT, /clip of\s+each side for motion changes/);
+  assert.match(agent.TASK_PROMPT, /clip of\s+each side for motion\s+changes/);
+  // The light look is taken first; the dark one is the second pass.
+  assert.match(agent.TASK_PROMPT, /light look\s+first and then in the dark look/);
   assert.match(agent.TASK_PROMPT, /skip a change you cannot reach/);
   for (const text of [prompt, agent.TASK_PROMPT]) {
     assert.doesNotMatch(text,

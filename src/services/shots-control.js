@@ -107,6 +107,7 @@ class RunControl {
         screen: target.viewport,
         side: target.side === 'base' ? 'before' : 'after',
         kind: target.variant === 'animation' ? 'clip' : target.variant === 'focus' ? 'element' : 'screen',
+        look: target.theme,
         bytes: info.bytes,
         ...(info.width ? { width: info.width, height: info.height } : {}),
         ...(sameAsOtherSide ? {

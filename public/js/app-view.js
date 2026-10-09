@@ -21278,15 +21278,36 @@ const AppView = {
   _shotsViewerHtml({ key, screens, sideBySide = false, autoSide = false, zoom = false, className = '', barLead = '' } = {}) {
     const esc = escapeHtml;
     const attr = escapeAttr;
-    const list = Array.isArray(screens) ? screens.slice(0, 6) : [];
+    const list = Array.isArray(screens) ? screens.slice(0, 12) : [];
     if (!list.length) return '';
     const sizeName = AppView._shotsSizeName;
     const sideId = (side) => `shots-${key}-side-${side}`;
     const pickId = (index) => `shots-${key}-screen-${index}`;
     const zoomId = (which) => `shots-${key}-zoom-${which}`;
+    // A screen's look. A look left out is light, so an HTML spec's drawn
+    // screens and an older run's card keep their meaning: with no dark
+    // screen in the list, no look segment is drawn and the markup is what it
+    // always was.
+    const lookOf = (screen) => (screen && screen.look === 'dark' ? 'dark' : 'light');
+    const themed = list.some((screen) => lookOf(screen) === 'dark');
     const shownSizes = [...new Set(list.map((screen) => screen.viewport))];
     const indexesOf = (size) => list.map((screen, index) => (screen.viewport === size ? index : -1)).filter((index) => index >= 0);
-    const stepping = shownSizes.some((size) => indexesOf(size).length > 1);
+    // The first screen of a size in one look, or null when that look has no
+    // screen of that size.
+    const firstOfLook = (size, look) => list.map((screen, index) => (
+      screen.viewport === size && lookOf(screen) === look ? index : -1
+    )).filter((index) => index >= 0)[0] ?? null;
+    // With two looks the arrows and the size switch move within one look:
+    // a screen's peers are its size's screens in its own look.
+    const peersOf = (index) => {
+      const screen = list[index];
+      return themed
+        ? list.map((other, otherIndex) => (
+          other.viewport === screen.viewport && lookOf(other) === lookOf(screen) ? otherIndex : -1
+        )).filter((otherIndex) => otherIndex >= 0)
+        : indexesOf(screen.viewport);
+    };
+    const stepping = list.some((_screen, index) => peersOf(index).length > 1);
     const zooming = zoom && list.some((screen) => screen.zoomable);
     const sizeIcon = {
       desktop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
@@ -21295,8 +21316,13 @@ const AppView = {
     const bothIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="7.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="7.5" height="14" rx="1.5"/></svg>';
     const closeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2M11 8.5v5M8.5 11h5"/></svg>';
     const wholeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>';
+    const lookIcon = {
+      light: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+      dark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+    };
+    const lookTitle = { light: 'Light', dark: 'Dark' };
     const stepper = (index) => {
-      const same = indexesOf(list[index].viewport);
+      const same = peersOf(index);
       const at = same.indexOf(index);
       const prev = at > 0 ? `<label for="${pickId(same[at - 1])}" class="shots-screen-step" title="Previous screen">‹</label>`
         : '<span class="shots-screen-step shots-screen-step-off">‹</span>';
@@ -21311,14 +21337,32 @@ const AppView = {
       const sizeSwitch = shownSizes.length > 1
         ? `<span class="shots-seg shots-seg-size" aria-hidden="true">${shownSizes.map((size) => {
           const here = size === screen.viewport;
-          return `<label for="${pickId(here ? screenIndex : indexesOf(size)[0])}" class="shots-seg-btn${here ? ' shots-seg-on' : ''}" title="${attr(sizeName(size))}">${sizeIcon[size] || ''}<span class="shots-seg-label">${esc(sizeName(size))}</span></label>`;
+          const target = themed ? (firstOfLook(size, lookOf(screen)) ?? indexesOf(size)[0]) : (here ? screenIndex : indexesOf(size)[0]);
+          return `<label for="${pickId(target)}" class="shots-seg-btn${here ? ' shots-seg-on' : ''}" title="${attr(sizeName(size))}">${sizeIcon[size] || ''}<span class="shots-seg-label">${esc(sizeName(size))}</span></label>`;
         }).join('')}</span>`
         : '';
       const zoomSwitch = zooming && screen.zoomable
         ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="Close-up">${closeIcon}<span class="shots-seg-label">Close-up</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="Whole screen">${wholeIcon}<span class="shots-seg-label">Whole screen</span></label></span>`
         : '';
+      // The look switch, after Desktop/Phone. Each button shows the other
+      // look's screen of this size: the same change's screen there when it
+      // has one, else that look's first screen of the size. A look the run
+      // has no screen of here is greyed out, not clickable.
+      const lookSwitch = themed
+        ? `<span class="shots-seg shots-seg-look" aria-hidden="true">${['light', 'dark'].map((look) => {
+          const peer = list.map((other, index) => (
+            other.viewport === screen.viewport && lookOf(other) === look ? index : -1
+          )).filter((index) => index >= 0);
+          const target = peer.find((index) => list[index].shot === screen.shot)
+            ?? firstOfLook(screen.viewport, look);
+          const on = lookOf(screen) === look;
+          return Number.isInteger(target)
+            ? `<label for="${pickId(target)}" class="shots-seg-btn${on ? ' shots-seg-on' : ''}" title="${lookTitle[look]}">${lookIcon[look]}</label>`
+            : `<span class="shots-seg-btn shots-seg-off" title="${lookTitle[look]}">${lookIcon[look]}</span>`;
+        }).join('')}</span>`
+        : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label>${both}</span>${sizeSwitch}${zoomSwitch}${lookSwitch}${stepping ? stepper(screenIndex) : ''}</div>
         <div class="shots-stage">
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
@@ -21333,7 +21377,7 @@ const AppView = {
       ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="Show a close-up of what changes" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="Show the whole screen"></span>`
       : '';
     const screenPicks = list.length > 1
-      ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(`Screen ${index + 1} of ${list.length}: ${screen.viewport}`)}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
+      ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(`Screen ${index + 1} of ${list.length}: ${screen.viewport}${themed ? `, ${lookOf(screen)}` : ''}`)}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
       : '';
     return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },
@@ -21401,10 +21445,17 @@ const AppView = {
       </section>`;
     }
 
-    const by = (storyId, viewport, side, variant, media = null) => artifacts.find((a) => (
+    // A saved file belongs to one look. A look left out is light, so older
+    // runs' artifacts keep their meaning.
+    const by = (storyId, viewport, side, variant, media = null, look = 'light') => artifacts.find((a) => (
       a && a.storyId === storyId && a.viewport === viewport && a.side === side
-      && a.variant === variant && (!media || a.media === media) && shotsUrl(a.url)
+      && a.variant === variant && (!media || a.media === media) && (a.theme || 'light') === look
+      && shotsUrl(a.url)
     ));
+    const lookOf = (screen) => (screen && screen.theme === 'dark' ? 'dark' : 'light');
+    // The run has a dark copy when any artifact carries one; the look switch
+    // is drawn only then.
+    const hasDarkArtifacts = artifacts.some((a) => a && (a.theme || 'light') === 'dark');
     // One result per declared change; runs from before shots have none.
     const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
     const resultOf = (claim) => shotResults.find((entry) => entry && entry.id === claim.id);
@@ -21426,22 +21477,37 @@ const AppView = {
     // screen, which describes only the changes on that screen. Changes on the
     // same screen share it. A run from before that was worked out gets a
     // screen per change and size, with nothing outlined.
-    let screens = (Array.isArray(shots.screens) ? shots.screens : []).filter((screen) => screen
-      && by(screen.shot, screen.viewport, 'base', 'context') && by(screen.shot, screen.viewport, 'head', 'context'));
+    let screens = (Array.isArray(shots.screens) ? shots.screens : []).filter((screen) => {
+      if (!screen) return false;
+      const look = lookOf(screen);
+      return by(screen.shot, screen.viewport, 'base', 'context', null, look)
+        && by(screen.shot, screen.viewport, 'head', 'context', null, look);
+    });
     if (!screens.length) {
       for (const claim of claims.filter((entry) => !skipped(entry))) {
         const viewports = Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop'];
         for (const viewport of viewports) {
-          if (by(claim.id, viewport, 'base', 'context') || by(claim.id, viewport, 'head', 'context')) {
-            screens.push({ viewport, shot: claim.id, stories: [claim.id], regions: [] });
+          for (const look of hasDarkArtifacts ? ['light', 'dark'] : ['light']) {
+            if (by(claim.id, viewport, 'base', 'context', null, look)
+                || by(claim.id, viewport, 'head', 'context', null, look)) {
+              screens.push({ viewport, theme: look, shot: claim.id, stories: [claim.id], regions: [] });
+            }
           }
         }
       }
     }
-    // Grouped by screen size, which the Desktop / Phone switch picks; the
-    // arrows step through the screens of one size.
+    // The viewer's own look leads, so the card opens on the shots in the
+    // look Homeroom is being used in, and the first radio — the one that
+    // starts checked — is that look. Within a look, grouped by screen size,
+    // which the Desktop / Phone switch picks; the arrows step through the
+    // screens of one size and look.
+    const hasDarkScreens = screens.some((screen) => lookOf(screen) === 'dark');
+    const lookOrder = hasDarkScreens && AppView.resolvedTheme() === 'dark'
+      ? ['dark', 'light'] : ['light', 'dark'];
     const sizes = [...new Set(screens.map((screen) => screen.viewport))];
-    screens = sizes.flatMap((size) => screens.filter((screen) => screen.viewport === size)).slice(0, 6);
+    screens = lookOrder.flatMap((look) => sizes.flatMap((size) => screens
+      .filter((screen) => lookOf(screen) === look && screen.viewport === size)))
+      .slice(0, 12);
     const onScreenOf = (screen) => (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
       .map((id) => claims.find((claim) => claim.id === id)).filter((claim) => claim && !skipped(claim));
 
@@ -21489,13 +21555,19 @@ const AppView = {
       return shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Not in these shots:</span> ${esc(shotNote)}</p>` : '';
     };
     const viewportsOf = (claim) => (Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop']);
-    const clipsOf = (claim, viewports) => viewports.map((viewport) => {
+    // A dark clip falls back to the light one when the dark pass missed it;
+    // the poster follows the same rule.
+    const clipLook = (artifactOf) => (look) => artifactOf(look) || (look === 'dark' ? artifactOf('light') : null);
+    const clipsOf = (claim, viewports, look = 'light') => viewports.map((viewport) => {
       // A motion change has a clip per side; older runs stored one paired
       // before/after recording instead.
-      const baseClip = by(claim.id, viewport, 'base', 'animation', 'webm');
-      const headClip = by(claim.id, viewport, 'head', 'animation', 'webm');
+      const baseClip = clipLook((at) => by(claim.id, viewport, 'base', 'animation', 'webm', at))(look);
+      const headClip = clipLook((at) => by(claim.id, viewport, 'head', 'animation', 'webm', at))(look);
       const pairedClip = by(claim.id, viewport, 'paired', 'animation', 'webm');
-      const poster = (side) => { const shot = by(claim.id, viewport, side, 'context'); return shot ? shotsUrl(shot.url) : ''; };
+      const poster = (side) => {
+        const shot = clipLook((at) => by(claim.id, viewport, side, 'context', null, at))(look);
+        return shot ? shotsUrl(shot.url) : '';
+      };
       const clip = (label, artifact, posterUrl) => `<figure style="flex:1 1 240px;min-width:0;margin:0">
           <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label} clip · ${esc(viewport)}</figcaption>
           ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`
@@ -21512,9 +21584,10 @@ const AppView = {
     }).join('');
 
     const screenParts = screens.map((screen) => {
+      const look = lookOf(screen);
       const onScreen = onScreenOf(screen);
-      const before = by(screen.shot, screen.viewport, 'base', 'context');
-      const after = by(screen.shot, screen.viewport, 'head', 'context');
+      const before = by(screen.shot, screen.viewport, 'base', 'context', null, look);
+      const after = by(screen.shot, screen.viewport, 'head', 'context', null, look);
       const absent = onScreen.length > 0 && onScreen.every((claim) => claim.baseState === 'not_present');
       const who = [...new Set(onScreen.map(persona))].map((name) => `a ${name}`).join(' and ') || 'a member';
       const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
@@ -21530,7 +21603,7 @@ const AppView = {
         const n = numberOf(claim.id);
         const flow = thread ? '' : flowOf(claim);
         return `<li class="shots-change" data-shots-n="${n}" data-shots-change="${attr(claim.id || '')}"><span class="shots-change-n">${n}</span>
-            <div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${flow ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${flow}</div>` : ''}${noteOf(claim)}${clipsOf(claim, [screen.viewport])}</div></li>`;
+            <div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${flow ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${flow}</div>` : ''}${noteOf(claim)}${clipsOf(claim, [screen.viewport], look)}</div></li>`;
       }).join('');
       // A dashed outline or line needs its words the first time it shows.
       const shown = drawn.base + drawn.head;
@@ -21543,6 +21616,7 @@ const AppView = {
       const dims = width > 0 && height > 0 ? `, ${Math.round(width)} × ${Math.round(height)}` : '';
       return {
         viewport: screen.viewport,
+        look,
         afterHtml: side('head', after, 'After'),
         beforeHtml: side('base', before, absent ? 'Before, not there yet' : 'Before'),
         afterChip: 'After',
@@ -21574,7 +21648,7 @@ const AppView = {
       }
       const viewports = viewportsOf(claim);
       const unseen = viewports.filter((viewport) => !shownAt.has(`${claim.id}|${viewport}`));
-      const clips = clipsOf(claim, unseen);
+      const clips = clipsOf(claim, unseen, AppView.resolvedTheme());
       if (unseen.length < viewports.length && !clips) return '';
       const flow = thread ? '' : flowOf(claim);
       return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="ready" class="shots-claim">
@@ -21602,7 +21676,7 @@ const AppView = {
           <div class="dev-shot-details-meta">${esc(viewportsOf(claim).map(sizeName).join(', '))} · seen as a ${esc(persona(claim))}</div>
           ${flow ? `<div class="dev-shot-details-flow">${flow}</div>` : ''}</li>`;
       }).join('');
-      return `${rows ? `<ol class="dev-shot-details-claims">${rows}</ol>` : ''}<p class="dev-shot-details-builds">Taken on the exact before and after builds of this change: ${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span></p>`;
+      return `${rows ? `<ol class="dev-shot-details-claims">${rows}</ol>` : ''}<p class="dev-shot-details-builds">Taken on the exact before and after builds of this change: ${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span>${hasDarkArtifacts ? '<span>Light and dark</span>' : ''}</p>`;
     }
     const viewer = AppView._shotsViewerHtml(thread
       ? { key, screens: screenParts, sideBySide: true, autoSide: true, className: 'shots-viewer-spec dev-change-viewer', barLead: '<span class="dev-change-card-name">Before and after</span>' }

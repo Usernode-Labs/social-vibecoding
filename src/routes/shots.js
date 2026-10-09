@@ -144,10 +144,10 @@ function shotsRoutes(config) {
       const trace = run.trace_summary && typeof run.trace_summary === 'object'
         ? run.trace_summary : {};
       const artifacts = await pool.query(
-        `SELECT story_id, viewport, side, variant, media, bytes, width, height, sha256
+        `SELECT story_id, viewport, theme, side, variant, media, bytes, width, height, sha256
            FROM shot_artifacts
           WHERE run_id = $1
-          ORDER BY story_id, viewport, side, variant
+          ORDER BY story_id, viewport, theme, side, variant
           LIMIT 256`,
         [run.id]
       );
@@ -179,6 +179,7 @@ function shotsRoutes(config) {
         artifacts: artifacts.rows.map((artifact) => ({
           storyId: artifact.story_id,
           viewport: artifact.viewport,
+          theme: artifact.theme,
           side: artifact.side,
           variant: artifact.variant,
           media: artifact.media,

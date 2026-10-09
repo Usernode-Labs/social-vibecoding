@@ -270,6 +270,17 @@ test('mismatched media is refused: no PNG animation, no WebM shot, no paired sti
   }), [], 'an unverified run serves no clip');
 });
 
+test('an artifact keeps its look, reads light without one, and the set stops at 72', () => {
+  assert.equal(kept(artifact({ theme: 'dark' }))[0].theme, 'dark');
+  assert.equal(kept(artifact({ theme: 'sepia' }))[0].theme, 'light', 'a look nothing shot is not kept');
+  assert.equal(kept(artifact())[0].theme, 'light', 'an artifact from before the looks reads light');
+  const many = Array.from({ length: 75 }, (_, index) => artifact({
+    id: `d${String(index).padStart(31, '0')}`, storyId: `s${index}`,
+  }));
+  assert.equal(view.cleanArtifacts(many, { slug: 'demo-app', sessionId: 42, verified: true }).length, 72,
+    '72 artifacts at most: 36 slots in both looks');
+});
+
 test('an interrupted run with an automatic retry to come says so, and is not offered for a manual retry', () => {
   const state = require('../src/services/shots-state');
   const row = {
@@ -354,6 +365,20 @@ test('a verified run\'s screens reach the card as integers and its own story ids
   assert.deepEqual(view.serialize(run({ screens, state: 'failed' }), session(), 'demo', HEAD).screens, []);
   assert.deepEqual(view.serialize(run({ screens }), session(), 'demo', OTHER).screens, []);
   assert.deepEqual(view.fromSnapshot(session(), HEAD).screens, []);
+});
+
+test('a screen keeps its look, and a screen from before the looks reads light', () => {
+  const screens = Array.from({ length: 14 }, (_, index) => ({
+    viewport: 'desktop', shot: 'dialog', stories: ['dialog'],
+    width: 10, heightBefore: 10, heightAfter: 10, regions: [],
+  }));
+  screens[0].theme = 'dark';
+  screens[1].theme = 'sepia';
+  const shown = view.serialize(run({ screens }), session(), 'demo', HEAD).screens;
+  assert.equal(shown.length, 12, 'twelve screens at most: the sizes of both looks');
+  assert.equal(shown[0].theme, 'dark');
+  assert.equal(shown[1].theme, 'light', 'a look nothing shot is not kept');
+  assert.equal(shown[2].theme, 'light', 'a screen with no look at all reads light');
 });
 
 test('a note or reason the agent wrote with escaped quotation marks reads with plain ones', () => {

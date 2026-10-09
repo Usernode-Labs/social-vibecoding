@@ -1391,9 +1391,9 @@
     {
       "source": "src/services/shots-state.js",
       "kind": "structural-template",
-      "fingerprint": "c3ee270fde2eebb15148",
+      "fingerprint": "c99377e263b24db226e3",
       "count": 1,
-      "preview": "`SELECT r.*, COALESCE(( SELECT jsonb_agg(jsonb_build_object( 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport, 'side', a.side, 'variant', a.variant, 'm"
+      "preview": "`SELECT r.*, COALESCE(( SELECT jsonb_agg(jsonb_build_object( 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport, 'theme', a.theme, 'side', a.side, 'varia"
     },
     {
       "source": "src/services/shots-state.js",

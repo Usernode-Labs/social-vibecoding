@@ -240,8 +240,9 @@ const areaOf = (region) => Math.max(
 // each step takes about a tenth of a second, and this runs in the platform's
 // own process.
 async function screensFor(stories, files) {
-  const find = (storyId, viewport, side, variant) => files.find((file) => file.storyId === storyId
-    && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png');
+  const find = (storyId, viewport, side, variant, theme = 'light') => files.find((file) => file.storyId === storyId
+    && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png'
+    && (file.theme || 'light') === theme);
   const cache = new Map();
   const pixelsOf = (file) => {
     if (!file) return null;
@@ -255,11 +256,16 @@ async function screensFor(stories, files) {
     }
   }
   const screens = [];
-  for (const viewport of viewports) {
+  // One pass per look, light first. A look with no files of its own is
+  // skipped, so a run that only has light shots (older runs, or a dark pass
+  // the agent ran out of time for) comes out of light only.
+  for (const look of ['light', 'dark']) {
+    if (!files.some((file) => (file.theme || 'light') === look)) continue;
+    for (const viewport of viewports) {
     const groups = [];
     for (const story of stories) {
-      const base = find(story.id, viewport, 'base', 'context');
-      const head = find(story.id, viewport, 'head', 'context');
+      const base = find(story.id, viewport, 'base', 'context', look);
+      const head = find(story.id, viewport, 'head', 'context', look);
       if (!base || !head) continue;
       const group = groups.find((entry) => entry.baseSha === base.sha256);
       if (group) group.stories.push(story);
@@ -275,8 +281,8 @@ async function screensFor(stories, files) {
         // may differ from the one shown only by what the agent hovered.
         const rects = {};
         for (const side of ['base', 'head']) {
-          const crop = find(story.id, viewport, side, 'focus');
-          const own = find(story.id, viewport, side, 'context');
+          const crop = find(story.id, viewport, side, 'focus', look);
+          const own = find(story.id, viewport, side, 'context', look);
           if (crop && own) await new Promise((resolve) => setImmediate(resolve));
           const places = crop && own ? locateAll(pixelsOf(own), pixelsOf(crop)) : [];
           const boxOf = (region) => (side === 'head' ? region.a : region.b);
@@ -302,6 +308,7 @@ async function screensFor(stories, files) {
         .map(({ region }) => region);
       screens.push({
         viewport,
+        theme: look,
         stories: group.stories.map((story) => story.id),
         shot: group.stories[0].id,
         width: before.w,
@@ -309,6 +316,7 @@ async function screensFor(stories, files) {
         heightAfter: after.h,
         regions: kept,
       });
+    }
     }
   }
   return screens;
@@ -325,6 +333,9 @@ function unchangedStories(screens) {
   const changed = new Set();
   const seen = new Set();
   for (const screen of screens || []) {
+    // The light look is what the change is judged on; the dark copy repeats
+    // it and says nothing new.
+    if ((screen.theme || 'light') !== 'light') continue;
     for (const id of screen.stories || []) {
       seen.add(id);
       if (id !== screen.shot || (screen.regions || []).length) changed.add(id);

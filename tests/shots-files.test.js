@@ -103,18 +103,24 @@ test('a shot is addressed to a declared change, one of its screens, a side and a
   const intent = motionIntent();
   const target = (raw) => shots.shotTarget(intent, raw);
   // People and the agent say before/after; the stored sides stay base/head.
+  // A look left out is light.
   assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'before' }), {
-    storyId: 'invite-suggestions', viewport: 'desktop', side: 'base', variant: 'context', media: 'png',
+    storyId: 'invite-suggestions', viewport: 'desktop', theme: 'light', side: 'base', variant: 'context', media: 'png',
   });
   assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' }), {
-    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
+    storyId: 'invite-suggestions', viewport: 'desktop', theme: 'light', side: 'head', variant: 'context', media: 'png',
   });
   assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'element' }), {
-    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'focus', media: 'png',
+    storyId: 'invite-suggestions', viewport: 'desktop', theme: 'light', side: 'head', variant: 'focus', media: 'png',
   });
   assert.deepEqual(target({ change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip' }), {
-    storyId: 'saved-toast', viewport: 'desktop', side: 'base', variant: 'animation', media: 'webm',
+    storyId: 'saved-toast', viewport: 'desktop', theme: 'light', side: 'base', variant: 'animation', media: 'webm',
   });
+  assert.deepEqual(target({ change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'dark' }), {
+    storyId: 'invite-suggestions', viewport: 'desktop', theme: 'dark', side: 'head', variant: 'context', media: 'png',
+  });
+  assert.throws(() => target({ change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'sepia' }),
+    refusal('invalid_look'));
 
   assert.throws(() => target({ change: 'someone-elses-change', screen: 'desktop', side: 'after' }),
     refusal('unknown_change'));
@@ -135,7 +141,7 @@ test('a shot is addressed to a declared change, one of its screens, a side and a
     refusal('clip_not_needed'));
 });
 
-test('a slot is one change, screen, side and kind', () => {
+test('a slot is one change, screen, look, side and kind', () => {
   const intent = motionIntent();
   const keys = new Set([
     { change: 'invite-suggestions', screen: 'desktop', side: 'before' },
@@ -143,12 +149,18 @@ test('a slot is one change, screen, side and kind', () => {
     { change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'element' },
     { change: 'saved-toast', screen: 'desktop', side: 'after' },
     { change: 'saved-toast', screen: 'desktop', side: 'after', kind: 'clip' },
+    { change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'dark' },
   ].map((raw) => shots.slotKey(shots.shotTarget(intent, raw))));
-  assert.equal(keys.size, 5);
+  assert.equal(keys.size, 6, 'a dark slot does not overwrite the light one');
   assert.equal(
     shots.slotKey(shots.shotTarget(intent, { change: 'saved-toast', screen: 'desktop', side: 'before' })),
     shots.slotKey(shots.shotTarget(intent, { change: 'saved-toast', screen: 'desktop', side: 'base', kind: 'screen' })),
   );
+  // A look left out counts as light.
+  assert.equal(shots.slotKey({ storyId: 'x', viewport: 'desktop', side: 'base', variant: 'context' }),
+    shots.slotKey({ storyId: 'x', viewport: 'desktop', theme: 'light', side: 'base', variant: 'context' }));
+  assert.notEqual(shots.slotKey({ storyId: 'x', viewport: 'desktop', theme: 'dark', side: 'base', variant: 'context' }),
+    shots.slotKey({ storyId: 'x', viewport: 'desktop', theme: 'light', side: 'base', variant: 'context' }));
 });
 
 test('a skip reason is trimmed, bounded and required', () => {
@@ -166,7 +178,7 @@ test('a stored file carries its slot, type, bytes and digest', () => {
     shots.shotTarget(intent, { change: 'invite-suggestions', screen: 'desktop', side: 'after' }),
     image, shots.inspectImage(image));
   assert.deepEqual({ ...shot, data: shot.data === image }, {
-    storyId: 'invite-suggestions', viewport: 'desktop', side: 'head', variant: 'context', media: 'png',
+    storyId: 'invite-suggestions', viewport: 'desktop', theme: 'light', side: 'head', variant: 'context', media: 'png',
     contentType: 'image/png', data: true, width: 5, height: 2, bytes: image.length, sha256: sha256(image),
     focusRect: null, stageLabels: null,
   });
@@ -411,4 +423,54 @@ test('an element shot must fit the screen it was taken on', () => {
     refusal('element_shot_too_wide'));
   // Screen shots and clips are not element shots.
   assert.doesNotThrow(() => shots.checkElementSize(story, target('mobile', 'screen'), size(390, 5000)));
+});
+
+test('a ready change takes its dark shots along only where they differ from light', () => {
+  const intent = motionIntent();
+  const lightBase = fixtures.png({ shade: 1 });
+  const lightHead = fixtures.png({ shade: 2 });
+  const darkBase = fixtures.png({ width: 5, height: 5, shade: 3 });
+  const darkHead = fixtures.png({ width: 5, height: 5, shade: 4 });
+  const build = (list) => {
+    const saved = new Map();
+    for (const [raw, buffer] of list) save(saved, intent, raw, buffer);
+    return saved;
+  };
+  const lightEntries = [
+    [{ change: 'invite-suggestions', screen: 'desktop', side: 'before' }, lightBase],
+    [{ change: 'invite-suggestions', screen: 'desktop', side: 'after' }, lightHead],
+  ];
+  // Light alone is ready, and everything published reads light.
+  const lightOnly = shots.summarize(intent, build(lightEntries));
+  assert.equal(lightOnly.stories[0].status, 'ready');
+  assert.ok(lightOnly.files.every((file) => file.theme === 'light'));
+
+  // An app with one fixed look: dark comes out the same on both sides, so
+  // the dark copy is dropped.
+  const sameDark = build([...lightEntries,
+    [{ change: 'invite-suggestions', screen: 'desktop', side: 'before', look: 'dark' }, lightBase],
+    [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'dark' }, lightHead],
+  ]);
+  const dropped = shots.summarize(intent, sameDark);
+  assert.ok(dropped.files.every((file) => file.theme === 'light'));
+
+  // One dark side missing is the agent's dark pass cut short: light only.
+  const halfDark = build([...lightEntries,
+    [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'dark' }, darkHead],
+  ]);
+  assert.ok(shots.summarize(intent, halfDark).files.every((file) => file.theme === 'light'));
+
+  // A dark copy that differs is published with the light ones, and a dark
+  // element shot rides along. The manifest hash moves with the look.
+  const withDark = build([...lightEntries,
+    [{ change: 'invite-suggestions', screen: 'desktop', side: 'before', look: 'dark' }, darkBase],
+    [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', look: 'dark' }, darkHead],
+    [{ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'element', look: 'dark' },
+      fixtures.png({ width: 5, height: 5, shade: 5 })],
+  ]);
+  const published = shots.summarize(intent, withDark);
+  assert.deepEqual(published.files.map((file) => [file.side, file.theme]), [
+    ['base', 'light'], ['head', 'light'], ['base', 'dark'], ['head', 'dark'], ['head', 'dark'],
+  ]);
+  assert.notEqual(published.manifestHash, lightOnly.manifestHash, 'the manifest carries the look');
 });

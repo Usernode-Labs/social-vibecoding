@@ -163,13 +163,14 @@ server.registerTool('get_brief', {
 });
 
 server.registerTool('save_shot', {
-  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, and the filename. One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, side and kind again replaces it. The answer says which saved and why any did not.',
+  description: 'Save screenshots for declared changes, several in one call. First call browser_take_screenshot with a filename for each (the visible screen, or one element with kind "element"), then list them here: for each, the change id, the screen name, side "before" or "after", the kind, the filename, and the look "light" or "dark" it was taken in (every screen is saved once per look; leave look out for the light pass). One screenshot can serve several changes: list it once for each. Every screen of a change needs a before and an after screen shot. A before shot must be taken on the before address and an after shot on the after address; a screenshot of any other site is refused. Saving the same change, screen, look, side and kind again replaces it. The answer says which saved and why any did not.',
   inputSchema: {
     shots: z.array(z.object({
       change: z.string().min(1).max(96),
       screen: z.string().min(1).max(32),
       side: z.enum(['before', 'after']),
       kind: z.enum(['screen', 'element']).optional(),
+      look: z.enum(['light', 'dark']).optional(),
       file: z.string().min(1).max(512),
     })).min(1).max(24),
   },
@@ -179,12 +180,12 @@ server.registerTool('save_shot', {
   // not these requests. A refused file does not stop the others.
   const results = [];
   let pair = null;
-  for (const { change, screen, side, kind = 'screen', file } of shots) {
+  for (const { change, screen, side, kind = 'screen', look = 'light', file } of shots) {
     try {
       const { image, origin } = savedScreenshot(file);
       pair = pair || await pairOrigins();
       requireOnApp(side, [origin], pair);
-      const query = new URLSearchParams({ change, screen, side, kind });
+      const query = new URLSearchParams({ change, screen, side, kind, look });
       const result = (await request(`/shot?${query}`, { method: 'POST', binary: image })).result;
       results.push({ change, screen, side, kind, file, saved: true, result });
     } catch (error) {
@@ -200,14 +201,15 @@ server.registerTool('save_shot', {
 });
 
 server.registerTool('save_clip', {
-  description: 'Only for a change whose intent.animation is "motion": save the clip you just recorded. The browser records each session and writes the clip when the session ends, so: browser_close, browser_resize to the screen size again, open the start path, do the steps that trigger the motion, wait for it to finish, browser_close, then call this with the change id, screen name, and side. Record the before and after sides separately.',
+  description: 'Only for a change whose intent.animation is "motion": save the clip you just recorded. The browser records each session and writes the clip when the session ends, so: browser_close, browser_resize to the screen size again, open the start path, do the steps that trigger the motion, wait for it to finish, browser_close, then call this with the change id, screen name, side, and the look "light" or "dark" it was recorded in (leave look out for the light pass). Record the before and after sides separately.',
   inputSchema: {
     change: z.string().min(1).max(96),
     screen: z.string().min(1).max(32),
     side: z.enum(['before', 'after']),
+    look: z.enum(['light', 'dark']).optional(),
   },
   annotations,
-}, async ({ change, screen, side }) => {
+}, async ({ change, screen, side, look = 'light' }) => {
   try {
     const context = (await request('/context', { timeoutMs: 30_000 })).context;
     const declared = context?.declaredChanges?.find((story) => story.id === change);
@@ -221,7 +223,7 @@ server.registerTool('save_clip', {
     requireOnApp(side, boundary.sessionOrigins(path.dirname(file), { notBefore: fs.statSync(file).mtimeMs }), {
       base: context.origins?.base, head: context.origins?.head,
     });
-    const query = new URLSearchParams({ change, screen, side, kind: 'clip' });
+    const query = new URLSearchParams({ change, screen, side, kind: 'clip', look });
     const result = (await request(`/shot?${query}`, { method: 'POST', binary: fs.readFileSync(file) })).result;
     retired.add(file);
     return resultContent(result);

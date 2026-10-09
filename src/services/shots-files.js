@@ -42,6 +42,10 @@ const PNG_IEND = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x
 const EBML_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
 // Friendly words for the agent and people; base/head stay the stored names.
 const SIDES = Object.freeze({ before: 'base', after: 'head', base: 'base', head: 'head' });
+// The look each shot is taken in. Light is the required one: it is what the
+// change is judged on, and dark is a second copy for viewers who use Homeroom
+// in dark.
+const LOOKS = Object.freeze(['light', 'dark']);
 const KINDS = Object.freeze({
   screen: { variant: 'context', media: 'png' },
   element: { variant: 'focus', media: 'png' },
@@ -107,12 +111,16 @@ function changeFor(intent, changeId) {
   return story;
 }
 
-function slotKey({ storyId, viewport, side, variant }) {
-  return `${storyId}\u0000${viewport}\u0000${side}\u0000${variant}`;
+// One saved file's slot: a change, screen size, look, side and kind. A look
+// left out counts as light, so every slot a caller names without one keeps
+// its meaning.
+function slotKey({ storyId, viewport, theme, side, variant }) {
+  return `${storyId}\u0000${viewport}\u0000${theme === 'dark' ? 'dark' : 'light'}\u0000${side}\u0000${variant}`;
 }
 
 // Where a saved file belongs: a declared change, one of its screen sizes, a
-// side, and whether it is the screen, one element, or a clip.
+// side, whether it is the screen, one element, or a clip, and the look it
+// was taken in (empty means light).
 function shotTarget(intent, raw = {}) {
   const story = changeFor(intent, raw.change);
   const viewport = String(raw.screen || '');
@@ -127,7 +135,12 @@ function shotTarget(intent, raw = {}) {
   if (kind.variant === 'animation' && !planContract.needsClip(story)) {
     throw new ShotError('clip_not_needed', `${story.id} is not declared as motion; save still shots for it.`);
   }
-  return { storyId: story.id, viewport, side, variant: kind.variant, media: kind.media };
+  const rawLook = String(raw.look || '').trim();
+  const theme = rawLook || 'light';
+  if (!LOOKS.includes(theme)) {
+    throw new ShotError('invalid_look', 'Look must be light or dark.');
+  }
+  return { storyId: story.id, viewport, theme, side, variant: kind.variant, media: kind.media };
 }
 
 // Whether a skip says the after build broke ('failed') or the state could
@@ -250,25 +263,55 @@ function summarize(intent, saved, skipped = new Map(), {
     const missing = [];
     const files = [];
     const required = planContract.needsClip(story) ? ['context', 'animation'] : ['context'];
+    // Light is what the change is judged on: readiness and the missing words
+    // read the light slots only. Dark shots are added afterwards, per screen
+    // size, for a change that is already ready.
     for (const viewport of story.viewports) {
       for (const side of ['base', 'head']) {
         for (const variant of ['context', 'focus', 'animation']) {
-          const file = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, side, variant }));
+          const file = saved.get(slotKey({ storyId: story.id, viewport: viewport.name, theme: 'light', side, variant }));
           if (file) files.push(file);
           else if (required.includes(variant)) missing.push(missingWords(viewport.name, side, variant));
         }
       }
     }
-    if (!missing.length) {
-      published.push(...files);
-      const note = notes.get(story.id);
-      return { id: story.id, status: 'ready', files: files.length, ...(note ? { note } : {}) };
+    if (missing.length) {
+      return {
+        id: story.id,
+        status: fallbackReason && fallbackFailed ? 'failed' : 'skipped',
+        reason: fallbackReason || `The shots agent did not save ${missing.join(', ')}.`,
+      };
     }
-    return {
-      id: story.id,
-      status: fallbackReason && fallbackFailed ? 'failed' : 'skipped',
-      reason: fallbackReason || `The shots agent did not save ${missing.join(', ')}.`,
-    };
+    // A ready change's dark copy, one screen size at a time. Both sides must
+    // be there, and at least one must differ from its light shot: an app
+    // with one fixed look gives the same picture in both looks, so the dark
+    // copy is dropped. Its element shots and clips ride along with the
+    // screen shots.
+    for (const viewport of story.viewports) {
+      const dark = (side, variant) => saved.get(
+        slotKey({ storyId: story.id, viewport: viewport.name, theme: 'dark', side, variant })
+      );
+      const light = (side, variant) => saved.get(
+        slotKey({ storyId: story.id, viewport: viewport.name, theme: 'light', side, variant })
+      );
+      const darkBase = dark('base', 'context');
+      const darkHead = dark('head', 'context');
+      const lightBase = light('base', 'context');
+      const lightHead = light('head', 'context');
+      const differs = (darkFile, lightFile) => !!darkFile && !!lightFile && darkFile.sha256 !== lightFile.sha256;
+      if (!darkBase || !darkHead
+          || (!differs(darkBase, lightBase) && !differs(darkHead, lightHead))) continue;
+      for (const [side, variant] of [
+        ['base', 'context'], ['head', 'context'], ['base', 'focus'],
+        ['head', 'focus'], ['base', 'animation'], ['head', 'animation'],
+      ]) {
+        const file = dark(side, variant);
+        if (file) files.push(file);
+      }
+    }
+    published.push(...files);
+    const note = notes.get(story.id);
+    return { id: story.id, status: 'ready', files: files.length, ...(note ? { note } : {}) };
   });
   // A ready change is still published when its before and after are the same
   // image (people judge the shots), but the card says so rather than letting
@@ -276,7 +319,9 @@ function summarize(intent, saved, skipped = new Map(), {
   const stories = markUnchanged(results, identicalStories(intent, saved));
   const ready = stories.filter((story) => story.status === 'ready').length;
   const manifest = published
-    .map(({ storyId, viewport, side, variant, sha256: digest }) => ({ storyId, viewport, side, variant, sha256: digest }))
+    .map(({ storyId, viewport, theme, side, variant, sha256: digest }) => (
+      { storyId, viewport, theme: theme === 'dark' ? 'dark' : 'light', side, variant, sha256: digest }
+    ))
     .sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
   return {
     stories,
@@ -308,6 +353,7 @@ module.exports = {
   MAX_IMAGE_BYTES,
   MAX_CLIP_BYTES,
   UNCHANGED_NOTE,
+  LOOKS,
   ShotError,
   inspectImage,
   inspectClip,

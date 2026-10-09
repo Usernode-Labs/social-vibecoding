@@ -570,7 +570,7 @@ function load() {
         present: enabled,
         enforce: false,
         maxRunMs: boundedInt('SHOTS_MAX_RUN_MS', 'VISUAL_EVIDENCE_MAX_RUN_MS', 1_440_000, 60_000),
-        maxAgentMs: boundedInt('SHOTS_MAX_AGENT_MS', 'VISUAL_EVIDENCE_MAX_AGENT_MS', 480_000, 30_000),
+        maxAgentMs: boundedInt('SHOTS_MAX_AGENT_MS', 'VISUAL_EVIDENCE_MAX_AGENT_MS', 840_000, 30_000),
         // The shots agent's own model, not the author's pick: following
         // declared steps and saving screenshots does not need the model that
         // wrote the change. A malformed override keeps the default.

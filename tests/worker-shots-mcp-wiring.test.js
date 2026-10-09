@@ -471,17 +471,25 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
     'the run\'s own addresses come from its brief');
   const [sent] = uploads(bridge);
   assert.equal(sent.method, 'POST');
-  assert.deepEqual(sent.query, { ...shot, kind: 'screen' });
+  assert.deepEqual(sent.query, { ...shot, kind: 'screen', look: 'light' });
   assert.equal(sent.headers['content-type'], 'application/octet-stream');
   assert.ok(Buffer.from(sent.body).equals(image));
+
+  // A dark save travels in the query, so it lands in the dark slot.
+  fs.writeFileSync(path.join(bridge.shotsDir, 'admin', 'invite-desktop-after-dark.png'), image);
+  stamp(bridge, 'admin', 'invite-desktop-after-dark.png', `${HEAD}/#invite`);
+  const dark = await bridge.call('save_shot',
+    { shots: [{ ...shot, look: 'dark', file: 'invite-desktop-after-dark.png' }] });
+  assert.equal(dark.isError, false);
+  assert.deepEqual(uploads(bridge).at(-1).query, { ...shot, kind: 'screen', look: 'dark' });
 
   // The path the browser reported is reduced to its name inside the shots
   // directories; it cannot lead anywhere else.
   assert.equal((await bridge.call('save_shot', { shots: [{
     ...shot, kind: 'element', file: '../../state/invite-desktop-after.png',
   }] })).isError, false);
-  assert.equal(uploads(bridge)[1].query.kind, 'element');
-  assert.ok(Buffer.from(uploads(bridge)[1].body).equals(image));
+  assert.equal(uploads(bridge)[2].query.kind, 'element');
+  assert.ok(Buffer.from(uploads(bridge)[2].body).equals(image));
 
   // Browser storage state, hidden or oddly named files, and links are never read.
   fs.writeFileSync(path.join(bridge.dir, 'member.json'), '{"cookies":["secret"]}');
@@ -501,7 +509,7 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
     assert.equal(refused.isError, true, `${file} must be refused`);
     assert.equal(refused.value.results[0].error.code, code, file);
   }
-  assert.equal(uploads(bridge).length, 2, 'a refused file never reaches the platform');
+  assert.equal(uploads(bridge).length, 3, 'a refused file never reaches the platform');
 
   // Several files in one call, and one screenshot for two changes: each is
   // its own upload, and a refused one does not stop the rest.
@@ -514,7 +522,7 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
   assert.equal(batch.value.saved, 2);
   assert.equal(batch.value.refused, 1);
   assert.equal(batch.value.results[2].error.code, 'shot_file_not_found');
-  assert.deepEqual(uploads(bridge).slice(2).map((sent) => sent.query.change), ['invite-suggestions', 'saved-toast']);
+  assert.deepEqual(uploads(bridge).slice(3).map((sent) => sent.query.change), ['invite-suggestions', 'saved-toast']);
 });
 
 test('save_shot publishes a shot only from its own side\'s address', async (t) => {
@@ -583,7 +591,7 @@ test('save_clip publishes the newest recording and retires every older one', asy
   const before = await clip('saved-toast', 'before');
   assert.equal(before.isError, false);
   assert.deepEqual(bridge.calls.at(-1).query,
-    { change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip' });
+    { change: 'saved-toast', screen: 'desktop', side: 'before', kind: 'clip', look: 'light' });
   assert.equal(lastBody(), 'motion before');
 
   // Both were retired, so the stale stills session can never be published.

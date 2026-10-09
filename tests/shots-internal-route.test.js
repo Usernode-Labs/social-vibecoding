@@ -119,9 +119,14 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
   assert.equal(accepted.status, 200);
   assert.equal(accepted.body.ok, true);
   assert.deepEqual({ ...accepted.body.result, progress: undefined }, {
-    saved: true, change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen',
+    saved: true, change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen', look: 'light',
     bytes: image.length, width: 5, height: 4, progress: undefined,
   });
+  // The look travels from the query to the saved slot: a dark save lands in
+  // the dark slot, not the light one.
+  assert.equal((await json(await post({ ...still, side: 'after', look: 'dark' }, image))).body.result.look, 'dark');
+  assert.equal(registration.control.saved.size, 2);
+  assert.deepEqual([...registration.control.saved.values()].map((file) => file.theme), ['light', 'dark']);
   const [stored] = registration.control.saved.values();
   assert.equal(stored.side, 'head');
   assert.ok(stored.data.equals(image), 'the stored bytes are exactly the request body');
@@ -132,13 +137,14 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
     fixtures.webm()));
   assert.equal(clip.status, 200);
   assert.equal(clip.body.result.kind, 'clip');
-  assert.equal(registration.control.saved.size, 3);
+  assert.equal(registration.control.saved.size, 4);
 
   for (const [query, body, status, code] of [
     [{ ...still, screen: 'phone', side: 'after' }, image, 400, 'unknown_screen'],
     [{ ...still, change: 'someone-elses-change', side: 'after' }, image, 400, 'unknown_change'],
     [{ ...still, side: 'middle' }, image, 400, 'invalid_side'],
     [{ ...still, side: 'after', kind: 'video' }, image, 400, 'invalid_kind'],
+    [{ ...still, side: 'after', look: 'sepia' }, image, 400, 'invalid_look'],
     [{ ...still, side: 'after', kind: 'clip' }, fixtures.webm(), 400, 'clip_not_needed'],
     [{ ...still, side: 'before' }, Buffer.from('x'.repeat(64)), 400, 'invalid_shot_image'],
     [{ ...still, side: 'before' }, image.subarray(0, image.length - 4), 400, 'invalid_shot_image'],
@@ -173,7 +179,7 @@ test('the shot route takes the raw file and maps each refusal to a status', asyn
   });
   assert.equal(unauthenticated.status, 401);
 
-  assert.equal(registration.control.saved.size, 3, 'no refused request saved anything');
+  assert.equal(registration.control.saved.size, 4, 'no refused request saved anything');
   assert.equal(registration.control.lastToolFailure.operation, 'save-shot');
 });
 

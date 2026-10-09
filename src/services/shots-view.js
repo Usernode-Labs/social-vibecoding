@@ -56,15 +56,18 @@ function cleanShotResults(value) {
 
 // The screens a verified run's card shows, and the areas that differ on
 // each: integers and story ids from this run's own declaration, nothing else.
+// A look left out is light, so older runs' screens keep their meaning; both
+// looks fit now, so the cap doubles with the artifact cap below.
 function cleanScreens(screens, claims) {
   const ids = new Set((claims || []).map((claim) => claim.id));
   const int = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 20000;
   const box = (value, size) => (Array.isArray(value) && value.length === size && value.every(int)
     ? value.slice() : null);
-  return (Array.isArray(screens) ? screens : []).slice(0, 6)
+  return (Array.isArray(screens) ? screens : []).slice(0, 12)
     .filter((screen) => screen && typeof screen.viewport === 'string' && ids.has(screen.shot))
     .map((screen) => ({
       viewport: screen.viewport.slice(0, 32),
+      theme: screen.theme === 'dark' ? 'dark' : 'light',
       shot: screen.shot,
       stories: (Array.isArray(screen.stories) ? screen.stories : []).filter((id) => ids.has(id)).slice(0, 3),
       width: int(screen.width) ? screen.width : null,
@@ -89,7 +92,7 @@ function artifactUrl(slug, sessionId, artifactId) {
 
 function cleanArtifacts(items, { slug, sessionId, verified }) {
   if (!verified || !Array.isArray(items)) return [];
-  return items.slice(0, 36).filter((artifact) => {
+  return items.slice(0, 72).filter((artifact) => {
     if (!artifact || !ARTIFACT_ID_RE.test(String(artifact.id || ''))
         || !STORY_ID_RE.test(String(artifact.storyId || ''))
         || !VIEWPORT_RE.test(String(artifact.viewport || ''))
@@ -107,6 +110,7 @@ function cleanArtifacts(items, { slug, sessionId, verified }) {
     id: String(artifact.id || ''),
     storyId: String(artifact.storyId || '').slice(0, 96),
     viewport: String(artifact.viewport || '').slice(0, 32),
+    theme: artifact.theme === 'dark' ? 'dark' : 'light',
     side: ['base', 'head', 'paired'].includes(artifact.side) ? artifact.side : null,
     variant: ['focus', 'context', 'animation'].includes(artifact.variant) ? artifact.variant : null,
     media: ['png', 'webm', 'gif'].includes(artifact.media) ? artifact.media : null,
@@ -230,11 +234,12 @@ async function getForSessions(pool, sessions, slug) {
               COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                   'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport,
-                  'side', a.side, 'variant', a.variant, 'media', a.media,
+                  'theme', a.theme, 'side', a.side, 'variant', a.variant,
+                  'media', a.media,
                   'contentType', a.content_type, 'width', a.width,
                   'height', a.height, 'bytes', a.bytes,
                   'focusRect', a.focus_rect, 'stageLabels', a.stage_labels
-                ) ORDER BY a.story_id, a.viewport, a.side, a.variant)
+                ) ORDER BY a.story_id, a.viewport, a.theme, a.side, a.variant)
                   FROM shot_artifacts a WHERE a.run_id = r.id
               ), '[]'::jsonb) AS artifact_summary,
               -- Its automatic retries, so the view can say one is coming.

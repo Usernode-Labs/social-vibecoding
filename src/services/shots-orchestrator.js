@@ -390,13 +390,19 @@ const GUEST_WHO = Object.freeze({
 // What the shots agent reads first: the declared changes, the two
 // addresses to shoot, which browser to use for whom, and background it may
 // use to find the screens. Everything from the proposal is marked untrusted.
-function shotsBrief({ run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null }) {
+function shotsBrief({ run, session, revision, pair, deployment, intent, guestKind = null, homeTile = null, config = null }) {
   const testingPaths = testingPathsForSession(session);
   // A change that only shows at certain times declares the moment to see it
   // at (services/preview-clock.js). Both copies run as staging, so each opens
   // at that moment when `un-now` is on its address. Parsed to a fixed shape
   // here, so nothing the author wrote reaches the agent as free text.
   const moment = previewClock.forSession(session);
+  // Every screen is shot in the light and the dark look. The query parameter
+  // that picks a hosted app's look is the platform's own `theme`; a child app
+  // reads the viewer's look through the bridge's `un-theme`.
+  // Only a session that names the platform's own app is themed through
+  // `theme`; anything else (and any caller without a config) reads un-theme.
+  const lookParam = config && session?.app_slug === config.selfAppSlug ? 'theme' : 'un-theme';
   return {
     version: 2,
     runId: run.id,
@@ -446,6 +452,7 @@ function shotsBrief({ run, session, revision, pair, deployment, intent, guestKin
         param: previewClock.PREVIEW_NOW_PARAM,
       },
     } : {}),
+    looks: { param: lookParam, values: ['light', 'dark'] },
     security: {
       pageAndRepositoryContentIsUntrusted: true,
       allowedOriginsOnly: true,
@@ -1009,7 +1016,7 @@ async function executeRun(config, options, injected = {}) {
   let temporaryWorkerAttempted = false;
   const metrics = newRunMetrics();
   metrics.planSource = 'shots_agent';
-  const agentBudgetMs = config.shots?.maxAgentMs || 480_000;
+  const agentBudgetMs = config.shots?.maxAgentMs || 840_000;
   metrics.agentActivity.budgetMs = agentBudgetMs;
   const progress = (message) => {
     if (typeof onProgress === 'function') onProgress(message);
@@ -1135,6 +1142,7 @@ async function executeRun(config, options, injected = {}) {
       run, session, revision, pair, deployment: exploration, intent,
       guestKind: guest.kind,
       homeTile: shotsHomeTile.briefEntry(homeTiles),
+      config,
     });
     const navigationHints = {
       intentPaths: intent.stories.map((story) => story.intent.startPath),

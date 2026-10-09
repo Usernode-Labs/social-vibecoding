@@ -15315,7 +15315,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-viewer:has(.shots-screen-pick:nth-of-type(3):checked) .shots-view:nth-of-type(3),
 .shots-viewer:has(.shots-screen-pick:nth-of-type(4):checked) .shots-view:nth-of-type(4),
 .shots-viewer:has(.shots-screen-pick:nth-of-type(5):checked) .shots-view:nth-of-type(5),
-.shots-viewer:has(.shots-screen-pick:nth-of-type(6):checked) .shots-view:nth-of-type(6) { visibility: visible; }
+.shots-viewer:has(.shots-screen-pick:nth-of-type(6):checked) .shots-view:nth-of-type(6),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(7):checked) .shots-view:nth-of-type(7),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(8):checked) .shots-view:nth-of-type(8),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(9):checked) .shots-view:nth-of-type(9),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(10):checked) .shots-view:nth-of-type(10),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(11):checked) .shots-view:nth-of-type(11),
+.shots-viewer:has(.shots-screen-pick:nth-of-type(12):checked) .shots-view:nth-of-type(12) { visibility: visible; }
 
 /* The toolbar holds the same controls on every screen, so the arrows at its
    end never move. */
@@ -15335,7 +15341,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-viewer:has(.shots-side-before:checked) .shots-seg-before { background: #dc2626; }
 .shots-viewer:has(.shots-side-pick:focus-visible) .shots-seg-side,
 .shots-viewer:has(.shots-screen-pick:focus-visible) .shots-seg-size,
+.shots-viewer:has(.shots-screen-pick:focus-visible) .shots-seg-look,
 .shots-viewer:has(.shots-screen-pick:focus-visible) .shots-screen-nav { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+/* A look the run has no screen of here: the same faded look as the viewer's
+   disabled arrows, and not clickable. */
+.shots-seg-off { opacity: 0.35; cursor: default; }
+.shots-seg-off:hover { background: transparent; }
+.shots-seg-look .shots-seg-btn { padding: 0 9px; }
 .shots-screen-nav { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
 .shots-screen-step { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; cursor: pointer; user-select: none;
   font-size: 18px; line-height: 1; color: #3f3f46; background: rgba(24, 24, 27, 0.06); }

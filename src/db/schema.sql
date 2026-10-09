@@ -9532,7 +9532,9 @@ CREATE TABLE IF NOT EXISTS shot_artifacts (
   focus_rect         JSONB,
   stage_labels       JSONB,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(run_id, story_id, viewport, side, variant, media)
+  -- The look the shot was taken in; every row before this column read light.
+  theme              VARCHAR(8) NOT NULL DEFAULT 'light' CHECK (theme IN ('light', 'dark')),
+  CONSTRAINT shot_artifacts_slot_unique UNIQUE (run_id, story_id, viewport, theme, side, variant, media)
 );
 CREATE INDEX IF NOT EXISTS idx_shot_artifacts_run
   ON shot_artifacts(run_id, story_id, viewport);
@@ -13271,3 +13273,32 @@ BEGIN
       CHECK (hostname ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$');
   END IF;
 END $$;
+
+-- Before/after shots come in the light and the dark look (#4459): the saved
+-- file's slot gains the look. The slot's unique constraint moves with it --
+-- the old six-column one is found by its columns, not by a guessed name, and
+-- dropped; the new one is created by index, so fresh databases that already
+-- have it from the table body skip it.
+DO $$
+DECLARE
+  old_name TEXT;
+BEGIN
+  SELECT conname INTO old_name
+    FROM (
+      SELECT c.conname,
+             array_agg(a.attname::text ORDER BY k.ord) AS cols
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_attribute a ON a.attrelid = c.conrelid
+        JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON k.attnum = a.attnum
+       WHERE c.contype = 'u' AND t.relname = 'shot_artifacts'
+         AND NOT a.attisdropped
+       GROUP BY c.conname
+    ) constraints
+   WHERE cols = ARRAY['run_id', 'story_id', 'viewport', 'side', 'variant', 'media']::text[];
+  IF old_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE shot_artifacts DROP CONSTRAINT %I', old_name);
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS shot_artifacts_slot_unique
+  ON shot_artifacts(run_id, story_id, viewport, theme, side, variant, media);

@@ -266,6 +266,50 @@ test('a Desktop / Phone switch picks the screen size, with no script', () => {
   assert.match(single, /<div class="shots-views shots-views-one">/);
 });
 
+test('a run shot in both looks offers Light / Dark, and an old run offers nothing', () => {
+  // The dark copies carry their own artifact ids and their look.
+  const darkShot = (char, side) => ({ id: id(char), storyId: 'dialog', viewport: 'desktop', side,
+    variant: 'context', media: 'png', url: url(char), theme: 'dark' });
+  const value = shots({ artifacts: [...shots().artifacts, darkShot('a', 'base'), darkShot('b', 'head')] });
+  const html = AppView.shotsHtml(value, { sessionId: 42 });
+  const picks = html.match(/<input type="radio" class="shots-screen-pick"[^>]*>/g) || [];
+  assert.equal(picks.length, 2);
+  assert.match(picks[0], /aria-label="Screen 1 of 2: desktop, light" checked/);
+  assert.match(picks[1], /aria-label="Screen 2 of 2: desktop, dark">/);
+  const [light, darkFigure] = html.match(/<figure class="shots-view"[\s\S]*?<\/figcaption>\s*<\/figure>/g);
+  // Where you are is lit; the other look's button points at its screen.
+  assert.match(light, /<label for="shots-42-screen-0" class="shots-seg-btn shots-seg-on" title="Light">/);
+  assert.match(light, /<label for="shots-42-screen-1" class="shots-seg-btn" title="Dark">/);
+  assert.match(darkFigure, /<label for="shots-42-screen-0" class="shots-seg-btn" title="Light">/);
+  assert.match(darkFigure, /<label for="shots-42-screen-1" class="shots-seg-btn shots-seg-on" title="Dark">/);
+  // A run from before the looks has no switch: nothing to switch to.
+  assert.doesNotMatch(AppView.shotsHtml(shots(), { sessionId: 42 }), /title="Light"|title="Dark"/);
+});
+
+test('the viewer opens in the reader\'s own look, and a dark clip falls back to the light one', () => {
+  const savedTheme = AppView.resolvedTheme;
+  AppView.resolvedTheme = () => 'dark';
+  try {
+    const darkShot = (char, side) => ({ id: id(char), storyId: 'dialog', viewport: 'desktop', side,
+      variant: 'context', media: 'png', url: url(char), theme: 'dark' });
+    const value = shots({ artifacts: [...shots().artifacts, darkShot('a', 'base'), darkShot('b', 'head')] });
+    value.claims[0].animation = 'motion';
+    value.artifacts.push(...clipArtifacts());
+    const html = AppView.shotsHtml(value, { sessionId: 42 });
+    const picks = html.match(/<input type="radio" class="shots-screen-pick"[^>]*>/g) || [];
+    assert.match(picks[0], /aria-label="Screen 1 of 2: desktop, dark" checked/,
+      'the dark look leads when the reader reads in the dark');
+    // The dark pass missed its clips: the dark screen still lists one,
+    // played from the light recording, with the dark shot as its poster.
+    const change = /<li class="shots-change" data-shots-n="1" data-shots-change="dialog">[\s\S]*?<\/li>/.exec(html)[0];
+    assert.match(change, /data-shots-clips="1"/);
+    assert.match(change, new RegExp(`src="${url('8')}"`), 'the after clip falls back to its light recording');
+    assert.match(change, new RegExp(`poster="${url('b')}"`), 'the poster follows the look when it exists');
+  } finally {
+    AppView.resolvedTheme = savedTheme;
+  }
+});
+
 test('arrows step through the screens of one size, in the same place on every screen', () => {
   const claim = (claimId, text) => ({ ...shots().claims[0], id: claimId, claim: text, viewports: ['desktop', 'phone'] });
   const context = (storyId, viewport, side, char) => ({ id: id(char), storyId, viewport, side, variant: 'context', media: 'png', url: url(char) });

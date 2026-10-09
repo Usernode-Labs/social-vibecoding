@@ -23,6 +23,7 @@ program failed replay on a locator, an assertion, or a fingerprint.
 | declared change | One visible change the author declares (up to three per proposal); changes that show on the same screen are one | `intent.stories[]` |
 | before / after | The build without and with the proposal | `base` / `head` |
 | shot | A PNG of the screen (`kind: "screen"`) or of one element (`kind: "element"`) | variant `context` / `focus` |
+| look | The light or dark look a shot was taken in (`look: "light"`, empty means light) | `theme` |
 | clip | A WebM of one side, for a `motion` change | variant `animation`, side `base`/`head` |
 | screen | A declared viewport (`desktop`, `mobile`, …) | `viewport` |
 | skipped | A change the shots agent could not reach, with its reason | `hard_verdict.stories[].status` |
@@ -136,6 +137,16 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    session (no turn open, the worker free); otherwise it starts once the
    checks settle. It never waits on the checks' verdict, and a proposal does
    not have to be up for a vote.
+
+   Every screen is shot in two looks, light and dark, so the card can open in
+   the look the viewer uses Homeroom in. The agent takes every light shot
+   first, then makes a second pass in the dark look: it reopens each start
+   path with the brief's `looks.param` set to `dark` and follows the steps
+   again. Light is what the change is judged on, so running short of time
+   costs the dark look, never the change: a change is ready from its light
+   shots alone, and a screen whose dark shots never landed just greys out the
+   card's moon button. A dark copy that comes out byte-identical to the light
+   one on both sides (an app with one fixed look) is not published.
 2. **Building before and after** (`provisioning`). Homeroom builds isolated
    copies of the exact base and head revisions. It resets both to the same
    fixture data and signs in each persona's browser, except the guest's,
