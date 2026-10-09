@@ -155,6 +155,10 @@ always was, with two differences from a push helper called in the deciding proce
 - a push over the NOTIFY budget becomes the resync nudge for every socket, the deciding
   process's included.
 
+One push is for a process, not a browser: `session_stop` carries a Stop to the process
+holding the session's turn, the only one that acts on it. It is delivered the same way,
+at most once, so the holder's next lease renewal reads the stop too.
+
 A notification is named, not carried: the transition pushes its id
 (`notification_new` with `notificationId`), and the relaying process reads it for the
 recipient's open tabs, so the bell's query never runs in the transition.
@@ -531,6 +535,7 @@ governance machine.
 | `tests/workflow-governance-routes-postgres.test.js` | The routes with the runtime on. |
 | `tests/workflow-governance-services.test.js` | The governance work handlers. |
 | `tests/admin-workflows.test.js` | The admin section. |
+| `tests/workflow-session-activity-postgres.test.js` | The session-activity machine: what keeps what out, leases that run out, the turn's journal, a Stop reaching the turn's holder, and a retirement that waits. |
 | `tests/workflow-process-state.test.js` | The list of what the machines still depend on only shrinks. |
 | `tests/workflow-boundary.test.js` | The boundary check's rules, on a small source tree of its own. |
 | `tests/workflow-processes-postgres.test.js` | Each machine's flows with every decision and work item in a child process, the test process being the web side; and the same flows with the child killed (SIGKILL) mid-item, restarted, and compared with an uninterrupted run. Only outside services are faked (`tests/fixtures/workflow-outside-fakes.js`); the harness is `tests/lib/workflow-processes.js`. The known dependencies on the web process's memory are `todo` scenarios, each naming its entry in the list. |
@@ -562,6 +567,7 @@ A new machine brings the same two layers:
 |---|---|---|---|
 | `governance-proposal` | `issue:<id>`, for the five governance kinds (rename, secret change, close issue, maintenance campaign, featured illustration) | `open` → `applied` / `refused` / `withdrawn` / `superseded` | Behind `WF_GOVERNANCE_ENABLED` |
 | `merge-followups` | `session:<id>`, for each merged proposal and each change that went live inside one | `delivering` → `live`, or `deploy_failed` → `live` | Behind `WF_MERGE_FOLLOWUPS_ENABLED` |
+| `session-activity` | `session:<id>`, for each chat session something uses | `idle` ⇄ `in_use`, `retiring` while a worker's retirement waits | Behind `WF_SESSION_ACTIVITY_ENABLED` |
 
 ### merge-followups
 
@@ -593,6 +599,40 @@ What a merged pull request still has to do once GitHub has merged it
   - Until then the change reads merged and going live.
 - **A failed deploy** ends in `deploy_failed`, said in the thread. Any later deploy that
   contains the change makes it live, and so does **Retry delivery** in Admin → Workflows.
+
+### session-activity
+
+Who is using a chat session right now (`src/workflow/session-activity/`, and the web
+side's `src/services/session-activity.js`).
+
+- **One activity per thing using the session:** a Mayor chat turn, a coding turn (any
+  mode, a sync with main or a recovery included), an operation on its branch or preview,
+  a screenshot run's hold on the worker, a pause, eviction, reclaim or teardown. Whatever
+  is about to start one asks (`Requested`, answered through `appendAndWait`), and the
+  machine grants it or refuses it with what is in the way, under the instance's lock.
+  What keeps what out is one table in `machine.ts`. A step of an activity the process
+  already runs on the session joins it instead of asking (`AsyncLocalStorage`).
+- **The holder renews a lease** on its row of `wf_session_activities` by a plain update
+  (`lease.ts`), as a service renews a work item. A lapsed lease stops counting at the next
+  decision. The holder ends it (`Ended`) in its `finally`.
+- **The turn's journal stays the truth for turns.** A running turn in
+  `chat_sessions.active_turn` keeps out what a turn keeps out, except another turn
+  (`persistNewTurn` keeps turns apart) and a request naming that turn.
+- **A Stop** that finds no turn in the process that received it asks the machine
+  (`StopRequested`), which pushes `session_stop` to every web process; only the holder of
+  the session's turn acts on it (`ws.js` → `session-activity.js`). Its next renewal
+  carries the stop too.
+- **A worker's retirement** (`RetireRequested`, from a merge, merge follow-ups or an
+  included change) runs at once when nothing uses the session, else when the last
+  activity ends; it refuses new activities meanwhile. Its timer is set only while it
+  waits.
+- **Readers.** Screens, `/status` and the busy checks that decide something add what
+  other processes run (`wf_session_activities` rows with a live lease) to this process's
+  memory.
+
+With the flag on, a process asks the machine and checks its memory, refusing if either
+says no; a process whose runtime did not start refuses rather than decide from memory.
+The in-memory registries go when the flag becomes the default.
 
 **Planned order:**
 1. **Previews and required checks.**
