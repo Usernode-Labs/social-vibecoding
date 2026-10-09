@@ -975,18 +975,20 @@ export function init() {
       removeBtn.className = 'rounded-full w-12 h-12 flex shrink-0 items-center justify-center text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors';
       removeBtn.textContent = '✕';
       removeBtn.addEventListener('click', () => removeScreenshot(shot));
-      // #4482: a comment handed over from comment mode keeps its pin beside
-      // its picture, as data; the thumbnail shows it over the picture.
-      if (shot.pin) {
+      // #4482: comments handed over from comment mode keep their pins beside
+      // their picture, as data; the thumbnail shows them over the picture.
+      if (shot.pins && shot.pins.length) {
         const frame = document.createElement('span');
         frame.className = 'relative inline-block shrink-0';
         frame.appendChild(img);
-        const dot = document.createElement('span');
-        dot.className = 'absolute h-2.5 w-2.5 -translate-y-full rounded-[50%_50%_50%_0] bg-violet-600 shadow-[0_0_0_1.5px_#fff]';
-        dot.style.left = `${shot.pin.x * 100}%`;
-        dot.style.top = `${shot.pin.y * 100}%`;
-        dot.setAttribute('aria-hidden', 'true');
-        frame.appendChild(dot);
+        for (const pin of shot.pins) {
+          const dot = document.createElement('span');
+          dot.className = 'absolute h-2.5 w-2.5 -translate-y-full rounded-[50%_50%_50%_0] bg-violet-600 shadow-[0_0_0_1.5px_#fff]';
+          dot.style.left = `${pin.x * 100}%`;
+          dot.style.top = `${pin.y * 100}%`;
+          dot.setAttribute('aria-hidden', 'true');
+          frame.appendChild(dot);
+        }
         item.appendChild(frame);
       } else {
         item.appendChild(img);
@@ -1003,14 +1005,14 @@ export function init() {
       body: blob,
     });
 
-    const attachScreenshotBlob = async (blob, pin = null) => {
+    const attachScreenshotBlob = async (blob, pins = null) => {
       // Never a fourth: every caller checks the room first, and this is the
       // backstop behind them.
       if (screenshots.length >= MAX_SCREENSHOTS) return;
       // Thumbnail immediately; upload in the background with Submit blocked
-      // (screenshotUploading) until the id lands. `pin` (#4482) is comment
-      // mode's, { x, y, note }, sent beside the picture at submit.
-      const shot = { blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true, pin };
+      // (screenshotUploading) until the id lands. `pins` (#4482) are comment
+      // mode's, each { x, y, n, note }, sent beside the picture at submit.
+      const shot = { blob, objectUrl: URL.createObjectURL(blob), id: null, uploading: true, pins };
       screenshots.push(shot);
       renderScreenshotThumb(shot);
       paintScreenshotActions();
@@ -1983,12 +1985,13 @@ export function init() {
         // the embed lines and links every row to the filed issue.
         const shotIds = screenshotIds();
         if (shotIds.length) body.screenshotIds = shotIds;
-        // #4482: a comment handed over keeps its pin beside its picture, which
-        // the server writes onto that picture's link (one per request).
-        const pinned = screenshots.find((shot) => shot.id && shot.pin);
-        if (pinned) {
-          body.screenshotPins = [{ id: pinned.id, x: pinned.pin.x, y: pinned.pin.y, note: String(pinned.pin.note || '') }];
-        }
+        // #4482: comments handed over keep their pins beside their pictures,
+        // which the server writes onto each picture's link.
+        const pinned = screenshots.filter((shot) => shot.id && shot.pins && shot.pins.length)
+          .flatMap((shot) => shot.pins.map((pin) => ({
+            id: shot.id, x: pin.x, y: pin.y, ...(pin.n ? { n: pin.n } : {}), note: String(pin.note || ''),
+          })));
+        if (pinned.length) body.screenshotPins = pinned;
         // #3940: and the uploaded clip.
         if (video && video.id) body.videoId = video.id;
         // #685: collect the app's state snapshot at submit time (fresh
@@ -2267,14 +2270,14 @@ export function init() {
         void attachScreenshotBlob(opts.screenshotBlob);
       }
       // Comment mode handing a box over (features/comment-pin/post.ts
-      // handOverOptions): its pictures, the page's with its pin beside it
+      // handOverOptions): its pictures, the pages' with their pins beside them
       // (#4482), the title the box showed, and its Kudos. A title the person
       // saw and kept is theirs, so it is not dropped as a stale suggestion.
       if (Array.isArray(opts.screenshots)) {
         for (const handed of opts.screenshots) {
           if (screenshots.length >= MAX_SCREENSHOTS) break;
           if (typeof Blob !== 'undefined' && handed && handed.blob instanceof Blob) {
-            void attachScreenshotBlob(handed.blob, handed.pin || null);
+            void attachScreenshotBlob(handed.blob, Array.isArray(handed.pins) ? handed.pins : null);
           }
         }
       }
@@ -2490,12 +2493,12 @@ export function init() {
   // for the ?shot=feedback deep links. Forwards to the island so React state
   // stays the source of truth.
   //
-  // Experimental (#4289's comment mode): where the device's switch is on and
-  // comment mode is the way it suggested last, a plain open is comment mode
-  // instead (features/improve/suggest-shortcut.ts decides, `opensComment`).
-  // Not an open that carries something for the form (a handed-over comment,
-  // the first-request moment) or that asks for the form by name
-  // (`mode: 'form'`, comment mode's Detailed).
+  // Experimental (#4289's comment mode): where the device's switch is on, a
+  // plain open is comment mode instead (features/improve/suggest-shortcut.ts
+  // decides, `opensComment`), and this form is one switch away from it. Not
+  // an open that carries something for the form (a handed-over comment, the
+  // first-request moment) or that asks for the form by name (`mode: 'form'`,
+  // comment mode's Form).
   App.openFeedbackModal = (opts = {}) => {
     const shortcut = window.UsernodeReact?.suggestShortcut;
     const plain = !opts.firstFeedback && !opts.description && !opts.screenshotBlob && !opts.screenshots

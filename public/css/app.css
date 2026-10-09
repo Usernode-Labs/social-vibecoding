@@ -15972,6 +15972,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   pointer-events: none;
   transition: opacity 160ms ease, visibility 160ms;
 }
+/* One mark per pin; a request of several comments numbers them. */
+.pin-shot-mark { position: absolute; inset: 0; }
 /* The button's `data-shown` is the one record of whether it is shown; its words say which press it is (not `aria-pressed`, whose name must not change). */
 .pin-shot-toggle[data-shown="false"] + .pin-shot-layer { opacity: 0; visibility: hidden; }
 .pin-shot-pin {
@@ -15984,6 +15986,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border: 2px solid #ffffff;
   border-radius: 50% 50% 50% 0;
   background: var(--accent);
+  color: var(--accent-ink);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
   transform: translateY(-100%);
 }
@@ -16010,13 +16018,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 /* Right of the pin, or left of the point in the picture's right part; its
    foot level with the point, or its head there near the picture's top. */
-.pin-shot-layer[data-side="right"] .pin-shot-note { left: calc(var(--pin-x) + 30px); }
-.pin-shot-layer[data-side="left"] .pin-shot-note {
+.pin-shot-mark[data-side="right"] .pin-shot-note { left: calc(var(--pin-x) + 30px); }
+.pin-shot-mark[data-side="left"] .pin-shot-note {
   right: calc(100% - var(--pin-x) + 6px);
   max-width: max(120px, min(240px, calc(var(--pin-x) - 10px)));
 }
-.pin-shot-layer[data-rise="up"] .pin-shot-note { bottom: calc(100% - var(--pin-y)); }
-.pin-shot-layer[data-rise="down"] .pin-shot-note { top: var(--pin-y); }
+.pin-shot-mark[data-rise="up"] .pin-shot-note { bottom: calc(100% - var(--pin-y)); }
+.pin-shot-mark[data-rise="down"] .pin-shot-note { top: var(--pin-y); }
 .pin-shot-toggle {
   position: absolute;
   top: 6px;

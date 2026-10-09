@@ -6,25 +6,33 @@
  *
  * ── What it looks like ────────────────────────────────────────────────
  *
- * A layer over the whole page with a comment cursor, and a bar at the foot:
- * "Comment mode", what to do next, how many are posted, the Detailed /
- * Comment switch, and Done. A click anywhere puts a pin there with a box
- * beside it; Enter posts the box as its own request and the pin stays, a
- * numbered marker the person can open again, so they can go on to the next
- * thing. A click elsewhere while a box is open moves its pin (the words
- * stay). Esc closes what is on top: an open marker, the box, then the mode.
- * The page under the layer still scrolls with the wheel, and the pins move
- * with what they were put on.
+ * A layer over the whole page with a comment cursor, and a bar: "Comment
+ * mode", what to do next, how many are posted, the Form / Comment switch,
+ * and Done. A click anywhere puts a pin there with a box beside it; Enter
+ * posts the box as its own request and the pin stays, a marker the person
+ * can open again, so they can go on to the next thing. "Add a comment" in
+ * the box makes the next click the same request's next comment instead:
+ * one request, its comments numbered, each with its own pin. A click
+ * elsewhere moves the open comment's pin (the words stay). Esc closes what
+ * is on top: an open marker, the wait for the next pin, the request (asking
+ * first when it has words), then the mode. The page under the layer still
+ * scrolls, with the wheel or a finger, and the pins move with what they
+ * were put on; a tap is a comment, as a click is.
+ *
+ * The bar sits at the foot until the person drags its handle somewhere
+ * else (kept on the device). Resting the pointer on it moves it out of the
+ * way, so what is under it can be commented on.
  *
  * ── The box ───────────────────────────────────────────────────────────
  *
- * The words; the title it will be posted with, suggested from the words as
- * they are typed (the dialog's own POST /api/feedback/title, with its rules:
- * a pause, a dozen characters, a few asks per box) and changed with a click;
- * the page's screenshot, removable, and up to two more images (the
- * paperclip, a paste or a drop: the server's three in all); Kudos, the
- * dialog's bounty (#964); and where it goes. Its expand button hands it all
- * to the detailed form instead.
+ * The comments' words; the title the request will be posted with,
+ * suggested from all of them as they are typed (the dialog's own POST
+ * /api/feedback/title, with its rules: a pause, a dozen characters, a few
+ * asks per request) and changed with a click; the page's screenshots,
+ * removable, and the person's own images (the paperclip, a paste or a drop:
+ * the server's three in all); Kudos for whoever solves it, the dialog's
+ * bounty (#964); and where it goes. Its expand button hands it all to the
+ * form instead.
  *
  * ── Where it goes ─────────────────────────────────────────────────────
  *
@@ -35,11 +43,13 @@
  *
  * ── The screenshot ────────────────────────────────────────────────────
  *
- * Drawn the moment the pin goes down (./picture.ts), previewed in the box
- * with the pin over it, and posted CLEAN: the pin is sent beside it as data
- * (#4482, ./pin-data.ts), and the request's page draws it over the picture
- * where it can be hidden. Each comment's picture is its own: the other
- * markers are this layer's, and the layer is never in a picture.
+ * Drawn the moment a pin goes down (./picture.ts), previewed in the box with
+ * the pins over it, and posted CLEAN: the pins are sent beside it as data
+ * (#4482, ./pin-data.ts), and the request's page draws them over the
+ * picture where they can be hidden. A comment pinned on the same view as an
+ * earlier one (nothing scrolled since) shares its picture; another view is
+ * another picture, while there is room. The markers are this layer's, and
+ * the layer is never in a picture.
  *
  * Mounted on demand through the shell's portal registry
  * (lib/legacy-portals.tsx) into a host appended to <body>; nothing of it is
@@ -48,25 +58,29 @@
 
 import {
   createElement, useCallback, useEffect, useLayoutEffect, useRef, useState,
-  type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type WheelEvent,
+  type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
+  type WheelEvent,
 } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
-  ArrowsPointingOutIcon, ChatIcon, DescriptionIcon, DraftEditIcon, PaperclipIcon, PlusIcon, SparklesIcon, XIcon,
+  ArrowsPointingOutIcon, ChatIcon, DescriptionIcon, DraftEditIcon, EllipsisVerticalIcon, PaperclipIcon, PlusIcon,
+  SparklesIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
-import { setSuggestMode } from '../improve/suggest-settings';
 import { platformSlug } from '../messages/channel-hub';
 import {
   describeElement, encodeUnder, inRect, pictureScale, placeBeside, takeBase, thumbnail,
   type Base, type ElementInfo, type Point, type Rect,
 } from './picture';
-import { MAX_PICTURES, handOver, numberFromUrl, postComment, whereLine, type CommentPost, type Target } from './post';
+import {
+  MAX_COMMENTS, MAX_PICTURES, handOver, numberFromUrl, numberedWords, postComment, whereLines,
+  type CommentPost, type CommentShot, type Spot, type Target,
+} from './post';
 
 export const HOST_ID = 'comment-pin-host';
-const BOX_WIDTH = 328;
+const BOX_WIDTH = 360;
 /** Room kept clear at the foot for the bar. */
 const BAR_SPACE = 76;
 
@@ -202,33 +216,48 @@ export interface CommentCarry {
 export interface OpenOptions {
   /** How it was opened: the key, "Suggest an improvement", or the form's switch. */
   via?: 'key' | 'suggest' | 'switch';
-  /** The form's draft, which the first box takes. */
+  /** The form's draft, which the first comment takes. */
   carry?: CommentCarry | null;
 }
 
 interface Picture {
+  key: number;
   /** Drawn, null when it could not be, undefined while drawing. */
   base: Base | null | undefined;
   promise: Promise<Base | null>;
   thumb: string;
-  /** Where the pin is on it, as fractions of its width and height. */
+  /** The view it shows: how many times the page had scrolled, and its route, when it was drawn. */
+  view: number;
+  screen: string;
+  /** The comment whose point the running app was asked about (its `at`), if that is still where it is. */
+  askedFor: number | null;
+}
+
+interface Comment {
+  key: number;
+  anchor: Anchor;
+  inApp: boolean;
+  /** The route the page was on, for the where line. */
+  screen: string;
+  /** The picture its pin is on, when it has one. */
+  picture: number | null;
+  /** Where its pin is on that picture, as fractions of its width and height. */
   pin: Point;
+  text: string;
 }
 
 interface Image { blob: Blob; url: string; name: string }
 
 type TitleState = 'none' | 'auto' | 'mine';
 
+/** A request being written: one comment, or several, each with its own pin. */
 interface Draft {
   key: number;
-  n: number;
-  anchor: Anchor;
-  inApp: boolean;
-  /** The route the page was on, for the where line. */
-  screen: string;
-  picture: Picture;
+  comments: Comment[];
+  /** The comment being written; null while the next one waits for its click. */
+  active: number | null;
+  pictures: Picture[];
   keepShot: boolean;
-  text: string;
   title: string;
   titleState: TitleState;
   /** The words the suggested title was named from. */
@@ -244,15 +273,17 @@ interface Draft {
 
 interface Posted {
   key: number;
-  n: number;
-  anchor: Anchor;
   title: string;
   words: string;
   place: string;
   href: string | null;
   pictures: number;
+  comments: number;
   kudos: boolean;
 }
+
+/** A posted comment's marker: its request, its number there when it has several. */
+interface PostedPin { key: number; request: number; n: number | null; anchor: Anchor }
 
 interface Session {
   host: HTMLElement;
@@ -260,19 +291,55 @@ interface Session {
   carry: CommentCarry | null;
 }
 
+const liveComments = (d: Draft) => d.comments.filter((c) => c.text.trim());
+const draftWords = (d: Draft) => liveComments(d).map((c) => c.text.trim()).join('\n');
+const hasWords = (d: Draft | null) => !!d && d.comments.some((c) => c.text.trim());
+const activeComment = (d: Draft | null) => (d && d.active != null ? d.comments.find((c) => c.key === d.active) || null : null);
+/** The pictures the request's comments are on, in order; none once the screenshot is removed. */
+const usedPictures = (d: Draft) => (d.keepShot
+  ? d.pictures.filter((p) => p.base !== null && d.comments.some((c) => c.picture === p.key)) : []);
+const pictureCount = (d: Draft) => usedPictures(d).length + d.images.length;
+const prune = (pictures: Picture[], comments: Comment[]) => pictures.filter((p) => comments.some((c) => c.picture === p.key));
+const routeOf = () => (location.hash || '#home').split('?')[0].slice(0, 120);
+
 /** The title a post carries: the person's, or a suggestion named from these very words (#732). */
 function titleToSend(d: Draft): string {
   if (d.titleState === 'mine') return d.title.trim();
-  if (d.titleState === 'auto' && d.titleFor === d.text.trim()) return d.title.trim();
+  if (d.titleState === 'auto' && d.titleFor === draftWords(d)) return d.title.trim();
   return '';
 }
+
+/** Where the person moved the bar, as fractions of the window, kept on the device; null: the foot, centred. */
+const BAR_KEY = 'usernode:comment-bar';
+
+function savedBarAt(): Point | null {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(BAR_KEY) || 'null') as Point | null;
+    return v && Number.isFinite(v.x) && Number.isFinite(v.y) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveBarAt(p: Point | null): void {
+  try {
+    if (p) window.localStorage.setItem(BAR_KEY, JSON.stringify({ x: p.x, y: p.y }));
+    else window.localStorage.removeItem(BAR_KEY);
+  } catch { /* private mode: it goes back to the foot next time */ }
+}
+
+/** How long the pointer rests on the bar before it moves out of the way. */
+const DUCK_AFTER_MS = 280;
+
+const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
 function CommentMode({ session, onClose }: { session: Session; onClose: () => void }): ReactNode {
   const { host, app } = session;
   const [draft, setDraft] = useState<Draft | null>(null);
   const [posted, setPosted] = useState<Posted[]>([]);
+  const [postedPins, setPostedPins] = useState<PostedPin[]>([]);
   const [open, setOpen] = useState<number | null>(null);
-  const [confirmExit, setConfirmExit] = useState(false);
+  const [confirm, setConfirm] = useState<'exit' | 'discard' | null>(null);
   const [carry, setCarry] = useState<CommentCarry | null>(session.carry);
   const [titleLoading, setTitleLoading] = useState(false);
   const [hover, setHover] = useState<Rect | null>(null);
@@ -280,6 +347,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const [budget, setBudget] = useState<Budget>(kudosBudget);
   const [boxAt, setBoxAt] = useState<Point>({ x: -9999, y: -9999 });
   const [cardAt, setCardAt] = useState<Point>({ x: -9999, y: -9999 });
+  const [barAt, setBarAt] = useState<Point | null>(savedBarAt);
+  const [barSize, setBarSize] = useState({ width: 0, height: 0 });
+  const [ducked, setDucked] = useState<Rect | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -287,6 +357,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const fileRef = useRef<HTMLInputElement>(null);
   const keys = useRef(0);
   const hoverFrame = useRef(0);
+  const view = useRef(0);
+  const duckTimer = useRef(0);
+  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const touch = useRef<{ id: number; start: Point; last: Point; moved: boolean; scroller: Element | null } | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const barAtRef = useRef(barAt);
+  barAtRef.current = barAt;
 
   const update = useCallback((key: number, patch: Partial<Draft> | ((d: Draft) => Partial<Draft>)) => {
     setDraft((d) => (d && d.key === key ? { ...d, ...(typeof patch === 'function' ? patch(d) : patch) } : d));
@@ -297,10 +375,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   useEffect(() => { barRef.current?.focus({ preventScroll: true }); }, []);
   useEffect(() => { void refreshKudosBudget().then(() => setBudget(kudosBudget())); }, []);
 
-  // The pins move with the page: any scroll, or a new window size, redraws.
+  // The pins move with the page: any scroll, or a new window size, redraws,
+  // and is a new view (a picture of the old one no longer shows it).
   useEffect(() => {
     let frame = 0;
     const redraw = () => {
+      view.current += 1;
       if (frame) return;
       frame = requestAnimationFrame(() => { frame = 0; setTick((t) => t + 1); });
     };
@@ -317,9 +397,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const urls = useRef(new Set<string>());
   useEffect(() => () => { urls.current.forEach((u) => URL.revokeObjectURL(u)); }, []);
 
-  /** Start drawing the page with the pin at `p`; the box shows it when it lands. */
-  const drawPicture = useCallback((key: number, p: Point): Picture => {
+  /** Start drawing the page with a pin at `p`; the box shows it when it lands. */
+  const drawPicture = useCallback((draftKey: number, p: Point, askedFor: number): Picture => {
     const shown = visibleAppFrame();
+    const key = ++keys.current;
     const promise = takeBase({
       host,
       scale: pictureScale(window.devicePixelRatio, { width: window.innerWidth, height: window.innerHeight }),
@@ -327,41 +408,72 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       frameRect: shown?.rect ?? null,
       pin: p,
     });
-    const picture: Picture = {
-      base: undefined,
-      promise,
-      thumb: '',
-      pin: { x: p.x / Math.max(1, window.innerWidth), y: p.y / Math.max(1, window.innerHeight) },
-    };
+    const land = (base: Base | null, thumb: string) => setDraft((d) => (d && d.key === draftKey
+      ? { ...d, pictures: d.pictures.map((pic) => (pic.key === key && pic.promise === promise ? { ...pic, base, thumb } : pic)) }
+      : d));
     promise.then((b) => {
       let thumb = '';
       if (b) {
         try { thumb = thumbnail(b.canvas, 160); } catch { /* no preview, still attached */ }
       }
-      setDraft((d) => (d && d.key === key && d.picture.promise === promise
-        ? { ...d, picture: { ...d.picture, base: b, thumb } } : d));
-    }, () => {
-      setDraft((d) => (d && d.key === key && d.picture.promise === promise
-        ? { ...d, picture: { ...d.picture, base: null } } : d));
-    });
-    return picture;
+      land(b, thumb);
+    }, () => land(null, ''));
+    return { key, base: undefined, promise, thumb: '', view: view.current, screen: routeOf(), askedFor };
   }, [host]);
 
-  /** A press on the page: a pin there, or the open box's pin moved there. */
+  /**
+   * The picture a pin at `p` goes on: one already drawn of this same view
+   * (nothing has scrolled or moved since), else a new one while there is
+   * room for it beside the others and the person's own images.
+   */
+  const pictureFor = useCallback((d: Draft, p: Point, commentKey: number): { pictures: Picture[]; picture: number | null } => {
+    const same = d.pictures.find((pic) => pic.view === view.current && pic.screen === routeOf() && pic.base !== null);
+    if (same) return { pictures: d.pictures, picture: same.key };
+    const others = d.comments.filter((c) => c.key !== commentKey);
+    const inUse = d.pictures.filter((pic) => others.some((c) => c.picture === pic.key)).length;
+    if (inUse + d.images.length >= MAX_PICTURES) return { pictures: d.pictures, picture: null };
+    const pic = drawPicture(d.key, p, commentKey);
+    return { pictures: [...d.pictures, pic], picture: pic.key };
+  }, [drawPicture]);
+
+  /**
+   * A press on the page: the open comment's pin moved there, the request's
+   * next comment there (after "Add a comment"), or a new request there.
+   */
   const place = useCallback((at: Point) => {
     if (open != null) { setOpen(null); return; }
     const p = clampToViewport(at);
     const anchor = anchorAt(p, host);
     const inApp = inRect(p, visibleAppFrame()?.rect);
-    const screen = (location.hash || '#home').split('?')[0].slice(0, 120);
-    setConfirmExit(false);
-    if (draft && !draft.sending) {
-      update(draft.key, { anchor, inApp, screen, picture: drawPicture(draft.key, p), error: '' });
-      textRef.current?.focus();
+    const screen = routeOf();
+    const pin = { x: p.x / Math.max(1, window.innerWidth), y: p.y / Math.max(1, window.innerHeight) };
+    setConfirm(null);
+    if (draft) {
+      if (draft.sending) return;
+      const current = activeComment(draft);
+      if (current) {
+        // A click elsewhere moves the open comment's pin; its words stay.
+        const got = pictureFor(draft, p, current.key);
+        const comments = draft.comments.map((c) => (c.key === current.key
+          ? { ...c, anchor, inApp, screen, picture: got.picture, pin } : c));
+        const pictures = prune(got.pictures, comments).map((pic) => (pic.key === got.picture && pic.askedFor === current.key && pic.key === current.picture
+          ? { ...pic, askedFor: null } : pic));
+        setDraft({ ...draft, comments, pictures, error: '' });
+        textRef.current?.focus();
+        return;
+      }
+      if (draft.comments.length >= MAX_COMMENTS) return;
+      const key = ++keys.current;
+      const got = pictureFor(draft, p, key);
+      setDraft({
+        ...draft,
+        pictures: got.pictures,
+        comments: [...draft.comments, { key, anchor, inApp, screen, picture: got.picture, pin, text: '' }],
+        active: key,
+        error: '',
+      });
       return;
     }
-    if (draft) return;
-    const key = ++keys.current;
     const c = carry;
     setCarry(null);
     const images: Image[] = (c?.images || []).filter((b) => IMAGE_TYPES.includes(b.type)).slice(0, MAX_PICTURES - 1)
@@ -370,15 +482,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         urls.current.add(url);
         return { blob, url, name: `Image ${i + 1}` };
       });
-    setDraft({
-      key,
-      n: posted.length + 1,
-      anchor,
-      inApp,
-      screen,
-      picture: drawPicture(key, p),
+    const empty: Draft = {
+      key: ++keys.current,
+      comments: [],
+      active: null,
+      pictures: [],
       keepShot: true,
-      text: c?.text || '',
       title: c?.title || '',
       titleState: c?.title ? 'mine' : 'none',
       titleFor: '',
@@ -389,20 +498,29 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       chosen: c?.target ?? null,
       sending: false,
       error: '',
+    };
+    const key = ++keys.current;
+    const got = pictureFor(empty, p, key);
+    setDraft({
+      ...empty,
+      pictures: got.pictures,
+      comments: [{ key, anchor, inApp, screen, picture: got.picture, pin, text: c?.text || '' }],
+      active: key,
     });
-  }, [open, host, draft, carry, posted.length, update, drawPicture]);
+  }, [open, host, draft, carry, pictureFor]);
 
-  // The words go to the box's field as it opens.
+  // The open comment's words have the keyboard whenever a comment opens.
   const draftKey = draft?.key;
+  const activeKey = draft?.active ?? null;
   useEffect(() => {
     const t = textRef.current;
     if (!t) return;
     t.focus();
     t.setSelectionRange(t.value.length, t.value.length);
-  }, [draftKey]);
+  }, [draftKey, activeKey]);
 
-  // #556: the title, suggested from the words after a pause.
-  const words = draft ? draft.text.trim() : '';
+  // #556: the title, suggested from all the request's words after a pause.
+  const words = draft ? draftWords(draft) : '';
   const titleMine = draft?.titleState === 'mine';
   const editingTitle = !!draft?.editingTitle;
   useEffect(() => {
@@ -427,7 +545,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         if (!live) return;
         const title = typeof data.title === 'string' ? data.title.trim() : '';
         if (title) {
-          update(key, (d) => (d.titleState === 'mine' || d.text.trim() !== words
+          update(key, (d) => (d.titleState === 'mine' || draftWords(d) !== words
             ? {} : { title, titleState: 'auto', titleFor: words }));
         }
       } catch { /* silent: the server names it when it is posted */ }
@@ -440,8 +558,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey, words, titleMine, editingTitle]);
 
-  const pictureCount = (d: Draft) => (d.keepShot && d.picture.base !== null ? 1 : 0) + d.images.length;
-
   const addImages = useCallback((files: File[]) => {
     if (!draft) return;
     const key = draft.key;
@@ -449,7 +565,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     const usable = files.filter((f) => IMAGE_TYPES.includes(f.type));
     if (usable.length < files.length) update(key, { error: 'Only PNG and JPEG images can be attached.' });
     if (room <= 0) {
-      update(key, { error: `A comment can carry ${MAX_PICTURES} images.` });
+      update(key, { error: `A request can carry ${MAX_PICTURES} images.` });
       return;
     }
     const added = usable.slice(0, room).map((f) => {
@@ -466,58 +582,79 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     update(key, (d) => ({ images: d.images.filter((i) => i.url !== url) }));
   };
 
-  /** The comment as a post: the picture encoded clean, the pin beside it. */
+  /** The request as a post: its words (numbered when there are several), each picture clean with its pins beside it. */
   const postFor = useCallback(async (d: Draft): Promise<CommentPost> => {
-    const base = d.picture.base === undefined ? await d.picture.promise.catch(() => null) : d.picture.base;
-    let at: ElementInfo | null;
-    if (d.inApp) at = base?.app?.at ?? null;
-    else at = d.anchor.el && d.anchor.el.isConnected ? describeElement(d.anchor.el) : null;
-    const screen = d.inApp ? (base?.app?.path || '') : d.screen;
-    let picture: Blob | null = null;
-    if (d.keepShot && base) {
-      try { picture = await encodeUnder(base.canvas); } catch { picture = null; }
+    const live = liveComments(d);
+    const many = live.length > 1;
+    const bases = new Map<number, Base | null>();
+    for (const pic of d.pictures) {
+      bases.set(pic.key, pic.base === undefined ? await pic.promise.catch(() => null) : pic.base);
     }
-    const target: Target = app ? (d.chosen ?? (d.inApp ? 'app' : 'platform')) : 'platform';
+    const spots: Spot[] = live.map((c) => {
+      const pic = c.picture != null ? d.pictures.find((x) => x.key === c.picture) : null;
+      const base = pic ? bases.get(pic.key) ?? null : null;
+      let at: ElementInfo | null;
+      if (c.inApp) at = pic && pic.askedFor === c.key ? base?.app?.at ?? null : null;
+      else at = c.anchor.el && c.anchor.el.isConnected ? describeElement(c.anchor.el) : null;
+      return { inApp: c.inApp, screen: c.inApp ? (base?.app?.path || '') : c.screen, at };
+    });
+    const shots: CommentShot[] = [];
+    if (d.keepShot) {
+      for (const pic of d.pictures) {
+        const base = bases.get(pic.key);
+        const pins = live.map((c, i) => ({ c, i })).filter(({ c }) => c.picture === pic.key)
+          .map(({ c, i }) => ({ x: c.pin.x, y: c.pin.y, n: many ? i + 1 : null, note: c.text.trim() }));
+        if (!base || !pins.length) continue;
+        try {
+          const blob = await encodeUnder(base.canvas);
+          if (blob) shots.push({ blob, pins });
+        } catch { /* that picture stays behind; the words go */ }
+      }
+    }
+    const first = live[0] || d.comments[0];
+    const target: Target = app ? (d.chosen ?? (first?.inApp ? 'app' : 'platform')) : 'platform';
     return {
-      text: d.text.trim(),
+      text: numberedWords(live.map((c) => c.text)),
       target,
       appSlug: app?.slug ?? null,
-      picture,
-      pin: picture ? d.picture.pin : null,
+      shots,
       images: d.images.map((i) => i.blob),
       title: titleToSend(d),
       bounty: d.kudos && budget.remaining !== 0,
-      where: whereLine({ inApp: d.inApp, screen, at }),
+      where: live.length ? whereLines(spots) : '',
     };
   }, [app, budget.remaining]);
 
   const send = useCallback(async () => {
     const d = draft;
-    if (!d || d.sending || !d.text.trim()) return;
+    if (!d || d.sending || !liveComments(d).length) return;
     update(d.key, { sending: true, error: '', editingTitle: false });
     const post = await postFor(d);
     const outcome = await postComment(post);
     if (outcome.ok) {
+      const live = liveComments(d);
+      const many = live.length > 1;
       const name = post.target === 'app' && app ? app.name : 'Homeroom';
       const number = numberFromUrl(outcome.url);
       const slug = post.target === 'app' ? app?.slug : platformSlug();
       setPosted((list) => [...list, {
         key: d.key,
-        n: d.n,
-        anchor: d.anchor,
         title: outcome.title || post.title || '',
         words: post.text,
         place: number ? `#${number} · Posted to ${name}` : `Posted to ${name}`,
         href: number && slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${number}` : null,
-        pictures: (post.picture ? 1 : 0) + (post.images?.length || 0),
+        pictures: (post.shots?.length || 0) + (post.images?.length || 0),
+        comments: live.length,
         kudos: !!outcome.bounty?.placed,
       }]);
+      setPostedPins((list) => [...list, ...live.map((c, i) => ({ key: c.key, request: d.key, n: many ? i + 1 : null, anchor: c.anchor }))]);
       setDraft(null);
       barRef.current?.focus({ preventScroll: true });
-      let line = outcome.botWillBuild ? `Posted to ${name}. Homeroom bot is building it.` : `Posted to ${name}. Thanks!`;
+      const what = many ? `Posted ${live.length} comments to ${name}` : `Posted to ${name}`;
+      let line = outcome.botWillBuild ? `${what}. Homeroom bot is building it.` : `${what}. Thanks!`;
       if (outcome.bounty) {
         line += outcome.bounty.placed
-          ? ' You put a kudos on it.'
+          ? ' Your kudos goes to whoever solves it.'
           : ` The kudos wasn't added: ${outcome.bounty.error || 'it could not be placed'}.`;
         void refreshKudosBudget().then(() => setBudget(kudosBudget()));
       }
@@ -532,11 +669,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     update(d.key, { sending: false, error: outcome.error });
   }, [draft, update, postFor, app, onClose]);
 
-  /** The detailed form instead, with whatever the open box holds. */
-  const toDetailed = useCallback(async () => {
-    setSuggestMode('form');
+  /** The form instead, with whatever the request holds. */
+  const toForm = useCallback(async () => {
     const d = draft;
-    const post = d && (d.text.trim() || d.images.length) ? await postFor(d) : null;
+    const post = d && (hasWords(d) || d.images.length) ? await postFor(d) : null;
     onClose();
     if (post) {
       handOver(post);
@@ -547,26 +683,57 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   const discard = useCallback(() => {
     setDraft(null);
-    setConfirmExit(false);
+    setConfirm(null);
     barRef.current?.focus({ preventScroll: true });
   }, []);
 
-  /** Done: leave, unless that would drop words nobody has posted (the box's, or the form's still waiting for a click). */
+  /** The box's ✕, and Esc: straight away when nothing is written, else asked on the bar. */
+  const requestDiscard = useCallback(() => {
+    if (hasWords(draft)) setConfirm('discard');
+    else discard();
+  }, [draft, discard]);
+
+  /** Done: leave, unless that would drop words nobody has posted (the request's, or the form's still waiting for a click). */
   const requestExit = useCallback(() => {
-    const unposted = draft ? !draft.sending && !!draft.text.trim() : !!carry?.text?.trim();
+    const unposted = draft ? !draft.sending && hasWords(draft) : !!carry?.text?.trim();
     if (unposted) {
-      setConfirmExit(true);
+      setConfirm('exit');
       return;
     }
     onClose();
   }, [draft, carry, onClose]);
 
+  /** "Add a comment": the request's next comment goes where the next click is. */
+  const addComment = useCallback(() => {
+    const cur = activeComment(draft);
+    if (!draft || draft.sending || !cur || !cur.text.trim() || draft.comments.length >= MAX_COMMENTS) return;
+    update(draft.key, { active: null });
+    barRef.current?.focus({ preventScroll: true });
+  }, [draft, update]);
+
+  const openComment = useCallback((key: number) => {
+    if (!draft || draft.sending) return;
+    update(draft.key, { active: key });
+  }, [draft, update]);
+
+  const removeComment = useCallback((key: number) => {
+    if (!draft || draft.sending || draft.comments.length < 2) return;
+    const comments = draft.comments.filter((c) => c.key !== key);
+    setDraft({
+      ...draft,
+      comments,
+      pictures: prune(draft.pictures, comments),
+      active: draft.active === key || draft.active == null ? comments[comments.length - 1].key : draft.active,
+    });
+  }, [draft]);
+
   const escape = useCallback(() => {
     if (open != null) { setOpen(null); return; }
-    if (confirmExit) { setConfirmExit(false); return; }
-    if (draft) { if (!draft.sending) discard(); return; }
+    if (confirm) { setConfirm(null); return; }
+    if (draft && draft.active == null && draft.comments.length) { openComment(draft.comments[draft.comments.length - 1].key); return; }
+    if (draft) { if (!draft.sending) requestDiscard(); return; }
     onClose();
-  }, [open, confirmExit, draft, discard, onClose]);
+  }, [open, confirm, draft, openComment, requestDiscard, onClose]);
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -584,22 +751,96 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     return () => { controller = null; };
   }, [requestExit]);
 
-  // The box and an open marker's card sit beside their pins, clear of the bar.
-  const viewport = () => ({ width: window.innerWidth, height: Math.max(200, window.innerHeight - BAR_SPACE) });
-  const draftPoint = draft ? (anchorPoint(draft.anchor) ?? draft.anchor.at) : null;
-  const openPin = open != null ? posted.find((p) => p.key === open) || null : null;
+  // ── The bar ─────────────────────────────────────────────────────────
+  //
+  // At the foot, centred, until the person drags its handle; then where they
+  // put it, kept on the device (a double-click on the handle puts it back).
+  // Resting the pointer on it moves it out of the way, so what is under it
+  // can be commented on; a quick pass on the way to one of its buttons, or a
+  // press, does not. It comes back when the pointer leaves that spot, unless
+  // the open comment's pin is there.
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const width = bar.offsetWidth;
+    const height = bar.offsetHeight;
+    if (width !== barSize.width || height !== barSize.height) setBarSize({ width, height });
+  });
+  useEffect(() => () => window.clearTimeout(duckTimer.current), []);
+  useEffect(() => { if (confirm) setDucked(null); }, [confirm]);
+  useEffect(() => {
+    if (!ducked) return undefined;
+    const onMove = (e: PointerEvent) => {
+      if (inRect({ x: e.clientX, y: e.clientY }, ducked)) return;
+      const cur = activeComment(draftRef.current);
+      const pt = cur ? anchorPoint(cur.anchor) : null;
+      if (pt && inRect(pt, ducked)) return;
+      setDucked(null);
+    };
+    window.addEventListener('pointermove', onMove);
+    return () => window.removeEventListener('pointermove', onMove);
+  }, [ducked]);
+  const onBarEnter = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'mouse' || drag.current || confirm) return;
+    window.clearTimeout(duckTimer.current);
+    duckTimer.current = window.setTimeout(() => {
+      const r = barRef.current?.getBoundingClientRect();
+      if (r) setDucked({ x: r.left - 24, y: r.top - 24, width: r.width + 48, height: r.height + 48 });
+    }, DUCK_AFTER_MS);
+  };
+  const onGripDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    window.clearTimeout(duckTimer.current);
+    const r = barRef.current?.getBoundingClientRect();
+    if (!r) return;
+    drag.current = { dx: e.clientX - (r.left + r.width / 2), dy: e.clientY - (r.top + r.height / 2) };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onGripMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    setBarAt({ x: clamp01((e.clientX - d.dx) / Math.max(1, window.innerWidth)), y: clamp01((e.clientY - d.dy) / Math.max(1, window.innerHeight)) });
+  };
+  const onGripUp = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    saveBarAt(barAtRef.current);
+  };
+  const barPlace = barAt
+    ? {
+      left: Math.round(Math.max(8, Math.min(window.innerWidth - barSize.width - 8, barAt.x * window.innerWidth - barSize.width / 2))),
+      top: Math.round(Math.max(8, Math.min(window.innerHeight - barSize.height - 8, barAt.y * window.innerHeight - barSize.height / 2))),
+    }
+    : null;
+  const barUp = barPlace ? barPlace.top + barSize.height / 2 < window.innerHeight / 2 : false;
+
+  // The box and an open marker's card sit beside their pins, clear of the bar at the foot.
+  const viewport = () => ({ width: window.innerWidth, height: Math.max(200, window.innerHeight - (barAt ? 0 : BAR_SPACE)) });
+  const boxComment = draft ? activeComment(draft) || draft.comments[draft.comments.length - 1] || null : null;
+  const boxPoint = boxComment ? (anchorPoint(boxComment.anchor) ?? boxComment.anchor.at) : null;
+  const openPin = open != null ? postedPins.find((p) => p.key === open) || null : null;
+  const openRequest = openPin ? posted.find((r) => r.key === openPin.request) || null : null;
   const openPoint = openPin ? anchorPoint(openPin.anchor) : null;
+  // Beside the marker where there is room for it; on a narrow screen, under
+  // the point (or over the marker), never on top of the pin it belongs to.
+  const besidePin = (p: Point, size: { width: number; height: number }): Point => {
+    const vp = viewport();
+    const fits = p.x + 24 + size.width <= vp.width - 8 || p.x - 24 - size.width >= 8;
+    if (fits) return placeBeside({ x: p.x + 10, y: p.y - 30 }, size, vp, 14);
+    const x = Math.max(8, Math.min(vp.width - 8 - size.width, p.x - size.width / 2));
+    const below = p.y + 10;
+    const y = below + size.height <= vp.height - 8 ? below : Math.max(8, p.y - 40 - size.height);
+    return { x, y };
+  };
   useLayoutEffect(() => {
     const box = boxRef.current;
-    if (box && draftPoint) {
-      const size = { width: box.offsetWidth || BOX_WIDTH, height: box.offsetHeight || 200 };
-      const at = placeBeside({ x: draftPoint.x + 10, y: draftPoint.y - 30 }, size, viewport(), 14);
+    if (box && boxPoint) {
+      const at = besidePin(boxPoint, { width: box.offsetWidth || BOX_WIDTH, height: box.offsetHeight || 200 });
       if (at.x !== boxAt.x || at.y !== boxAt.y) setBoxAt(at);
     }
     const card = cardRef.current;
     if (card && openPoint) {
-      const size = { width: card.offsetWidth || 300, height: card.offsetHeight || 140 };
-      const at = placeBeside({ x: openPoint.x + 10, y: openPoint.y - 30 }, size, viewport(), 14);
+      const at = besidePin(openPoint, { width: card.offsetWidth || 300, height: card.offsetHeight || 140 });
       if (at.x !== cardAt.x || at.y !== cardAt.y) setCardAt(at);
     }
   });
@@ -626,6 +867,29 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     s.scrollBy({ left: e.deltaX * unit, top: e.deltaY * unit });
   };
 
+  // A finger: a tap is a comment, a drag scrolls what is under it.
+  const onLayerPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse') return;
+    e.preventDefault();
+    const start = { x: e.clientX, y: e.clientY };
+    touch.current = { id: e.pointerId, start, last: start, moved: false, scroller: scrollerAt(start, host) };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const onLayerPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const t = touch.current;
+    if (!t || e.pointerId !== t.id) return;
+    const p = { x: e.clientX, y: e.clientY };
+    if (!t.moved && Math.hypot(p.x - t.start.x, p.y - t.start.y) > 8) t.moved = true;
+    if (t.moved && t.scroller) t.scroller.scrollBy(t.last.x - p.x, t.last.y - p.y);
+    t.last = p;
+  };
+  const onLayerPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const t = touch.current;
+    if (!t || e.pointerId !== t.id) return;
+    touch.current = null;
+    if (!t.moved) place({ x: e.clientX, y: e.clientY });
+  };
+
   const onBoxKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -647,36 +911,48 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   const postedCount = posted.length;
   const hint = draft
-    ? 'Enter posts it. Esc discards it.'
+    ? (draft.active == null ? 'Click where the next comment goes' : 'Enter posts it. Esc discards it.')
     : carry ? 'Click where your words belong' : postedCount ? 'Click to leave another' : 'Click anything to comment on it';
 
-  const target: Target | null = draft ? (app ? (draft.chosen ?? (draft.inApp ? 'app' : 'platform')) : 'platform') : null;
+  const first = draft ? draft.comments[0] : null;
+  const target: Target | null = draft ? (app ? (draft.chosen ?? (first?.inApp ? 'app' : 'platform')) : 'platform') : null;
   const count = draft ? pictureCount(draft) : 0;
+  const live = draft ? liveComments(draft).length : 0;
+  const numbered = !!draft && (draft.comments.length > 1 || draft.active == null);
+  const drawing = !!draft && draft.keepShot && draft.pictures.some((p) => p.base === undefined);
   const kudosOut = budget.remaining === 0;
+  const kudosLeft = budget.remaining != null && budget.limit != null
+    ? `Costs 1 kudos. ${budget.remaining} of ${budget.limit} left this week.` : 'Costs 1 kudos.';
   const shotLine = !draft ? '' : !draft.keepShot
     ? 'No screenshot.'
-    : draft.picture.base === undefined
+    : drawing
       ? 'Taking a screenshot…'
-      : draft.picture.base === null
-        ? "Couldn't take a screenshot. Your words still go."
-        : count >= MAX_PICTURES ? `${count} of ${MAX_PICTURES} images` : 'Screenshot of this page, with your pin';
+      : !usedPictures(draft).length && !draft.images.length
+        ? "No screenshot. Your words still go."
+        : count >= MAX_PICTURES ? `${count} of ${MAX_PICTURES} images`
+          : numbered ? 'Screenshot of this page, with your pins' : 'Screenshot of this page, with your pin';
+  const quietTool = 'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[13px] font-semibold text-zinc-600 ring-1 ring-inset ring-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-300 dark:ring-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-white';
 
   return (
     <div className="fixed inset-0" style={{ zIndex: 2147483000 }}>
       {/* The layer: a press anywhere is a comment. Its mousedown is
           prevented, so the box's field keeps the keyboard through it
-          (tests/keyboard-dismiss.test.js). */}
+          (tests/keyboard-dismiss.test.js); a finger taps or scrolls. */}
       <div
         id="comment-pin"
         aria-hidden="true"
         data-keep-keyboard=""
         className="absolute inset-0"
-        style={{ cursor: CURSOR }}
+        style={{ cursor: CURSOR, touchAction: 'none' }}
         onMouseDown={(e) => {
           if (e.button !== 0) return;
           e.preventDefault();
           place({ x: e.clientX, y: e.clientY });
         }}
+        onPointerDown={onLayerPointerDown}
+        onPointerMove={onLayerPointerMove}
+        onPointerUp={onLayerPointerUp}
+        onPointerCancel={() => { touch.current = null; }}
         onMouseMove={onLayerMove}
         onMouseLeave={() => setHover(null)}
         onWheel={onWheel}
@@ -690,43 +966,55 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         />
       ) : null}
 
-      {posted.map((p) => {
+      {postedPins.map((p) => {
         const at = anchorPoint(p.anchor);
-        if (!at) return null;
+        const request = posted.find((r) => r.key === p.request);
+        if (!at || !request) return null;
         return (
           <button
             key={p.key}
             type="button"
-            data-comment-pin-posted={p.n}
-            aria-label={`Comment ${p.n}, ${p.place}`}
+            data-comment-pin-posted={p.n ?? ''}
+            aria-label={p.n ? `Comment ${p.n}, ${request.place}` : `Comment, ${request.place}`}
             aria-expanded={open === p.key}
             onClick={() => setOpen((o) => (o === p.key ? null : p.key))}
             className={`absolute grid h-[30px] w-[30px] place-items-center ${PIN_SHAPE} bg-violet-600 text-[13px] font-extrabold text-white shadow-[0_0_0_2.5px_#fff,0_3px_10px_rgba(0,0,0,0.28)] hover:bg-violet-500`}
             style={{ left: at.x, top: at.y - 30 }}
           >
-            {p.n}
+            {p.n ?? <ChatIcon className="h-4 w-4" />}
           </button>
         );
       })}
 
-      {draft && draftPoint ? (
-        <span
-          aria-hidden="true"
-          data-comment-pin-dot=""
-          className={`absolute grid h-[30px] w-[30px] place-items-center ${PIN_SHAPE} bg-white text-[13px] font-extrabold text-violet-600 shadow-[0_0_0_2.5px_#0a6ee0,0_3px_10px_rgba(0,0,0,0.2)] dark:bg-zinc-900`}
-          style={{ left: draftPoint.x, top: draftPoint.y - 30 }}
-        >
-          {draft.n}
-        </span>
-      ) : null}
+      {draft ? draft.comments.map((c, i) => {
+        const at = anchorPoint(c.anchor) ?? (c.key === draft.active ? c.anchor.at : null);
+        if (!at) return null;
+        const on = c.key === draft.active;
+        return (
+          <button
+            key={c.key}
+            type="button"
+            data-comment-pin-dot=""
+            aria-label={`Comment ${i + 1}, not posted yet`}
+            disabled={draft.sending}
+            onClick={() => openComment(c.key)}
+            className={on
+              ? `absolute grid h-[30px] w-[30px] place-items-center ${PIN_SHAPE} bg-white text-[13px] font-extrabold text-violet-600 shadow-[0_0_0_2.5px_#0a6ee0,0_3px_10px_rgba(0,0,0,0.2)] dark:bg-zinc-900`
+              : `absolute grid h-[30px] w-[30px] place-items-center ${PIN_SHAPE} bg-white/90 text-[13px] font-extrabold text-violet-600/80 shadow-[0_0_0_2px_rgba(10,110,224,0.55),0_2px_6px_rgba(0,0,0,0.15)] dark:bg-zinc-900/90`}
+            style={{ left: at.x, top: at.y - 30 }}
+          >
+            {numbered ? i + 1 : ''}
+          </button>
+        );
+      }) : null}
 
       {draft && target ? (
         <div
           ref={boxRef}
           id="comment-pin-box"
           role="dialog"
-          aria-label="Your comment"
-          className={`absolute flex w-[328px] max-w-[calc(100vw-24px)] flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10`}
+          aria-label="Your request"
+          className={`absolute flex w-[360px] max-w-[calc(100vw-24px)] flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10`}
           style={{ left: boxAt.x, top: boxAt.y }}
           onDragOver={(e) => { if (Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault(); }}
           onDrop={onDrop}
@@ -758,10 +1046,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <span className="min-w-0 flex-1" />
             <button
               type="button"
-              title="Open in the detailed form"
-              aria-label="Open in the detailed form"
+              title="Open in the form"
+              aria-label="Open in the form"
               disabled={draft.sending}
-              onClick={() => { void toDetailed(); }}
+              onClick={() => { void toForm(); }}
               className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
             >
               <ArrowsPointingOutIcon className="h-4 w-4" />
@@ -769,27 +1057,75 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <button
               type="button"
               title="Discard (Esc)"
-              aria-label="Discard this comment"
+              aria-label="Discard this request"
               disabled={draft.sending}
-              onClick={discard}
+              onClick={requestDiscard}
               className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
             >
               <XIcon className="h-4 w-4" />
             </button>
           </div>
-          <textarea
-            ref={textRef}
-            id="comment-pin-text"
-            aria-label="Your comment"
-            rows={3}
-            value={draft.text}
-            readOnly={draft.sending}
-            onChange={(e) => update(draft.key, { text: e.target.value })}
-            onKeyDown={onBoxKeyDown}
-            onPaste={onPaste}
-            placeholder="What should change here?"
-            className="block max-h-[180px] min-h-[62px] w-full resize-none bg-transparent text-[15px] leading-snug text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
-          />
+          <div className="flex flex-col gap-1.5" id="comment-pin-comments">
+            {draft.comments.map((c, i) => (c.key === draft.active ? (
+              <div key={c.key} className="flex items-start gap-2">
+                {numbered ? (
+                  <span aria-hidden="true" className={`mt-0.5 grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-white text-[11px] font-extrabold text-violet-600 ring-2 ring-inset ring-violet-600 dark:bg-zinc-900`}>{i + 1}</span>
+                ) : null}
+                <textarea
+                  ref={textRef}
+                  id="comment-pin-text"
+                  aria-label={numbered ? `Comment ${i + 1}` : 'Your comment'}
+                  rows={numbered ? 2 : 3}
+                  value={c.text}
+                  readOnly={draft.sending}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    update(draft.key, (d) => ({ comments: d.comments.map((x) => (x.key === c.key ? { ...x, text: value } : x)) }));
+                  }}
+                  onKeyDown={onBoxKeyDown}
+                  onPaste={onPaste}
+                  placeholder={i ? 'And what should change here?' : 'What should change here?'}
+                  className={`block max-h-[160px] w-full min-w-0 flex-1 resize-none bg-transparent text-[15px] leading-snug text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500 ${numbered ? 'min-h-[44px]' : 'min-h-[62px]'}`}
+                />
+              </div>
+            ) : (
+              <div key={c.key} className="flex items-center gap-2">
+                <span aria-hidden="true" className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-zinc-100 text-[11px] font-extrabold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400`}>{i + 1}</span>
+                <button
+                  type="button"
+                  title="Change this comment"
+                  disabled={draft.sending}
+                  onClick={() => openComment(c.key)}
+                  className="min-w-0 flex-1 truncate rounded-lg px-1.5 py-0.5 text-left text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+                >
+                  {c.text.trim() || 'Nothing written yet'}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Remove comment ${i + 1}`}
+                  title="Remove"
+                  disabled={draft.sending}
+                  onClick={() => removeComment(c.key)}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )))}
+            {draft.active == null ? (
+              <div className="flex items-center gap-2 rounded-[10px] bg-violet-600/10 px-2 py-1.5 ring-1 ring-inset ring-violet-600/30">
+                <span aria-hidden="true" className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-white text-[11px] font-extrabold text-violet-600 ring-2 ring-inset ring-violet-600 dark:bg-zinc-900`}>{draft.comments.length + 1}</span>
+                <span className="min-w-0 flex-1 text-[13px] font-semibold text-violet-700 dark:text-violet-300">Click on the page where it goes</span>
+                <button
+                  type="button"
+                  onClick={() => openComment(draft.comments[draft.comments.length - 1].key)}
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : null}
+          </div>
           <div id="comment-pin-title" className="flex min-h-[32px] items-center gap-2 rounded-[10px] bg-zinc-100 py-1 pl-2.5 pr-1 text-[13px] dark:bg-zinc-800">
             <span className="shrink-0 font-semibold text-zinc-500 dark:text-zinc-400">Title</span>
             {draft.editingTitle ? (
@@ -845,23 +1181,26 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             )}
           </div>
           <div className="flex min-h-[44px] flex-wrap items-center gap-2.5">
-            {draft.keepShot && draft.picture.base !== null ? (
-              <span className="relative block h-[42px] w-[64px] shrink-0">
-                {draft.picture.thumb ? (
-                  <img src={draft.picture.thumb} alt="" className="h-[42px] w-[64px] rounded-lg object-cover object-left-top ring-1 ring-black/10 dark:ring-white/10" />
+            {usedPictures(draft).map((pic) => (
+              <span key={pic.key} className="relative block h-[42px] w-[64px] shrink-0">
+                {pic.thumb ? (
+                  <img src={pic.thumb} alt="" className="h-[42px] w-[64px] rounded-lg object-cover object-left-top ring-1 ring-black/10 dark:ring-white/10" />
                 ) : (
                   <span className="block h-[42px] w-[64px] animate-pulse rounded-lg bg-zinc-100 motion-reduce:animate-none dark:bg-zinc-800" />
                 )}
-                {/* The pin over the preview: data beside the picture, as it is posted. */}
-                <span
-                  aria-hidden="true"
-                  className={`absolute h-[10px] w-[10px] -translate-y-full ${PIN_SHAPE} bg-violet-600 shadow-[0_0_0_1.5px_#fff]`}
-                  style={{ left: `${draft.picture.pin.x * 100}%`, top: `${draft.picture.pin.y * 100}%` }}
-                />
-                {draft.picture.base ? (
+                {/* The pins over the preview: data beside the picture, as they are posted. */}
+                {draft.comments.filter((c) => c.picture === pic.key).map((c) => (
+                  <span
+                    key={c.key}
+                    aria-hidden="true"
+                    className={`absolute h-[10px] w-[10px] -translate-y-full ${PIN_SHAPE} bg-violet-600 shadow-[0_0_0_1.5px_#fff]`}
+                    style={{ left: `${c.pin.x * 100}%`, top: `${c.pin.y * 100}%` }}
+                  />
+                ))}
+                {pic.base ? (
                   <button
                     type="button"
-                    aria-label="Remove the screenshot"
+                    aria-label="Remove the screenshots"
                     title="Remove"
                     disabled={draft.sending}
                     onClick={() => update(draft.key, { keepShot: false })}
@@ -871,7 +1210,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                   </button>
                 ) : null}
               </span>
-            ) : null}
+            ))}
             {draft.images.map((img) => (
               <span key={img.url} className="relative block h-[42px] w-[64px] shrink-0">
                 <img src={img.url} alt={img.name} className="h-[42px] w-[64px] rounded-lg object-cover ring-1 ring-black/10 dark:ring-white/10" />
@@ -887,18 +1226,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 </button>
               </span>
             ))}
-            {count < MAX_PICTURES ? (
-              <button
-                type="button"
-                aria-label="Attach an image"
-                title="Attach an image, or paste one"
-                disabled={draft.sending}
-                onClick={() => fileRef.current?.click()}
-                className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-lg text-zinc-500 ring-[1.5px] ring-inset ring-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:ring-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-white"
-              >
-                <PlusIcon className="h-4 w-4" />
-              </button>
-            ) : null}
             <span id="comment-pin-shot" className="min-w-[90px] flex-1 text-xs leading-tight text-zinc-500 dark:text-zinc-400">
               {shotLine}
               {!draft.keepShot ? (
@@ -906,7 +1233,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                   {' '}
                   <button
                     type="button"
-                    disabled={draft.sending || count >= MAX_PICTURES}
+                    disabled={draft.sending || draft.images.length >= MAX_PICTURES}
                     onClick={() => update(draft.key, { keepShot: true })}
                     className="font-semibold text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300"
                   >
@@ -926,45 +1253,66 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               onChange={(e) => { addImages(Array.from(e.target.files || [])); e.target.value = ''; }}
             />
           </div>
-          {draft.kudos || kudosOut ? (
-            <p className="text-xs leading-snug text-zinc-500 dark:text-zinc-400">
-              {kudosOut
-                ? (budget.limit != null ? `You've used all ${budget.limit} kudos this week.` : "You've used all your kudos this week.")
-                : budget.remaining != null && budget.limit != null
-                  ? `Thanks whoever solves it. Costs 1 kudos. ${budget.remaining} of ${budget.limit} left this week.`
-                  : 'Thanks whoever solves it. Costs 1 kudos.'}
-            </p>
-          ) : null}
+          {/* Kudos (#964): one line, a switch. What it costs is said on hover
+              and to a screen reader; the line itself says what it is for. */}
+          <button
+            type="button"
+            id="comment-pin-kudos"
+            role="switch"
+            aria-checked={draft.kudos}
+            aria-describedby="comment-pin-kudos-cost"
+            title={kudosOut ? undefined : kudosLeft}
+            disabled={draft.sending || kudosOut}
+            onClick={() => update(draft.key, (d) => ({ kudos: !d.kudos }))}
+            className={draft.kudos
+              ? 'flex h-9 w-full items-center gap-2 rounded-[10px] bg-violet-600/10 px-2.5 text-left ring-1 ring-inset ring-violet-600/30'
+              : 'flex h-9 w-full items-center gap-2 rounded-[10px] bg-zinc-100 px-2.5 text-left hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-800 dark:hover:bg-zinc-700'}
+          >
+            <span aria-hidden="true" className="text-base leading-none">{'\u{1F44F}'}</span>
+            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">Kudos for whoever solves it</span>
+            <span id="comment-pin-kudos-cost" className="shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+              {kudosOut ? 'None left this week' : budget.remaining != null ? `${budget.remaining} left` : ''}
+              <span className="sr-only">{kudosOut ? '' : `. ${kudosLeft}`}</span>
+            </span>
+            <span
+              aria-hidden="true"
+              className={draft.kudos
+                ? 'relative h-5 w-[34px] shrink-0 rounded-full bg-violet-600'
+                : 'relative h-5 w-[34px] shrink-0 rounded-full bg-zinc-300 dark:bg-zinc-600'}
+            >
+              <span className={draft.kudos
+                ? 'absolute left-[17px] top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow'
+                : 'absolute left-[3px] top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow'}
+              />
+            </span>
+          </button>
           {draft.error ? (
             <p id="comment-pin-error" role="alert" className="text-[13px] text-red-700 dark:text-red-400">{draft.error}</p>
           ) : null}
-          <div className="flex items-center gap-1 border-t border-black/5 pt-2 dark:border-white/10">
+          <div className="flex items-center gap-1.5 border-t border-black/5 pt-2 dark:border-white/10">
             <button
               type="button"
               title="Attach images, or paste one"
               aria-label="Attach images"
               disabled={draft.sending || count >= MAX_PICTURES}
               onClick={() => fileRef.current?.click()}
-              className="grid h-8 w-8 place-items-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+              className={`${quietTool} w-8 justify-center px-0`}
             >
               <PaperclipIcon className="h-4 w-4" />
             </button>
-            <button
-              type="button"
-              id="comment-pin-kudos"
-              aria-pressed={draft.kudos}
-              title="Put a kudos on this to thank whoever solves it"
-              disabled={draft.sending || kudosOut}
-              onClick={() => update(draft.key, (d) => ({ kudos: !d.kudos }))}
-              className={draft.kudos
-                ? 'inline-flex h-8 items-center gap-1.5 rounded-full bg-violet-600/10 px-2.5 text-[13px] font-semibold text-violet-700 ring-1 ring-inset ring-violet-600/30 dark:text-violet-300'
-                : 'inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-semibold text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white'}
-            >
-              <span aria-hidden="true">{'\u{1F44F}'}</span>
-              Kudos
-            </button>
+            {draft.comments.length < MAX_COMMENTS ? (
+              <button
+                type="button"
+                title="Add another comment to this same request: click where it goes next"
+                disabled={draft.sending || draft.active == null || !activeComment(draft)?.text.trim()}
+                onClick={addComment}
+                className={quietTool}
+              >
+                <PlusIcon className="h-4 w-4" />
+                Add a comment
+              </button>
+            ) : null}
             <span className="min-w-0 flex-1" />
-            <span className="mr-1 hidden whitespace-nowrap text-xs text-zinc-400 sm:inline dark:text-zinc-500">Enter to post</span>
             <Button
               type="button"
               id="comment-pin-send"
@@ -972,26 +1320,27 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               size="sm"
               ink="solid"
               disabledStyle="block"
-              disabled={draft.sending || !draft.text.trim()}
+              className="whitespace-nowrap"
+              disabled={draft.sending || !live}
               onClick={() => { void send(); }}
             >
-              {draft.sending ? 'Posting…' : 'Post'}
+              {draft.sending ? 'Posting…' : live > 1 ? `Post ${live} comments` : 'Post'}
             </Button>
           </div>
         </div>
       ) : null}
 
-      {openPin && openPoint ? (
+      {openPin && openRequest && openPoint ? (
         <div
           ref={cardRef}
           role="dialog"
-          aria-label={`Comment ${openPin.n}`}
+          aria-label={openRequest.place}
           className="absolute flex w-[300px] max-w-[calc(100vw-24px)] flex-col gap-1.5 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
           style={{ left: cardAt.x, top: cardAt.y }}
         >
           <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-            <span className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-violet-600 text-[11px] font-extrabold text-white`} aria-hidden="true">{openPin.n}</span>
-            <span className="min-w-0 flex-1 truncate">{openPin.place}</span>
+            <span className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-violet-600 text-[11px] font-extrabold text-white`} aria-hidden="true">{openPin.n ?? ''}</span>
+            <span className="min-w-0 flex-1 truncate">{openRequest.place}</span>
             <button
               type="button"
               aria-label="Close"
@@ -1001,16 +1350,19 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               <XIcon className="h-3.5 w-3.5" />
             </button>
           </div>
-          {openPin.title ? <p className="text-[15px] font-[650] leading-snug text-zinc-900 dark:text-white">{openPin.title}</p> : null}
-          <p className="line-clamp-3 whitespace-pre-wrap text-[13px] text-zinc-600 dark:text-zinc-300">{openPin.words}</p>
+          {openRequest.title ? <p className="text-[15px] font-[650] leading-snug text-zinc-900 dark:text-white">{openRequest.title}</p> : null}
+          <p className="line-clamp-3 whitespace-pre-wrap text-[13px] text-zinc-600 dark:text-zinc-300">{openRequest.words}</p>
           <div className="mt-1 flex items-center gap-2 border-t border-black/5 pt-2 text-xs text-zinc-500 dark:border-white/10 dark:text-zinc-400">
             <span className="min-w-0 flex-1 truncate">
-              {[openPin.pictures ? (openPin.pictures === 1 ? '1 image' : `${openPin.pictures} images`) : '', openPin.kudos ? 'a kudos on it' : '']
-                .filter(Boolean).join(' · ')}
+              {[
+                openRequest.comments > 1 ? `${openRequest.comments} comments` : '',
+                openRequest.pictures ? (openRequest.pictures === 1 ? '1 image' : `${openRequest.pictures} images`) : '',
+                openRequest.kudos ? 'kudos for whoever solves it' : '',
+              ].filter(Boolean).join(' · ')}
             </span>
-            {openPin.href ? (
+            {openRequest.href ? (
               <a
-                href={openPin.href}
+                href={openRequest.href}
                 onClick={() => onClose()}
                 className="shrink-0 rounded-full bg-violet-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-violet-500"
               >
@@ -1026,21 +1378,46 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         tabIndex={-1}
         role="toolbar"
         aria-label="Comment mode"
-        className="absolute bottom-4 left-1/2 flex max-w-[calc(100vw-24px)] -translate-x-1/2 items-center gap-2.5 whitespace-nowrap rounded-full bg-white py-1.5 pl-3.5 pr-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.22)] outline-none ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
+        onPointerEnter={onBarEnter}
+        onPointerLeave={() => window.clearTimeout(duckTimer.current)}
+        onPointerDown={() => window.clearTimeout(duckTimer.current)}
+        className={[
+          'absolute flex max-w-[calc(100vw-24px)] items-center gap-2 whitespace-nowrap rounded-full bg-white py-1.5 pl-1.5 pr-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.22)] outline-none ring-1 ring-black/10 transition-[transform,opacity] duration-200 motion-reduce:transition-none dark:bg-zinc-900 dark:ring-white/10 sm:gap-2.5',
+          barPlace ? '' : 'bottom-4 left-1/2 -translate-x-1/2',
+          ducked ? 'pointer-events-none opacity-0' : '',
+          ducked && !barUp ? 'translate-y-[calc(100%+24px)]' : '',
+          ducked && barUp ? '-translate-y-[calc(100%+24px)]' : '',
+        ].filter(Boolean).join(' ')}
+        style={barPlace ? { left: barPlace.left, top: barPlace.top } : undefined}
       >
-        {confirmExit ? (
+        <button
+          type="button"
+          aria-label="Move the bar"
+          title="Drag to move the bar. Double-click to put it back."
+          onPointerDown={onGripDown}
+          onPointerMove={onGripMove}
+          onPointerUp={onGripUp}
+          onPointerCancel={onGripUp}
+          onDoubleClick={() => { setBarAt(null); saveBarAt(null); }}
+          className="grid h-8 w-6 shrink-0 cursor-grab touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 active:cursor-grabbing dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+        >
+          <EllipsisVerticalIcon className="h-4 w-4" />
+        </button>
+        {confirm ? (
           <>
-            <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">Discard the comment you haven't posted?</span>
+            <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
+              {confirm === 'discard' ? 'Discard this request? Nothing in it is posted yet.' : "Discard the comments you haven't posted?"}
+            </span>
             <button
               type="button"
-              onClick={() => { setConfirmExit(false); textRef.current?.focus(); }}
+              onClick={() => { setConfirm(null); textRef.current?.focus(); }}
               className="h-[34px] shrink-0 rounded-full px-3 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 dark:text-white dark:hover:bg-zinc-800"
             >
               Keep writing
             </button>
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => { if (confirm === 'discard') discard(); else onClose(); }}
               className="h-[34px] shrink-0 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900"
             >
               Discard
@@ -1050,7 +1427,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           <>
             <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300">
               <ChatIcon className="h-[18px] w-[18px]" />
-              Comment mode
+              <span className="hidden sm:inline">Comment mode</span>
             </span>
             <span className="hidden min-w-0 truncate text-[13px] text-zinc-500 md:inline dark:text-zinc-400">{hint}</span>
             {postedCount ? (
@@ -1063,12 +1440,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 type="button"
                 role="radio"
                 aria-checked="false"
-                title="The detailed form"
-                onClick={() => { void toDetailed(); }}
+                title="Suggest it with the form"
+                onClick={() => { void toForm(); }}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full pl-2 pr-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
               >
                 <DescriptionIcon className="h-4 w-4" />
-                Detailed
+                Form
               </button>
               <button
                 type="button"
@@ -1084,10 +1461,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <button
               type="button"
               onClick={requestExit}
-              className="inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full bg-zinc-900 pl-4 pr-3 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900"
+              className="inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900 sm:pr-3"
             >
               Done
-              <kbd className="rounded-[5px] px-1 font-mono text-[11px] font-semibold opacity-70 ring-1 ring-inset ring-current">Esc</kbd>
+              <kbd className="hidden rounded-[5px] px-1 font-mono text-[11px] font-semibold opacity-70 ring-1 ring-inset ring-current sm:inline">Esc</kbd>
             </button>
           </>
         )}
@@ -1113,18 +1490,13 @@ export function closeCommentMode(): void {
   controller = null;
 }
 
-/**
- * Turn comment mode on. A second call while it is on does nothing. It is
- * now the way this device suggests, so "Suggest an improvement" opens it
- * next time (../improve/suggest-settings.ts).
- */
+/** Turn comment mode on. A second call while it is on does nothing. */
 export function openCommentMode(opts: OpenOptions = {}): void {
   if (openHost || typeof document === 'undefined') return;
   const host = document.createElement('div');
   host.id = HOST_ID;
   document.body.appendChild(host);
   openHost = host;
-  setSuggestMode('comment');
   const session: Session = { host, app: appTarget(), carry: opts.carry ?? null };
   const close = () => { if (openHost === host) closeCommentMode(); };
   mountLegacyPortal(host, createElement(CommentMode, { session, onClose: close }));

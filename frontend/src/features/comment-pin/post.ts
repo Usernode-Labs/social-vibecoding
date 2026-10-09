@@ -6,10 +6,12 @@
  *   POST /api/feedback              { description, target, appSlug?, title?,
  *                                     bounty?, screenshotIds?, screenshotPins? }
  *
- * The page's picture goes first and is CLEAN: the pin is not drawn into it
- * but sent beside it, as `screenshotPins` (#4482), and the server writes it
- * onto that picture's link in the request (./pin-data.ts). The person's own
- * images follow it, up to the server's three.
+ * The page's pictures go first and are CLEAN: the pins are not drawn into
+ * them but sent beside them, as `screenshotPins` (#4482), and the server
+ * writes them onto each picture's link in the request (./pin-data.ts). A
+ * request of several comments has a picture for each view they were pinned
+ * on, each with its comments' pins, numbered. The person's own images follow,
+ * up to the server's three in all.
  *
  * The title is the one the box showed (its suggestion, or the person's own),
  * sent only when it was named from these very words, as the dialog does
@@ -22,7 +24,7 @@
  * ── Nothing is lost ───────────────────────────────────────────────────
  *
  * Offline, a network failure or a server error HANDS THE COMMENT OVER to
- * the dialog, words, title, pictures (the pin still beside the page's),
+ * the dialog, words, title, pictures (the pins still beside the pages),
  * Kudos and destination, where the outbox (#1054) keeps it and sends it when
  * it can. Only a refusal the person can act on (a 4xx with a reason) is said
  * in the box itself, with their words still in it.
@@ -33,15 +35,20 @@ import { noteFor } from './pin-data';
 
 export type Target = 'app' | 'platform';
 
+/** A comment's pin on a picture: fractions of its width and height, its number when there are several, its words. */
+export interface ShotPin { x: number; y: number; n?: number | null; note: string }
+
+/** The page as it was when pins went down, clean, with the pins beside it. */
+export interface CommentShot { blob: Blob; pins: ShotPin[] }
+
 export interface CommentPost {
+  /** The request's words: the comment's, or the comments' numbered. */
   text: string;
   target: Target;
   appSlug: string | null;
-  /** The page as it was when the pin went down, clean. */
-  picture: Blob | null;
-  /** Where the pin is on `picture`, as fractions of its width and height. */
-  pin?: { x: number; y: number } | null;
-  /** The person's own images, after the picture. */
+  /** The pages, each with its pins. */
+  shots?: CommentShot[];
+  /** The person's own images, after the pages. */
   images?: Blob[];
   /** The box's title; '' leaves it to the server. */
   title?: string;
@@ -60,6 +67,9 @@ export type PostOutcome =
 
 /** The server's own limit on images per request (MAX_SCREENSHOTS_PER_ISSUE). */
 export const MAX_PICTURES = 3;
+
+/** The server's own limit on pins per request (MAX_PINS_PER_ISSUE): the most comments one request takes. */
+export const MAX_COMMENTS = 8;
 
 /** "on button "Save" (#settings-save)", or '' when nothing useful is known. */
 export function describeTarget(info: ElementInfo | null): string {
@@ -80,6 +90,32 @@ export function whereLine(opts: { inApp: boolean; screen: string; at: ElementInf
     : `on Homeroom at ${opts.screen || '#home'}`;
   const on = describeTarget(opts.at);
   return `Pinned with C ${place}${on ? `, ${on}` : ''}.`;
+}
+
+/** Where one comment was pinned, for `whereLines`. */
+export interface Spot { inApp: boolean; screen: string; at: ElementInfo | null }
+
+/**
+ * The where line for several comments, numbered as their words are: one
+ * place said once when they share it, else each comment's own.
+ */
+export function whereLines(spots: Spot[]): string {
+  if (spots.length === 1) return whereLine(spots[0]);
+  const place = (s: Spot) => (s.inApp ? `in the app at ${s.screen || '/'}` : `on Homeroom at ${s.screen || '#home'}`);
+  const places = new Set(spots.map(place));
+  if (places.size === 1) {
+    return `Pinned with C ${place(spots[0])}: ${spots.map((s, i) => `${i + 1} ${describeTarget(s.at) || 'on the page'}`).join('; ')}.`;
+  }
+  return `Pinned with C: ${spots.map((s, i) => {
+    const on = describeTarget(s.at);
+    return `${i + 1} ${place(s)}${on ? `, ${on}` : ''}`;
+  }).join('; ')}.`;
+}
+
+/** Several comments' words, numbered, a paragraph each; one comment's, as they are. */
+export function numberedWords(texts: string[]): string {
+  const words = texts.map((t) => String(t || '').trim()).filter(Boolean);
+  return words.length === 1 ? words[0] : words.map((w, i) => `${i + 1}. ${w}`).join('\n\n');
 }
 
 /** The request's description: the words, then the where line. */
@@ -136,14 +172,17 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return { ok: false, handover: true };
 
   const ids: string[] = [];
-  let pictureId: string | null = null;
-  const pictures = [post.picture, ...(post.images || [])].filter((b): b is Blob => !!b).slice(0, MAX_PICTURES);
-  for (const blob of pictures) {
-    const id = await upload(blob);
+  const pins: Array<ShotPin & { id: string }> = [];
+  const pictures: Array<{ blob: Blob; pins: ShotPin[] }> = [
+    ...(post.shots || []),
+    ...(post.images || []).map((blob) => ({ blob, pins: [] })),
+  ].filter((p) => !!p.blob).slice(0, MAX_PICTURES);
+  for (const picture of pictures) {
+    const id = await upload(picture.blob);
     if (id === 'handover') return { ok: false, handover: true };
     if (!id) continue;
     ids.push(id);
-    if (blob === post.picture) pictureId = id;
+    for (const pin of picture.pins) pins.push({ ...pin, id });
   }
 
   const body: Record<string, unknown> = {
@@ -155,8 +194,12 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
   if (title) body.title = title.slice(0, 200);
   if (post.bounty) body.bounty = true;
   if (ids.length) body.screenshotIds = ids;
-  if (pictureId && post.pin) {
-    body.screenshotPins = [{ id: pictureId, x: post.pin.x, y: post.pin.y, note: noteFor(post.text) }];
+  if (pins.length) {
+    body.screenshotPins = pins.slice(0, MAX_COMMENTS).map((p) => {
+      const out: Record<string, unknown> = { id: p.id, x: p.x, y: p.y, note: noteFor(p.note) };
+      if (p.n) out.n = p.n;
+      return out;
+    });
   }
 
   let res: Response;
@@ -186,16 +229,16 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
   return { ok: false, handover: false, error: reason };
 }
 
-/** What the dialog's open takes for a picture: its bytes, and the pin beside it. */
-export interface HandedPicture { blob: Blob; pin?: { x: number; y: number; note: string } }
+/** What the dialog's open takes for a picture: its bytes, and the pins beside it. */
+export interface HandedPicture { blob: Blob; pins?: ShotPin[] }
 
 /** The comment as the dialog takes it (feedback-controller.js `_open`). */
 export function handOverOptions(post: CommentPost): Record<string, unknown> {
   const screenshots: HandedPicture[] = [];
-  if (post.picture) {
-    screenshots.push(post.pin
-      ? { blob: post.picture, pin: { x: post.pin.x, y: post.pin.y, note: noteFor(post.text) } }
-      : { blob: post.picture });
+  for (const shot of post.shots || []) {
+    screenshots.push(shot.pins.length
+      ? { blob: shot.blob, pins: shot.pins.map((p) => ({ x: p.x, y: p.y, n: p.n ?? null, note: noteFor(p.note) })) }
+      : { blob: shot.blob });
   }
   for (const blob of post.images || []) screenshots.push({ blob });
   const opts: Record<string, unknown> = {

@@ -23,7 +23,7 @@
  * exactly as it came in, so a request with neither is drawn as it always was.
  */
 
-import { readPin, type PinData } from '../../comment-pin/pin-data';
+import { readPins, type PinData } from '../../comment-pin/pin-data';
 
 /** Where the platform keeps a request's screenshots (src/routes/feedback.js `buildScreenshotsEmbed`). */
 export const SHOT_PATH = '/issue-images/';
@@ -53,9 +53,10 @@ export function pinPlacement(pin: Pick<PinData, 'x' | 'y'>): PinPlacement {
   };
 }
 
-/** What the corner button says while the comment is shown, and while it is not. */
-export function pinToggleLabel(shown: boolean): string {
-  return shown ? 'Hide comment' : 'Show comment';
+/** What the corner button says while the comments are shown, and while they are not. */
+export function pinToggleLabel(shown: boolean, many = false): string {
+  const what = many ? 'comments' : 'comment';
+  return shown ? `Hide ${what}` : `Show ${what}`;
 }
 
 export interface RequestShots {
@@ -112,43 +113,55 @@ function make(doc: Document, tag: string, className: string): Element {
 
 /**
  * Wraps the picture (its viewer link, when the renderer made one) with the
- * comment's layer and the button that toggles it:
+ * comments' layer and the button that toggles it, one mark per pin:
  *
  *   <span class="pin-shot" data-pin-shot="">
  *     <a class="dc-inline-img-link" …><img …></a>
- *     <button type="button" class="pin-shot-toggle touch-target-32" data-shown="true">Hide comment</button>
- *     <span class="pin-shot-layer" aria-hidden="true" data-side="right" data-rise="up" style="--pin-x: …; --pin-y: …">
- *       <span class="pin-shot-pin"></span><span class="pin-shot-note">the words</span>
+ *     <button type="button" class="pin-shot-toggle touch-target-32" data-shown="true" data-many="">Hide comments</button>
+ *     <span class="pin-shot-layer" aria-hidden="true">
+ *       <span class="pin-shot-mark" data-side="right" data-rise="up" style="--pin-x: …; --pin-y: …">
+ *         <span class="pin-shot-pin">1</span><span class="pin-shot-note">the words</span>
+ *       </span>
+ *       …
  *     </span>
  *   </span>
  *
- * The button's `data-shown` is the one record of whether the comment is
- * shown: app.css hides the layer that follows a button set to false. The
- * layer is hidden from assistive technology because the comment's words are
- * already in the request's text.
+ * A pin shows its comment's number when the request has several (`n`), and
+ * is plain otherwise. The button's `data-shown` is the one record of whether
+ * the comments are shown: app.css hides the layer that follows a button set
+ * to false. The layer is hidden from assistive technology because the
+ * comments' words are already in the request's text.
  */
-function pinShot(doc: Document, img: Element, pin: PinData): void {
+function pinShot(doc: Document, img: Element, pins: PinData[]): void {
   const link = img.parentNode;
   const target = hasClass(link, 'dc-inline-img-link') ? link : img;
   const parent = target.parentNode;
   if (!parent) return;
-  const place = pinPlacement(pin);
+  const many = pins.length > 1;
   const shot = make(doc, 'span', 'pin-shot');
   shot.setAttribute('data-pin-shot', '');
   const button = make(doc, 'button', 'pin-shot-toggle touch-target-32');
   button.setAttribute('type', 'button');
   button.setAttribute('data-shown', 'true');
-  button.textContent = pinToggleLabel(true);
+  if (many) button.setAttribute('data-many', '');
+  button.textContent = pinToggleLabel(true, many);
   const layer = make(doc, 'span', 'pin-shot-layer');
   layer.setAttribute('aria-hidden', 'true');
-  layer.setAttribute('data-side', place.side);
-  layer.setAttribute('data-rise', place.rise);
-  layer.setAttribute('style', `--pin-x: ${place.x}; --pin-y: ${place.y}`);
-  layer.appendChild(make(doc, 'span', 'pin-shot-pin'));
-  if (pin.note) {
-    const note = make(doc, 'span', 'pin-shot-note');
-    note.textContent = pin.note;
-    layer.appendChild(note);
+  for (const pin of pins) {
+    const place = pinPlacement(pin);
+    const mark = make(doc, 'span', 'pin-shot-mark');
+    mark.setAttribute('data-side', place.side);
+    mark.setAttribute('data-rise', place.rise);
+    mark.setAttribute('style', `--pin-x: ${place.x}; --pin-y: ${place.y}`);
+    const dot = make(doc, 'span', 'pin-shot-pin');
+    if (pin.n) dot.textContent = String(pin.n);
+    mark.appendChild(dot);
+    if (pin.note) {
+      const note = make(doc, 'span', 'pin-shot-note');
+      note.textContent = pin.note;
+      mark.appendChild(note);
+    }
+    layer.appendChild(mark);
   }
   parent.insertBefore(shot, target);
   shot.appendChild(target);
@@ -181,9 +194,9 @@ export function requestShots(
   let changed = false;
   if (pins) {
     for (const img of imagesIn(root)) {
-      const pin = readPin(img.getAttribute('src'));
-      if (!pin) continue;
-      pinShot(doc, img, pin);
+      const pins = readPins(img.getAttribute('src'));
+      if (!pins.length) continue;
+      pinShot(doc, img, pins);
       changed = true;
     }
   }
@@ -220,6 +233,6 @@ export function togglePinShot(target: EventTarget | null, scope: Element | null)
   if (!button || !scope.contains(button)) return false;
   const shown = button.getAttribute('data-shown') !== 'true';
   button.setAttribute('data-shown', String(shown));
-  button.textContent = pinToggleLabel(shown);
+  button.textContent = pinToggleLabel(shown, button.hasAttribute('data-many'));
   return true;
 }

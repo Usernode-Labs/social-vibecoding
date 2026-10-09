@@ -8,13 +8,12 @@
  *
  * ── The other way in ────────────────────────────────────────────────────
  *
- * "Suggest an improvement" opens whichever way this device suggested last:
- * comment mode once it has been used, the detailed form once the person
- * switches back to it (Detailed, on comment mode's bar or in its box). The
- * form's own Comment switch opens comment mode with the form's draft. Both
- * reach this module through `openCommentMode` (the form's island imports it;
- * feedback-controller.js, which cannot import, through
- * window.UsernodeReact.suggestShortcut).
+ * While the switch is on, "Suggest an improvement" opens comment mode, on a
+ * phone too (a tap is a comment there), and the form is one switch away
+ * (Form, on comment mode's bar or in its box). The form's own Comment switch
+ * opens comment mode with the form's draft. Both reach this module through
+ * `openCommentMode` (the form's island imports it; feedback-controller.js,
+ * which cannot import, through window.UsernodeReact.suggestShortcut).
  *
  * ── Only a C nobody else used ─────────────────────────────────────────
  *
@@ -60,14 +59,10 @@
 import { EMBEDDED_PANEL_CLASS } from '../../lib/side-panel-mode';
 import type { OpenOptions } from '../comment-pin/comment-pin';
 import {
-  defaultStorage, setSuggestMode, setSuggestShortcutEnabled, suggestMode, suggestShortcutEnabled,
-  type StorageLike,
+  defaultStorage, setSuggestShortcutEnabled, suggestShortcutEnabled, type StorageLike,
 } from './suggest-settings';
 
-export {
-  SUGGEST_MODE_STORAGE_KEY, SUGGEST_SHORTCUT_STORAGE_KEY, setSuggestMode, setSuggestShortcutEnabled, suggestMode,
-  suggestShortcutEnabled,
-} from './suggest-settings';
+export { SUGGEST_SHORTCUT_STORAGE_KEY, setSuggestShortcutEnabled, suggestShortcutEnabled } from './suggest-settings';
 
 /** The bridge's message from inside an app; its one value is `'suggest'`. */
 export const SHORTCUT_MESSAGE_KEY = '__usernode_shortcut';
@@ -322,36 +317,31 @@ export function openCommentMode(opts: OpenOptions = {}): void {
 }
 
 type MediaHost = {
-  matchMedia?: (q: string) => { matches: boolean };
   document?: { documentElement?: { classList?: { contains(name: string): boolean } } | null };
 };
 
 /**
- * Where comment mode can be: a pointer to comment with (a phone keeps the
- * form), and not the side panel (`?panel=1`), which is the platform framed
- * beside an app and would cover only itself.
+ * Where comment mode can be: anywhere but the side panel (`?panel=1`), which
+ * is the platform framed beside an app and would cover only itself. A phone
+ * can: a tap is a comment there.
  */
 function commentable(win: MediaHost | null): boolean {
   try {
-    if (win?.document?.documentElement?.classList?.contains(EMBEDDED_PANEL_CLASS)) return false;
-    return !!win?.matchMedia && win.matchMedia('(any-pointer: fine)').matches;
+    return !!win && !win.document?.documentElement?.classList?.contains(EMBEDDED_PANEL_CLASS);
   } catch {
     return false;
   }
 }
 
-/**
- * Whether "Suggest an improvement" opens comment mode on this device: the
- * switch is on, comment mode is the way it suggested last, and it can be here.
- */
+/** Whether "Suggest an improvement" opens comment mode: the switch is on, and it can be here. */
 export function suggestOpensComment(
   win: MediaHost | null = typeof window !== 'undefined' ? window : null,
   storage: StorageLike | null = defaultStorage(),
 ): boolean {
-  return suggestShortcutEnabled(storage) && suggestMode(storage) === 'comment' && commentable(win);
+  return suggestShortcutEnabled(storage) && commentable(win);
 }
 
-/** Whether the form offers the switch to comment mode: the switch is on, and it can be here. */
+/** Whether the form offers the switch to comment mode: the same. */
 export function formOffersComment(
   win: MediaHost | null = typeof window !== 'undefined' ? window : null,
   storage: StorageLike | null = defaultStorage(),
@@ -387,7 +377,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     enabled: () => suggestShortcutEnabled(),
     setEnabled: (on: boolean) => setSuggestShortcutEnabled(!!on),
     opensComment: () => suggestOpensComment(),
-    setMode: (mode: 'comment' | 'form') => setSuggestMode(mode === 'comment' ? 'comment' : 'form'),
     openComment: (opts?: OpenOptions) => openCommentMode(opts || {}),
   };
 }

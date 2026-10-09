@@ -101,11 +101,15 @@ function parseScreenshotIds(body) {
 // Pure (exported for tests): the issue-body suffix for every attached image.
 // One image keeps the exact pre-#3027 line, so an issue with one screenshot
 // reads as it always has; several are numbered under one heading, in the
-// order they were attached. `pins` (#4482) maps an id to its pin; that
-// image's link carries it as its fragment.
+// order they were attached. `pins` (#4482) maps an id to its pins; that
+// image's link carries them as its fragment, each note with its share of the
+// budget among all of the request's pins.
 function buildScreenshotsEmbed(ids, domain, pins = null) {
   if (!Array.isArray(ids) || ids.length === 0) return '';
-  const fragment = (id) => (pins && pins.has(id) ? pinFragment(pins.get(id)) : '');
+  let total = 0;
+  if (pins) for (const list of pins.values()) total += list.length;
+  const budget = Math.floor(PIN_NOTE_ENCODED_MAX / Math.max(1, total));
+  const fragment = (id) => (pins && pins.has(id) ? pinsFragment(pins.get(id), budget) : '');
   if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain, fragment(ids[0]));
   const lines = ids.map((id, i) => `![Screenshot ${i + 1}](https://${domain}/issue-images/${id}${fragment(id)})`);
   return `\n\n**Screenshots:**\n${lines.join('\n')}`;
@@ -120,46 +124,62 @@ function buildScreenshotsEmbed(ids, domain, pins = null) {
 // which never reaches a server: GitHub's image proxy, the coding agents and
 // GET /issue-images/:id all see the plain picture, and the comment's words
 // and where line are in the body for them. The same rule as
-// frontend/src/features/comment-pin/pin-data.ts `pinFragment`, which reads it
-// back; tests/comment-pin.test.js holds the two together.
+// frontend/src/features/comment-pin/pin-data.ts `pinsFragment`, which reads
+// it back; tests/comment-pin.test.js holds the two together. A request made
+// of several comments numbers them, and a picture with several of their pins
+// carries each in turn: `#pin=x,y&n=1&note=…&pin=x,y&n=2&note=…`.
 //
-// A post carries `screenshotPins: [{ id, x, y, note }]`, at most one (a
-// comment has one pin, and its note is what the body's reserve has room
-// for, FEEDBACK_BODY_RESERVE): `id` one of the attached screenshotIds, `x`
-// and `y` fractions of the picture, `note` the comment's words.
-const MAX_PINS_PER_ISSUE = 1;
+// A post carries `screenshotPins: [{ id, x, y, n?, note? }]`, up to
+// MAX_PINS_PER_ISSUE: `id` one of the attached screenshotIds (several pins
+// may share one), `x` and `y` fractions of the picture, `n` the comment's
+// number when there are several, `note` its words. The notes share what the
+// body's reserve has room for (FEEDBACK_BODY_RESERVE), PIN_NOTE_ENCODED_MAX
+// in all; eight pins keep the whole fragment, with every other line the
+// route adds, inside it.
+const MAX_PINS_PER_ISSUE = 8;
 const PIN_NOTE_MAX = 280;
-const PIN_NOTE_ENCODED_MAX = 800;
+const PIN_NOTE_ENCODED_MAX = 600;
 
 function encodePinNote(s) {
   return encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
-function fitPinNote(text) {
+function fitPinNote(text, budget = PIN_NOTE_ENCODED_MAX) {
   const chars = Array.from(String(text || '').replace(/\s+/g, ' ').trim());
   let note = chars.length > PIN_NOTE_MAX ? `${chars.slice(0, PIN_NOTE_MAX - 1).join('').trimEnd()}\u2026` : chars.join('');
-  while (note && encodePinNote(note).length > PIN_NOTE_ENCODED_MAX) {
+  while (note && encodePinNote(note).length > budget) {
     note = `${Array.from(note).slice(0, -2).join('').trimEnd()}\u2026`;
   }
   return note;
 }
 
-// Pure (exported for tests): the fragment for a pin, `#` included.
+// Pure (exported for tests): the fragment for a picture's pins, `#`
+// included; `budget` is each note's encoded length.
+function pinsFragment(pins, budget = Math.floor(PIN_NOTE_ENCODED_MAX / Math.max(1, pins.length))) {
+  if (!pins.length) return '';
+  const round4 = (v) => Math.round(Math.max(0, Math.min(1, v)) * 10000) / 10000;
+  return `#${pins.map((pin) => {
+    const note = fitPinNote(pin.note, budget);
+    const n = Number.isInteger(pin.n) && pin.n > 0 ? `&n=${pin.n}` : '';
+    return `pin=${round4(pin.x)},${round4(pin.y)}${n}${note ? `&note=${encodePinNote(note)}` : ''}`;
+  }).join('&')}`;
+}
+
+// Pure (exported for tests): the fragment for one pin, `#` included.
 function pinFragment(pin) {
-  const round4 = (n) => Math.round(Math.max(0, Math.min(1, n)) * 10000) / 10000;
-  const note = fitPinNote(pin.note);
-  return `#pin=${round4(pin.x)},${round4(pin.y)}${note ? `&note=${encodePinNote(note)}` : ''}`;
+  return pinsFragment([pin]);
 }
 
 // Pure (exported for tests): the pins a POST /api/feedback body puts on its
-// screenshots. Returns { ok: true, pins } (a Map of id to { x, y, note },
-// empty when there are none) or { ok: false, error }.
+// screenshots. Returns { ok: true, pins } (a Map of id to its pins, each
+// { x, y, n, note }, in the order sent; empty when there are none) or
+// { ok: false, error }.
 function parseScreenshotPins(body, screenshotIds) {
   const raw = (body || {}).screenshotPins;
   const pins = new Map();
   if (raw === undefined || raw === null) return { ok: true, pins };
   if (!Array.isArray(raw)) return { ok: false, error: 'screenshotPins must be an array' };
-  if (raw.length > MAX_PINS_PER_ISSUE) return { ok: false, error: 'A request carries one pin' };
+  if (raw.length > MAX_PINS_PER_ISSUE) return { ok: false, error: `A request carries at most ${MAX_PINS_PER_ISSUE} pins` };
   const ids = new Set(screenshotIds || []);
   for (const p of raw) {
     if (!p || typeof p !== 'object' || !ids.has(p.id)) {
@@ -173,7 +193,11 @@ function parseScreenshotPins(body, screenshotIds) {
     if (typeof p.note === 'string' && p.note.length > FEEDBACK_DESCRIPTION_MAX) {
       return { ok: false, error: 'A pin note is too long' };
     }
-    pins.set(p.id, { x: p.x, y: p.y, note: p.note || '' });
+    if (p.n !== undefined && p.n !== null && !(Number.isInteger(p.n) && p.n > 0 && p.n <= 99)) {
+      return { ok: false, error: 'A pin number must be a small whole number' };
+    }
+    if (!pins.has(p.id)) pins.set(p.id, []);
+    pins.get(p.id).push({ x: p.x, y: p.y, n: p.n || null, note: p.note || '' });
   }
   return { ok: true, pins };
 }
@@ -1136,6 +1160,7 @@ module.exports = {
   // #4482: a comment's pin as data on its screenshot — tests/comment-pin.test.js.
   parseScreenshotPins,
   pinFragment,
+  pinsFragment,
   MAX_PINS_PER_ISSUE,
   // #3940: video attachments — tests/feedback-video.test.js.
   validateVideoUpload,

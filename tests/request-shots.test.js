@@ -70,6 +70,7 @@ class El {
     this.parentNode = null;
   }
   getAttribute(name) { return this.attrs.has(name) ? this.attrs.get(name) : null; }
+  hasAttribute(name) { return this.attrs.has(name); }
   setAttribute(name, value) { this.attrs.set(name, String(value)); }
   appendChild(child) { return this.insertBefore(child, null); }
   insertBefore(child, ref) {
@@ -244,8 +245,9 @@ test('a pinned picture gets the comment as a layer over it and a button; the pic
       + `<a class="dc-inline-img-link" href="${escaped}" target="_blank" rel="noopener noreferrer" aria-label="View image full size">`
       + `<img class="dc-inline-img" src="${escaped}" alt="Screenshot" loading="lazy"></a>`
       + '<button class="pin-shot-toggle touch-target-32" type="button" data-shown="true">Hide comment</button>'
-      + '<span class="pin-shot-layer" aria-hidden="true" data-side="right" data-rise="up" style="--pin-x: 42.13%; --pin-y: 31.8%">'
-      + '<span class="pin-shot-pin"></span><span class="pin-shot-note">Make it bigger</span></span>'
+      + '<span class="pin-shot-layer" aria-hidden="true">'
+      + '<span class="pin-shot-mark" data-side="right" data-rise="up" style="--pin-x: 42.13%; --pin-y: 31.8%">'
+      + '<span class="pin-shot-pin"></span><span class="pin-shot-note">Make it bigger</span></span></span>'
       + '</span></p>',
   ));
 });
@@ -259,8 +261,26 @@ test('the note is text, never markup, and a pin with no words is a pin alone', (
   assert.equal((out.words.match(/<img/g) || []).length, 1, 'the only picture is the screenshot');
 
   const bare = shots.requestShots(words(`<p>${picture(`${SRC}${pins.pinFragment({ x: 0.5, y: 0.5, note: '' })}`)}</p>`), { parse });
-  assert.match(bare.words, /<span class="pin-shot-layer"[^>]*><span class="pin-shot-pin"><\/span><\/span>/);
+  assert.match(bare.words, /<span class="pin-shot-mark"[^>]*><span class="pin-shot-pin"><\/span><\/span>/);
   assert.doesNotMatch(bare.words, /pin-shot-note/);
+});
+
+test('a picture with several comments\' pins numbers each, with its own note and place, under one button', () => {
+  const frag = pins.pinsFragment([
+    { x: 0.2, y: 0.5, n: 1, note: 'First thing' },
+    { x: 0.9, y: 0.1, n: 2, note: 'Second thing' },
+  ]);
+  assert.deepEqual(pins.readPins(`${SRC}${frag}`), [
+    { x: 0.2, y: 0.5, n: 1, note: 'First thing' },
+    { x: 0.9, y: 0.1, n: 2, note: 'Second thing' },
+  ]);
+  const out = shots.requestShots(words(`<p>${picture(`${SRC}${frag}`)}</p>`), { parse });
+  assert.match(out.words, /<button class="pin-shot-toggle touch-target-32" type="button" data-shown="true" data-many="">Hide comments<\/button>/);
+  assert.match(out.words, /<span class="pin-shot-mark" data-side="right" data-rise="up" style="--pin-x: 20%; --pin-y: 50%"><span class="pin-shot-pin">1<\/span><span class="pin-shot-note">First thing<\/span><\/span>/);
+  assert.match(out.words, /<span class="pin-shot-mark" data-side="left" data-rise="down" style="--pin-x: 90%; --pin-y: 10%"><span class="pin-shot-pin">2<\/span><span class="pin-shot-note">Second thing<\/span><\/span>/);
+  assert.equal(shots.pinToggleLabel(false, true), 'Show comments');
+  // A number that is not a small whole number is no number, and a note before any pin belongs to none.
+  assert.deepEqual(pins.readPins(`${SRC}#note=stray&pin=0.5,0.5&n=x&note=ok`), [{ x: 0.5, y: 0.5, n: null, note: 'ok' }]);
 });
 
 test('only pictures with a pin are wrapped: a plain screenshot, a bad pin and another link stay as they were', () => {

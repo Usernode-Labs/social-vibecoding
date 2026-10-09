@@ -345,8 +345,8 @@ test('Settings, Experimental has the switch, unchecked as shipped, painted and s
   const html = renderToHtml(createElement(ExperimentalSection));
   assert.match(html,
     /<label[^>]*><input id="suggest-shortcut-enabled" type="checkbox" class="un-switch"\/><span[^>]*>Press C to comment on the page<\/span><\/label>/);
-  assert.match(html, /press C to turn on comment mode/);
-  assert.match(html, /opens whichever you used last/);
+  assert.match(html, /Suggest an improvement opens comment mode, and on a computer so does pressing C\./);
+  assert.match(html, /The form is one switch away\./);
   assert.match(html, /Saved on this device only\./);
   assert.ok(html.indexOf('id="suggest-shortcut-enabled"') < html.indexOf('id="settings-local-agents-section"'),
     'inside the Experimental block');
@@ -358,7 +358,7 @@ test('Settings, Experimental has the switch, unchecked as shipped, painted and s
   assert.match(settings, /pref\?\.setEnabled\(e\.target\.checked\)/, 'saved on change');
 });
 
-// ── 6. The way it opens next time (#4289 follow-up) ───────────────────
+// ── 6. Suggest an improvement opens comment mode (#4289 follow-up) ─────
 
 function modeStorage(entries = {}) {
   const map = new Map(Object.entries(entries));
@@ -370,39 +370,21 @@ function modeStorage(entries = {}) {
   };
 }
 
-test('the way this device suggested last is kept on it, and the form until comment mode is used', () => {
-  const store = modeStorage();
-  assert.equal(shortcut.suggestMode(store), 'form');
-  shortcut.setSuggestMode('comment', store);
-  assert.equal(store.map.get(shortcut.SUGGEST_MODE_STORAGE_KEY), 'comment');
-  assert.equal(shortcut.suggestMode(store), 'comment');
-  shortcut.setSuggestMode('form', store);
-  assert.equal(store.map.has(shortcut.SUGGEST_MODE_STORAGE_KEY), false, 'the form is the absence of a choice');
-  assert.equal(shortcut.suggestMode(null), 'form', 'no storage, no comment mode');
-  const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() {} };
-  assert.equal(shortcut.suggestMode(broken), 'form');
-  shortcut.setSuggestMode('comment', broken);
+test('with the switch on, Suggest an improvement opens comment mode, on a phone too, but not in the side panel', () => {
+  const on = { [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '1' };
+  const page = { document: { documentElement: { classList: { contains: () => false } } } };
+  const panel = { document: { documentElement: { classList: { contains: (c) => c === 'in-side-panel' } } } };
+  assert.equal(shortcut.suggestOpensComment(page, modeStorage(on)), true);
+  assert.equal(shortcut.suggestOpensComment(page, modeStorage()), false, 'the form, with the switch off');
+  assert.equal(shortcut.suggestOpensComment(panel, modeStorage(on)), false, 'the side panel keeps the form');
+  assert.equal(shortcut.suggestOpensComment(null, modeStorage(on)), false, 'no window, no comment mode');
+  assert.equal(shortcut.formOffersComment(page, modeStorage(on)), true);
+  assert.equal(shortcut.formOffersComment(page, modeStorage()), false, 'the form offers nothing with the switch off');
+  assert.equal(shortcut.formOffersComment(panel, modeStorage(on)), false);
+  assert.equal(shortcut.SUGGEST_MODE_STORAGE_KEY, undefined, 'nothing remembers a last way: the switch decides');
 });
 
-test('Suggest an improvement opens comment mode only with the switch on, comment mode last, on a computer', () => {
-  const fine = { matchMedia: (q) => ({ matches: q === '(any-pointer: fine)' }) };
-  const finger = { matchMedia: () => ({ matches: false }) };
-  const both = { [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '1', [shortcut.SUGGEST_MODE_STORAGE_KEY]: 'comment' };
-  assert.equal(shortcut.suggestOpensComment(fine, modeStorage(both)), true);
-  assert.equal(shortcut.suggestOpensComment(finger, modeStorage(both)), false, 'a phone keeps the form');
-  assert.equal(shortcut.suggestOpensComment(fine, modeStorage({ [shortcut.SUGGEST_MODE_STORAGE_KEY]: 'comment' })), false,
-    'not with the switch off, whatever was used last');
-  assert.equal(shortcut.suggestOpensComment(fine, modeStorage({ [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '1' })), false,
-    'the form until comment mode has been used');
-  assert.equal(shortcut.formOffersComment(fine, modeStorage({ [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '1' })), true);
-  assert.equal(shortcut.formOffersComment(fine, modeStorage()), false, 'the form offers nothing with the switch off');
-  assert.equal(shortcut.formOffersComment(finger, modeStorage({ [shortcut.SUGGEST_SHORTCUT_STORAGE_KEY]: '1' })), false);
-  const panel = { ...fine, document: { documentElement: { classList: { contains: (c) => c === 'in-side-panel' } } } };
-  assert.equal(shortcut.suggestOpensComment(panel, modeStorage(both)), false, 'the side panel keeps the form');
-  assert.equal(shortcut.formOffersComment(panel, modeStorage(both)), false);
-});
-
-test('a plain open of the form goes to comment mode where the device says so, and nothing else does', () => {
+test('a plain open of the form goes to comment mode where the switch says so, and nothing else does', () => {
   const fc = read('frontend/src/features/dialogs/feedback-controller.js');
   const open = fc.match(/App\.openFeedbackModal = \(opts = \{\}\) => \{[\s\S]*?\n  \};/)[0];
   assert.match(open, /const plain = !opts\.firstFeedback && !opts\.description && !opts\.screenshotBlob && !opts\.screenshots\s*&& opts\.mode !== 'form';/);
@@ -410,11 +392,10 @@ test('a plain open of the form goes to comment mode where the device says so, an
   const src = read('frontend/src/features/improve/suggest-shortcut.ts');
   assert.match(src, /opensComment: \(\) => suggestOpensComment\(\),/);
   assert.match(src, /openComment: \(opts\?: OpenOptions\) => openCommentMode\(opts \|\| \{\}\),/);
-  // Comment mode makes itself the way next time; its Detailed makes the form.
+  // Comment mode's Form asks for the form by name, past the routing.
   const mode = read('frontend/src/features/comment-pin/comment-pin.tsx');
-  assert.match(mode, /openHost = host;\s*setSuggestMode\('comment'\);/);
-  assert.match(mode, /const toDetailed = useCallback\(async \(\) => \{\s*setSuggestMode\('form'\);/);
-  assert.match(mode, /openFeedbackModal\?\.\(\{ mode: 'form' \}\)/, 'asks for the form by name, past the routing');
+  assert.match(mode, /openFeedbackModal\?\.\(\{ mode: 'form' \}\)/);
+  assert.doesNotMatch(mode, /setSuggestMode/);
 });
 
 test('the form offers comment mode with its draft, and only where the switch is on', () => {

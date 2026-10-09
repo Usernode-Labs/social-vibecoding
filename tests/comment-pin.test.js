@@ -89,7 +89,7 @@ function withFetch(responses, fn) {
 }
 
 const blob = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' });
-const base = { text: 'Make it bigger', target: 'app', appSlug: 'demo', picture: blob, where: 'Pinned with C in the app at /.' };
+const base = { text: 'Make it bigger', target: 'app', appSlug: 'demo', shots: [{ blob, pins: [] }], where: 'Pinned with C in the app at /.' };
 
 test('a comment is the dialog\'s two requests: the picture, then the request naming it', () => withFetch([
   { status: 200, body: { id: 'a'.repeat(32) } },
@@ -110,7 +110,7 @@ test('a comment is the dialog\'s two requests: the picture, then the request nam
 test('Homeroom gets no app slug, and a comment without a picture makes one request', () => withFetch([
   { status: 200, body: {} },
 ], async (calls) => {
-  await post.postComment({ ...base, target: 'platform', picture: null });
+  await post.postComment({ ...base, target: 'platform', shots: [] });
   assert.equal(calls.length, 1);
   assert.deepEqual(JSON.parse(calls[0].init.body), { description: 'Make it bigger\n\nPinned with C in the app at /.', target: 'platform' });
 }));
@@ -127,7 +127,7 @@ const imageA = new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpe
 const imageB = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1])], { type: 'image/png' });
 const full = {
   ...base,
-  pin: { x: 0.25, y: 0.5 },
+  shots: [{ blob, pins: [{ x: 0.25, y: 0.5, note: 'Make the Join   button\nbigger' }] }],
   images: [imageA, imageB],
   title: '  Bigger Join button  ',
   bounty: true,
@@ -169,6 +169,43 @@ test('no more than three pictures, and a pin only on a picture the server took',
   assert.equal(body.screenshotPins, undefined, 'the page was refused, so there is nothing to pin');
 }));
 
+test('a request of several comments numbers them, and each picture carries its own comments\' pins', () => withFetch([
+  { status: 200, body: { id: 'a'.repeat(32) } },
+  { status: 200, body: { id: 'b'.repeat(32) } },
+  { status: 200, body: { url: 'https://github.com/o/r/issues/4491' } },
+], async (calls) => {
+  const texts = ['The Join button is too small', '  Pace should say min per km  ', 'And the list wraps'];
+  assert.equal(post.numberedWords(texts), '1. The Join button is too small\n\n2. Pace should say min per km\n\n3. And the list wraps');
+  assert.equal(post.numberedWords(['  Just one  ', '']), 'Just one', 'one comment reads as it always has');
+  const where = post.whereLines([
+    { inApp: true, screen: '/runs', at: { tag: 'button', id: '', text: 'Join' } },
+    { inApp: true, screen: '/runs', at: null },
+  ]);
+  assert.equal(where, 'Pinned with C in the app at /runs: 1 on button "Join"; 2 on the page.');
+  assert.equal(post.whereLines([
+    { inApp: true, screen: '/runs', at: { tag: 'button', id: '', text: 'Join' } },
+    { inApp: false, screen: '#home', at: { tag: 'h1', id: 'hi', text: 'Home' } },
+  ]), 'Pinned with C: 1 in the app at /runs, on button "Join"; 2 on Homeroom at #home, on h1 "Home" (#hi).');
+  assert.equal(post.whereLines([{ inApp: false, screen: '#x', at: null }]), 'Pinned with C on Homeroom at #x.');
+
+  const shotB = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 2])], { type: 'image/png' });
+  await post.postComment({
+    ...base,
+    text: post.numberedWords(texts),
+    shots: [
+      { blob, pins: [{ x: 0.1, y: 0.2, n: 1, note: texts[0] }, { x: 0.3, y: 0.4, n: 2, note: texts[1] }] },
+      { blob: shotB, pins: [{ x: 0.5, y: 0.6, n: 3, note: texts[2] }] },
+    ],
+    where,
+  });
+  assert.deepEqual(JSON.parse(calls[2].init.body).screenshotPins, [
+    { id: 'a'.repeat(32), x: 0.1, y: 0.2, n: 1, note: 'The Join button is too small' },
+    { id: 'a'.repeat(32), x: 0.3, y: 0.4, n: 2, note: 'Pace should say min per km' },
+    { id: 'b'.repeat(32), x: 0.5, y: 0.6, n: 3, note: 'And the list wraps' },
+  ]);
+  assert.equal(post.MAX_COMMENTS, feedbackRoute.MAX_PINS_PER_ISSUE, 'the box stops where the server does');
+}));
+
 test('a refusal with a reason stays in the box; failures hand the comment to the dialog', async () => {
   await withFetch([{ status: 200, body: { id: 'x' } }, { status: 400, body: { error: 'Too long.' } }], async () => {
     assert.deepEqual(await post.postComment(base), { ok: false, handover: false, error: 'Too long.' });
@@ -198,7 +235,7 @@ test('handing over opens the dialog with the words, the pictures, the pin, the t
   assert.deepEqual(got, {
     target: 'app',
     description: 'Make the Join   button\nbigger\n\nPinned with C in the app at /.',
-    screenshots: [{ blob, pin: { x: 0.25, y: 0.5, note: 'Make the Join button bigger' } }, { blob: imageA }, { blob: imageB }],
+    screenshots: [{ blob, pins: [{ x: 0.25, y: 0.5, n: null, note: 'Make the Join button bigger' }] }, { blob: imageA }, { blob: imageB }],
     title: 'Bigger Join button',
     bounty: true,
   });
@@ -207,12 +244,13 @@ test('handing over opens the dialog with the words, the pictures, the pin, the t
   assert.match(fc, /if \(opts\.target === 'platform'\) setFeedbackTarget\('platform'\);/);
   assert.match(fc, /feedbackText\.value = typed \? `\$\{typed\}\\n\\n\$\{opts\.description\}` : opts\.description;/,
     'added after anything already typed, never over it');
-  assert.match(fc, /void attachScreenshotBlob\(handed\.blob, handed\.pin \|\| null\);/, 'each picture, its pin beside it');
+  assert.match(fc, /void attachScreenshotBlob\(handed\.blob, Array\.isArray\(handed\.pins\) \? handed\.pins : null\);/, 'each picture, its pins beside it');
   assert.match(fc, /feedbackTitle\.value = opts\.title\.trim\(\)\.slice\(0, 200\);\s*titleDirty = true;/,
     'the title the box showed is kept, not dropped as a stale suggestion');
   assert.match(fc, /if \(opts\.bounty === true && !bountyCheckbox\.disabled\) bountyCheckbox\.checked = true;/);
-  // The form sends the pin beside the picture it was handed with.
-  assert.match(fc, /const pinned = screenshots\.find\(\(shot\) => shot\.id && shot\.pin\);\s*if \(pinned\) \{\s*body\.screenshotPins = \[\{ id: pinned\.id, x: pinned\.pin\.x, y: pinned\.pin\.y, note: String\(pinned\.pin\.note \|\| ''\) \}\];/);
+  // The form sends the pins beside the pictures it was handed with.
+  assert.match(fc, /const pinned = screenshots\.filter\(\(shot\) => shot\.id && shot\.pins && shot\.pins\.length\)\s*\.flatMap\(/);
+  assert.match(fc, /if \(pinned\.length\) body\.screenshotPins = pinned;/);
 });
 
 // ── 2b. The pin as data (#4482) ───────────────────────────────────────
@@ -244,11 +282,11 @@ test('the server writes the pin onto its picture\'s link by the rule the page re
   assert.equal(pinData.readPin('https://x/issue-images/abc#pin=a,b'), null);
 });
 
-test('a post may pin one of its own screenshots, on the picture, with words', () => {
+test('a post may pin its own screenshots, on the picture, with words and numbers', () => {
   const id = 'a'.repeat(32);
   const ok = feedbackRoute.parseScreenshotPins({ screenshotPins: [{ id, x: 0, y: 1, note: 'Here' }] }, [id]);
   assert.equal(ok.ok, true);
-  assert.deepEqual([...ok.pins], [[id, { x: 0, y: 1, note: 'Here' }]]);
+  assert.deepEqual([...ok.pins], [[id, [{ x: 0, y: 1, n: null, note: 'Here' }]]]);
   assert.deepEqual(feedbackRoute.parseScreenshotPins({}, [id]), { ok: true, pins: new Map() });
   const refuse = (pins, ids = [id]) => feedbackRoute.parseScreenshotPins({ screenshotPins: pins }, ids).ok;
   assert.equal(refuse('nope'), false);
@@ -257,8 +295,22 @@ test('a post may pin one of its own screenshots, on the picture, with words', ()
   assert.equal(refuse([{ id, x: Number.NaN, y: 0.5 }]), false);
   assert.equal(refuse([{ id, x: '0.5', y: 0.5 }]), false);
   assert.equal(refuse([{ id, x: 0.5, y: 0.5, note: 7 }]), false);
-  assert.equal(refuse([{ id, x: 0.5, y: 0.5 }, { id, x: 0.2, y: 0.2 }]), false, 'one pin per request');
-  assert.equal(feedbackRoute.MAX_PINS_PER_ISSUE, 1);
+  assert.equal(refuse([{ id, x: 0.5, y: 0.5, n: 0 }]), false, 'a number counts from 1');
+  assert.equal(refuse([{ id, x: 0.5, y: 0.5, n: 1.5 }]), false);
+  assert.equal(feedbackRoute.MAX_PINS_PER_ISSUE, 8);
+  assert.equal(refuse(Array.from({ length: 9 }, (_, i) => ({ id, x: 0.1, y: 0.1, n: i + 1 }))), false, 'eight pins at most');
+  const several = feedbackRoute.parseScreenshotPins({ screenshotPins: [
+    { id, x: 0.1, y: 0.2, n: 1, note: 'One' }, { id, x: 0.3, y: 0.4, n: 2, note: 'Two' },
+  ] }, [id]);
+  assert.equal(feedbackRoute.buildScreenshotsEmbed([id], 'd', several.pins),
+    `\n\n**Screenshot:**\n![Screenshot](https://d/issue-images/${id}#pin=0.1,0.2&n=1&note=One&pin=0.3,0.4&n=2&note=Two)`);
+  // Eight long notes share the reserve: the whole fragment stays inside it.
+  const eight = feedbackRoute.parseScreenshotPins({ screenshotPins: Array.from({ length: 8 }, (_, i) => ({
+    id, x: 0.123456, y: 0.654321, n: i + 1, note: '日本語'.repeat(100),
+  })) }, [id]);
+  const embed = feedbackRoute.buildScreenshotsEmbed([id, 'b'.repeat(32), 'c'.repeat(32)], 'app.onhomeroom.com', eight.pins);
+  assert.ok(embed.length < 1536 - 400, `the embed (${embed.length}) leaves the reserve room for the route's other lines`);
+  assert.deepEqual(pinData.readPins(embed.match(/\((https:[^)]+)\)/)[1]).map((p) => p.n), [1, 2, 3, 4, 5, 6, 7, 8]);
 
   const one = feedbackRoute.buildScreenshotsEmbed([id], 'app.onhomeroom.com', ok.pins);
   assert.equal(one, `\n\n**Screenshot:**\n![Screenshot](https://app.onhomeroom.com/issue-images/${id}#pin=0,1&note=Here)`);
@@ -405,14 +457,30 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /mountLegacyPortal\(host, createElement\(CommentMode,/);
   assert.match(src, /if \(openHost \|\| typeof document === 'undefined'\) return;/, 'never a second layer');
   assert.match(src, /if \(openHost\) \{\s*if \(controller\) controller\.exit\(\);/, 'C again is Done');
-  // Done keeps words nobody has posted: it asks first.
-  assert.match(src, /const unposted = draft \? !draft\.sending && !!draft\.text\.trim\(\) : !!carry\?\.text\?\.trim\(\);\s*if \(unposted\) \{\s*setConfirmExit\(true\);/);
+  // Done keeps words nobody has posted: it asks first, and so do the box's ✕ and Esc.
+  assert.match(src, /const unposted = draft \? !draft\.sending && hasWords\(draft\) : !!carry\?\.text\?\.trim\(\);\s*if \(unposted\) \{\s*setConfirm\('exit'\);/);
+  assert.match(src, /if \(hasWords\(draft\)\) setConfirm\('discard'\);\s*else discard\(\);/);
   // The box is a dialog while it is up, so a C typed elsewhere stacks nothing on it.
   assert.match(src, /id="comment-pin-box"\s+role="dialog"/);
   // Each picture is drawn without the layer: no marker is ever in one.
   assert.match(src, /const promise = takeBase\(\{\s*host,/);
-  // Posted clean, the pin beside it.
-  assert.match(src, /pin: picture \? d\.picture\.pin : null,/);
+  // Posted clean, each picture's pins beside it, numbered when there are several.
+  assert.match(src, /\.map\(\(\{ c, i \}\) => \(\{ x: c\.pin\.x, y: c\.pin\.y, n: many \? i \+ 1 : null, note: c\.text\.trim\(\) \}\)\);/);
+  assert.match(src, /if \(blob\) shots\.push\(\{ blob, pins \}\);/);
+  // A comment on the same view shares the earlier picture; another view is another picture, while there is room.
+  assert.match(src, /const same = d\.pictures\.find\(\(pic\) => pic\.view === view\.current && pic\.screen === routeOf\(\) && pic\.base !== null\);/);
+  assert.match(src, /if \(inUse \+ d\.images\.length >= MAX_PICTURES\) return \{ pictures: d\.pictures, picture: null \};/);
+  // Kudos is one line that says who it is for.
+  assert.match(src, />Kudos for whoever solves it</);
+  // The bar: moved by its handle and kept on the device; out of the way after a rest, not a pass.
+  assert.match(src, /const BAR_KEY = 'usernode:comment-bar';/);
+  assert.match(src, /const DUCK_AFTER_MS = 280;/);
+  assert.match(src, /if \(e\.pointerType !== 'mouse' \|\| drag\.current \|\| confirm\) return;/, 'a finger never makes it duck');
+  // A finger: a tap is a comment, a drag scrolls.
+  assert.match(src, /if \(!t\.moved\) place\(\{ x: e\.clientX, y: e\.clientY \}\);/);
+  // The form is called the form.
+  assert.doesNotMatch(src, /Detailed/);
+  assert.doesNotMatch(read('frontend/src/features/dialogs/feedback.tsx'), />\s*Detailed\s*</);
   // The dialog's rule for when a request can go to the app, read the same way.
   assert.match(src, /!\/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(data\.repo_url \|\| ''\) \|\| data\.self_hosted/);
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const hasRepo = \/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(repoUrl\);/);

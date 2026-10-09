@@ -67,10 +67,10 @@ interface OpenOptions {
   screenshotBlob?: Blob;
   /**
    * Comment mode handing a box over (features/comment-pin/post.ts
-   * `handOverOptions`): its pictures, the page's with its pin beside it as
+   * `handOverOptions`): its pictures, the pages' with their pins beside them as
    * data (#4482), the title the box showed, and its Kudos.
    */
-  screenshots?: Array<{ blob: Blob; pin?: { x: number; y: number; note: string } }>;
+  screenshots?: Array<{ blob: Blob; pins?: Array<{ x: number; y: number; n?: number | null; note: string }> }>;
   title?: string;
   bounty?: boolean;
   /** 'form': this form, even where "Suggest an improvement" would open comment mode. */
@@ -91,8 +91,8 @@ function feedbackLocked(): boolean {
 
 export function FeedbackDialog() {
   // Experimental (#4289): the form's switch to comment mode, offered where
-  // the device's switch is on, on a computer. Read on every open, since the
-  // setting lives on the device and can change between opens.
+  // the device's switch is on (not in the side panel). Read on every open,
+  // since the setting lives on the device and can change between opens.
   const [offersComment, setOffersComment] = useState(false);
   const dialog = useDialog<OpenOptions>('feedback', {
     onOpen: (opts) => {
@@ -151,22 +151,23 @@ export function FeedbackDialog() {
           Members can see it, vote on it and pick it up.
         </p>
         {/* Experimental (#4289): this form, or comment mode, where a click on
-            the page is the comment. React's own node, which the controller
-            never writes; hidden in the prerendered shell (the class, as the
-            rest of this card is), since the switch is off until a person
-            turns it on. The way chosen here is the way
-            "Suggest an improvement" opens next time. */}
+            the page is the comment. With the switch on, "Suggest an
+            improvement" opens comment mode, and this form is reached from its
+            Form switch; this is the way back. React's own node, which the
+            controller never writes; hidden in the prerendered shell (the
+            class, as the rest of this card is), since the switch is off until
+            a person turns it on. */}
         <div className={offersComment ? '-mt-1 mb-4 flex items-center gap-2' : 'hidden'}>
           <span className="inline-flex gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label="How to suggest it">
             <button
               type="button"
               role="radio"
               aria-checked="true"
-              title="The detailed form"
+              title="Suggest it with this form"
               className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white pl-2 pr-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
             >
               <DescriptionIcon className="h-4 w-4" />
-              Detailed
+              Form
             </button>
             <button
               type="button"
