@@ -22062,13 +22062,14 @@ html.in-side-panel body {
 /* ── The Workshop tab, cleaned up (#4457) ─────────────────────────────
    One list per section, a hairline between rows (workshop/work-row.tsx).
    A row is a neutral tile, the title (15px, two lines at most), one line
-   in words (13px, muted), then small tags for what is happening on it and,
-   on a change up for a vote, its votes. The title is a link stretched over
-   the row; the Vote button sits above it. */
+   in words (13px, muted), then small tags for what is happening on it —
+   two at most, then one grey "+n", on a single line a change's votes share
+   (a phone wraps and gives the vote its own line back). The title is a
+   link stretched over the row; the Vote button sits above it. */
 .dev-ws-wlist { display: flex; flex-direction: column; margin-top: 4px; }
 .dev-ws-wrow {
   position: relative; display: flex; align-items: flex-start; gap: 12px;
-  padding: 12px 2px; min-width: 0; border-radius: 12px;
+  padding: 10px 2px; min-width: 0; border-radius: 12px;
 }
 .dev-ws-wrow + .dev-ws-wrow,
 .dev-ws-week + .dev-ws-week { border-top: 1px solid var(--app-sheet-line); }
@@ -22095,22 +22096,27 @@ html.in-side-panel body {
   font-size: 13px; line-height: 1.35; color: var(--text-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.dev-ws-wrow-status { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* One line: two tags at most, then a "+n", and the vote at the far end. A
+   tag shrinks and cuts its words short with "…" before the vote leaves the
+   line; a phone (640px) wraps again below. */
+.dev-ws-wrow-status { margin-top: 4px; display: flex; flex-wrap: nowrap; min-width: 0; align-items: center; gap: 6px; }
 .dev-ws-wrow-chev { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--text-muted); opacity: .7; }
 .dev-ws-tag {
   display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px;
-  font-size: 12px; font-weight: 600; white-space: nowrap;
+  font-size: 12px; font-weight: 600; white-space: nowrap; flex: 0 1 auto; min-width: 0;
   background: var(--state-neutral-bg); color: var(--text-secondary);
 }
-.dev-ws-tag svg { width: 12px; height: 12px; }
-.dev-ws-tag .dc-status-spinner-arc { width: 11px; height: 11px; }
+.dev-ws-tag-text { overflow: hidden; text-overflow: ellipsis; }
+.dev-ws-tag-more { flex: none; }
+.dev-ws-tag svg { flex: none; width: 12px; height: 12px; }
+.dev-ws-tag .dc-status-spinner-arc { flex: none; width: 11px; height: 11px; }
 .dev-ws-tag[data-tone="run"] { color: var(--lit-ink); background: var(--lit-tint); }
 .dev-ws-tag[data-tone="ok"] { color: var(--state-ok); background: var(--state-ok-bg); }
 .dev-ws-tag[data-tone="warn"] { color: var(--state-attention); background: var(--state-attention-bg); }
 .dev-ws-tag[data-tone="bad"] { color: var(--state-blocked); background: var(--state-blocked-bg); }
 /* A change's votes: one part per Yes it needs, the count, and Vote. The
    count is in the accent when this viewer's vote is wanted. */
-.dev-ws-wvote { position: relative; z-index: 1; margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.dev-ws-wvote { position: relative; z-index: 1; margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 8px; }
 .dev-ws-wvote-bar { display: inline-flex; gap: 3px; width: 56px; height: 6px; }
 .dev-ws-wvote-cell { flex: 1 1 0; border-radius: 999px; background: color-mix(in srgb, var(--text-muted) 22%, transparent); }
 .dev-ws-wvote-cell[data-on] { background: var(--lit-ink); }
@@ -22202,6 +22208,7 @@ html.in-side-panel body {
   .dev-ws-rule-join { flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; }
   .dev-ws-wrow { gap: 10px; }
   .dev-ws-wrow-tile { width: 30px; height: 30px; border-radius: 9px; }
+  .dev-ws-wrow-status { flex-wrap: wrap; }
   .dev-ws-wvote { margin-left: 0; width: 100%; }
   .dev-ws-wvote-btn { margin-left: auto; }
   .dev-ws-week-line { font-size: 13.5px; }

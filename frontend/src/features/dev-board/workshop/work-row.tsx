@@ -11,9 +11,11 @@
  *   - the title, 15px, at most two lines;
  *   - one line in words: "Change #4456 · yours · for #4455 and #4452",
  *     "Request #4417 · Communities & projects · 3 replies";
- *   - a status line: small tags for what is happening on it, and on a change
- *     up for a vote its votes (one part per Yes it needs, the count, and the
- *     card's own Vote button, so the vote is the existing one);
+ *   - a status line: small tags for what is happening on it (at most two;
+ *     the rest are one grey "+n", and the item's page has them all), and on
+ *     a change up for a vote its votes on the same line (one part per Yes it
+ *     needs, the count, and the card's own Vote button, so the vote is the
+ *     existing one);
  *   - a › that says the row opens.
  *
  * THE ROW OPENS THE ITEM'S PAGE. Its title is a real link to the page's
@@ -91,13 +93,16 @@ const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
   vote: BallotIcon,
 };
 
+/** How many status tags a row shows: the rest are one "+n" (#4485). */
+const TAG_LIMIT = 2;
+
 function Tag({ t }: { t: RowTag }): ReactNode {
   return (
     <span className="dev-ws-tag" data-tone={t.tone}>
       {t.tone === 'run' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}
       {t.tone === 'ok' ? <CheckIcon aria-hidden="true" /> : null}
       {t.glyph === 'eye' ? <EyeIcon aria-hidden="true" /> : null}
-      {t.label}
+      <span className="dev-ws-tag-text">{t.label}</span>
     </span>
   );
 }
@@ -158,7 +163,13 @@ export function WorkRow({ row, slug, inMine = false, on = false, onOpen }: {
         <span className="dev-ws-wrow-sub">{rowWords(b, inMine)}</span>
         {status ? (
           <span className="dev-ws-wrow-status">
-            {b.tags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+            {b.tags.slice(0, TAG_LIMIT).map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+            {b.tags.length > TAG_LIMIT ? (
+              <span className="dev-ws-tag dev-ws-tag-more" data-tone="plain" key="more">
+                {`+${b.tags.length - TAG_LIMIT}`}
+                <span className="sr-only">{` more: ${b.tags.slice(TAG_LIMIT).map((t) => t.label).join(', ')}`}</span>
+              </span>
+            ) : null}
             {b.vote ? <Votes vote={b.vote} card={row.card} /> : null}
           </span>
         ) : null}

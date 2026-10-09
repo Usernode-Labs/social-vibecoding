@@ -2076,7 +2076,7 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   const html = workshopHtml(AppView, 'workshop');
   const lane = html.slice(html.indexOf('data-ws-lane="mine"'), html.indexOf('data-ws-since=""'));
   assert.match(lane, /<div class="dev-ws-wlist"><div class="dev-ws-wrow" data-ws-row="mine:/);
-  assert.match(lane, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><span class="dev-ws-wrow-sub">Change · yours · for #12<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-tag" data-tone="plain">Started<\/span><\/span>/);
+  assert.match(lane, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><span class="dev-ws-wrow-sub">Change · yours · for #12<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-tag" data-tone="plain"><span class="dev-ws-tag-text">Started<\/span><\/span><\/span>/);
   assert.ok(!/data-edge=|dev-card-icon|dev-fold-mark|aria-expanded|data-issue-row|data-session-chip/.test(lane),
     'none of the card\'s chrome, and none of the hooks the Board\'s handler opens a card on');
 });
@@ -2091,7 +2091,7 @@ test('#4457: a change up for a vote keeps its votes on the row: one part per yes
   const brief = { kind: 'change', noun: 'Change', n: 34, by: 'bob', mine: false, category: '', replies: 0, linked: [], closed: [], stage: 'vote', at: 0,
     tags: [{ label: 'Checks running…', tone: 'run' }, { label: 'Preview ready', tone: 'plain', glyph: 'eye' }], vote: { yes: 1, need: 3, ask: true } };
   const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
-  assert.match(html, /<span class="dev-ws-tag" data-tone="run"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks running…<\/span>/);
+  assert.match(html, /<span class="dev-ws-tag" data-tone="run"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span class="dev-ws-tag-text">Checks running…<\/span><\/span>/);
   assert.match(html, /<span class="dev-ws-wvote-bar" data-done="0" role="img" aria-label="1 of 3 yes"><span class="dev-ws-wvote-cell" data-on="1"><\/span><span class="dev-ws-wvote-cell"><\/span><span class="dev-ws-wvote-cell"><\/span><\/span>/,
     'one part per yes it needs');
   assert.match(html, /<span class="dev-ws-wvote-n" data-ask="1">1 of 3 yes<\/span>/, 'in the accent while your vote is wanted');
@@ -2103,6 +2103,32 @@ test('#4457: a change up for a vote keeps its votes on the row: one part per yes
   assert.deepEqual(plain(topicRef({ attrs: { 'data-session-chip': '51' } })), { kind: 'proposal', id: 51 });
   assert.deepEqual(plain(topicRef({ attrs: { 'data-gov-row': '7' } })), { kind: 'gov', id: 7 });
   assert.equal(topicRef({ attrs: {} }), null);
+});
+
+test('#4485: a row shows two tags and a "+n", and the vote shares their line', () => {
+  const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
+  const AppView = makeAppView();
+  seed(AppView);
+  const v = AppView._workshopView();
+  const row = [...v.votes.rows, ...(v.since ? v.since.rows : [])].find((r) => r.t === 'card' && r.card.attrs['data-proposal-row']);
+  assert.ok(row, 'a proposal row');
+  const brief = { kind: 'change', noun: 'Change', n: 34, by: 'bob', mine: false, category: '', replies: 0, linked: [], closed: [], stage: 'vote', at: 0,
+    tags: [{ label: 'Checks running…', tone: 'run' }, { label: 'In review', tone: 'plain' }, { label: 'Preview ready', tone: 'plain', glyph: 'eye' }],
+    vote: { yes: 1, need: 1, ask: false } };
+  const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
+  assert.equal((html.match(/dev-ws-tag-text/g) || []).length, 2, 'two tags drawn, no third');
+  assert.ok(!/>Preview ready</.test(html), 'the third tag is not drawn bare');
+  assert.match(html, /<span class="dev-ws-tag dev-ws-tag-more" data-tone="plain">\+1<span class="sr-only"> more: Preview ready<\/span><\/span>/,
+    'a grey "+n" carries the hidden names for a screen reader');
+  assert.ok(html.indexOf('dev-ws-tag-more') < html.indexOf('dev-ws-wvote'), 'the vote follows the +n, on the same line');
+  // The CSS keeps the status line to one line; a phone wraps again.
+  assert.match(CSS, /\.dev-ws-wrow-status \{ margin-top: 4px; display: flex; flex-wrap: nowrap; min-width: 0; align-items: center; gap: 6px; \}/);
+  const phone = CSS.slice(CSS.indexOf('@media (max-width: 640px)', CSS.indexOf('.dev-ws-wrow {')));
+  assert.match(phone.slice(0, phone.indexOf('\n}')), /\.dev-ws-wrow-status \{ flex-wrap: wrap; \}/,
+    'a phone wraps the status line, so the vote keeps its own line');
+  // Two tags: no "+n", and nothing else changes.
+  const two = renderToHtml(createElement(WorkRow, { row: { ...row, brief: { ...brief, tags: brief.tags.slice(0, 2) } }, slug: 'demo-app' }));
+  assert.ok(!/dev-ws-tag-more/.test(two), 'no "+n" when both tags fit');
 });
 
 test('#4457: a row opens its page beside the list on a wide window, and that page is the topic page itself', () => {
@@ -4418,7 +4444,7 @@ test('#4457: Week by week opens on two weeks, and Show earlier weeks adds rows t
   // Every class it emits has a rule (the #2097 lesson).
   const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const cls of ['dev-ws-wlist', 'dev-ws-wrow', 'dev-ws-wrow-tile', 'dev-ws-wrow-main', 'dev-ws-wrow-link', 'dev-ws-wrow-sub',
-    'dev-ws-wrow-status', 'dev-ws-wrow-chev', 'dev-ws-tag', 'dev-ws-wvote', 'dev-ws-wvote-bar', 'dev-ws-wvote-cell', 'dev-ws-wvote-n',
+    'dev-ws-wrow-status', 'dev-ws-wrow-chev', 'dev-ws-tag', 'dev-ws-tag-text', 'dev-ws-tag-more', 'dev-ws-wvote', 'dev-ws-wvote-bar', 'dev-ws-wvote-cell', 'dev-ws-wvote-n',
     'dev-ws-week', 'dev-ws-week-main', 'dev-ws-week-head', 'dev-ws-week-fresh', 'dev-ws-week-line', 'dev-ws-week-n',
     'dev-ws-weekpage', 'dev-ws-week-meta', 'dev-ws-week-lead', 'dev-ws-none', 'dev-ws-since-clear', 'dev-ws-since-sum',
     'dev-ws-rules', 'dev-ws-rule-step', 'dev-ws-rule-join', 'dev-ws-rule-tile', 'dev-ws-rule-face', 'dev-ws-rule-text',
