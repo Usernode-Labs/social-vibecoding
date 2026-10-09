@@ -70,6 +70,9 @@ const {
   getConventionSection,
 } = require('./prompts');
 const specHtml = require('./spec-html');
+const {
+  PLAN_VERSION, MAX_STORIES, MAX_TEXT, MAX_STEPS, PERSONAS, safeParseIntent,
+} = require('./visible-changes');
 const stageCosts = require('./stage-costs');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('./in-loop-browser');
 const buildContract = require('./build-contract');
@@ -1517,6 +1520,134 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
   });
 }
 
+// ── The shots declaration a bot proposal needs ──────────────────────────
+//
+// A proposal without a declared visible change ends its shots run at
+// "nothing to shoot", so voters see only the spec's drawn screens. The bot
+// never writes a declaration by hand: the spec turn already lists what will
+// look different (<ol data-changes>, spec-html.specChanges), and the build
+// turn is asked, as a dev chat turn is, to declare what it built with its
+// own `declare_visible_changes` tool. The build's declaration, written on
+// the session while it ran, wins; the spec's list is the fallback written
+// just before promotion.
+
+// A story's id from the spec's data-change value, lower-cased and narrowed
+// to the slug the declaration allows; the entry's position when that leaves
+// nothing usable, and always unique. Pure.
+function specStoryId(n, position, used) {
+  const cleaned = String(n || '').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const candidates = [
+    cleaned && /^[a-z0-9](?:[a-z0-9_-]{0,94}[a-z0-9])?$/.test(`change-${cleaned}`) ? `change-${cleaned}` : null,
+    `change-${position}`,
+  ];
+  for (const c of candidates) if (!used.has(c)) return c;
+  for (let k = 2; ; k += 1) {
+    const c = `change-${position}-${k}`;
+    if (!used.has(c)) return c;
+  }
+}
+
+// The steps the shots replay, split at the arrows the spec writes between
+// them, trimmed and emptied out, words unchanged. Pure.
+function specSteps(steps) {
+  return String(steps || '')
+    .split(/→|->/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, MAX_STEPS);
+}
+
+/**
+ * The spec's before and after list as a version-1 visible-changes
+ * declaration, or null when no entry survives. Entries without text or
+ * steps are skipped, not guessed; each is checked as a one-story
+ * declaration before it is kept, and at most MAX_STORIES are. Never
+ * produces impact "none". Pure.
+ */
+function specVisibleChanges(htmlSpec) {
+  const entries = specHtml.specChanges(htmlSpec);
+  const stories = [];
+  const used = new Set();
+  for (const [index, entry] of entries.entries()) {
+    if (stories.length >= MAX_STORIES) break;
+    const claim = String(entry.text || '').slice(0, MAX_TEXT);
+    const steps = specSteps(entry.steps);
+    if (!claim || !steps.length) continue;
+    // One viewport per distinct drawn size, in the screens' own order; no
+    // screen names a size the shots can draw, so desktop when none do.
+    const viewports = [];
+    const seen = new Set();
+    for (const screen of entry.screens) {
+      if (seen.has(screen.size)) continue;
+      seen.add(screen.size);
+      viewports.push(screen.size === 'phone'
+        ? { name: 'phone', width: 390, height: 844 }
+        : { name: 'desktop', width: 1280, height: 800 });
+    }
+    if (!viewports.length) viewports.push({ name: 'desktop', width: 1280, height: 800 });
+    // Who the spec drew the change for: the first screen's persona when it
+    // names one the shots know, else an ordinary member.
+    const first = entry.screens[0];
+    const persona = first && PERSONAS.includes(first.persona) ? first.persona : 'member';
+    const story = {
+      id: specStoryId(entry.n, index + 1, used),
+      claim,
+      persona,
+      viewports,
+      intent: {
+        startPath: '/',
+        steps,
+        checkpoint: claim.slice(0, 500),
+        focus: claim.slice(0, 200),
+        animation: 'none',
+      },
+    };
+    const checked = safeParseIntent({
+      version: PLAN_VERSION, impact: 'ui',
+      rationale: 'Taken from the spec\'s before and after list; the build declared none.',
+      stories: [story],
+    });
+    if (!checked.ok) continue;
+    used.add(story.id);
+    stories.push(checked.value.stories[0]);
+  }
+  if (!stories.length) return null;
+  const parsed = safeParseIntent({
+    version: PLAN_VERSION, impact: 'ui',
+    rationale: 'Taken from the spec\'s before and after list; the build declared none.',
+    stories,
+  });
+  return parsed.ok ? parsed.value : null;
+}
+
+/**
+ * The fallback half of that: record the spec's list as the session's
+ * declaration, only when the build declared none itself. Never throws; each
+ * way out is logged and named. Resolves { recorded, why? }.
+ */
+async function declareFromSpec({ pool, config, sessionId, specHtml: html, shotsState = null }) {
+  const state = shotsState || require('./shots-state');
+  if (!config?.shots?.collect) return { recorded: false, why: 'disabled' };
+  try {
+    const { rows } = await pool.query(
+      'SELECT shots_detail FROM chat_sessions WHERE id = $1', [sessionId],
+    );
+    // The build's own declaration is already on the session, and it wins.
+    // A placeholder left for a change the classifier flagged has no intent
+    // on it and does not count as one.
+    const detail = rows[0]?.shots_detail;
+    if (detail && typeof detail === 'object' && detail.intent) return { recorded: false, why: 'declared' };
+    const intent = specVisibleChanges(html);
+    if (!intent) return { recorded: false, why: 'no_spec_changes' };
+    // No head SHA, matching the build's own declaration route.
+    await state.recordIntent(pool, sessionId, intent);
+    return { recorded: true };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not declare the spec\'s visible changes', { sessionId, err: err.message });
+    return { recorded: false, why: 'error' };
+  }
+}
+
 // #3518: the proposal's summary, the text the group reads before it votes.
 // The same block an OpenRouter dev chat turn ends with (#2820), parsed by
 // proposal-description.js; prepareProposal files it where the promote route
@@ -1534,6 +1665,22 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
   'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop. Skip the',
   'block only if you changed nothing.',
+]);
+
+// What the shots need from the build (this file, declareFromSpec): the dev
+// chat's hosted-worker block (src/routes/sessions.js
+// buildHostedCodingWorkflowGuidance), said to this build as its own, with
+// what a bot's declaration replaces said plainly. Spread into the build
+// prompt just before the description block, so the build ends its turn
+// saying what it changed.
+const VISIBLE_CHANGES_LINES = Object.freeze([
+  '',
+  'Once you have built the change, call the provided `declare_visible_changes` tool once with concrete claims',
+  'a person reading the proposal would make and the real steps that reach each one, from the screens you',
+  'checked; or impact "none" with a specific reason when nobody will see the change. Homeroom takes before',
+  'and after shots of the exact builds from it. Your declaration replaces the one Homeroom would otherwise',
+  'take from the spec\'s before and after list, so declare what you built, not what was planned. If the tool',
+  'fails, say so in your summary; never claim it was recorded when it was not.',
 ]);
 
 // A build of the platform's own repository runs its tests the way that
@@ -1796,6 +1943,7 @@ function buildPrompt({
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
+    ...VISIBLE_CHANGES_LINES,
     ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
 }
@@ -2833,6 +2981,17 @@ async function buildAndPropose({
     pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
     buildText: result.lastResultText, model,
   });
+  // The proposal's before/after shots need a declared change. The build was
+  // asked to declare its own; what it recorded is already on the session
+  // and wins. Only when it recorded nothing is the spec's before and after
+  // list written as the fallback, before promotion starts staging, so a
+  // bot proposal is judged from shots the same way a person's is. Awaited,
+  // but its result never stops the proposal (declareFromSpec never throws).
+  await declareFromSpec({
+    pool, config, sessionId: session.id,
+    specHtml: spec.ok ? spec.specHtml || null : null,
+    shotsState: deps.shotsState || require('./shots-state'),
+  });
   const promoted = await promoteAsBot({
     config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
   });
@@ -2990,6 +3149,9 @@ module.exports = {
   openBotProposal,
   promoteAsBot,
   prepareProposal,
+  specVisibleChanges,
+  declareFromSpec,
+  VISIBLE_CHANGES_LINES,
   proposalTitle,
   specUserFacing,
   buildDescription,

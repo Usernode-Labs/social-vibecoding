@@ -513,6 +513,80 @@ function screenStats(text) {
     });
 }
 
+// ── The spec's before and after list ────────────────────────────────────
+//
+// The proposal's shots need a visible-changes declaration, and a bot build
+// never writes one by hand: its spec's <ol data-changes> already lists what
+// will look different and the steps to reach it. A tolerant reader over the
+// same tokenizer the markdown projection uses, so an author who strays from
+// the dialect still gets whatever entries are readable, never an exception.
+
+// `data-change="N"` on a screen's parts, in the quoting either author writes.
+function changeMarkRe(n) {
+  return new RegExp(`data-change=["']${String(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`);
+}
+
+/**
+ * Each entry of the first <ol data-changes> of an HTML spec: its number, its
+ * text (entities decoded, whitespace collapsed, trimmed), its data-steps
+ * verbatim, and the drawn screens that mark it (every screen when none
+ * names it: [] for anything that is not an HTML spec or has no such list).
+ * Pure.
+ */
+function specChanges(text) {
+  const html = typeof text === 'string' ? extractHtmlSpec(text) : null;
+  if (!html) return [];
+  const screens = [];
+  const entries = [];
+  let inList = 0;   // open <ol data-changes>, the first one only
+  let done = false; // it closed: a second such list is never read
+  let nested = 0;   // plain lists opened inside it
+  let item = null;
+  for (const tok of tokenize(html)) {
+    if (tok.type === 'raw' && tok.name === 'template' && 'data-screen' in tok.attrs) {
+      screens.push(tok);
+      continue;
+    }
+    if (done) continue;
+    if (inList) {
+      if (tok.type === 'open' && (tok.name === 'ol' || tok.name === 'ul')) {
+        if ('data-changes' in tok.attrs) continue;
+        nested += 1;
+      } else if (tok.type === 'close' && (tok.name === 'ol' || tok.name === 'ul')) {
+        if (nested) nested -= 1;
+        else { inList = 0; done = true; item = null; }
+        continue;
+      }
+      if (tok.type === 'open' && tok.name === 'li') {
+        item = { n: String(tok.attrs['data-change'] || '').trim(), steps: tok.attrs['data-steps'] || '', text: '' };
+        continue;
+      }
+      if (tok.type === 'close' && tok.name === 'li' && item) {
+        entries.push({ ...item, text: cleanInline(decodeEntities(item.text)).trim() });
+        item = null;
+        continue;
+      }
+      if (item && tok.type === 'text') item.text += tok.text;
+      continue;
+    }
+    if (tok.type === 'open' && tok.name === 'ol' && 'data-changes' in tok.attrs) inList = 1;
+  }
+  return entries.map((e, i) => {
+    const n = e.n || String(i + 1);
+    const re = changeMarkRe(n);
+    const marked = screens.filter((s) => re.test(s.raw));
+    return {
+      n,
+      text: e.text,
+      steps: e.steps,
+      screens: (marked.length ? marked : screens).map((s) => ({
+        size: screenGeometry(s.attrs).kind,
+        persona: s.attrs['data-persona'] ? String(s.attrs['data-persona']).toLowerCase() : null,
+      })),
+    };
+  });
+}
+
 module.exports = {
   MAX_SPEC_HTML_CHARS,
   SCREEN_SIZES,
@@ -521,6 +595,7 @@ module.exports = {
   extractHtmlSpec,
   stripInvisible,
   screenStats,
+  specChanges,
   normalizeSpecOutput,
   screenGeometry,
   specHtmlToMarkdown,

@@ -15,6 +15,7 @@ const {
   isHtmlSpec,
   normalizeSpecOutput,
   screenGeometry,
+  specChanges,
   specHtmlToMarkdown,
   stripHtmlWrapperFence,
   MAX_SPEC_HTML_CHARS,
@@ -179,3 +180,69 @@ test('screenStats measures each drawn screen and flags one past twice its budget
   assert.deepEqual(screenStats('# A markdown spec'), []);
   assert.deepEqual(screenStats(null), []);
 });
+
+// ── specChanges: the spec's before and after list, as the shots read it ──
+
+const CHANGES_SPEC = `<article data-spec>
+  <h1>T</h1>
+  <section data-spec-tab="user">
+    <figure data-screens>
+      <ol data-changes>
+        <li data-change="1" data-steps="Dev board &rarr; a proposal">The vote card &amp; its bar</li>
+        <li data-change="2" data-steps="Communities → project → Workshop">It names who approved</li>
+      </ol>
+      <template data-screen data-size="phone" data-persona="Guest"><div data-side="after" data-change="1">phone</div></template>
+      <template data-screen data-size="desktop"><div data-change="2">desktop</div></template>
+    </figure>
+    <h3>Questions</h3>
+    <ol><li>Should guests see the bar? Default: no.</li></ol>
+  </section>
+  <section data-spec-tab="tech"><p>Build it.</p></section>
+</article>`;
+
+test('specChanges: one entry per <li>, text decoded and collapsed, steps verbatim, the screens that mark it', () => {
+  assert.deepEqual(specChanges(CHANGES_SPEC), [
+    {
+      n: '1',
+      text: 'The vote card & its bar',
+      steps: 'Dev board → a proposal',
+      screens: [{ size: 'phone', persona: 'guest' }],
+    },
+    {
+      n: '2',
+      text: 'It names who approved',
+      steps: 'Communities → project → Workshop',
+      screens: [{ size: 'desktop', persona: null }],
+    },
+  ], 'each screen lists only where its markup carries the entry\'s data-change');
+});
+
+test('specChanges: an entry no screen marks gets every screen, in document order', () => {
+  const doc = `<article data-spec><section data-spec-tab="user"><figure data-screens>
+    <ol data-changes><li data-change="1" data-steps="A → B">Both screens show it</li></ol>
+    <template data-screen data-size="desktop"></template>
+    <template data-screen data-size="phone" data-persona="full_admin"></template>
+  </figure></section></article>`;
+  const [entry] = specChanges(doc);
+  assert.deepEqual(entry.screens, [
+    { size: 'desktop', persona: null },
+    { size: 'phone', persona: 'full_admin' },
+  ]);
+});
+
+test('specChanges: nothing readable is still no exception; the first list only', () => {
+  assert.deepEqual(specChanges('# A markdown spec'), [], 'markdown is not an HTML spec');
+  assert.deepEqual(specChanges(null), []);
+  assert.deepEqual(
+    specChanges('<article data-spec><h1>T</h1><section data-spec-tab="user"><p>no list</p></section></article>'),
+    [],
+  );
+  assert.deepEqual(specChanges('<article data-spec><ol data-changes></ol></article>'), [], 'an empty list');
+  // A plain <ol> elsewhere (Questions) is not the changes list; a second
+  // <ol data-changes> is never read.
+  const two = CHANGES_SPEC.replace('<ol data-changes>\n        <li data-change="1"',
+    '<ol data-changes><li data-change="0">Early</li></ol><ol data-changes>\n        <li data-change="1"');
+  assert.deepEqual(specChanges(two).map((e) => e.n), ['0'],
+    'the first list is the one read, whole; the second is never read');
+});
+

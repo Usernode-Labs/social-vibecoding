@@ -1039,3 +1039,133 @@ test('#3426: a request with a screenshot tells each bot turn to look at it, and 
   assert.match(BOT_SRC, /seed, live\.screenshotNote\(seed\)\.join\('\\n'\)\.trim\(\), triagePrompt\(\)/, 'and the triage');
   assert.ok(!live.buildPrompt({ seed: 'Issue #3', buildNote: 'x' }).includes('Download each one'));
 });
+
+// ── The shots a bot proposal gets ────────────────────────────────────────
+//
+// A proposal without a declared visible change ends its shots run at
+// "nothing to shoot". The bot's spec already lists what will look different
+// (<ol data-changes>); that list is the fallback declaration, written just
+// before promotion when the build declared nothing itself.
+
+const CHANGES_SPEC = `<article data-spec>
+  <h1>The vote card says what is left</h1>
+  <section data-spec-tab="user">
+    <figure data-screens>
+      <ol data-changes>
+        <li data-change="1" data-steps="Communities → a project → Workshop → open a proposal">The vote card says how many approvals are left</li>
+        <li data-change="2" data-steps="Dev board → a proposal">It names who approved</li>
+      </ol>
+      <template data-screen data-size="phone"><div data-side="after" data-change="1">phone</div></template>
+      <template data-screen data-size="desktop" data-persona="Guest"><div data-change="2">desktop</div></template>
+    </figure>
+  </section>
+  <section data-spec-tab="tech"><p>Build it.</p></section>
+</article>`;
+
+test('specVisibleChanges: the spec\'s before and after list as a declaration the shots accept', () => {
+  const { parseIntent } = require('../src/services/visible-changes');
+  const intent = live.specVisibleChanges(CHANGES_SPEC);
+  assert.deepEqual(parseIntent(intent), intent, 'the one parser every caller shares accepts it as it stands');
+  assert.equal(intent.version, 1);
+  assert.equal(intent.impact, 'ui', 'a mapped spec entry is always something to see');
+  const [first, second] = intent.stories;
+  assert.equal(first.id, 'change-1');
+  assert.equal(first.persona, 'member', 'the phone screen names nobody, so an ordinary member');
+  assert.deepEqual(first.viewports, [{ name: 'phone', width: 390, height: 844 }]);
+  assert.equal(first.intent.startPath, '/', 'the spec names steps, not a start page');
+  assert.deepEqual(first.intent.steps, ['Communities', 'a project', 'Workshop', 'open a proposal'],
+    'split at the arrows, the spec\'s own words');
+  assert.equal(second.id, 'change-2');
+  assert.equal(second.persona, 'guest', 'who the spec drew the change for');
+  assert.deepEqual(second.viewports, [{ name: 'desktop', width: 1280, height: 800 }]);
+  assert.deepEqual(live.specVisibleChanges('# a markdown spec'), null);
+  assert.deepEqual(live.specVisibleChanges(null), null);
+});
+
+test('specVisibleChanges: unreadable entries are skipped, not guessed; at most three; never impact none', () => {
+  const list = [
+    '<li data-change="1">No steps written</li>',
+    '<li data-change="2" data-steps="Dev board → a proposal"></li>',
+    `<li data-change="3" data-steps="Dev board → ${'x'.repeat(250)}">A step far too long to replay</li>`,
+    '<li data-change="4" data-steps="Dev board → a proposal">First kept</li>',
+    '<li data-change="5" data-steps="Dev board → a proposal">Second kept</li>',
+    '<li data-change="6" data-steps="Dev board → a proposal">Third kept</li>',
+    '<li data-change="7" data-steps="Dev board → a proposal">Never reached</li>',
+  ].join('');
+  const spec = `<article data-spec><section data-spec-tab="user"><figure data-screens><ol data-changes>${list}</ol></figure></section></article>`;
+  const intent = live.specVisibleChanges(spec);
+  assert.equal(intent.stories.length, 3, 'the shots\' own cap');
+  assert.deepEqual(intent.stories.map((s) => s.id), ['change-4', 'change-5', 'change-6'], 'bad entries cost no slot');
+  assert.equal(intent.impact, 'ui');
+  assert.deepEqual(
+    live.specVisibleChanges(spec.replace(/data-steps="[^"]*"/g, '')), null,
+    'every entry bad is no declaration at all',
+  );
+});
+
+test('declareFromSpec: the build\'s declaration wins, the spec\'s list is the fallback, and failures never throw', async () => {
+  const { canonicalJson } = require('../src/services/visible-changes');
+  const intent = live.specVisibleChanges(CHANGES_SPEC);
+  assert.ok(intent, 'the spec under test maps to a declaration');
+  const written = [];
+  const shotsState = {
+    async recordIntent(pool, sessionId, recorded) { written.push({ sessionId, intent: recorded }); return { accepted: true }; },
+  };
+  const config = { shots: { collect: true } };
+  const read = (rows) => ({ async query() { return { rows }; } });
+
+  // The build declared its own: the session's intent stands, nothing written.
+  const declared = { intent: { version: 1, impact: 'none' }, required: true };
+  assert.deepEqual(
+    await live.declareFromSpec({ pool: read([{ shots_detail: declared }]), config, sessionId: 1, specHtml: CHANGES_SPEC, shotsState }),
+    { recorded: false, why: 'declared' },
+  );
+  assert.deepEqual(written, []);
+
+  // Only the classifier's placeholder, or nothing on the session at all: the
+  // spec's list is written, exactly as it was derived.
+  const placeholder = { required: true };
+  assert.deepEqual(
+    await live.declareFromSpec({ pool: read([{ shots_detail: placeholder }]), config, sessionId: 2, specHtml: CHANGES_SPEC, shotsState }),
+    { recorded: true },
+  );
+  const nothing = await live.declareFromSpec({ pool: read([]), config, sessionId: 3, specHtml: CHANGES_SPEC, shotsState });
+  assert.deepEqual(nothing, { recorded: true });
+  assert.equal(written.length, 2);
+  assert.deepEqual(written.map((w) => w.sessionId), [2, 3]);
+  assert.deepEqual(written.map((w) => canonicalJson(w.intent)), [canonicalJson(intent), canonicalJson(intent)]);
+
+  // Shots collection off: the session is never read and nothing is written.
+  const untouched = { async query() { throw new Error('must not be read'); } };
+  assert.deepEqual(
+    await live.declareFromSpec({ pool: untouched, config: {}, sessionId: 4, specHtml: CHANGES_SPEC, shotsState }),
+    { recorded: false, why: 'disabled' },
+  );
+  // No readable entries in the spec either: no declaration from it.
+  assert.deepEqual(
+    await live.declareFromSpec({ pool: read([]), config, sessionId: 5, specHtml: '# a markdown spec', shotsState }),
+    { recorded: false, why: 'no_spec_changes' },
+  );
+  assert.deepEqual(written.filter((w) => w.sessionId > 3), [], 'still nothing written');
+
+  // A failing write is logged and answered, never thrown.
+  const failing = { async recordIntent() { throw new Error('database down'); } };
+  assert.deepEqual(
+    await live.declareFromSpec({ pool: read([]), config, sessionId: 6, specHtml: CHANGES_SPEC, shotsState: failing }),
+    { recorded: false, why: 'error' },
+  );
+});
+
+test('the build is asked to declare what it changed, before the description block', () => {
+  const prompt = live.buildPrompt({ seed: 'Issue #3', buildNote: 'x' });
+  const block = live.VISIBLE_CHANGES_LINES.join('\n');
+  assert.ok(prompt.includes(block), 'the block is in the build prompt as written');
+  assert.match(prompt, /declare_visible_changes/);
+  assert.match(prompt, /replaces the one Homeroom would otherwise/);
+  assert.match(prompt, /impact "none" with a specific reason/);
+  assert.ok(prompt.indexOf('declare_visible_changes') < prompt.indexOf('==== DESCRIPTION ===='),
+    'said before it is asked for its description');
+  // The block is built from whole lines: no em dash, and every line the
+  // prompt line length the other blocks keep.
+  for (const line of live.VISIBLE_CHANGES_LINES) assert.ok(!line.includes('—'), 'no em dashes');
+});
