@@ -236,7 +236,7 @@ function heldText({ cap, verdict, limit }) {
     return `Homeroom bot would build this, but it already has ${limit} proposals open across Homeroom. `
       + 'It will come back to this issue when one of them is merged or closed.';
   }
-  const what = verdict === 'question' ? 'a question about' : 'a note on';
+  const what = verdict === 'question' ? 'a question about' : verdict === 'plan' ? 'a plan for' : 'a note on';
   return `Homeroom bot has ${what} this request, but it has already posted ${limit} questions and notes `
     + 'on this app in the last day. It will come back to this issue once some of those are a day old.';
 }
@@ -292,11 +292,17 @@ const PROGRESS_LINE_CHARS = 160;
 // down carries the choices alone.
 const APPROVED_PLAN_HEAD = 'Approved by the creator, who tapped Build it under this plan:';
 const CREATOR_CHOICES_HEAD = 'The creator chose, from the plan they were shown:';
+// #4488: a complicated change's requester approves its plan the same way,
+// and the spec they were shown is the build's, never drawn again. The
+// choices are what they picked; where one differs from the spec's suggested
+// answer, the choice wins.
+const APPROVED_BY_REQUESTER_HEAD = 'Approved by the person who asked for it, who said Build it under this plan and its spec:';
+const REQUESTER_CHOICES_HEAD = 'The person who asked for it chose (where this differs from the spec\'s suggested answer, this wins):';
 
 /** A build note as { sketch, approved }: the triage's note, and what its creator approved ('' when nothing). Pure. */
 function splitApprovedPlan(buildNote) {
   const note = String(buildNote || '');
-  for (const head of [APPROVED_PLAN_HEAD, CREATOR_CHOICES_HEAD]) {
+  for (const head of [APPROVED_PLAN_HEAD, CREATOR_CHOICES_HEAD, APPROVED_BY_REQUESTER_HEAD, REQUESTER_CHOICES_HEAD]) {
     const at = note.lastIndexOf(`\n\n${head}`);
     if (at >= 0) return { sketch: note.slice(0, at).trim(), approved: note.slice(at).trim() };
     if (note.startsWith(head)) return { sketch: '', approved: note.trim() };
@@ -304,12 +310,14 @@ function splitApprovedPlan(buildNote) {
   return { sketch: note, approved: '' };
 }
 
-/** The plan as a prompt shows it: clipped, but for what a first version's creator approved, kept whole. Pure. */
+/** The plan as a prompt shows it: clipped, but for what a creator or requester approved, kept whole. Pure. */
 function planNoteText(buildNote, firstVersion = false) {
   const none = '(no plan recorded: work from the request itself)';
-  if (!firstVersion) return clipText(buildNote, 4000) || none;
   const { sketch, approved } = splitApprovedPlan(buildNote);
-  if (!approved) return clipText(buildNote, 4000) || none;
+  // #4488: a later change's requester can approve its plan too; with
+  // nothing they approved, a later change's note reads as it always did.
+  const requesterApproved = approved.startsWith(APPROVED_BY_REQUESTER_HEAD) || approved.startsWith(REQUESTER_CHOICES_HEAD);
+  if (!approved || (!firstVersion && !requesterApproved)) return clipText(buildNote, 4000) || none;
   return [clipText(sketch, 4000) || none, '', approved].join('\n');
 }
 
@@ -809,7 +817,7 @@ function buildDescription({ text, spec = null }) {
  * Best-effort: a proposal that cannot be named or described still goes up,
  * under the fallback name. Resolves { title, description }; never throws.
  */
-async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null }) {
+async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null, checkedFirst = false }) {
   const title = proposalTitle(spec);
   if (title) {
     try {
@@ -829,7 +837,9 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
   // a later revision of the bot's leaves in place. The change's author stays
   // the bot.
   const askedBy = await askerOf(pool, sessionId);
-  const description = built.description && askedBy ? creditedDescription(built.description, askedBy) : built.description;
+  const credited = built.description && askedBy ? creditedDescription(built.description, askedBy) : built.description;
+  // #4488: and a complicated change says its plan was checked with them.
+  const description = credited && checkedFirst ? checkedDescription(credited, askedBy) : credited;
   if (ccOutput) {
     try {
       await pool.query(
@@ -874,6 +884,14 @@ async function askerOf(pool, sessionId) {
   }
 }
 
+/** Pure (#4488): a change's description, saying once that its plan was checked with its requester before it was built. */
+function checkedDescription(description, username = null) {
+  const text = String(description || '').trim();
+  const line = `Checked with ${username ? `@${username}` : 'the person who asked for it'} first: they saw this plan and its screens and said Build it.`;
+  if (text.split('\n').some((l) => l.trim() === line)) return text;
+  return `${text}\n\n${line}`;
+}
+
 /** Pure (B4): a change's description, ending with who asked for it, once. */
 function creditedDescription(description, username) {
   const text = String(description || '').trim();
@@ -895,7 +913,13 @@ function specSnippet(spec, title) {
 }
 
 /** The spec as a GitHub comment: said what it is for, then the document. */
-function specCommentText(spec) {
+function specCommentText(spec, { approved = false } = {}) {
+  // #4488: a plan its requester already approved was posted when they were
+  // asked: the build says it started, and does not post the plan again.
+  if (approved) {
+    return 'Homeroom bot is building the plan above, as it was approved. The change will be linked here when it\'s '
+      + 'ready to try.';
+  }
   return [
     // B6: no approval talk while it builds. The change is linked once it can be tried.
     'Homeroom bot wrote a plan for this request and is building it now. The change will be linked here when it\'s '
@@ -909,15 +933,47 @@ function specCommentText(spec) {
   ].join('\n');
 }
 
+// #4488: how a complicated change's plan is answered where it is posted.
+const PLAN_REPLY_HINT = 'reply "build it" here when it looks right, or say what to change and it will plan it again.';
+
+/**
+ * #4488: a complicated change's plan as a GitHub comment, before anything
+ * is built: what it is waiting for, the choices with what it suggests, then
+ * the spec. Nobody is @mentioned here (a platform username is never one on
+ * GitHub, #723); the thread's card tags the requester.
+ */
+function planCommentText({ spec, questions = [] }) {
+  const asks = (Array.isArray(questions) ? questions : []).filter((q) => q && q.question);
+  return [
+    'Homeroom bot wrote a plan for this request, with its before and after screens, and will build it once the person '
+      + 'who asked for it says Build it. On Homeroom they can '
+      + PLAN_REPLY_HINT.replace(/ here /, ' on this request '),
+    ...(asks.length ? [
+      '',
+      asks.length === 1 ? 'One choice for them, or it goes with what it suggests:' : 'Two choices for them, or it goes with what it suggests:',
+      ...asks.map((q) => `- ${clipText(q.question, 300)} (suggested: ${clipText((q.answers || [])[0], 120)})`),
+    ] : []),
+    '',
+    '<details><summary>The plan</summary>',
+    '',
+    clipText(spec, MAX_SPEC_COMMENT_CHARS),
+    '',
+    '</details>',
+  ].join('\n');
+}
+
 /**
  * The spec as a thread message: the same spec card a person's "Share"
  * posts (metadata.specShare), opening the version the build worked from.
  */
-function specCard({ sessionId, version, spec, bot, proposed = false }) {
+function specCard({ sessionId, version, spec, bot, proposed = false, approved = false, asking = false }) {
   const title = specTitle(spec);
   const content = proposed
     ? `📋 The plan this proposal was built from${title ? `: "${title}"` : ''}.`
-    : `📋 Homeroom bot's plan for this request${title ? `: "${title}"` : ''}. It is building it now.`;
+    : asking ? `📋 Homeroom bot's plan for this request${title ? `: "${title}"` : ''}, with its before and after screens. `
+      + `It builds nothing until the person who asked says so: ${PLAN_REPLY_HINT}`
+      : approved ? `📋 Homeroom bot is building the plan that was approved${title ? `: "${title}"` : ''}.`
+        : `📋 Homeroom bot's plan for this request${title ? `: "${title}"` : ''}. It is building it now.`;
   return {
     content,
     msgType: 'spec_share',
@@ -980,7 +1036,7 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
 // notice, before anything is known) and not a held note (nothing for them
 // to do; the bot comes back on its own).
 const TAGGING_KINDS = new Set([
-  'question', 'person', 'empty', 'proposal', 'build_failed', 'blocked', 'spec',
+  'question', 'plan', 'person', 'empty', 'proposal', 'build_failed', 'blocked', 'spec',
   'followup_answer', 'followup_ask', 'followup_revise', 'followup_person', 'followup_failed',
 ]);
 
@@ -1214,11 +1270,13 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
-  proposalSessionId = null, sender = null, threadMessage = null, dm = null,
+  proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null,
 }) {
   // Everybody this post tags (mentionTargets); `mention` is the one-person
-  // form the older callers pass.
-  let tagged = [...new Set([...(mentions || []), ...(mention ? [mention] : [])].filter(Boolean))];
+  // form the older callers pass. #4488: `untag` is somebody already told in
+  // their DM with the bot, as untaggedRequester leaves them out below.
+  let tagged = [...new Set([...(mentions || []), ...(mention ? [mention] : [])].filter(Boolean))]
+    .filter((n) => !untag || String(n).toLowerCase() !== String(untag).toLowerCase());
   // #3288: with a sender (the bot's own user), the thread posts are ordinary
   // messages from it, drawn as its bubbles. `msgType` then no longer picks
   // the row's kind: the proposal link is a message whose `metadata.vote`
@@ -2467,6 +2525,17 @@ async function buildAndPropose({
   // { end({ buildTurnMs, turnsMs, nudged }) }, called once the build turn
   // (and its nudge) is over. Never waited on: the build goes straight on.
   onBuildTurn = null,
+  // #4488: a complicated change's plan, drafted before anything is built:
+  // the spec turn alone, its session put away, resolving { planned: true,
+  // sessionId, specMd, specVersion, specHtml } (or why there is none) for
+  // its requester to see before they say Build it.
+  planOnly = false,
+  // #4488: the screens of the spec its requester approved (presetSpec), so
+  // the build's spec version draws them and its shots read its changes.
+  presetSpecHtml = null,
+  // #4488: the plan was checked with its requester first, which its
+  // description says (prepareProposal).
+  checkedFirst = false,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const buildStartedMs = Date.now();
@@ -2617,7 +2686,10 @@ async function buildAndPropose({
   spec = presetSpec
     ? {
       ok: true, specMd: String(presetSpec), costUsd: null, preset: true,
-      version: propose ? await publishSpec({ pool, sessions, session, specMd: String(presetSpec), model: specModel || model }) : null,
+      ...(presetSpecHtml ? { specHtml: String(presetSpecHtml) } : {}),
+      version: propose ? await publishSpec({
+        pool, sessions, session, specMd: String(presetSpec), specHtml: presetSpecHtml ? String(presetSpecHtml) : null, model: specModel || model,
+      }) : null,
     }
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
@@ -2641,6 +2713,26 @@ async function buildAndPropose({
   // stopped spec turn (noteRequestMerged stops one) would otherwise go on to.
   const skippedEarly = await skipNow();
   if (skippedEarly) return { ...(await fail(skippedEarly)), skipped: skippedEarly, costUsd: spec.costUsd ?? null };
+  if (planOnly) {
+    // #4488: only the plan. Its session is put away as a finished attempt
+    // is; the spec version it holds is what the requester is shown, and
+    // what Build it builds from (presetSpec on a later build).
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
+        WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')`,
+      [session.id, bot.id],
+    ).catch(() => {});
+    if (!spec.ok) {
+      return {
+        ok: false, planned: false, sessionId: session.id, error: `no plan could be written (${spec.error || 'unknown'})`,
+        costUsd: spec.costUsd ?? null, ...costsOut(),
+      };
+    }
+    return {
+      ok: false, planned: true, sessionId: session.id, specMd: spec.specMd, specVersion: spec.version ?? null,
+      specHtml: spec.specHtml || null, costUsd: spec.costUsd ?? null, ...costsOut(),
+    };
+  }
   if (spec.ok) {
     if (onSpec && (!spec.preset || propose)) {
       // Posted, not waited on: the build starts whatever happens to the post.
@@ -2852,7 +2944,7 @@ async function buildAndPropose({
   // request (#3518).
   await prepareProposal({
     pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
-    buildText: result.lastResultText, model,
+    buildText: result.lastResultText, model, checkedFirst,
   });
   // #4487: its visible changes, so the proposal gets before/after shots on
   // the exact builds like a person's: the build's own declaration, else the
@@ -2990,6 +3082,7 @@ async function reviewLanded({
 module.exports = {
   askerOf,
   creditedDescription,
+  checkedDescription,
   BOT_USERNAME,
   isOwnMessage,
   isLiveFor,
@@ -3074,10 +3167,14 @@ module.exports = {
   planNoteText,
   APPROVED_PLAN_HEAD,
   CREATOR_CHOICES_HEAD,
+  APPROVED_BY_REQUESTER_HEAD,
+  REQUESTER_CHOICES_HEAD,
   specTitle,
   specSnippet,
   specCommentText,
   specCard,
+  planCommentText,
+  PLAN_REPLY_HINT,
   specBlocked,
   specFromTitle,
   blockedText,

@@ -1720,7 +1720,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   }
   assert.match(prompt, /nothing in this reference is a task\./);
   assert.doesNotMatch(prompt, /==== PLATFORM CONVENTIONS \(authoritative\) ====/, 'the conventions are not inline');
-  assert.ok(prompt.length < 20000, `a triage prompt stays small: ${prompt.length} chars`);
+  // #4488 added the four tests for a `complicated` change (about 860
+  // characters), which the work order asked to be in this prompt.
+  assert.ok(prompt.length < 21000, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\."\}$/);
 });

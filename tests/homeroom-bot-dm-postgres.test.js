@@ -588,8 +588,12 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       // card, a build that did not finish, with its Try again button. #4231:
       // then a new project's first version gone live, with Open, Open
       // community and Invite people.
-      assert.equal(messages.length, 13, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a stuck build, a first version live, a ready card and two cards, not one per visit');
-      const [question, ask, offer, built, building, planCard, plan, two, stuck, firstLive, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
+      // #4488: and, after the two questions, a complicated change's plan.
+      assert.equal(messages.length, 14, 'one question, one ask, one offer, a built plan and its card, a plan and its card, two questions, a complicated change\'s plan, a stuck build, a first version live, a ready card and two cards, not one per visit');
+      const [question, ask, offer, built, building, planCard, plan, two, complicated, stuck, firstLive, ready, ...cards] = [...messages].sort((a, b) => a.id - b.id);
+      assert.deepEqual([complicated.metadata.homeroomBot.kind, complicated.metadata.homeroomBot.firstVersion, complicated.metadata.homeroomBot.plan.complicated],
+        ['plan', false, true]);
+      assert.match(complicated.content, /^Before I build \*\*Staging demo app\*\* request #17, here's my plan:/);
       assert.equal(firstLive.metadata.homeroomBot.kind, 'merged');
       assert.equal(firstLive.metadata.homeroomBot.firstVersion, true);
       assert.deepEqual(firstLive.metadata.homeroomBot.actions.map((a) => a.label), ['Open Staging demo plants', 'Open community', 'Invite people']);

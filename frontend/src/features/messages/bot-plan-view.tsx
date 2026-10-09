@@ -1,6 +1,6 @@
 import { useId, useState, type ReactNode } from 'react';
 
-import { CheckIcon } from '@/components/ui/icons';
+import { CheckIcon, InfoCircleIcon } from '@/components/ui/icons';
 import { ProgressRing } from '@/components/ui/progress-ring';
 
 import type { HomeroomBotPlan } from './types';
@@ -48,8 +48,17 @@ import type { HomeroomBotPlan } from './types';
  * host may add a `footer`: the chat's "Notify me when it's ready", right
  * after Build it is pressed there (./notify-me.tsx).
  *
+ * #4488: THE SAME CARD ASKS ABOUT A COMPLICATED CHANGE (`plan.complicated`)
+ * to a project that already exists: its requester sees the plan before it
+ * is built. Its spec, with the before and after screens, is on the request,
+ * whose card the chat draws under this one, and what they ask to change is
+ * posted there for the group to see; one quiet note says both.
+ *
  * Pure: no store, so the App tab draws it without the Messages screen.
  */
+
+/** #4488: the note under a complicated change's plan while it waits. */
+export const COMPLICATED_PLAN_NOTE = 'Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.';
 
 export type PlanCardState = 'open' | 'built' | 'replaced' | 'stopped' | 'changing' | 'closed';
 
@@ -238,6 +247,12 @@ export function PlanCardView({
           </div>
         </div>
       )) : null}
+      {open && plan.complicated ? (
+        <p className="messages-bot-note mt-2.5" data-bot-plan-note="">
+          <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>{COMPLICATED_PLAN_NOTE}</span>
+        </p>
+      ) : null}
       {open ? (
         <>
           <button
