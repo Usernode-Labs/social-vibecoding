@@ -185,7 +185,10 @@ test('long lists are bounded', () => {
 function historyPool(graduatedKeys) {
   return {
     async query(sql) {
-      assert.match(sql, /first_passed_at IS NOT NULL/);
+      // Merged proposals' passes are folded in first (check-history.js
+      // settleMergedPasses); the graduated set is what merges passed.
+      if (/^WITH merged AS/.test(sql.trim())) return { rows: [], rowCount: 0 };
+      assert.match(sql, /merged_pass_at IS NOT NULL/);
       return { rows: graduatedKeys.map((k) => ({ check_key: k })) };
     },
   };
@@ -194,7 +197,7 @@ function historyPool(graduatedKeys) {
 const BROKEN = [frame('/', { v: 1, stylesheets: [{ path: '/tailwind.css', problem: 'answered 204 with no content' }], blank: false })];
 const KEY = appManifest.checkKey(renderHealth.RENDER_CHECK_NAME, renderHealth.RENDER_CHECK_PATH);
 
-test('earned gating: advisory until the app has passed it once, blocking after', async () => {
+test('earned gating: advisory until a merged change has passed it, blocking after', async () => {
   const fresh = await renderHealth.maybeBuildRenderHealthRow({ pool: historyPool([]), appId: 7, frames: BROKEN });
   assert.equal(fresh.row.index, renderHealth.RENDER_CHECK_INDEX);
   assert.equal(fresh.row.status, 'fail');

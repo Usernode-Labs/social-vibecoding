@@ -562,6 +562,13 @@ export interface ChangeGateView {
   actions?: ActionSpec[];
   /** Testing only: a "See what failed" door into Details. */
   details?: boolean;
+  /**
+   * Votes only, on a merge of Homeroom itself that is not live yet: the
+   * server's `release` block, which the card words after the note and keeps
+   * counting down ("Merged; goes live in the next release (about 8
+   * minutes)", frontend/src/lib/release-eta.ts).
+   */
+  release?: unknown;
 }
 
 /** #4455: what a change's page says about the change itself, as the thread's root post. */
@@ -698,6 +705,11 @@ export interface TopicBody {
    * follow keeps the disclosure from collapsing under the reader.
    */
   proposalBody?: { id: number | null; open: boolean; html: string } | null;
+  /**
+   * A change page with no summary and no plan folds `proposalBody` under
+   * the summary line as "Description", where the line says it is.
+   */
+  descriptionFold?: boolean;
   details?: ProposalDetails | null;
   /** A change page's hero, and its steps (drawn in Details, B10b). Set with `changeId`. */
   hero?: HeroView | null;
