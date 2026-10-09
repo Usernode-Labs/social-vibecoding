@@ -182,7 +182,7 @@ test('#4220: the bot stays "typing" until the message it sent is drawn, and no l
   const typing = (on) => h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: on });
 
   typing(true);
-  assert.deepEqual(h.state().typing[42], ['Homeroom bot']);
+  assert.deepEqual(h.state().typing[42].map((typist) => typist.name), ['Homeroom bot']);
   // The answer's re-read is slow: hold it until the test lets it go.
   const listMessages = h.api.listMessages;
   let release;
@@ -191,7 +191,7 @@ test('#4220: the bot stays "typing" until the message it sent is drawn, and no l
   h.store.messagesController.handleEvent({ type: 'conversation_message_created', conversationId: 42, messageId: 2 });
   await h.flush();
   typing(false);
-  assert.deepEqual(h.state().typing[42], ['Homeroom bot'], 'the stop waits for the message it typed');
+  assert.deepEqual(h.state().typing[42].map((typist) => typist.name), ['Homeroom bot'], 'the stop waits for the message it typed');
   release();
   await h.flush();
   assert.ok(h.contents().includes('Done: it is up for a vote.'), 'the message is drawn');
@@ -203,7 +203,7 @@ test('#4220: the bot stays "typing" until the message it sent is drawn, and no l
   h.store.messagesController.handleEvent({ type: 'conversation_message_created', conversationId: 42, messageId: 3 });
   await h.flush();
   typing(false);
-  assert.deepEqual(h.state().typing[42], ['Homeroom bot']);
+  assert.deepEqual(h.state().typing[42].map((typist) => typist.name), ['Homeroom bot']);
   const cap = timers.filter((timer) => timer.live && timer.ms === 5000);
   assert.equal(cap.length, 1, 'one cap of about five seconds');
   cap[0].fn();
@@ -220,6 +220,55 @@ test('#4220: a stop with no new message on its way clears the line at once', asy
   assert.equal(h.state().typing[42].length, 1);
   h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: false });
   assert.deepEqual(h.state().typing[42], []);
+});
+
+test('a typist is kept by user id, and "no username" comes and goes with that person alone', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  const timers = [];
+  Object.assign(globalThis.window, {
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
+  });
+  // A member whose username did not come with the row (the normalizer's
+  // stand-in and flag), and an account really called "unknown".
+  const NAMELESS = { id: 11, username: 'unknown', unnamed: true, avatarUrl: null, status: 'member' };
+  const REAL = { id: 12, username: 'unknown', avatarUrl: null, status: 'member' };
+  const ADA = { id: 13, username: 'ada', avatarUrl: null, status: 'member' };
+  const group = { ...DM, kind: 'group', title: 'Crew', members: [{ ...ME, status: 'member' }, NAMELESS, REAL, ADA] };
+  h.api.getConversation = async () => group;
+  await openDm(h);
+  const typing = (userId, on) => h.store.messagesController.handleEvent({ type: 'conversation_typing', conversationId: 42, userId, typing: on });
+  const line = () => h.state().typing[42].map((typist) => [typist.userId, typist.name, typist.unnamed]);
+
+  // Two people shown by the same word are two typists, each with its own flag.
+  typing(NAMELESS.id, true);
+  typing(REAL.id, true);
+  assert.deepEqual(line(), [[11, 'unknown', true], [12, 'unknown', false]]);
+  // A renewal keeps the place and the flag.
+  typing(NAMELESS.id, true);
+  assert.deepEqual(line(), [[11, 'unknown', true], [12, 'unknown', false]]);
+  // The nameless member stops: the flag goes with them.
+  typing(NAMELESS.id, false);
+  assert.deepEqual(line(), [[12, 'unknown', false]]);
+  typing(REAL.id, false);
+  assert.deepEqual(line(), []);
+  // Later the real account types alone: named, though a nameless member typed before.
+  typing(REAL.id, true);
+  assert.deepEqual(line(), [[12, 'unknown', false]]);
+  typing(REAL.id, false);
+  // Expiry removes the person it was set for, flag and all.
+  typing(NAMELESS.id, true);
+  typing(ADA.id, true);
+  const expiry = timers.filter((timer) => timer.live && timer.ms === 6000);
+  assert.equal(expiry.length, 2);
+  expiry[0].fn();
+  assert.deepEqual(line(), [[13, 'ada', false]]);
+  typing(REAL.id, true);
+  assert.deepEqual(line(), [[13, 'ada', false], [12, 'unknown', false]]);
+  // The line reads the flag carried with each typist, never the word.
+  const index = read('frontend/src/features/messages/index.tsx');
+  assert.match(index, /if \(typing\.length === 1\) return first\.unnamed \? t\('messages:thread\.typingOneUnknown'\) : t\('messages:thread\.typingOne', \{ name: first\.name \}\);/);
+  assert.doesNotMatch(read('frontend/src/features/messages/store.ts'), /unnamedTypists/);
 });
 
 test('#3706: a page read before the send landed does not take the sender\'s message away', async () => {

@@ -72,12 +72,12 @@ import {
   syncChrome,
   followPlatformSlug,
   setFilter,
-  typingIsUnnamed,
   typingUsers,
   useChannelHandles,
   useMessagesSnapshot,
   openBot,
 } from './store';
+import type { Typist } from './store';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
 import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
@@ -1638,16 +1638,14 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
  * come with the row is a stand-in, and the line then has its own wording
  * instead of taking that word as a name.
  */
-function typingLine(t: ReturnType<typeof useMessages>, conversationId: number, typing: string[]): string {
+function typingLine(t: ReturnType<typeof useMessages>, typing: readonly Typist[]): string {
   if (!typing.length) return '';
   const [first, second] = typing;
-  const firstUnknown = typingIsUnnamed(conversationId, first);
-  if (typing.length === 1) return firstUnknown ? t('messages:thread.typingOneUnknown') : t('messages:thread.typingOne', { name: first });
-  const secondUnknown = typingIsUnnamed(conversationId, second);
-  if (firstUnknown && secondUnknown) return t('messages:thread.typingTwoUnknown');
-  if (firstUnknown) return t('messages:thread.typingTwoFirstUnknown', { second });
-  if (secondUnknown) return t('messages:thread.typingTwoSecondUnknown', { first });
-  return t('messages:thread.typingTwo', { first, second });
+  if (typing.length === 1) return first.unnamed ? t('messages:thread.typingOneUnknown') : t('messages:thread.typingOne', { name: first.name });
+  if (first.unnamed && second.unnamed) return t('messages:thread.typingTwoUnknown');
+  if (first.unnamed) return t('messages:thread.typingTwoFirstUnknown', { second: second.name });
+  if (second.unnamed) return t('messages:thread.typingTwoSecondUnknown', { first: first.name });
+  return t('messages:thread.typingTwo', { first: first.name, second: second.name });
 }
 
 /**
@@ -1944,7 +1942,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       <TranscriptOverlay edge="foot">
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
-      <div className="messages-typing" aria-live="polite">{typingLine(t, conversationId || 0, typing)}</div>
+      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
       <MessageComposer />
     </section>
   );
