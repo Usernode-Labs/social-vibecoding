@@ -201,7 +201,11 @@ export function sentence(t: Template, key: string, words: string): Sentence {
   if (t.finish) {
     // Their words end the sentence. Where they left the punctuation off, the
     // catalog supplies it (a language closes a sentence its own way).
-    const ended = !own || /[.!?。！？…]$/u.test(own)
+    // Which last characters count as "already ended" is the catalog's too:
+    // in English `.`, `!` and `?`, exactly as before this text moved (so
+    // words ending in an ellipsis still get their full stop).
+    const enders = translate('onboarding:firstSession.make.sentenceEnders');
+    const ended = !own || enders.includes(own.slice(-1))
       ? own : translate('onboarding:firstSession.make.wordsWithStop', { words: own });
     // What is drawn is the WHOLE message: everything the catalog puts before
     // and after `{{words}}` stays, and where their words will go stands the

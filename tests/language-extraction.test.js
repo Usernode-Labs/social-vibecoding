@@ -104,6 +104,12 @@ test('a game sentence keeps everything the catalog writes around the maker\'s wo
     assert.deepEqual([board.head, board.fill, board.tail],
       ['A new game we build together. For the first version, ', 'a board game where', ' …']);
     assert.equal(board.text, 'A new game we build together. For the first version, a board game where we roll dice.');
+    // Odd endings read exactly as they did before the text moved: only
+    // `.`, `!` and `?` count as an ending in English.
+    const said = (words) => sentence(game, 'board', words).text.replace('A new game we build together. For the first version, a board game where ', '');
+    assert.deepEqual(['we take turns…', 'we roll dice。', 'really?', 'go!', 'stop.', 'two  spaces ', 'x'].map(said),
+      ['we take turns….', 'we roll dice。.', 'really?', 'go!', 'stop.', 'two spaces.', 'x.']);
+    assert.equal(sentence(game, 'board', '').text, 'A new game we build together. For the first version, a board game where ');
     const own = sentence(game, OWN, 'we draw and guess!');
     assert.deepEqual([own.head, own.fill, own.tail], ['A new game we build together. For the first version, ', '', '']);
     assert.equal(own.text, 'A new game we build together. For the first version, we draw and guess!');
@@ -115,6 +121,7 @@ test('a game sentence keeps everything the catalog writes around the maker\'s wo
     'onboarding:firstSession.template.game.own.sentence': 'Propio {{words}} DESPUÉS',
     'onboarding:firstSession.make.wordsBlank': '___',
     'onboarding:firstSession.make.wordsWithStop': '{{words}}。',
+    'onboarding:firstSession.make.sentenceEnders': '。！？',
   });
   const game = examples.TEMPLATES.find((x) => x.key === 'game');
   const board = examples.sentence(game, 'board', 'tiramos dados');
@@ -122,8 +129,10 @@ test('a game sentence keeps everything the catalog writes around the maker\'s wo
     'the text after the blank is drawn, with the language\'s own mark in the blank');
   assert.equal(board.text, 'Intro TABLERO tiramos dados。 FINAL OBLIGATORIO',
     'and sent, with the catalog\'s punctuation, not an English full stop');
-  assert.equal(examples.sentence(game, 'board', 'tiramos dados!').text, 'Intro TABLERO tiramos dados! FINAL OBLIGATORIO',
-    'their own punctuation is left alone');
+  assert.equal(examples.sentence(game, 'board', 'tiramos dados！').text, 'Intro TABLERO tiramos dados！ FINAL OBLIGATORIO',
+    'an ending the language itself lists is left alone');
+  assert.equal(examples.sentence(game, 'board', 'tiramos dados.').text, 'Intro TABLERO tiramos dados.。 FINAL OBLIGATORIO',
+    'and which endings count is the catalog\'s decision, not the code\'s');
   const own = examples.sentence(game, examples.OWN, 'dibujamos');
   assert.deepEqual([own.head, own.tail], ['Propio  DESPUÉS', '']);
   assert.equal(own.text, 'Propio dibujamos。 DESPUÉS');

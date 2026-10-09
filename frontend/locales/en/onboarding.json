@@ -363,6 +363,10 @@
     "text": "{{words}}.",
     "description": "The maker's own words with the punctuation that ends a sentence, used in the description sent for a new game when they typed their words without any. {{words}} is exactly what they typed. Only the closing punctuation is translated, for example a different full stop."
   },
+  "firstSession.make.sentenceEnders": {
+    "text": ".!?",
+    "description": "Not shown on screen. The characters that already end a sentence: when the maker's own words for a new game end in one of them, no closing punctuation is added to the description that is sent. List the sentence-ending marks of your language, with nothing between them."
+  },
   "firstSession.template.game.own.example": {
     "text": "For example, a drawing game where one of us draws and everyone guesses",
     "description": "Placeholder in the box where the maker describes their own game, finishing the sentence that ends \"For the first version, …\". An example of an ending; no full stop."
