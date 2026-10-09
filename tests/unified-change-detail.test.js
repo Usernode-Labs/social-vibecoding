@@ -182,15 +182,22 @@ test('before review the author reads the spec under About this change (#2371)', 
   assert.ok(own.body.proposalBody, 'the spec stands in for the technical details');
   assert.match(own.body.proposalBody.html, /Authenticate previews/);
   assert.match(own.body.summaryHtml, /plan this change is built from is under Details/);
+  assert.equal(own.body.summaryPromisesDetails, true, 'the promise names Details, so the page carries the fold (#4479)');
 
   // A real PR body wins, and a summary is never replaced.
   const withBody = av._topicViewFor('session', { ...draft, pr_body: 'The PR body', pr_summary_md: 'Previews wait for sign-in.' });
   assert.match(withBody.body.proposalBody.html, /The PR body/);
   assert.doesNotMatch(withBody.body.summaryHtml, /spec this change/);
+  assert.equal(withBody.body.summaryPromisesDetails, false, 'a real summary promises nothing');
+  // A description with no summary yet makes the same promise about itself.
+  const withBodyOnly = av._topicViewFor('session', { ...draft, pr_body: 'The PR body' });
+  assert.match(withBodyOnly.body.summaryHtml, /current description is under Details/);
+  assert.equal(withBodyOnly.body.summaryPromisesDetails, true, 'the description stand-in promises Details too');
 
   // Nobody else's change, and nothing once it is up for review.
   const readerView = context({ id: 99 })._topicViewFor('session', { ...draft, shared_at: '2026-09-11' });
   assert.equal(readerView.body.proposalBody, null);
+  assert.equal(readerView.body.summaryPromisesDetails, false, "a reader's page carries no plan");
   assert.doesNotMatch(readerView.body.summaryHtml, /spec this change/);
   const promoted = av._topicViewFor('proposal', { ...draft, status: 'promoted' });
   assert.doesNotMatch(promoted.body.summaryHtml || '', /spec this change/);

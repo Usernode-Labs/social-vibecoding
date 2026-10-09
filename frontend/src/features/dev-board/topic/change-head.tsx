@@ -37,7 +37,7 @@ import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeThreadView, TopicBody } from './model';
 import { RequestWords } from './request-head';
 import { TopicBack } from './topic-back';
-import { IncludedIn, IssueAssociations, SummaryMore } from './topic-head';
+import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
 
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
@@ -179,6 +179,11 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {body.summaryStale && body.summaryHtml
             ? <p className="dev-change-stale" role="note">Written for an earlier version of this change.</p>
             : null}
+          {/* #4479: when the summary is the stand-in that promises the plan
+              is "under Details", the fold is here, so the promise is true on
+              the page. A real summary keeps the technical half in the ⋯
+              menu's Details sheet; a reader's page never carries the plan. */}
+          {body.summaryPromisesDetails && body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
           {body.includedIn ? <IncludedIn r={body.includedIn} /> : null}
           {id && (issues.length || body.canEditIssues || thanks) ? (
             <IssueAssociations

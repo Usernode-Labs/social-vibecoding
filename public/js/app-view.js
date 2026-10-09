@@ -5971,6 +5971,11 @@ const AppView = {
     // returns it to the owner of an underway change only.
     const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
     if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
+    // The summary's stand-in promises the technical half is "under Details";
+    // when that is what the summary says, the page carries the fold itself
+    // (change-head.tsx), so the promise is true on the page. A real summary
+    // promises nothing, and a reader's page never carries the plan.
+    body.summaryPromisesDetails = !!(body.proposalBody && !body.summaryHtml);
     body.summaryHtml ||= specStandIn
       ? '<p>No short summary has been added yet. The plan this change is built from is under Details.</p>'
       : body.proposalBody

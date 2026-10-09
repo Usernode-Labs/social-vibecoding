@@ -308,6 +308,31 @@ test('a stale flag without any saved summary points to the current description',
   assert.doesNotMatch(page, /Written for an earlier version/);
 });
 
+// #4479: the summary's stand-in promises the plan is "under Details", but
+// the only way there was the ⋯ menu's sheet, which the summary never names.
+// When the promise is what the summary says, the page carries the Technical
+// details fold itself, directly under the quote, and the plan inside it.
+test('the plan the summary promises under Details is on the page, in the fold under the quote (#4479)', () => {
+  const av = context();
+  const mine = { ...PR, user_id: 42, status: 'active', pr_number: null, pr_url: null,
+    mergeRequirements: undefined, shared_at: null, pr_summary_md: null, pr_body: null,
+    spec_md: '# Topics as discussion containers\n\nA topic holds its own discussion, and opening one creates its issue category.' };
+  const { v, page } = render(av, mine, 'session');
+  assert.equal(v.body.summaryPromisesDetails, true, 'the summary is the stand-in that names Details');
+  assert.match(page, /No short summary has been added yet\. The plan this change is built from is under Details\./);
+  const quote = page.indexOf('data-request-words');
+  const fold = page.indexOf('<details class="dev-topic-details"');
+  const addresses = page.indexOf('dev-change-chips-lead');
+  assert.ok(quote >= 0 && fold > quote && fold < addresses, 'the fold sits between the quote and the Addresses row');
+  const inside = page.slice(fold, addresses);
+  assert.match(inside, /<details class="dev-topic-details"><summary class="dev-topic-details-summary">Technical details<\/summary>/);
+  assert.match(inside, /Topics as discussion containers[\s\S]*A topic holds its own discussion/, 'the plan is inside it');
+  assert.ok(!inside.includes('data-change-gate'), 'nothing else rides in the fold');
+  // A change with a real summary promises nothing, and carries no fold: the
+  // technical half stays one tap down in the Details sheet.
+  assert.doesNotMatch(render(av, PR).page, /Technical details/);
+});
+
 test('Vote is the Votes card’s button and Preview the Testing card’s; everything else is the sheet’s ⋯ (#4455)', () => {
   const av = context();
   const { v, page } = render(av, PR);

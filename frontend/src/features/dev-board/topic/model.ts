@@ -685,6 +685,14 @@ export interface TopicBody {
    * follow keeps the disclosure from collapsing under the reader.
    */
   proposalBody?: { id: number | null; open: boolean; html: string } | null;
+  /**
+   * #4479 — true when the summary is the stand-in that names Details ("The
+   * plan this change is built from is under Details"): the page then carries
+   * the Technical details fold itself, under the quote, so the promise is
+   * true on the page. False once a real summary exists or for a reader,
+   * whose page never carries the plan.
+   */
+  summaryPromisesDetails?: boolean;
   details?: ProposalDetails | null;
   /** A change page's hero, and its steps (drawn in Details, B10b). Set with `changeId`. */
   hero?: HeroView | null;
