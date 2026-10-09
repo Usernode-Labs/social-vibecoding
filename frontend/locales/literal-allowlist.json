@@ -220,9 +220,23 @@
         "Also widen the meter a little",
         "Daily",
         "Weekly",
-        "Monthly"
+        "Monthly",
+        "What issues are open right now?",
+        "Change the colors",
+        "Add a new feature",
+        "Fix something that's broken",
+        "What does issue #",
+        "ask for?",
+        "Propose it to the group",
+        "Make a tweak",
+        "What did it change?",
+        "Build the spec",
+        "Revise the spec",
+        "What will this change?",
+        "Make a change",
+        "What's the current state?"
       ],
-      "why": "Product, venue and model names. They are passed to messages as {{venue}}, {{agent}}, {{product}} and never translated. DevChat.MODELS default table: a copy of the server's /api/models answer (label and changeSize), replaced wholesale by loadModels(). Server-worded data; the 'short' hints beside them are the same. System-row `content` in the server's own vocabulary: the server persists the same sentences (src/routes/sessions.js) and the client's live echo must equal the reloaded row; code also keys off them. stagingErrorName 'Error' is an error class name. Fixtures for ?shot= / demo states: they stand in for server sentences and for text a person typed. Key suffixes that pick an id from _OPENROUTER_TITLE_IDS, not text."
+      "why": "Product, venue and model names. They are passed to messages as {{venue}}, {{agent}}, {{product}} and never translated. DevChat.MODELS default table: a copy of the server's /api/models answer (label and changeSize), replaced wholesale by loadModels(). Server-worded data; the 'short' hints beside them are the same. System-row `content` in the server's own vocabulary: the server persists the same sentences (src/routes/sessions.js) and the client's live echo must equal the reloaded row; code also keys off them. stagingErrorName 'Error' is an error class name. Fixtures for ?shot= / demo states: they stand in for server sentences and for text a person typed. Key suffixes that pick an id from _OPENROUTER_TITLE_IDS, not text. Quick-reply pills (STARTER_QUICK_REPLIES, _starterQuickReplies and FALLBACK_QUICK_REPLIES): the server holds the same literals (RECOVERY_PILLS / BANNED_GENERIC_PILLS in src/services/recovery-pills.js, pinned equal by tests/quick-reply-fallback.test.js) and compares against them, and a pressed pill is sent as the person's message. They need a server-side decision before they can be worded per language."
     },
     "frontend/src/features/dev-chat/launchpad.js": {
       "texts": [
@@ -442,9 +456,9 @@
     },
     "frontend/src/features/dev-board/card/skeleton.tsx": {
       "texts": [
-        "bg-white dark:bg-zinc-900 p-0.5\\\" aria-hidden=\\\"true\\\">"
+        "bg-white dark:bg-zinc-900 p-0.5\" aria-hidden=\"true\">"
       ],
-      "why": "A class string and attribute inside the skeleton's HTML builder, not interface text; the heuristic reads the string fragment as HTML text."
+      "why": "A fragment of class names and attributes inside an HTML string, not text."
     },
     "frontend/src/features/dev-board/discussion-store.ts": {
       "texts": [
@@ -642,6 +656,29 @@
         "Invite someone to the network"
       ],
       "why": "Labels of the built-in artworks, read only by the admin console's illustration gallery (features/admin/topochain/illustration-gallery.tsx), which is out of scope. The two user-facing consumers (challenge-card.tsx, challenges-pane.tsx) draw the image with alt=\"\" and never read the label."
+    },
+    "frontend/src/features/dev-board/topic/request-model.ts": {
+      "texts": [
+        "Homeroom bot"
+      ],
+      "why": "BOT_NAME: the assistant's name, shown in place of the GitHub account it files through (displayName). A product name used as data, as in public/js/group-chat.js; never translated."
+    },
+    "frontend/src/features/app-frame/live-band.tsx": {
+      "texts": [
+        "Sample row one",
+        "Sample row two",
+        "Sample row three",
+        "Sample live stream",
+        "Not a real app",
+        "Just added: a new row"
+      ],
+      "why": "sampleRecording(): the made-up page played for the ?shot=first-version-live screenshot state. It stands in for an app's own content, which Homeroom never translates."
+    },
+    "frontend/src/features/dialogs/app-domain.tsx": {
+      "texts": [
+        "app.example.com"
+      ],
+      "why": "The address box's placeholder: a sample hostname on the reserved example.com domain, the same in every language."
     }
   }
 }

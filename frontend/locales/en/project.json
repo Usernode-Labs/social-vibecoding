@@ -1289,7 +1289,7 @@
   },
   "plan.linesLabel": {
     "text": "Plan for {{project}}",
-    "description": "Accessible name of the list of the plan's lines on the read-only plan page. {{project}} is the project's name."
+    "description": "Accessible name of the list of the plan's lines, on the read-only plan page and in the plan sheet a member opens from the App tab while the first version is built. {{project}} is the project's name."
   },
   "plan.talk": {
     "text": "Talk about it in Discussion",
@@ -1911,18 +1911,6 @@
     "text": "Resize spec panel",
     "description": "Accessible name of the draggable divider between a proposal's or request's page and the spec reader docked beside it. A spec is the written plan a change is built from."
   },
-  "topic.discussion.title": {
-    "text": "Discussion",
-    "description": "Heading, and accessible name, of the section under a change's page where the project's members talk about that change. A noun."
-  },
-  "topic.discussion.visibleToGroup": {
-    "text": "Visible to the group",
-    "description": "Small line under the Discussion heading on a change's page: everything posted in this discussion can be read by the project's members."
-  },
-  "topic.discussion.readOnlyNotice": {
-    "text": "You're viewing this app's dev space read-only. Only collaborators can post.",
-    "description": "Notice shown in place of the message box in a change's Discussion when the viewer may read the project but not take part. \"Dev space\" is the area of an app where its changes are built and discussed; collaborators are the people invited to build it."
-  },
   "topic.back.messages": {
     "text": "Messages",
     "description": "Text of the back chip at the top of a proposal's or request's page when it was opened from a conversation: the name of the Messages screen it returns to. Shown after a left-pointing chevron."
@@ -2167,33 +2155,9 @@
     "text": "No testing instructions have been added yet.",
     "description": "Shown under \"Testing instructions\" on a proposal that has none."
   },
-  "topic.hero.kindChange": {
-    "text": "Change",
-    "description": "Small upper-case word at the top of a change's page saying what kind of page it is. A noun: a change to the project that is being built or voted on."
-  },
-  "topic.hero.verbProposed": {
-    "text": "proposed",
-    "description": "Lower-case verb in the by-line under a change's title, between the author's name and how long ago, as in \"maya · proposed 5h ago\". Past tense: the author put the change up for a vote."
-  },
-  "topic.hero.needsOtherYes": {
-    "text": "Needs a Yes from another member before it can go live.",
-    "description": "Note under the vote status on a proposal's page: the proposal cannot be approved by its author alone and waits for a Yes vote from a different member of the project. \"Go live\" means the change is applied to the running app."
-  },
-  "topic.hero.summaryStale": {
-    "text": "This summary may describe an earlier revision.",
-    "description": "Note under a proposal's summary when the change was updated after the summary was written."
-  },
   "topic.hero.howItsBuilt": {
     "text": "How it’s built",
-    "description": "Label that unfolds the technical design part of a change's summary, under the part written for the people deciding on it. \"It\" is the change."
-  },
-  "topic.hero.shotsTaking": {
-    "text": "Taking before & after shots",
-    "description": "Line with a spinner on a change's page while Homeroom is capturing screenshots of the app before and after the change."
-  },
-  "topic.hero.shotsRetrying": {
-    "text": "Trying the shots again",
-    "description": "Line with a spinner on a change's page while the capture of before-and-after screenshots, which was interrupted, is being started again automatically."
+    "description": "Label that unfolds the technical design part of a change's summary on the change's page, under the part written for the people deciding on it. \"It\" is the change."
   },
   "topic.transcript.readOnly": {
     "text": "read-only",
@@ -2207,25 +2171,161 @@
     "text": "The change this one went live in",
     "description": "Accessible name of the box on a change's page that links to the later change it was merged as part of. \"This one\" is the change being viewed."
   },
+  "topic.change.sheetLabel": {
+    "text": "Change",
+    "description": "Accessible name of the sheet that holds a change's page. A noun: a change to the project that is being built or voted on."
+  },
+  "topic.change.bar.titleNumbered": {
+    "text": "Change #{{number}}",
+    "description": "Title in the header of a change's page. {{number}} is the change's number. \"Change\" is a noun: a change to the project that is being built or voted on."
+  },
+  "topic.change.bar.title": {
+    "text": "Change",
+    "description": "Title in the header of a change's page while the change has no number yet. A noun: a change to the project that is being built."
+  },
+  "topic.change.bar.more": {
+    "text": "More actions",
+    "description": "Accessible name and tooltip of the ⋯ button in the header of a change's page: opens the menu with everything else that can be done with the change."
+  },
+  "topic.change.summaryStale": {
+    "text": "Written for an earlier version of this change.",
+    "description": "Note under a change's summary on its page when the change was updated after the summary was written, so the summary may no longer describe it."
+  },
+  "topic.change.gate.noteSeeFailed": {
+    "text": "{{note}} <0>See what failed</0>",
+    "description": "The line under the Testing card on a change's page when its checks failed. {{note}} is one or more whole sentences, already worded, saying what happened. <0></0> is a link-style button that opens the Details sheet at the failed checks."
+  },
+  "topic.change.gate.seeFailed": {
+    "text": "See what failed",
+    "description": "Link-style button under the Testing card on a change's page when its checks failed and there is nothing else to say: opens the Details sheet at the failed checks."
+  },
+  "topic.change.shots.title": {
+    "text": "Before and after",
+    "description": "Name, and accessible name, of the card on a change's page that holds screenshots of the app before and after the change, or the line saying where they are."
+  },
+  "topic.change.stream.replies_one": {
+    "text": "{{count}} reply",
+    "description": "Line under a change, over the replies to it, on the change's page: how many replies people have written. {{count}} is that number. Reply is a noun."
+  },
+  "topic.change.stream.replies_other": {
+    "text": "{{count}} replies",
+    "description": "Line under a change, over the replies to it, on the change's page: how many replies people have written. {{count}} is that number. Reply is a noun."
+  },
+  "topic.change.stream.noReplies": {
+    "text": "No replies yet",
+    "description": "Line under a change, on its page, when nobody has replied to it."
+  },
+  "topic.change.stream.loading": {
+    "text": "Loading replies…",
+    "description": "Line under a change, on its page, while the replies to it are being fetched."
+  },
+  "topic.change.stream.loadEarlier": {
+    "text": "Load earlier replies",
+    "description": "Button at the top of the replies on a change's page: fetches the older replies before the ones shown. Load is a verb."
+  },
+  "topic.change.stream.tryIt": {
+    "text": "Try it",
+    "description": "Link-style button at the end of the line \"The preview is ready\" among the replies on a change's page: opens the preview so the person can use the change before voting. \"It\" is the change."
+  },
+  "topic.change.line.postedSpec": {
+    "text": "<0>{{author}}</0> posted spec v{{version}}",
+    "description": "One line among the replies on a change's page, saying something that happened: a spec (the written plan for the change) was posted. {{author}} is who posted it, a username, drawn bold by <0></0>. {{version}} is the spec's version number; \"v\" abbreviates version."
+  },
+  "topic.change.line.previewReady": {
+    "text": "The preview is ready",
+    "description": "One line among the replies on a change's page, saying something that happened: the preview build of the change finished and can be opened. A \"Try it\" button follows it. No full stop."
+  },
+  "topic.change.line.askedForApproval": {
+    "text": "<0>{{author}}</0> asked for approval",
+    "description": "One line among the replies on a change's page, saying something that happened: the change was put up for the members' vote. {{author}} is the username of who did it, drawn bold by <0></0>."
+  },
+  "topic.change.line.unnamedAskedForApproval": {
+    "text": "Asked for approval",
+    "description": "One line among the replies on a change's page: the change was put up for the members' vote, when it is not known by whom. A past-tense verb phrase with no subject."
+  },
+  "topic.change.line.votedYes": {
+    "text": "<0>{{voter}}</0> voted yes",
+    "description": "One line among the replies on a change's page: a member voted in favour of the change. {{voter}} is their username, drawn bold by <0></0>."
+  },
+  "topic.change.line.votedYesReason": {
+    "text": "<0>{{voter}}</0> voted yes<1>: “{{reason}}”</1>",
+    "description": "One line among the replies on a change's page: a member voted in favour of the change and gave a reason. {{voter}} is their username, drawn bold by <0></0>. {{reason}} is what they wrote, in their own words; keep it and its quotation marks inside <1></1>."
+  },
+  "topic.change.line.votedYesEarlier": {
+    "text": "<0>{{voter}}</0> voted yes on an earlier version",
+    "description": "One line among the replies on a change's page: a member voted in favour, but the change has been updated since, so that vote no longer counts. {{voter}} is their username, drawn bold by <0></0>."
+  },
+  "topic.change.line.votedYesEarlierReason": {
+    "text": "<0>{{voter}}</0> voted yes on an earlier version<1>: “{{reason}}”</1>",
+    "description": "One line among the replies on a change's page: a member voted in favour and gave a reason, but the change has been updated since, so that vote no longer counts. {{voter}} is their username, drawn bold by <0></0>. {{reason}} is what they wrote; keep it and its quotation marks inside <1></1>."
+  },
+  "topic.change.line.votedNo": {
+    "text": "<0>{{voter}}</0> voted no",
+    "description": "One line among the replies on a change's page: a member voted against the change. {{voter}} is their username, drawn bold by <0></0>."
+  },
+  "topic.change.line.votedNoReason": {
+    "text": "<0>{{voter}}</0> voted no<1>: “{{reason}}”</1>",
+    "description": "One line among the replies on a change's page: a member voted against the change and gave a reason. {{voter}} is their username, drawn bold by <0></0>. {{reason}} is what they wrote, in their own words; keep it and its quotation marks inside <1></1>."
+  },
+  "topic.change.line.votedNoEarlier": {
+    "text": "<0>{{voter}}</0> voted no on an earlier version",
+    "description": "One line among the replies on a change's page: a member voted against, but the change has been updated since, so that vote no longer counts. {{voter}} is their username, drawn bold by <0></0>."
+  },
+  "topic.change.line.votedNoEarlierReason": {
+    "text": "<0>{{voter}}</0> voted no on an earlier version<1>: “{{reason}}”</1>",
+    "description": "One line among the replies on a change's page: a member voted against and gave a reason, but the change has been updated since, so that vote no longer counts. {{voter}} is their username, drawn bold by <0></0>. {{reason}} is what they wrote; keep it and its quotation marks inside <1></1>."
+  },
+  "topic.change.line.unnamedVotedYes": {
+    "text": "Voted yes",
+    "description": "One line among the replies on a change's page: somebody voted in favour of the change, when it is not known who. A past-tense verb phrase with no subject."
+  },
+  "topic.change.line.unnamedVotedYesReason": {
+    "text": "Voted yes<1>: “{{reason}}”</1>",
+    "description": "One line among the replies on a change's page: somebody voted in favour of the change and gave a reason, when it is not known who. {{reason}} is what they wrote; keep it and its quotation marks inside <1></1>. There is no <0> tag in this line."
+  },
+  "topic.change.line.unnamedVotedYesEarlier": {
+    "text": "Voted yes on an earlier version",
+    "description": "One line among the replies on a change's page: somebody voted in favour, when it is not known who, and the change has been updated since, so that vote no longer counts."
+  },
+  "topic.change.line.unnamedVotedYesEarlierReason": {
+    "text": "Voted yes on an earlier version<1>: “{{reason}}”</1>",
+    "description": "One line among the replies on a change's page: somebody voted in favour and gave a reason, when it is not known who, and the change has been updated since. {{reason}} is what they wrote; keep it and its quotation marks inside <1></1>. There is no <0> tag in this line."
+  },
+  "topic.change.line.unnamedVotedNo": {
+    "text": "Voted no",
+    "description": "One line among the replies on a change's page: somebody voted against the change, when it is not known who. A past-tense verb phrase with no subject."
+  },
+  "topic.change.line.unnamedVotedNoReason": {
+    "text": "Voted no<1>: “{{reason}}”</1>",
+    "description": "One line among the replies on a change's page: somebody voted against the change and gave a reason, when it is not known who. {{reason}} is what they wrote; keep it and its quotation marks inside <1></1>. There is no <0> tag in this line."
+  },
+  "topic.change.line.unnamedVotedNoEarlier": {
+    "text": "Voted no on an earlier version",
+    "description": "One line among the replies on a change's page: somebody voted against, when it is not known who, and the change has been updated since, so that vote no longer counts."
+  },
+  "topic.change.line.unnamedVotedNoEarlierReason": {
+    "text": "Voted no on an earlier version<1>: “{{reason}}”</1>",
+    "description": "One line among the replies on a change's page: somebody voted against and gave a reason, when it is not known who, and the change has been updated since. {{reason}} is what they wrote; keep it and its quotation marks inside <1></1>. There is no <0> tag in this line."
+  },
   "topic.requests.region": {
     "text": "Requests this change addresses",
-    "description": "Accessible name of the area on a change's page that lists the requests (filed issues) the change is meant to resolve."
+    "description": "Accessible name of the row on a change's page, under its summary, that names the requests (filed issues) the change is meant to resolve."
   },
   "topic.requests.addresses": {
     "text": "Addresses",
-    "description": "Label at the start of the line on a change's page that lists the requests it resolves, followed by those requests as chips. A verb in the third person: this change addresses these requests. Not postal addresses."
+    "description": "Label at the start of the row on a change's page that names the requests it resolves: the first request follows it as a chip, with a \"+N more\" button when there are others. A verb in the third person: this change addresses these requests. Not postal addresses."
   },
-  "topic.requests.noneLinked": {
-    "text": "No requests linked yet.",
-    "description": "Shown after \"Addresses\" on a change's page when the change is not linked to any request (filed issue)."
+  "topic.requests.more_one": {
+    "text": "+{{count}} more",
+    "description": "Button after the first request on the \"Addresses\" row of a change's page, when the change resolves more than one request: shows the others, one to a line. {{count}} is how many others there are. Keep the plus sign."
   },
-  "topic.requests.edit": {
-    "text": "Edit requests",
-    "description": "Button at the end of the \"Addresses\" line on a change's page, for its owner: opens the editor that changes which requests (filed issues) the change is linked to."
+  "topic.requests.more_other": {
+    "text": "+{{count}} more",
+    "description": "Button after the first request on the \"Addresses\" row of a change's page, when the change resolves more than one request: shows the others, one to a line. {{count}} is how many others there are. Keep the plus sign."
   },
-  "topic.requests.add": {
-    "text": "Add request",
-    "description": "Button at the end of the \"Addresses\" line on a change's page when no request is linked yet: opens the editor that links the change to an existing request (filed issue). It does not file a new request."
+  "topic.requests.showLess": {
+    "text": "Show less",
+    "description": "Replaces the \"+N more\" button on the \"Addresses\" row of a change's page while the other requests are shown: hides them again."
   },
   "topic.requests.selectedCount_one": {
     "text": "Selected ({{count}})",
@@ -2377,11 +2477,11 @@
   },
   "topic.request.body.unavailable": {
     "text": "This request is not available right now.",
-    "description": "Error under the description editor of a request when it cannot be saved because its project is not loaded."
+    "description": "Error under the editor of a request's words, on the request's page and in its About sheet, when the edit cannot be saved because the request's project is not loaded."
   },
   "topic.request.body.saveFailed": {
     "text": "Couldn’t save the request.",
-    "description": "Error under the description editor of a request when saving failed and the server gave no message of its own."
+    "description": "Error under the editor of a request's words, on the request's page and in its About sheet, when saving failed and the server gave no message of its own."
   },
   "topic.request.body.save": {
     "text": "Save body",
@@ -2390,6 +2490,150 @@
   "topic.request.body.saving": {
     "text": "Saving…",
     "description": "Text of the main button under the description editor of a request while the description is being saved."
+  },
+  "topic.request.sheetLabel": {
+    "text": "Request",
+    "description": "Accessible name of the sheet that holds a request's page. A noun: something a member asked to have built or fixed in the project."
+  },
+  "topic.request.bar.title": {
+    "text": "Request #{{number}}",
+    "description": "Title in the header of a request's page. {{number}} is the request's number. \"Request\" is a noun: something a member asked to have built or fixed."
+  },
+  "topic.request.bar.more": {
+    "text": "More actions",
+    "description": "Accessible name and tooltip of the ⋯ button in the header of a request's page: opens the menu with everything else that can be done with the request."
+  },
+  "topic.request.words.showMore": {
+    "text": "Show more",
+    "description": "Button under a request's own words on its page, and under a change's summary on a change's page, while the text is folded after four lines: unfolds all of it."
+  },
+  "topic.request.words.showLess": {
+    "text": "Show less",
+    "description": "Button under a request's own words on its page, and under a change's summary on a change's page, once the text is unfolded: folds it back to four lines."
+  },
+  "topic.request.editor.label": {
+    "text": "The request",
+    "description": "Accessible name of the text box in which the person who filed a request rewrites its words, on the request's page. A noun."
+  },
+  "topic.request.editor.saving": {
+    "text": "Saving…",
+    "description": "Replaces \"Save\" on the button under the editor of a request's words, on the request's page, while the edit is being saved."
+  },
+  "topic.request.status.label": {
+    "text": "Where this request is",
+    "description": "Accessible name of the card on a request's page that shows how far the request has come: asked, spec written, built, voted in."
+  },
+  "topic.request.status.specVersionReady": {
+    "text": "Spec v{{version}} is ready for comments.",
+    "description": "Sentence in the status card on a request's page once a spec (the written plan for the change that would answer the request) has been posted. {{version}} is the spec's version number; \"v\" abbreviates version."
+  },
+  "topic.request.status.specReady": {
+    "text": "A spec is ready for comments.",
+    "description": "Sentence in the status card on a request's page once a spec (the written plan for the change that would answer the request) has been posted and its version is not known."
+  },
+  "topic.request.stage.asked": {
+    "text": "Asked",
+    "description": "First of the four stops on the progress line of a request's page (Asked, Spec, Built, Voted in): somebody asked for this. A past participle describing the request."
+  },
+  "topic.request.stage.spec": {
+    "text": "Spec",
+    "description": "Second of the four stops on the progress line of a request's page (Asked, Spec, Built, Voted in): a spec, the written plan for the change, has been posted. A noun, short for specification."
+  },
+  "topic.request.stage.built": {
+    "text": "Built",
+    "description": "Third of the four stops on the progress line of a request's page (Asked, Spec, Built, Voted in): a change that answers the request has been built. A past participle describing the request."
+  },
+  "topic.request.stage.voted": {
+    "text": "Voted in",
+    "description": "Last of the four stops on the progress line of a request's page (Asked, Spec, Built, Voted in): the change that answers the request was approved by the members' vote and went live."
+  },
+  "topic.request.spec.kicker": {
+    "text": "Spec",
+    "description": "Small upper-case label over the title on a spec's card under a request, when the spec has no version number. A noun, short for specification: the written plan for the change."
+  },
+  "topic.request.spec.kickerVersion": {
+    "text": "Spec · v{{version}}",
+    "description": "Small upper-case label over the title on a spec's card under a request. \"Spec\" is a noun, short for specification: the written plan for the change. {{version}} is its version number; \"v\" abbreviates version."
+  },
+  "topic.request.spec.by": {
+    "text": "by {{author}}",
+    "description": "Line under the title on a spec's card under a request, when the time is not known: who posted the spec. {{author}} is a username, or the assistant's name, Homeroom bot."
+  },
+  "topic.request.spec.byAt": {
+    "text": "by {{author}} · <0>{{time}}</0>",
+    "description": "Line under the title on a spec's card under a request: who posted the spec, and when. {{author}} is a username, or the assistant's name, Homeroom bot. {{time}} is when, already formatted, for example 2:41 PM or Oct 5; keep it inside <0></0>."
+  },
+  "topic.request.spec.read": {
+    "text": "Read",
+    "description": "Button on a spec's card under a request: opens the spec to read beside the page. A verb in the imperative, not the past tense."
+  },
+  "topic.request.spec.readNamed": {
+    "text": "Read {{title}}",
+    "description": "Accessible name of the Read button on a spec's card under a request. {{title}} is the spec's title. Read is a verb in the imperative."
+  },
+  "topic.request.spec.opening": {
+    "text": "Opening…",
+    "description": "Replaces \"Read\" on a spec's card under a request while the spec is being fetched."
+  },
+  "topic.request.spec.untitled": {
+    "text": "The spec",
+    "description": "Stands in for the title of a spec that has none, on its card under a request and at the top of the reader that opens it. The spec is the written plan Homeroom's assistant posted on the request's GitHub issue."
+  },
+  "topic.request.stream.replies_one": {
+    "text": "{{count}} reply",
+    "description": "Line under a request, over the replies to it, on the request's page: how many replies people have written. {{count}} is that number. Reply is a noun."
+  },
+  "topic.request.stream.replies_other": {
+    "text": "{{count}} replies",
+    "description": "Line under a request, over the replies to it, on the request's page: how many replies people have written. {{count}} is that number. Reply is a noun."
+  },
+  "topic.request.stream.noReplies": {
+    "text": "No replies yet",
+    "description": "Line under a request, on its page, when nobody has replied to it."
+  },
+  "topic.request.stream.loading": {
+    "text": "Loading replies…",
+    "description": "Line under a request, on its page, while the replies to it are being fetched."
+  },
+  "topic.request.stream.loadEarlier": {
+    "text": "Load earlier replies",
+    "description": "Button at the top of the replies on a request's page: fetches the older replies before the ones shown. Load is a verb."
+  },
+  "topic.request.stream.earlierOnGitHub": {
+    "text": "Earlier GitHub comments aren’t shown here. <0>Read them on GitHub</0>",
+    "description": "Line at the top of the replies on a request's page when only the newest comments from the request's GitHub issue were fetched. <0></0> is a link to the issue on GitHub, where the rest can be read. GitHub is a product name."
+  },
+  "topic.request.stream.earlierNotShown": {
+    "text": "Earlier GitHub comments aren’t shown here.",
+    "description": "Line at the top of the replies on a request's page when only the newest comments from the request's GitHub issue were fetched and the issue's address is not known. GitHub is a product name."
+  },
+  "topic.request.stream.timeOnGitHub": {
+    "text": "<0>{{time}}</0><1> · on GitHub</1>",
+    "description": "Beside the author's name on a reply, on a request's page, that was written as a comment on the request's GitHub issue rather than in Homeroom. {{time}} is when it was written, already formatted; <0></0> holds it and <1></1> holds the note saying where it was written. Keep both tags. GitHub is a product name."
+  },
+  "topic.request.stream.onGitHub": {
+    "text": "on GitHub",
+    "description": "Beside the author's name on a reply, on a request's page, that was written as a comment on the request's GitHub issue rather than in Homeroom, when its time is not known. Lower case: it follows the name. GitHub is a product name."
+  },
+  "topic.request.stream.postedSpecVersion": {
+    "text": "<0>{{author}}</0> posted spec v{{version}}",
+    "description": "One line among the replies on a request's page, saying something that happened: a spec (the written plan for the change) was posted. {{author}} is the username of who posted it, drawn bold by <0></0>. {{version}} is the spec's version number; \"v\" abbreviates version."
+  },
+  "topic.request.stream.postedSpec": {
+    "text": "<0>{{author}}</0> posted a spec",
+    "description": "One line among the replies on a request's page, saying something that happened: a spec (the written plan for the change) was posted on the request's GitHub issue. {{author}} is who posted it, a username or the assistant's name, Homeroom bot, drawn bold by <0></0>."
+  },
+  "topic.request.stream.claimed": {
+    "text": "<0>{{member}}</0> started working on this",
+    "description": "One line among the replies on a request's page, saying something that happened: a member took the request on. {{member}} is their username, drawn bold by <0></0>. \"This\" is the request."
+  },
+  "topic.request.stream.claimedPlain": {
+    "text": "{{member}} started working on this",
+    "description": "Plain-text form of the line saying a member took a request on, for places that show a request's events as text only. {{member}} is their username. \"This\" is the request."
+  },
+  "topic.request.stream.read": {
+    "text": "Read",
+    "description": "Link-style button at the end of the line saying a spec was posted, among the replies on a request's page: opens that spec to read. A verb in the imperative, not the past tense."
   },
   "topic.run.build": {
     "text": "Build",
@@ -2494,6 +2738,10 @@
   "topic.details.description": {
     "text": "Description",
     "description": "Sub-heading in the Details sheet of a change, over the full technical description of the change. A noun."
+  },
+  "topic.details.shots": {
+    "text": "Shot details",
+    "description": "Sub-heading in the Details sheet of a change, over the technical record of its before-and-after screenshots: what was captured and what was left out. \"Shot\" is a noun, short for screenshot."
   },
   "card.pill.goesLiveIn": {
     "text": "Goes live in {{time}}",
@@ -3071,6 +3319,14 @@
     "text": "Manage who can use and build this app",
     "description": "Second line of the 'App settings' row in a project's settings. 'Build' is a verb, to work on the app's code."
   },
+  "menu.domain.title": {
+    "text": "Custom domain",
+    "description": "Row among a project's settings, for the people who manage it: opens the dialog for giving the project a web address of its own, beside its Homeroom address."
+  },
+  "menu.domain.sub": {
+    "text": "Use your own web address for this project",
+    "description": "Second line of the 'Custom domain' row in a project's settings."
+  },
   "menu.illustration.title": {
     "text": "Featured illustration",
     "description": "Row among a project's settings, shown to those who may edit it: opens the editor for the picture shown on the project's card on the Discover screen."
@@ -3306,22 +3562,6 @@
   "clamp.showLess": {
     "text": "Show less",
     "description": "Button under a long comment that has been expanded, on a request's or proposal's card and page: cuts it back to four lines."
-  },
-  "comments.spec.kicker": {
-    "text": "The spec",
-    "description": "Small label above the title of a folded card inside a GitHub comment written by Homeroom bot on a request: the card holds the specification the bot wrote for the requested change."
-  },
-  "comments.botTag": {
-    "text": "bot",
-    "description": "Small tag after an author's name on a GitHub comment shown in a request's page, marking the author as an automated account. Lower case."
-  },
-  "comments.heading": {
-    "text": "Discussion",
-    "description": "Heading above the comments copied from the request's GitHub issue, on a request's page."
-  },
-  "comments.truncated": {
-    "text": "Earlier comments omitted. <0>View the full thread on GitHub</0>.",
-    "description": "Note above the GitHub comments on a request's page when only the most recent ones are shown. The tagged words link to the whole conversation on GitHub; when no address is known they are plain text."
   },
   "filters.quick.assignedToYou": {
     "text": "Assigned to you",

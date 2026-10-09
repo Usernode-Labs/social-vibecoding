@@ -25,6 +25,8 @@ import type { FormEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useInnerHtml } from '../../../lib/html';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { useStoreState } from '../../../lib/use-store-state';
 import { ISSUE_BODY_MAX } from '../../../lib/issue-body-limit';
 import { Button } from '@/components/ui/button';
@@ -62,10 +64,11 @@ function host(id: string): Element | null {
 
 /** The sheet's header: what this is, the category, and everything else behind ⋯. */
 function RequestBar({ r }: { r: RequestView }): ReactNode {
+  const t = useMessages('project');
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
-        <div className="messages-thread-name">{`Request #${r.number}`}</div>
+        <div className="messages-thread-name">{t('project:topic.request.bar.title', { number: r.number })}</div>
         {r.category ? <div className="messages-thread-sub" data-request-category="">{r.category}</div> : null}
       </div>
       {r.menuKey ? (
@@ -74,14 +77,21 @@ function RequestBar({ r }: { r: RequestView }): ReactNode {
           className="messages-thread-action dev-card-menu-btn"
           data-card-menu={r.menuKey}
           aria-haspopup="true"
-          aria-label="More actions"
-          title="More actions"
+          aria-label={t('project:topic.request.bar.more')}
+          title={t('project:topic.request.bar.more')}
         >
           <EllipsisHorizontalIcon aria-hidden="true" />
         </button>
       ) : null}
     </header>
   );
+}
+
+/** Whole sentences, one after another, as one short paragraph. */
+export function sentences(parts: readonly (string | null | undefined | false)[]): string {
+  const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
+  if (!said.length) return '';
+  return said.reduce((first, second) => translate('project:sentences.pair', { first, second }));
 }
 
 /** The curve the sheets move on, and how long the fold takes to open. */
@@ -100,6 +110,7 @@ function reducedMotion(): boolean {
  * request has no control under it.
  */
 export function RequestWords({ html }: { html: string }): ReactNode {
+  const t = useMessages('project');
   const text = useRef<HTMLDivElement>(null);
   const inner = useInnerHtml(html);
   // `open` is what the clamp says; `shown` is what the button says, which
@@ -163,7 +174,7 @@ export function RequestWords({ html }: { html: string }): ReactNode {
           onClick={toggle}
         >
           <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          {shown ? 'Show less' : 'Show more'}
+          {shown ? t('project:topic.request.words.showLess') : t('project:topic.request.words.showMore')}
         </button>
       ) : null}
     </div>
@@ -172,6 +183,7 @@ export function RequestWords({ html }: { html: string }): ReactNode {
 
 /** The author's editor for the request's words, opened from ⋯ "Edit request". */
 function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }): ReactNode {
+  const t = useMessages('project');
   const [draft, setDraft] = useState(r.editor.markdown);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -179,7 +191,7 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
     event.preventDefault();
     if (saving) return;
     const slug = appView()?.appData?.slug;
-    if (!slug) { setError('This request is not available right now.'); return; }
+    if (!slug) { setError(t('project:topic.request.body.unavailable')); return; }
     setSaving(true);
     setError('');
     try {
@@ -187,7 +199,7 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
       onClose();
       call('_renderTopicHead');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Couldn’t save the request.');
+      setError(err instanceof Error ? err.message : t('project:topic.request.body.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -196,7 +208,7 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
     <form className="mt-2 space-y-3" data-issue-body-editor={r.editor.issue} onSubmit={save}>
       <Textarea
         id="dev-issue-body-input"
-        aria-label="The request"
+        aria-label={t('project:topic.request.editor.label')}
         rows={10}
         maxLength={ISSUE_BODY_MAX}
         width="full"
@@ -209,8 +221,8 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
       />
       {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       <div className="flex justify-end gap-2">
-        <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={onClose} disabled={saving}>Cancel</Button>
-        <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+        <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={onClose} disabled={saving}>{t('core:common.cancel')}</Button>
+        <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? t('project:topic.request.editor.saving') : t('core:common.save')}</Button>
       </div>
     </form>
   );
@@ -222,16 +234,19 @@ function RequestEditor({ r, onClose }: { r: RequestView; onClose: () => void }):
  * thing this viewer would do next. A step already done gets no fill.
  */
 function RequestStatus({ s, specs }: { s: RequestStatusView; specs: RequestSpecCard[] }): ReactNode {
+  const t = useMessages('project');
   const stage = requestStage(s.stage, specs.length);
   const at = STAGES.findIndex((step) => step.key === stage);
   // Voted in is the end: every stop is done.
   const done = stage === 'voted';
   const version = newestSpecVersion(specs);
-  const specLine = stage === 'spec' ? (version ? `Spec v${version} is ready for comments.` : 'A spec is ready for comments.') : null;
-  const say = [s.lead, s.note || specLine].filter(Boolean).join(' ');
+  const specLine = stage === 'spec'
+    ? (version ? t('project:topic.request.status.specVersionReady', { version }) : t('project:topic.request.status.specReady'))
+    : null;
+  const say = sentences([s.lead, s.note || specLine]);
   const a = s.action;
   return (
-    <div className="dev-request-status" role="group" aria-label="Where this request is" data-request-stage={stage}>
+    <div className="dev-request-status" role="group" aria-label={t('project:topic.request.status.label')} data-request-stage={stage}>
       {s.closed ? null : (
         <ol className="dev-request-steps">
           {STAGES.map((step, i) => {
@@ -239,7 +254,7 @@ function RequestStatus({ s, specs }: { s: RequestStatusView; specs: RequestSpecC
             return (
               <li key={step.key} className="dev-request-step" data-state={state} aria-current={state === 'now' ? 'step' : undefined}>
                 <span className="dev-request-step-mark">{state === 'done' ? <CheckIcon aria-hidden="true" /> : null}</span>
-                <span className="dev-request-step-label">{step.label}</span>
+                <span className="dev-request-step-label">{t(step.label)}</span>
               </li>
             );
           })}
@@ -271,29 +286,35 @@ function RequestStatus({ s, specs }: { s: RequestStatusView; specs: RequestSpecC
 
 /** One spec, at its newest version, as a shared item hangs off a message. */
 function SpecCard({ card }: { card: RequestSpecCard }): ReactNode {
+  const t = useMessages('project');
   const [loading, setLoading] = useState(false);
   return (
     <div className="messages-object-card dev-request-spec" data-request-spec={card.key}>
       <span className="messages-object-icon" aria-hidden="true">📋</span>
       <div className="min-w-0 flex-1">
-        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{card.version ? `Spec · v${card.version}` : 'Spec'}</div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-semibold">{card.version ? t('project:topic.request.spec.kickerVersion', { version: card.version }) : t('project:topic.request.spec.kicker')}</div>
         <div className="text-base font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-2">{card.title}</div>
         <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
-          {`by ${card.by}`}
-          {card.time ? <> · <time dateTime={card.at || undefined} title={card.timeTitle}>{card.time}</time></> : null}
+          {card.time ? (
+            <RichMessage
+              id="project:topic.request.spec.byAt"
+              values={{ author: card.by, time: card.time }}
+              components={[<time dateTime={card.at || undefined} title={card.timeTitle} />]}
+            />
+          ) : t('project:topic.request.spec.by', { author: card.by })}
         </div>
       </div>
       <button
         type="button"
         className="dev-request-read"
         disabled={loading}
-        aria-label={`Read ${card.title}`}
+        aria-label={t('project:topic.request.spec.readNamed', { title: card.title })}
         onClick={async () => {
           setLoading(true);
           try { await openRequestSpec(card); } finally { setLoading(false); }
         }}
       >
-        {loading ? 'Opening…' : 'Read'}
+        {loading ? t('project:topic.request.spec.opening') : t('project:topic.request.spec.read')}
       </button>
     </div>
   );

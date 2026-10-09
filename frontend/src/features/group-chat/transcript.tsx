@@ -960,6 +960,7 @@ function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, ch
  * it carries none of the row's controls.
  */
 const GitHubRow = memo(function GitHubRow({ msg }: { msg: TranscriptMessage }) {
+  const t = useMessages('project');
   return (
     <ChatMessageRow
       className="gc-msg gc-msg-github"
@@ -972,10 +973,13 @@ const GitHubRow = memo(function GitHubRow({ msg }: { msg: TranscriptMessage }) {
       )}
       name={displayName(msg.username)}
       timestamp={(
-        <>
-          {msg.time ? <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span> : null}
-          <span className="gc-msg-via">{msg.time ? ' · on GitHub' : 'on GitHub'}</span>
-        </>
+        msg.time ? (
+          <RichMessage
+            id="project:topic.request.stream.timeOnGitHub"
+            values={{ time: msg.time }}
+            components={[<span className="gc-msg-time" title={msg.timeTitle} />, <span className="gc-msg-via" />]}
+          />
+        ) : <span className="gc-msg-via">{t('project:topic.request.stream.onGitHub')}</span>
       )}
     >
       <Body html={msg.bodyHtml} />
@@ -993,17 +997,20 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
   const spec = msg.kind === 'spec_share' ? msg.specShare : null;
   const gh = msg.kind === 'github' ? msg.githubSpec : null;
   const claim = /^(\S+) claimed this (?:issue|request)$/.exec((msg.systemText || '').trim());
+  const t = useMessages('project');
+  const tChat = useMessages('chat');
   let glyph = '•';
   let text: ReactNode = msg.systemText;
+  // Each line is one whole message, with <0> around who did it.
   if (spec) {
     glyph = '📋';
-    text = <><b>{spec.sharedBy}</b>{` posted spec v${spec.version}`}</>;
+    text = <RichMessage id="project:topic.request.stream.postedSpecVersion" values={{ author: spec.sharedBy, version: spec.version }} components={[<b />]} />;
   } else if (gh) {
     glyph = '📋';
-    text = <><b>{displayName(msg.username)}</b>{' posted a spec'}</>;
+    text = <RichMessage id="project:topic.request.stream.postedSpec" values={{ author: displayName(msg.username) }} components={[<b />]} />;
   } else if (claim) {
     glyph = '✋';
-    text = <><b>{claim[1]}</b>{' started working on this'}</>;
+    text = <RichMessage id="project:topic.request.stream.claimed" values={{ member: claim[1] }} components={[<b />]} />;
   }
   return (
     <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-request-event={spec || gh ? 'spec' : claim ? 'claim' : 'notice'}>
@@ -1011,9 +1018,9 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
       <span className="dev-request-event-text">
         {text}
         {msg.repeat && msg.repeat > 1 ? (
-          <span className="gc-msg-system-repeat" title={`Posted ${msg.repeat} times in a row; this is the latest`}>{` · ×${msg.repeat}`}</span>
+          <span className="gc-msg-system-repeat" title={tChat('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
         ) : null}
-        {onRead ? <>{' · '}<button type="button" className="dev-request-event-link" onClick={onRead}>Read</button></> : null}
+        {onRead ? <>{' · '}<button type="button" className="dev-request-event-link" onClick={onRead}>{t('project:topic.request.stream.read')}</button></> : null}
         {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
       </span>
     </div>
@@ -1030,6 +1037,7 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
  * posting twice, so it is left out (../dev-board/topic/request-model.ts).
  */
 export function RequestRows({ view }: { view: TranscriptView }) {
+  const t = useMessages('project');
   const stream = useMemo(() => requestStream(foldRepeats(view.messages)), [view.messages]);
   const specs = stream.specs;
   const count = replyCount(stream.rows);
@@ -1070,12 +1078,12 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   return (
     <>
       <div className="messages-reply-count" data-request-replies={count}>
-        <span>{count ? `${count} ${count === 1 ? 'reply' : 'replies'}` : loaded ? 'No replies yet' : 'Loading replies…'}</span>
+        <span>{count ? t('project:topic.request.stream.replies', { count }) : loaded ? t('project:topic.request.stream.noReplies') : t('project:topic.request.stream.loading')}</span>
       </div>
       {view.lead.earlier ? (
         <div className="text-center py-1">
           <button type="button" id="gc-thread-earlier" className="messages-load-older" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
-            Load earlier replies
+            {t('project:topic.request.stream.loadEarlier')}
           </button>
         </div>
       ) : null}
@@ -1083,8 +1091,12 @@ export function RequestRows({ view }: { view: TranscriptView }) {
         <div className="dev-request-event dev-request-gh-more">
           <span className="dev-request-event-glyph" aria-hidden="true">•</span>
           <span className="dev-request-event-text">
-            {'Earlier GitHub comments aren’t shown here. '}
-            {more.url ? <a href={more.url} target="_blank" rel="noopener" className="dev-request-event-link">Read them on GitHub</a> : null}
+            {more.url ? (
+              <RichMessage
+                id="project:topic.request.stream.earlierOnGitHub"
+                components={[<a href={more.url} target="_blank" rel="noopener" className="dev-request-event-link" />]}
+              />
+            ) : t('project:topic.request.stream.earlierNotShown')}
           </span>
         </div>
       ) : null}
@@ -1092,7 +1104,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
         <div role="alert" className="gc-history-error flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
           <span>{view.lead.error}</span>
           <Button type="button" variant="neutral" size="xsText" ink="neutral" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
-            Try again
+            {t('core:common.tryAgain')}
           </Button>
         </div>
       ) : null}
@@ -1109,6 +1121,8 @@ export function RequestRows({ view }: { view: TranscriptView }) {
  * alike. `.gc-msg-system` keeps the module's row hooks.
  */
 const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage }) {
+  const t = useMessages('project');
+  const tChat = useMessages('chat');
   const line = changeLine(msg);
   if (!line) return null;
   const sessionId = Number(msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
@@ -1116,14 +1130,16 @@ const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage 
     <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind}>
       <span className="dev-request-event-glyph" aria-hidden="true">{line.glyph}</span>
       <span className="dev-request-event-text">
-        {line.actor ? <b>{line.actor}</b> : null}
-        {line.text}
-        {line.reason ? <span className="dev-change-event-reason">{`: “${line.reason}”`}</span> : null}
+        {/* A line the page words is one whole message: <0> is who did it,
+            <1> a vote's reason. */}
+        {line.id
+          ? <RichMessage id={line.id} values={line.values} components={[<b />, <span className="dev-change-event-reason" />]} />
+          : line.text}
         {msg.repeat && msg.repeat > 1 ? (
-          <span className="gc-msg-system-repeat" title={`Posted ${msg.repeat} times in a row; this is the latest`}>{` · ×${msg.repeat}`}</span>
+          <span className="gc-msg-system-repeat" title={tChat('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
         ) : null}
         {line.tryIt && sessionId ? (
-          <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => (window as any).AppView?._tryChangePreview?.(sessionId)}>Try it</button></>
+          <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => (window as any).AppView?._tryChangePreview?.(sessionId)}>{t('project:topic.change.stream.tryIt')}</button></>
         ) : null}
         {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
       </span>
@@ -1144,10 +1160,11 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
   const count = changeReplyCount(rows);
   const lead = view.lead.change;
   const loaded = !!lead?.loaded;
+  const t = useMessages('project');
   if (lead?.closed) {
     return (
       <>
-        <div className="messages-reply-count" data-change-replies="0"><span>No replies yet</span></div>
+        <div className="messages-reply-count" data-change-replies="0"><span>{t('project:topic.change.stream.noReplies')}</span></div>
         <p className="dev-change-closed-note">{lead.closed}</p>
       </>
     );
@@ -1172,12 +1189,12 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
   return (
     <>
       <div className="messages-reply-count" data-change-replies={count}>
-        <span>{count ? `${count} ${count === 1 ? 'reply' : 'replies'}` : loaded ? 'No replies yet' : 'Loading replies…'}</span>
+        <span>{count ? t('project:topic.change.stream.replies', { count }) : loaded ? t('project:topic.change.stream.noReplies') : t('project:topic.change.stream.loading')}</span>
       </div>
       {view.lead.earlier ? (
         <div className="text-center py-1">
           <button type="button" id="gc-thread-earlier" className="messages-load-older" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
-            Load earlier replies
+            {t('project:topic.change.stream.loadEarlier')}
           </button>
         </div>
       ) : null}
@@ -1185,7 +1202,7 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
         <div role="alert" className="gc-history-error flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
           <span>{view.lead.error}</span>
           <Button type="button" variant="neutral" size="xsText" ink="neutral" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
-            Try again
+            {t('core:common.tryAgain')}
           </Button>
         </div>
       ) : null}

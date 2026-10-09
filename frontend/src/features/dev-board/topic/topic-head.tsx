@@ -35,6 +35,8 @@ import { createPortal } from 'react-dom';
 import type { FormEvent, KeyboardEvent, ReactNode, SyntheticEvent } from 'react';
 
 import { Html } from '../../../lib/html';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { FRESH, watch } from '../../../lib/live-reads';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
@@ -144,13 +146,14 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
  * check, not for a voter reading the row.
  */
 function CheckRowView({ r }: { r: CheckRow }): ReactNode {
+  const t = useMessages('project');
   const glyphCls = `dev-ledger-check-glyph ${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`;
   const tags = (
     <>
-      {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">advisory</span> : null}
+      {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">{t('project:topic.check.advisory')}</span> : null}
       {r.flaky ? (
-        <span className="dev-check-flaky" title={`Failed about ${r.flaky}% of its recorded runs`}>
-          {`flaky · ${r.flaky}%`}
+        <span className="dev-check-flaky" title={t('project:topic.check.flakyTitle', { percent: r.flaky })}>
+          {t('project:topic.check.flaky', { percent: r.flaky })}
         </span>
       ) : null}
     </>
@@ -175,11 +178,16 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
           <span className={glyphCls} aria-hidden="true">{r.pass ? '✓' : '✗'}</span>
           <span className="dev-ledger-check-name" title={r.name}>{r.name}</span>
           {tags}
-          <span className="dev-ledger-check-open">{r.pass ? 'Passed on retry' : 'Why it failed'}</span>
+          <span className="dev-ledger-check-open">{r.pass ? t('project:topic.check.passedOnRetry') : t('project:topic.check.whyItFailed')}</span>
         </summary>
         <div className="dev-ledger-why-body">
-          {r.reason || 'failed'}
-          {r.path ? <span className="dev-ledger-why-path">{` · on ${r.path}`}</span> : null}
+          {r.path ? (
+            <RichMessage
+              id="project:topic.check.reasonOnPath"
+              values={{ reason: r.reason || t('project:topic.check.failed'), path: r.path }}
+              components={[<span className="dev-ledger-why-path" />]}
+            />
+          ) : (r.reason || t('project:topic.check.failed'))}
           {/* #3978: the unit-suite row's failing tests, each with the
               assertion text the run captured. The fold is the collapse —
               these open with "Why it failed" like the console errors below. */}
@@ -187,8 +195,13 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
             <ul className="dev-ledger-why-details">
               {r.details.map((d, i) => (
                 <li key={i}>
-                  <span className="dev-ledger-why-test">{d.test}</span>
-                  {d.file ? <span className="dev-ledger-why-file">{` · in ${d.file}`}</span> : null}
+                  {d.file ? (
+                    <RichMessage
+                      id="project:topic.check.testInFile"
+                      values={{ test: d.test, file: d.file }}
+                      components={[<span className="dev-ledger-why-test" />, <span className="dev-ledger-why-file" />]}
+                    />
+                  ) : <span className="dev-ledger-why-test">{d.test}</span>}
                   {d.excerpt ? <span className="dev-ledger-why-excerpt">{d.excerpt}</span> : null}
                 </li>
               ))}
@@ -241,15 +254,17 @@ function usePassNames(passesFor: number | null | undefined) {
 }
 
 function PassNamesPending({ state }: { state: 'idle' | 'loading' | 'failed' }): ReactNode {
+  const t = useMessages('project');
   return (
     <li className="dev-passes-pending opacity-70">
-      {state === 'failed' ? 'Could not load the passing checks. Close this and open it again to retry.' : 'Loading passing checks…'}
+      {state === 'failed' ? t('project:topic.checks.passNamesFailed') : t('project:topic.checks.passNamesLoading')}
     </li>
   );
 }
 
 /** The checks verdict: its rows nest, and its passes fold away. */
 export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
+  const t = useMessages('project');
   const names = usePassNames(v.passesFor);
   const passList = v.passes.length || v.passesFor ? (
     <ul className="mt-1 ml-1 space-y-0.5">
@@ -268,7 +283,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
       ) : null}
       {v.foldPasses ? (
         <details className="mt-1" onToggle={names.onToggle}>
-          <summary className="cursor-pointer opacity-80">{`Show ${v.passCount ?? v.passes.length} passing checks`}</summary>
+          <summary className="cursor-pointer opacity-80">{t('project:topic.checks.showPassing', { count: v.passCount ?? v.passes.length })}</summary>
           {passList}
         </details>
       ) : passList}
@@ -304,10 +319,13 @@ function Bar({ ran, passed, failed, expected, attr, value, indeterminate }: {
 }
 
 function BuildSteps({ steps }: { steps: LedgerBuildStep[] }): ReactNode {
+  const t = useMessages('project');
   const now = steps.find((s) => s.state === 'now');
   const fmt = (ms: number) => {
     const s = Math.max(0, Math.round(ms / 1000));
-    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+    return s < 60
+      ? t('project:topic.build.seconds', { seconds: s })
+      : t('project:topic.build.minutesSeconds', { minutes: Math.floor(s / 60), seconds: s % 60 });
   };
   const withPhases = steps.find((s) => s.phases && s.phases.length);
   const nowPhase = withPhases ? withPhases.phases!.find((p) => p.state === 'now') : null;
@@ -399,8 +417,9 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
  * repeated here.
  */
 function Roster({ r }: { r: RosterView }): ReactNode {
+  const t = useMessages('project');
   if (r.phase === 'hidden') return null;
-  if (r.phase === 'loading') return <span className="dev-ledger-roster">Loading votes…</span>;
+  if (r.phase === 'loading') return <span className="dev-ledger-roster">{t('project:topic.roster.loading')}</span>;
   // QA 2026-09-24: a side nobody has taken is left out, rather than drawn as
   // "No (0): —". The loaders send an empty string for it; the bare dash is
   // what they sent before, and is still read as empty.
@@ -410,11 +429,15 @@ function Roster({ r }: { r: RosterView }): ReactNode {
   return (
     <span className="dev-ledger-roster" data-approved={r.approved ? '1' : undefined}>
       {r.approved ? (
-        <>
-          <span className="dev-ledger-lead dev-ledger-lead-ok">Approved</span>
-          {yesNames ? ` by ${yesNames}` : null}
-          {noNames ? <span className="dev-ledger-needs">{` · No: ${noNames}`}</span> : null}
-        </>
+        // One whole message per case: who approved, and who said No.
+        yesNames || noNames ? (
+          <RichMessage
+            id={yesNames && noNames ? 'project:topic.roster.approvedByWithNo'
+              : yesNames ? 'project:topic.roster.approvedBy' : 'project:topic.roster.approvedWithNo'}
+            values={{ approvers: yesNames, against: noNames }}
+            components={[<span className="dev-ledger-lead dev-ledger-lead-ok" />, <span className="dev-ledger-needs" />]}
+          />
+        ) : <span className="dev-ledger-lead dev-ledger-lead-ok">{t('project:topic.roster.approved')}</span>
       ) : (
         <>
           {/* The space rides inside the lead: a bare whitespace expression
@@ -422,17 +445,27 @@ function Roster({ r }: { r: RosterView }): ReactNode {
               tests/shell-build.test.js guards against. With nobody on
               either side the lead is the whole line: the tally beside it
               already says the count. */}
-          <span className="dev-ledger-lead dev-ledger-lead-vote">{yesNames || noNames ? 'Waiting for votes. ' : 'Waiting for votes.'}</span>
-          {yesNames ? <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span> : null}
-          {yesNames ? ` ${yesNames}${noNames ? ' · ' : ''}` : null}
-          {noNames ? <span className="dev-ledger-no">{`${r.no!.label}:`}</span> : null}
-          {noNames ? ` ${noNames}` : null}
+          {yesNames || noNames ? (
+            <RichMessage
+              id={yesNames && noNames ? 'project:topic.roster.waitingYesNo'
+                : yesNames ? 'project:topic.roster.waitingYes' : 'project:topic.roster.waitingNo'}
+              values={{
+                yesLabel: r.yes ? r.yes.label : '', yesNames,
+                noLabel: r.no ? r.no.label : '', noNames,
+              }}
+              components={[
+                <span className="dev-ledger-lead dev-ledger-lead-vote" />,
+                <span className="dev-ledger-yes" />,
+                <span className="dev-ledger-no" />,
+              ]}
+            />
+          ) : <span className="dev-ledger-lead dev-ledger-lead-vote">{t('project:topic.roster.waiting')}</span>}
         </>
       )}
       {/* #1688: each voter's line under the names, in their own words. */}
       {(r.reasons || []).map((q) => (
         <span key={q.who} className="dev-ledger-reason" data-vote={q.vote}>
-          {`${q.who}: “${q.text}”`}
+          {t('project:topic.roster.reason', { voter: q.who, reason: q.text })}
         </span>
       ))}
       {r.earlier ? <span className="dev-ledger-earlier">{r.earlier}</span> : null}
@@ -442,16 +475,17 @@ function Roster({ r }: { r: RosterView }): ReactNode {
 
 /** "How voting works", and the circular "?" — both open the same popover. */
 function HelpLinks({ question }: { question: boolean }): ReactNode {
+  const t = useMessages('project');
   return (
     <span className="dev-ledger-help voting-help-hint">
-      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">How voting works</button>
+      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">{t('project:topic.help.howVotingWorks')}</button>
       {question ? (
         <button
           type="button"
           className="voting-help-btn un-touch-target"
           data-voting-help=""
-          aria-label="How voting and merges work"
-          title="How voting and merges work"
+          aria-label={t('project:topic.help.votingAndMerges')}
+          title={t('project:topic.help.votingAndMerges')}
         >?</button>
       ) : null}
     </span>
@@ -473,6 +507,7 @@ function passingCount(r: LedgerRow): number {
 }
 
 function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
+  const t = useMessages('project');
   const names = usePassNames(r.passesFor);
   return (
     <>
@@ -524,7 +559,7 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
           {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
           {passingCount(r) ? (
             <details className="dev-ledger-passes" onToggle={names.onToggle}>
-              <summary className="gc-vote-btn dev-ledger-passes-btn">{`${passingCount(r)} passing`}</summary>
+              <summary className="gc-vote-btn dev-ledger-passes-btn">{t('project:topic.ledger.passing', { count: passingCount(r) })}</summary>
               <ul className="dev-ledger-fails">
                 {(r.passes || []).map((c) => <CheckRowView key={c.key} r={c} />)}
                 {r.passesFor ? <PassNamesPending state={names.state} /> : null}
@@ -538,6 +573,7 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
 }
 
 export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> }): ReactNode {
+  const t = useMessages('project');
   return (
     <details
       className="dev-topic-details"
@@ -547,7 +583,7 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
       }}
     >
       <summary className="dev-topic-details-summary">
-        Technical details
+        {t('project:topic.about.technicalDetails')}
       </summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built, and
           the same pipeline the issue body above uses. */}
@@ -564,6 +600,7 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
  * repaint does not shut it.
  */
 export function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> }): ReactNode {
+  const t = useMessages('project');
   return (
     <details
       className="dev-topic-details dev-topic-hero-more"
@@ -573,30 +610,31 @@ export function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> })
         if (m.id != null) call('_setSummaryMoreOpen', m.id, e.currentTarget.open);
       }}
     >
-      <summary className="dev-topic-details-summary">How it’s built</summary>
+      <summary className="dev-topic-details-summary">{t('project:topic.hero.howItsBuilt')}</summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-issue-body dev-topic-details-body" html={m.html} />
     </details>
   );
 }
 
-function Transcript({ t }: { t: TranscriptSection }): ReactNode {
+function Transcript({ t: section }: { t: TranscriptSection }): ReactNode {
+  const t = useMessages('project');
   return (
-    <div className="st-section" data-transcript-section={t.id}>
+    <div className="st-section" data-transcript-section={section.id}>
       <button
         type="button"
         className="st-section-head"
-        data-transcript-toggle={t.id}
-        aria-expanded={t.expanded}
-        onClick={() => call('toggleTranscript', t.id)}
+        data-transcript-toggle={section.id}
+        aria-expanded={section.expanded}
+        onClick={() => call('toggleTranscript', section.id)}
       >
         <span className="st-caret" aria-hidden="true"></span>
-        <span data-transcript-label="">{t.label}</span>
-        <span className="st-readonly-tag">read-only</span>
+        <span data-transcript-label="">{section.label}</span>
+        <span className="st-readonly-tag">{t('project:topic.transcript.readOnly')}</span>
       </button>
       {/* The BODY is public/js/session-transcript.js's — a controller host,
           rendered once with a constant className and never looked inside. */}
-      <div className="st-body" data-transcript-body={t.id} hidden={!t.expanded}></div>
+      <div className="st-body" data-transcript-body={section.id} hidden={!section.expanded}></div>
     </div>
   );
 }
@@ -643,7 +681,7 @@ export async function readChangeDetail(item: any, owner: boolean, signal: AbortS
   const demo = av?._demoQS?.() ? '&demo=1' : '';
   const response = await fetch(`${url}?results=failing${demo}`, fresh ? { ...FRESH, signal } : { signal });
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
+  if (!response.ok) throw new Error(payload.error || translate('project:topic.change.refreshFailed'));
   const session = review ? payload.proposal : payload.session;
   if (review && !signal.aborted) {
     if (owner || fresh) av._invalidateVoteRoster(id);
@@ -668,7 +706,7 @@ export function parseExactIssueNumber(value: string): { issue: number | null; er
   if (!/^#?[1-9]\d*$/.test(token)) return { issue: null, error: '' };
   const issue = Number(token.replace(/^#/, ''));
   if (!Number.isSafeInteger(issue) || issue > 2147483647) {
-    return { issue: null, error: `“${token}” is too large to be an issue number.` };
+    return { issue: null, error: translate('project:topic.requests.numberTooLarge', { input: token }) };
   }
   return { issue, error: '' };
 }
@@ -754,8 +792,9 @@ function IssueIdentity({ label, title }: { label: string; title: string }): Reac
  * returned.
  */
 function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
+  const t = useMessages('project');
   return (
-    <aside className="dev-change-issues" aria-label="The change addressing this issue">
+    <aside className="dev-change-issues" aria-label={t('project:topic.request.addressedByRegion')}>
       <h4 className="dev-topic-h">{r.heading}</h4>
       <div className="mt-2">
         <a
@@ -783,31 +822,40 @@ function AddressedBy({ r }: { r: IssueProposalRef }): ReactNode {
  */
 function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
   const r = b.ref;
+  const t = useMessages('project');
+  // The band's words are ONE message per case (closed, when, and by what), so
+  // a language orders them as it reads. Each numbered tag is one of the
+  // band's own elements; the separators are the aria-hidden dots.
+  const k = <span className="dev-issue-closed-band-k" />;
+  const dot = <span className="dev-issue-closed-band-dot" aria-hidden="true" />;
+  const when = <span title={b.whenTitle || undefined} />;
+  const chip = r ? (
+    <a
+      href={r.href}
+      className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
+      data-addressed-by={r.sessionId}
+      aria-label={t('project:topic.request.closedBand.byChangeLabel', { change: r.label, title: r.title })}
+      onClick={(event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
+      }}
+    ><b>{r.label}</b><span>{r.title}</span><ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /></a>
+  ) : null;
+  const words = chip
+    ? (b.when
+      ? <RichMessage id="project:topic.request.closedBand.whenByChange" values={{ date: b.when }} components={[k, dot, when, dot, <span />, chip]} />
+      : <RichMessage id="project:topic.request.closedBand.byChange" components={[k, dot, <span />, chip]} />)
+    : b.how
+      ? (b.when
+        ? <RichMessage id="project:topic.request.closedBand.whenHow" values={{ date: b.when, how: b.how }} components={[k, dot, when, dot, <span />]} />
+        : <RichMessage id="project:topic.request.closedBand.how" values={{ how: b.how }} components={[k, dot, <span />]} />)
+      : b.when
+        ? <RichMessage id="project:topic.request.closedBand.when" values={{ date: b.when }} components={[k, dot, when]} />
+        : <RichMessage id="project:topic.request.closedBand.closed" components={[k]} />;
   return (
     <div className="dev-issue-closed-band" data-tone={b.tone} data-topic-part="closed-band">
       <CheckIcon className="dev-issue-closed-band-glyph" aria-hidden="true" />
-      <span className="dev-issue-closed-band-k">Closed</span>
-      {b.when ? <>
-        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
-        <span title={b.whenTitle || undefined}>{b.when}</span>
-      </> : null}
-      {r ? <>
-        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
-        <span>by</span>
-        <a
-          href={r.href}
-          className="dev-ws-chip dev-ws-chip-info dev-topic-issue"
-          data-addressed-by={r.sessionId}
-          aria-label={`Closed by ${r.label}: ${r.title}`}
-          onClick={(event) => {
-            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-            event.preventDefault(); call('openTopic', 'proposal', r.sessionId);
-          }}
-        ><b>{r.label}</b><span>{r.title}</span><ChevronRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /></a>
-      </> : b.how ? <>
-        <span className="dev-issue-closed-band-dot" aria-hidden="true">·</span>
-        <span>{b.how}</span>
-      </> : null}
+      {words}
     </div>
   );
 }
@@ -819,8 +867,9 @@ function ClosedBand({ b }: { b: IssueClosedBand }): ReactNode {
  * closed an issue, this the change that carried this one live.
  */
 export function IncludedIn({ r }: { r: IssueProposalRef }): ReactNode {
+  const t = useMessages('project');
   return (
-    <aside className="dev-change-issues" aria-label="The change this one went live in" data-topic-part="included-in">
+    <aside className="dev-change-issues" aria-label={t('project:topic.change.includedInRegion')} data-topic-part="included-in">
       <h4 className="dev-topic-h">{r.heading}</h4>
       <div className="mt-2">
         <a
@@ -860,6 +909,7 @@ export function IssueAssociations({
    */
   thread: { thanks: ReactNode };
 }): ReactNode {
+  const t = useMessages('project');
   const normalized = normalizeLinkedIssues(linkedIssues);
   const signature = normalized.join(', ');
   const [editing, setEditing] = useState(false);
@@ -878,13 +928,13 @@ export function IssueAssociations({
   const changed = selectedSignature !== signature;
   const optionsByNumber = new Map([...issueOptions, ...issues].map((issue) => [issue.n, issue]));
   const selectedIssues = selected.map((n) => optionsByNumber.get(n) || {
-    n, title: `Request #${n}`, href: `#${n}`,
+    n, title: t('project:topic.requests.untitled', { number: n }), href: `#${n}`,
   });
   const suggestions = filterIssueOptions(query, issueOptions, selected);
   const exact = parseExactIssueNumber(query);
   const exactOption = exact.issue && !selected.includes(exact.issue)
     && !suggestions.some((issue) => issue.n === exact.issue)
-    ? { n: exact.issue, title: 'Add by issue number', href: `#${exact.issue}` } : null;
+    ? { n: exact.issue, title: t('project:topic.requests.addByNumber'), href: `#${exact.issue}` } : null;
 
   const openEditor = () => {
     setSelected(normalized);
@@ -910,7 +960,7 @@ export function IssueAssociations({
   const addIssue = (issue: number) => {
     if (selected.includes(issue)) return;
     if (selected.length >= MAX_LINKED_ISSUES) {
-      setError(`A change can link at most ${MAX_LINKED_ISSUES} requests.`);
+      setError(t('project:topic.requests.tooMany', { count: MAX_LINKED_ISSUES }));
       return;
     }
     setSelected((current) => normalizeLinkedIssues([...current, issue]));
@@ -932,7 +982,7 @@ export function IssueAssociations({
     if (suggestions[0]) addIssue(suggestions[0].n);
     else if (exactOption) addIssue(exactOption.n);
     else if (exact.error) setError(exact.error);
-    else setError('Choose a matching issue or enter its issue number.');
+    else setError(t('project:topic.requests.chooseOrEnter'));
   };
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -947,17 +997,17 @@ export function IssueAssociations({
         body: JSON.stringify({ addIssues, removeIssues }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message || body.error || 'Couldn\'t update the requests.');
+      if (!response.ok) throw new Error(body.message || body.error || t('project:topic.requests.updateFailed'));
       const saved = Array.isArray(body.linkedIssues) ? body.linkedIssues.map(Number) : selected;
       onSaved(saved);
       setSelected(normalizeLinkedIssues(saved));
       setQuery('');
       setEditing(false);
       setNotice(body.prBodyStatus === 'github_unavailable'
-        ? 'Issues saved. The pull request could not be updated yet; saving again will retry it.'
-        : 'Issues saved.');
+        ? t('project:topic.requests.savedSyncPending')
+        : t('project:topic.requests.saved'));
     } catch (err) {
-      setError(err instanceof TypeError ? 'Network error. Try again.' : (err as Error).message);
+      setError(err instanceof TypeError ? t('project:topic.requests.networkError') : (err as Error).message);
     } finally {
       setSaving(false);
     }
@@ -967,8 +1017,8 @@ export function IssueAssociations({
     <form className="mt-3 space-y-3" data-linked-issues-editor="" onSubmit={save}>
         <div>
           <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            <span>{`Selected (${selected.length})`}</span>
-            <span>{`${MAX_LINKED_ISSUES - selected.length} remaining`}</span>
+            <span>{t('project:topic.requests.selectedCount', { count: selected.length })}</span>
+            <span>{t('project:topic.requests.remaining', { count: MAX_LINKED_ISSUES - selected.length })}</span>
           </div>
           {selectedIssues.length ? <div className="space-y-1.5">{selectedIssues.map((issue) => (
             <div key={issue.n} className="flex min-h-10 items-center gap-3 rounded-xl bg-zinc-100/80 px-3 py-2 dark:bg-zinc-800/80" data-selected-issue={issue.n}>
@@ -976,15 +1026,15 @@ export function IssueAssociations({
               <button
                 type="button"
                 className="-mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:bg-red-500/10 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
-                aria-label={`Remove #${issue.n}: ${issue.title}`}
+                aria-label={t('project:topic.requests.remove', { number: issue.n, title: issue.title })}
                 onClick={() => removeIssue(issue.n)}
               ><XIcon className="h-4 w-4" aria-hidden="true" /></button>
             </div>
-          ))}</div> : <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/80 dark:text-zinc-400">No requests selected.</p>}
+          ))}</div> : <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-sm text-zinc-500 dark:bg-zinc-800/80 dark:text-zinc-400">{t('project:topic.requests.noneSelected')}</p>}
         </div>
         <div>
           <label htmlFor={`linked-issues-${proposalId}`} className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
-            Add another request
+            {t('project:topic.requests.addAnother')}
           </label>
           <div className="relative mt-1.5">
             <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
@@ -994,35 +1044,35 @@ export function IssueAssociations({
               value={query}
               onChange={(event) => { setQuery(event.target.value); setError(''); }}
               onKeyDown={handleSearchKey}
-              placeholder="Search by number or title"
+              placeholder={t('project:topic.requests.searchPlaceholder')}
               autoComplete="off"
               autoFocus
             />
           </div>
-          {query.trim() ? <div className="mt-2 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800" aria-label="Matching requests">
+          {query.trim() ? <div className="mt-2 overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-800" aria-label={t('project:topic.requests.matches')}>
             {suggestions.map((issue) => (
               <button
                 key={issue.n}
                 type="button"
                 className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                aria-label={`Add #${issue.n}: ${issue.title}`}
+                aria-label={t('project:topic.requests.addNamed', { number: issue.n, title: issue.title })}
                 onClick={() => addIssue(issue.n)}
               ><IssueIdentity label={`#${issue.n}`} title={issue.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button>
             ))}
             {exactOption ? <button
               type="button"
               className="flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left hover:bg-zinc-200 dark:hover:bg-zinc-700"
-              aria-label={`Add request #${exactOption.n}`}
+              aria-label={t('project:topic.requests.addNumbered', { number: exactOption.n })}
               onClick={() => addIssue(exactOption.n)}
             ><IssueIdentity label={`#${exactOption.n}`} title={exactOption.title} /><PlusIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden="true" /></button> : null}
-            {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No matching open requests. Enter a request number to add it.</p> : null}
+            {!suggestions.length && !exactOption ? <p className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">{t('project:topic.requests.noMatches')}</p> : null}
           </div> : null}
-          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">Searches open requests in this project. You can always add one by its number.</p>
+          <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">{t('project:topic.requests.searchHelp')}</p>
         </div>
         {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}>Cancel</Button>
-          <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? 'Saving…' : 'Save requests'}</Button>
+          <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancelEditor} disabled={saving}>{t('core:common.cancel')}</Button>
+          <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving || !changed}>{saving ? t('project:topic.requests.saving') : t('project:topic.requests.save')}</Button>
         </div>
       </form>
   );
@@ -1041,10 +1091,10 @@ export function IssueAssociations({
   );
   const [first, ...rest] = issues;
   return (
-    <aside className="dev-change-addresses" aria-label="Requests this change addresses">
+    <aside className="dev-change-addresses" aria-label={t('project:topic.requests.region')}>
       {!editing && (first || thread.thanks) ? (
         <div className="dev-change-chips" data-open={more ? 'true' : 'false'}>
-          {first ? <span className="dev-change-chips-lead">Addresses</span> : null}
+          {first ? <span className="dev-change-chips-lead">{t('project:topic.requests.addresses')}</span> : null}
           {first ? (
             <span className="dev-change-chips-first">
               {chip(first)}
@@ -1054,7 +1104,7 @@ export function IssueAssociations({
                   className="dev-ws-chip dev-change-reqs-more"
                   aria-expanded={more}
                   onClick={() => setMore((v) => !v)}
-                >{more ? 'Show less' : `+${rest.length} more`}</button>
+                >{more ? t('project:topic.requests.showLess') : t('project:topic.requests.more', { count: rest.length })}</button>
               ) : null}
             </span>
           ) : null}
@@ -1075,13 +1125,14 @@ const STEP_MARK: Record<string, string> = {
 
 /** The vote step's line: the bar to the threshold, the card's pill, the counts. */
 function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
+  const t = useMessages('project');
   const majority = Math.max(1, v.majority || 1);
   const pct = Math.max(0, Math.min(100, Math.round((v.yes / majority) * 100)));
   return (
     <div className="dev-step-vote">
       <span className="dev-step-vote-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
       {v.pill ? <StatusPill s={v.pill} inline /> : null}
-      <span className="dev-step-vote-tally">{`Yes ${v.yes} · No ${v.no}`}</span>
+      <span className="dev-step-vote-tally">{t('project:topic.steps.voteTally', { yes: v.yes, no: v.no })}</span>
       {v.was ? <span className="dev-step-vote-was">{v.was}</span> : null}
     </div>
   );
@@ -1111,14 +1162,15 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
 
 /** "?" — How voting works, on the Votes step's line. */
 function HelpQuestion(): ReactNode {
+  const t = useMessages('project');
   return (
     <span className="dev-ledger-help voting-help-hint">
       <button
         type="button"
         className="voting-help-btn un-touch-target"
         data-voting-help=""
-        aria-label="How voting and merges work"
-        title="How voting and merges work"
+        aria-label={t('project:topic.steps.votingHelp')}
+        title={t('project:topic.steps.votingHelp')}
       >?</button>
     </span>
   );
@@ -1128,6 +1180,12 @@ function HelpQuestion(): ReactNode {
 function fmtCount(n: number): string {
   return String(Math.trunc(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+
+/** The unit suite's two set-up phases, as the Unit tests row names them (message ids). */
+const UNIT_PHASE: Record<'cloning' | 'installing', string> = {
+  cloning: 'project:topic.run.unit.cloning',
+  installing: 'project:topic.run.unit.installing',
+};
 
 /** One bar: passed from the left, failed after it, the rest the track. */
 function RunTrack({ c, busy }: {
@@ -1152,27 +1210,43 @@ function RunTrack({ c, busy }: {
  * (`data-build-step`, `data-build-progress`, `data-step`) for the checks.
  */
 function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
+  const t = useMessages('project');
   const b = run.build;
   const now = b ? b.steps.find((st) => st.state === 'now') : null;
   const built = b ? b.steps.filter((st) => st.state === 'done').length : 0;
   const c = run.checks;
+  // Each value is one whole message: the counts, and the failures when there
+  // are any. `count` only picks the plural; the numbers shown are formatted.
   const checksValue = c && c.ran
     ? (c.done
-      ? `${fmtCount(c.passed)} passed${c.failed ? ` · ${c.failed} failed` : ''}`
-      : `${fmtCount(c.ran)} / ${c.expected ? fmtCount(c.expected) : '?'}${c.failed ? ` · ${c.failed} failed` : ''}`)
+      ? (c.failed
+        ? t('project:topic.run.checks.passedFailed', { count: c.failed, passed: fmtCount(c.passed), failed: c.failed })
+        : t('project:topic.run.checks.passed', { count: c.passed, passed: fmtCount(c.passed) }))
+      : (c.failed
+        ? t('project:topic.run.checks.progressFailed', {
+          count: c.failed, ran: fmtCount(c.ran), expected: c.expected ? fmtCount(c.expected) : '?', failed: c.failed,
+        })
+        : t('project:topic.run.checks.progress', { ran: fmtCount(c.ran), expected: c.expected ? fmtCount(c.expected) : '?' })))
     : (run.live
-      ? (run.phase === 'testing' ? 'Starting' : run.phase === 'queued' ? 'Waiting for a slot' : 'After the build')
-      : 'Did not run');
+      ? (run.phase === 'testing' ? t('project:topic.run.checks.starting')
+        : run.phase === 'queued' ? t('project:topic.run.checks.waitingForSlot') : t('project:topic.run.checks.afterBuild'))
+      : t('project:topic.run.checks.didNotRun'));
   const u = run.unit;
   const unitPhase = u && !u.done && (u.phase === 'cloning' || u.phase === 'installing') ? u.phase : null;
-  const unitValue = !u ? '' : unitPhase ? `${unitPhase.charAt(0).toUpperCase()}${unitPhase.slice(1)}`
-    : u.done ? `${fmtCount(u.passed)} passed${u.failed ? ` · ${u.failed} failed` : ''}`
-      : `${fmtCount(u.ran)} / ${u.expected ? `~${fmtCount(u.expected)}` : '?'}${u.failed ? ` · ${u.failed} failed` : ''}`;
+  const unitExpected = u && u.expected ? `~${fmtCount(u.expected)}` : '?';
+  const unitValue = !u ? '' : unitPhase ? t(UNIT_PHASE[unitPhase])
+    : u.done
+      ? (u.failed
+        ? t('project:topic.run.unit.passedFailed', { count: u.failed, passed: fmtCount(u.passed), failed: u.failed })
+        : t('project:topic.run.unit.passed', { count: u.passed, passed: fmtCount(u.passed) }))
+      : (u.failed
+        ? t('project:topic.run.unit.progressFailed', { count: u.failed, ran: fmtCount(u.ran), expected: unitExpected, failed: u.failed })
+        : t('project:topic.run.unit.progress', { ran: fmtCount(u.ran), expected: unitExpected }));
   return (
     <div className="dev-step-run" id={id}>
       {b ? (
         <div className="dev-step-run-row dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
-          <span className="dev-step-run-k">Build</span>
+          <span className="dev-step-run-k">{t('project:topic.run.build')}</span>
           <span className="dev-ledger-build-bar" aria-hidden="true" data-build-progress={`${built}/${b.steps.length}`}>
             {b.steps.map((st) => <span key={st.key} className={`dev-ledger-build-seg is-${st.state}`} data-step={st.key} />)}
           </span>
@@ -1180,13 +1254,13 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
         </div>
       ) : null}
       <div className="dev-step-run-row" data-checks-progress={c ? `${c.ran}/${c.expected ?? '?'}` : undefined}>
-        <span className="dev-step-run-k">App checks</span>
+        <span className="dev-step-run-k">{t('project:topic.run.checks.label')}</span>
         <RunTrack c={c} />
         <span className={`dev-step-run-v${c && c.failed ? ' is-bad' : ''}`}>{checksValue}</span>
       </div>
       {u ? (
         <div className="dev-step-run-row" data-unit-phase={u.phase}>
-          <span className="dev-step-run-k">Unit tests</span>
+          <span className="dev-step-run-k">{t('project:topic.run.unit.label')}</span>
           <RunTrack c={unitPhase ? null : u} busy={!!unitPhase || (!u.done && u.ran === 0)} />
           <span className={`dev-step-run-v${u.failed ? ' is-bad' : ''}`}>{unitValue}</span>
         </div>
@@ -1317,18 +1391,19 @@ export function DetailsBody({ prRef, steps, help, html }: {
   help: boolean;
   html: string;
 }): ReactNode {
+  const t = useMessages('project');
   return (
     <>
       {prRef ? (
         <p className="dev-details-pr" data-details-part="pr">
           <span>{prRef.s}</span>
-          {prRef.href ? <a href={prRef.href} target="_blank" rel="noopener">Open on GitHub</a> : null}
+          {prRef.href ? <a href={prRef.href} target="_blank" rel="noopener">{t('project:topic.details.openOnGitHub')}</a> : null}
         </p>
       ) : null}
       {steps ? <StepsSheet s={steps} help={help} /> : null}
       {html ? (
         <section className="dev-details-part" data-details-part="description">
-          <h5 className="dev-details-sub">Description</h5>
+          <h5 className="dev-details-sub">{t('project:topic.details.description')}</h5>
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           <Html className="dev-issue-body dev-topic-details-body" html={html} />
         </section>
@@ -1359,6 +1434,7 @@ function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
   /** #4455: Shot details, what the change page's Before and after card leaves out. */
   shotsHtml?: string;
 }): ReactNode {
+  const t = useMessages('project');
   const [open, setOpen] = useState(() => {
     if (!detailsFromUrl) return false;
     detailsFromUrl = false;
@@ -1392,17 +1468,17 @@ function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
   if (typeof document === 'undefined') return null;
   return createPortal(
     <div className="dev-details-scrim" hidden={!open} data-change-details={id} onClick={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
-      <div ref={card} className="dev-details-card" role="dialog" aria-modal="true" aria-label="Details">
+      <div ref={card} className="dev-details-card" role="dialog" aria-modal="true" aria-label={t('project:topic.details.title')}>
         <div className="dev-details-head">
-          <h4 className="dev-topic-h">Details</h4>
-          <button type="button" className="dev-details-close" aria-label="Close" onClick={() => setOpen(false)}>
+          <h4 className="dev-topic-h">{t('project:topic.details.title')}</h4>
+          <button type="button" className="dev-details-close" aria-label={t('core:common.close')} onClick={() => setOpen(false)}>
             <XIcon className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
         <DetailsBody prRef={prRef} steps={steps} help={help} html={html} />
         {shotsHtml ? (
           <section className="dev-details-part" data-details-part="shots" data-note="shots">
-            <h5 className="dev-details-sub">Shot details</h5>
+            <h5 className="dev-details-sub">{t('project:topic.details.shots')}</h5>
             {/* AppView.shotsHtml's `details` reading, escaped where it is built. */}
             <Html className="dev-shot-details" html={shotsHtml} />
           </section>
@@ -1431,6 +1507,7 @@ function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
 export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, back = false }: {
   card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; back?: boolean;
 }): ReactNode {
+  const t = useMessages('project');
   const root = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState<any>(null);
   const [error, setError] = useState('');
@@ -1534,7 +1611,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     <div ref={root} className={changePage ? 'dev-change-head' : 'dev-topic'}>
       {/* A change's back chip is portalled above its sheet (change-head.tsx). */}
       {back && !changePage ? <TopicBack /> : null}
-      {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
+      {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>{t('core:common.retry')}</button></p> : null}
       {changePage ? (
         <>
           {/* #4455: the change as a Messages thread's root post, where it
@@ -1591,7 +1668,7 @@ export async function saveIssueBody(slug: string, issue: number, draft: string):
     body: JSON.stringify({ body: draft }),
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || 'Couldn’t save the request.');
+  if (!response.ok) throw new Error(result.error || translate('project:topic.request.body.saveFailed'));
   const body = typeof result.body === 'string' ? result.body : draft;
   const html = typeof av?._cacheIssueBody === 'function' ? av._cacheIssueBody(issue, body) : '';
   return { body, html };
@@ -1602,6 +1679,7 @@ function IssueBody(
   html: string;
   editor: NonNullable<TopicBody['issueBodyEditor']>;
 }): ReactNode {
+  const t = useMessages('project');
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(editor.markdown);
   const [html, setHtml] = useState(initialHtml);
@@ -1628,7 +1706,7 @@ function IssueBody(
     const av = typeof window !== 'undefined' ? (window as any).AppView : null;
     const slug = av?.appData?.slug;
     if (!slug) {
-      setError('This request is not available right now.');
+      setError(t('project:topic.request.body.unavailable'));
       return;
     }
     setSaving(true);
@@ -1640,7 +1718,7 @@ function IssueBody(
       setEditing(false);
       if (typeof av?._renderTopicHead === 'function') av._renderTopicHead();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Couldn’t save the request.');
+      setError(err instanceof Error ? err.message : t('project:topic.request.body.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -1649,13 +1727,13 @@ function IssueBody(
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <h4 id="dev-issue-body-heading" className="dev-topic-h">About this request</h4>
+        <h4 id="dev-issue-body-heading" className="dev-topic-h">{t('project:topic.request.body.title')}</h4>
         {editor.canEdit && !editing ? (
           <button
             type="button"
             className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
-            title="Edit this request (you asked for it)"
-            aria-label="Edit request"
+            title={t('project:topic.request.body.editTitle')}
+            aria-label={t('project:topic.request.body.editLabel')}
             data-issue-body-edit={editor.issue}
             onClick={() => { setError(''); setEditing(true); }}
           >
@@ -1680,14 +1758,14 @@ function IssueBody(
           />
           {error ? <p role="alert" className="text-xs text-red-700 dark:text-red-400">{error}</p> : null}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancel} disabled={saving}>Cancel</Button>
-            <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? 'Saving…' : 'Save body'}</Button>
+            <Button type="button" variant="pillNeutral" size="xsText" ink="neutral" onClick={cancel} disabled={saving}>{t('core:common.cancel')}</Button>
+            <Button type="submit" variant="pillAccent" size="xsText" disabledStyle="dim" disabled={saving}>{saving ? t('project:topic.request.body.saving') : t('project:topic.request.body.save')}</Button>
           </div>
         </form>
       ) : html ? (
         <Html className="dev-topic-about-body" html={html} />
       ) : editor.canEdit ? (
-        <p className="dev-topic-note">No description yet.</p>
+        <p className="dev-topic-note">{t('project:topic.request.body.empty')}</p>
       ) : null}
     </>
   );
@@ -1709,6 +1787,7 @@ function IssueBody(
  * a request through these sections.
  */
 export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
+  const t = useMessages('project');
   const a = body.actions;
   // The About sheet: the words, the before/after tiles — open, they are the
   // most useful thing on the page for a voter — the PR body as a disclosure
@@ -1739,11 +1818,11 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
       {images.viewer}
       {hasAbout ? (
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about" {...images.scope}>
-          {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4> : null}
+          {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || t('project:topic.about.title')}</h4> : null}
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
           {summaryHtml ? (
             <>
-              <h5 className="dev-topic-sub">What changes for you</h5>
+              <h5 className="dev-topic-sub">{t('project:topic.about.whatChanges')}</h5>
               <Html className="dev-topic-about-body" html={summaryHtml} />
             </>
           ) : null}
@@ -1758,9 +1837,9 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           ) : null}
           {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
           {body.testing ? <details className="dev-topic-details">
-            <summary className="dev-topic-details-summary">Testing instructions</summary>
+            <summary className="dev-topic-details-summary">{t('project:topic.about.testing.title')}</summary>
             {body.testing.html ? <Html className="dev-issue-body dev-topic-details-body" html={body.testing.html} />
-              : <p className="dev-topic-note">{body.testing.path ? `Testing instructions are recorded in ${body.testing.path}.` : 'No testing instructions have been added yet.'}</p>}
+              : <p className="dev-topic-note">{body.testing.path ? t('project:topic.about.testing.recordedIn', { path: body.testing.path }) : t('project:topic.about.testing.none')}</p>}
           </details> : null}
           {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
           {/* #2603: the votes, in the voters' own words — the same roster

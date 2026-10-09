@@ -72,9 +72,10 @@ export interface MemberPlan {
  * (../../app-frame/waiting-card.tsx).
  */
 export function PlanLines({ name, plan }: { name: string; plan: MemberPlan }): ReactNode {
+  const t = useMessages('project');
   return (
     <>
-      <GroupedList tone="plane" className="mx-0" role="list" aria-label={`Plan for ${name}`} data-ws-plan-lines="">
+      <GroupedList tone="plane" className="mx-0" role="list" aria-label={t('project:plan.linesLabel', { project: name })} data-ws-plan-lines="">
         {plan.bullets.map((bullet) => <div key={bullet} role="listitem" className="dev-ws-plan-row">{bullet}</div>)}
       </GroupedList>
       {plan.questions.length ? (

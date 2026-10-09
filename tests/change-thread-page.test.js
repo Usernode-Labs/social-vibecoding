@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -42,20 +43,27 @@ const ev = (patch) => ({ sessionId: '4368', prNumber: '4368', title: '', actor: 
 test('things that happened are single lines, in the page’s own words', () => {
   const { changeLine } = loadTsx(MODEL);
   const line = (patch) => JSON.parse(JSON.stringify(changeLine(row(patch))));
+  // A line the page words is one whole message: its id, and what it is read
+  // with. <0> is who did it (drawn bold), <1> a vote's reason.
   assert.deepEqual(line({ kind: 'vote', event: ev({ type: 'submitted', actor: 'snait' }) }),
-    { kind: 'submitted', glyph: '🗳️', actor: 'snait', text: ' asked for approval' });
+    { kind: 'submitted', glyph: '🗳️', actor: 'snait', id: 'project:topic.change.line.askedForApproval', values: { author: 'snait' } });
+  assert.equal(message('project:topic.change.line.askedForApproval'), '<0>{{author}}</0> asked for approval');
   assert.deepEqual(line({ kind: 'vote', event: ev({ type: 'vote', actor: 'cilokman', vote: 'yes' }) }),
-    { kind: 'vote', glyph: '✅', actor: 'cilokman', text: ' voted yes' });
+    { kind: 'vote', glyph: '✅', actor: 'cilokman', id: 'project:topic.change.line.votedYes', values: { voter: 'cilokman' } });
+  assert.equal(message('project:topic.change.line.votedYes'), '<0>{{voter}}</0> voted yes');
   // A yes a newer push retired (services/vote-revision.js) says so.
-  assert.equal(line({ kind: 'vote', event: ev({ type: 'vote', actor: 'cilokman', vote: 'yes', earlier: true }) }).text,
-    ' voted yes on an earlier version');
+  assert.equal(line({ kind: 'vote', event: ev({ type: 'vote', actor: 'cilokman', vote: 'yes', earlier: true }) }).id,
+    'project:topic.change.line.votedYesEarlier');
+  assert.equal(message('project:topic.change.line.votedYesEarlier'), '<0>{{voter}}</0> voted yes on an earlier version');
   assert.deepEqual(line({ kind: 'vote', event: ev({ type: 'vote', actor: 'jo', vote: 'no', reason: 'Not yet' }) }),
-    { kind: 'vote', glyph: '✋', actor: 'jo', text: ' voted no', reason: 'Not yet' });
+    { kind: 'vote', glyph: '✋', actor: 'jo', id: 'project:topic.change.line.votedNoReason', values: { voter: 'jo', reason: 'Not yet' } });
+  assert.equal(message('project:topic.change.line.votedNoReason'), '<0>{{voter}}</0> voted no<1>: “{{reason}}”</1>');
   // The two long build notices: the start is the Testing card's to say; the
   // finish is one line with its door.
   assert.equal(changeLine(row({ kind: 'system', stagingBuild: 'started', systemText: 'Building a staging preview…' })), null);
   assert.deepEqual(line({ kind: 'system', stagingBuild: 'ready', systemText: 'The staging preview for PR #4368 is ready…' }),
-    { kind: 'preview', glyph: '👀', actor: null, text: 'The preview is ready', tryIt: true });
+    { kind: 'preview', glyph: '👀', actor: null, id: 'project:topic.change.line.previewReady', tryIt: true });
+  assert.equal(message('project:topic.change.line.previewReady'), 'The preview is ready');
   assert.equal(line({ kind: 'system', event: ev({ type: 'merged', votes: '2/3' }) }).text, 'This change went live with 2/3 votes');
   assert.deepEqual(line({ kind: 'system', event: ev({ type: 'notice', text: 'Synced with main.' }) }),
     { kind: 'notice', glyph: '•', actor: null, text: 'Synced with main.' });
@@ -87,6 +95,7 @@ test('ChangeRows: "N replies", then Messages rows and quiet lines in the order t
         event: ev({ type: 'notice', text: 'The staging preview is ready.' }) }),
       row({ id: 4, kind: 'vote', time: '1:37 PM', event: ev({ type: 'vote', actor: 'cilokman', vote: 'yes', earlier: true }) }),
       row({ id: 5, username: 'cilokman', bodyHtml: '<p>Looks good on my phone.</p>' }),
+      row({ id: 6, kind: 'vote', time: '1:40 PM', event: ev({ type: 'vote', actor: 'jo', vote: 'no', reason: 'Not yet' }) }),
     ],
   };
   const html = renderComponent(TRANSCRIPT, 'ChangeRows', { view });
@@ -98,6 +107,7 @@ test('ChangeRows: "N replies", then Messages rows and quiet lines in the order t
   assert.match(html, /<b>snait<\/b> asked for approval<span class="dev-request-event-time"[^>]*> · 1:36 PM<\/span>/);
   assert.match(html, /The preview is ready · <button type="button" class="dev-request-event-link">Try it<\/button>/);
   assert.match(html, /<b>cilokman<\/b> voted yes on an earlier version/);
+  assert.match(html, /<b>jo<\/b> voted no<span class="dev-change-event-reason">: “Not yet”<\/span>/, 'a vote\'s reason, quoted after it');
   assert.doesNotMatch(html, /Building a staging preview/, 'the long build notice is not drawn');
   assert.doesNotMatch(html, /gc-event-box|gc-bubble/, 'no boxed notices, no bubbles');
 });

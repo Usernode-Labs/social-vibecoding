@@ -212,7 +212,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
       <form id={ids.form} className="messages-composer-card">
         <div className="flex items-end gap-1.5">
           <div className="messages-composer-add">
-            <button type="button" id={ids.attach} className="messages-composer-action" aria-label="Attach files" title="Attach files">
+            <button type="button" id={ids.attach} className="messages-composer-action" aria-label={t('chat:group.composer.page.attachFiles')} title={t('chat:group.composer.page.attachFiles')}>
               <PlusIcon aria-hidden="true" />
             </button>
           </div>
@@ -223,11 +223,11 @@ export function ComposerForm({ scope, fill, placeholder, maxLength, messages = f
             maxLength={maxLength}
             autoComplete="off"
             placeholder={placeholder}
-            aria-label="Reply"
+            aria-label={t('chat:group.composer.page.reply')}
             className="messages-composer-input"
           />
           {/* Keeps the field focused through the press, as Messages' Send does. */}
-          <button type="submit" className="messages-send" aria-label="Send" title="Send" onMouseDown={(event) => event.preventDefault()}>
+          <button type="submit" className="messages-send" aria-label={t('chat:group.composer.page.send')} title={t('chat:group.composer.page.send')} onMouseDown={(event) => event.preventDefault()}>
             <ArrowUpIcon aria-hidden="true" />
           </button>
         </div>

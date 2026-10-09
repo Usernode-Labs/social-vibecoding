@@ -2211,6 +2211,150 @@
     "text": "Opening…",
     "description": "Note under an app's icon and name on the cover shown while the app is being opened."
   },
+  "appFrame.waiting.title": {
+    "text": "While you wait",
+    "description": "Small heading over the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet. The card lists things to do in the meantime."
+  },
+  "appFrame.waiting.sayHi.title": {
+    "text": "Say hi to the group",
+    "description": "First row of the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet: opens the project's Discussion so the member can greet the others."
+  },
+  "appFrame.waiting.sayHi.makerNote": {
+    "text": "{{maker}}: “{{note}}”",
+    "description": "Second line of the \"Say hi to the group\" row on the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet: the first thing the project's maker wrote in its Discussion. {{maker}} is their username and {{note}} what they wrote, in their own words. Use your language's quotation marks."
+  },
+  "appFrame.waiting.sayHi.introduce": {
+    "text": "Introduce yourself",
+    "description": "Second line of the \"Say hi to the group\" row on the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet, when the project's maker has not written anything yet."
+  },
+  "appFrame.waiting.plan.title": {
+    "text": "See the plan",
+    "description": "Row of the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet: opens the plan for the first version, to read. \"Plan\" is a noun."
+  },
+  "appFrame.waiting.plan.count_one": {
+    "text": "{{count}} thing it will do",
+    "description": "Second line of the \"See the plan\" row on the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet: how many lines the plan has. {{count}} is that number. \"It\" is the app being built."
+  },
+  "appFrame.waiting.plan.count_other": {
+    "text": "{{count}} things it will do",
+    "description": "Second line of the \"See the plan\" row on the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet: how many lines the plan has. {{count}} is that number. \"It\" is the app being built."
+  },
+  "appFrame.waiting.plan.talk": {
+    "text": "Talk about it in Discussion",
+    "description": "Button at the foot of the plan sheet a member opens from the App tab while a project's first version is built: turns the sheet into the project's Discussion, to say something about the plan. \"It\" is the plan; \"Discussion\" is the name of the project's chat."
+  },
+  "appFrame.waiting.suggest.title": {
+    "text": "Suggest something",
+    "description": "Last row of the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet: opens the form for suggesting an improvement to the project."
+  },
+  "appFrame.waiting.suggest.sub": {
+    "text": "Homeroom bot starts on it once it’s live",
+    "description": "Second line of the \"Suggest something\" row on the \"While you wait\" card a member sees on the App tab while a project's first version is not ready yet. \"Homeroom bot\" is the name of Homeroom's assistant and stays as it is. The first \"it\" is the suggestion; the second is the project's first version, and \"live\" means built and running."
+  },
+  "appFrame.waiting.sheet.discussion": {
+    "text": "{{project}} discussion",
+    "description": "Title of the sheet a member opens from the App tab, while a project's first version is not ready yet, to talk with the project's other members. {{project}} is the project's name. \"Discussion\" is a noun."
+  },
+  "appFrame.waiting.sheet.plan": {
+    "text": "The plan for {{project}}",
+    "description": "Title of the sheet a member opens from the App tab, while a project's first version is not ready yet, to read the plan for that version. {{project}} is the project's name."
+  },
+  "appFrame.waiting.buildNote": {
+    "text": "usually 10 to 25 min",
+    "description": "Note after the status \"Building it\" on the App tab and in the plan sheet, for a member waiting for a project's first version: how long building one usually takes. Lower case, it follows the status on the same line; \"min\" abbreviates minutes."
+  },
+  "appFrame.waiting.discussion.loading": {
+    "text": "Loading…",
+    "description": "Shown in the Discussion sheet a member opens from the App tab while the project's Discussion is being fetched."
+  },
+  "appFrame.waiting.discussion.failed": {
+    "text": "The discussion could not be opened. Try again in a moment.",
+    "description": "Shown in the Discussion sheet a member opens from the App tab when the project's Discussion could not be fetched."
+  },
+  "appFrame.screens.pill.firstLook": {
+    "text": "First look · drawn from the plan",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, when the picture is a first look at the app's main screen, drawn from the plan before anything is built."
+  },
+  "appFrame.screens.pill.real": {
+    "text": "Real screen",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, when the picture is a screenshot of the app as built so far and the time it was taken is not known."
+  },
+  "appFrame.screens.pill.realMinutes_one": {
+    "text": "Real screen · {{count}} min ago",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, when the picture is a screenshot of the app as built so far. {{count}} is how many minutes ago it was taken; \"min\" abbreviates minutes."
+  },
+  "appFrame.screens.pill.realMinutes_other": {
+    "text": "Real screen · {{count}} min ago",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, when the picture is a screenshot of the app as built so far. {{count}} is how many minutes ago it was taken; \"min\" abbreviates minutes."
+  },
+  "appFrame.screens.pill.realHours_one": {
+    "text": "Real screen · {{count}} h ago",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, when the picture is a screenshot of the app as built so far. {{count}} is how many hours ago it was taken; \"h\" abbreviates hours."
+  },
+  "appFrame.screens.pill.realHours_other": {
+    "text": "Real screen · {{count}} h ago",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, when the picture is a screenshot of the app as built so far. {{count}} is how many hours ago it was taken; \"h\" abbreviates hours."
+  },
+  "appFrame.screens.alt.firstLook": {
+    "text": "A first look at {{project}}, drawn from the plan",
+    "description": "Text alternative of the picture in the picture area at the top of a project's card on the App tab while the project's first version is being built, when it is a first look at the app's main screen drawn from the plan. {{project}} is the project's name."
+  },
+  "appFrame.screens.alt.real": {
+    "text": "{{project}}, real screen {{number}} of {{total}}",
+    "description": "Text alternative of one of the screenshots in the picture area at the top of a project's card on the App tab while the project's first version is being built, taken of the app as built so far. {{project}} is the project's name; {{number}} is this screenshot's place among them and {{total}} how many there are."
+  },
+  "appFrame.screens.dot": {
+    "text": "Screen {{number}} of {{total}}",
+    "description": "Accessible name of one of the page dots under the screenshots in the picture area at the top of a project's card on the App tab while the project's first version is being built: shows that screenshot. {{number}} is its place and {{total}} how many there are. \"Screen\" is a noun: a screen of the app."
+  },
+  "appFrame.live.switch.label": {
+    "text": "What the picture shows",
+    "description": "Accessible name of the two-way switch (Preview, Live) in the corner of the picture area at the top of a project's card on the App tab while the project's first version is being built."
+  },
+  "appFrame.live.switch.preview": {
+    "text": "Preview",
+    "description": "One side of the two-way switch in the corner of the picture area at the top of a project's card on the App tab while the project's first version is being built: the picture shows the first look drawn from the plan. A noun."
+  },
+  "appFrame.live.switch.live": {
+    "text": "Live",
+    "description": "One side of the two-way switch in the corner of the picture area at the top of a project's card on the App tab while the project's first version is being built: the picture shows the app itself as it takes shape, updating as it is built. An adjective."
+  },
+  "appFrame.live.pill.starting": {
+    "text": "Starting the app…",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen, until the first picture of the running app arrives."
+  },
+  "appFrame.live.pill.failed": {
+    "text": "A restart failed · showing the last good screen",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen, when the app being built did not start again after its latest change, so the picture is from before it."
+  },
+  "appFrame.live.pill.justUpdated": {
+    "text": "Live · just updated",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen, when the picture of the running app changed within the last few seconds. \"Live\" is an adjective."
+  },
+  "appFrame.live.pill.updatedSeconds_one": {
+    "text": "Live · updated {{count}} s ago",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen. \"Live\" is an adjective. {{count}} is how many seconds ago the picture of the running app last changed; \"s\" abbreviates seconds."
+  },
+  "appFrame.live.pill.updatedSeconds_other": {
+    "text": "Live · updated {{count}} s ago",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen. \"Live\" is an adjective. {{count}} is how many seconds ago the picture of the running app last changed; \"s\" abbreviates seconds."
+  },
+  "appFrame.live.pill.updatedMinutes_one": {
+    "text": "Live · updated {{count}} min ago",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen. \"Live\" is an adjective. {{count}} is how many minutes ago the picture of the running app last changed; \"min\" abbreviates minutes."
+  },
+  "appFrame.live.pill.updatedMinutes_other": {
+    "text": "Live · updated {{count}} min ago",
+    "description": "Small label over the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen. \"Live\" is an adjective. {{count}} is how many minutes ago the picture of the running app last changed; \"min\" abbreviates minutes."
+  },
+  "appFrame.live.frame.starting": {
+    "text": "{{project}} is starting",
+    "description": "Text alternative of the phone-shaped picture in the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen, until the first picture of the running app arrives. {{project}} is the project's name."
+  },
+  "appFrame.live.frame.live": {
+    "text": "{{project}}, live while it is built",
+    "description": "Text alternative of the phone-shaped picture in the picture area at the top of a project's card on the App tab while the project's first version is being built, with Live chosen: it shows the app itself, updating as it is built. {{project}} is the project's name."
+  },
   "install.banner.getOnAppStore": {
     "text": "Get the app on the App Store",
     "description": "Second line of the install banner, the strip at the top of Homeroom in a phone's browser that offers the Homeroom app, when the link goes to Apple's App Store. \"the App Store\" is Apple's name for it."

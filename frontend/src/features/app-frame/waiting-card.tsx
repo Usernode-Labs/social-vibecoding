@@ -48,6 +48,8 @@ import { IconTile } from '@/components/ui/icon-tile';
 import { ChatIcon, LightBulbIcon, ListLinesIcon, XIcon } from '@/components/ui/icons';
 
 import { pushDismissible } from '../../lib/back-stack';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { type BuildLineState, BuildLine } from '../first-session/build-line';
 import { reloadCommunity, useCommunity } from '../dev-board/workshop/community-card';
 import { PlanLines, decidesLine, type MemberPlan } from '../dev-board/workshop/plan-page';
@@ -68,34 +70,38 @@ export interface FirstVersionWaiting {
 
 /** "Say hi to the group"'s second line. */
 export function sayHiLine(waiting: Pick<FirstVersionWaiting, 'maker' | 'makerNote'>): string {
-  return waiting.maker && waiting.makerNote ? `${waiting.maker}: “${waiting.makerNote}”` : 'Introduce yourself';
+  return waiting.maker && waiting.makerNote
+    ? translate('agent:appFrame.waiting.sayHi.makerNote', { maker: waiting.maker, note: waiting.makerNote })
+    : translate('agent:appFrame.waiting.sayHi.introduce');
 }
 
 /** "See the plan"'s second line: "3 things it will do". */
 export function planCountLine(plan: MemberPlan): string {
-  const n = plan.bullets.length;
-  return `${n} ${n === 1 ? 'thing' : 'things'} it will do`;
+  return translate('agent:appFrame.waiting.plan.count', { count: plan.bullets.length });
 }
 
-/** "Suggest something"'s second line. */
-export const SUGGEST_LINE = 'Homeroom bot starts on it once it’s live';
+/** "Suggest something"'s second line, as its message id. */
+export const SUGGEST_LINE = 'agent:appFrame.waiting.suggest.sub';
 
 type Sheet = 'discussion' | 'plan' | null;
 
 const TILE = 'h-10 w-10 rounded-[12px] [&>svg]:h-5 [&>svg]:w-5';
 
 export function WaitingCard({ waiting, line }: { waiting: FirstVersionWaiting; line: BuildLineState | null }): ReactNode {
+  // Subscribed: the helpers' lines are read in the language on screen.
+  const t = useMessages('agent');
+  useMessages('project');
   const [sheet, setSheet] = useState<Sheet>(null);
   const plan = waiting.plan && waiting.plan.bullets.length ? waiting.plan : null;
   return (
     <div className="w-full max-w-[342px] pt-3 text-left" data-app-first-version-waiting="">
-      <SectionHeader className="px-1 pb-2 pt-0">While you wait</SectionHeader>
+      <SectionHeader className="px-1 pb-2 pt-0">{t('agent:appFrame.waiting.title')}</SectionHeader>
       <GroupedList tone="plane" className="mx-0">
         <ListRow
           as="button"
           data-waiting-row="discussion"
           leading={<IconTile className={TILE}><ChatIcon aria-hidden="true" /></IconTile>}
-          title="Say hi to the group"
+          title={t('agent:appFrame.waiting.sayHi.title')}
           subtitle={sayHiLine(waiting)}
           onClick={() => setSheet('discussion')}
         />
@@ -104,7 +110,7 @@ export function WaitingCard({ waiting, line }: { waiting: FirstVersionWaiting; l
             as="button"
             data-waiting-row="plan"
             leading={<IconTile className={TILE}><ListLinesIcon aria-hidden="true" /></IconTile>}
-            title="See the plan"
+            title={t('agent:appFrame.waiting.plan.title')}
             subtitle={planCountLine(plan)}
             onClick={() => setSheet('plan')}
           />
@@ -113,8 +119,8 @@ export function WaitingCard({ waiting, line }: { waiting: FirstVersionWaiting; l
           as="button"
           data-waiting-row="suggest"
           leading={<IconTile className={TILE}><LightBulbIcon aria-hidden="true" /></IconTile>}
-          title="Suggest something"
-          subtitle={SUGGEST_LINE}
+          title={t('agent:appFrame.waiting.suggest.title')}
+          subtitle={t(SUGGEST_LINE)}
           onClick={() => Improve.giveFeedback()}
         />
       </GroupedList>
@@ -125,7 +131,9 @@ export function WaitingCard({ waiting, line }: { waiting: FirstVersionWaiting; l
       {sheet ? (
         <WaitSheet
           id={sheet === 'discussion' ? 'app-waiting-discussion' : 'app-waiting-plan'}
-          title={sheet === 'discussion' ? `${waiting.name} discussion` : `The plan for ${waiting.name}`}
+          title={sheet === 'discussion'
+            ? t('agent:appFrame.waiting.sheet.discussion', { project: waiting.name })
+            : t('agent:appFrame.waiting.sheet.plan', { project: waiting.name })}
           tall={sheet === 'discussion'}
           onClose={() => setSheet(null)}
         >
@@ -145,7 +153,7 @@ export function WaitingCard({ waiting, line }: { waiting: FirstVersionWaiting; l
                 data-waiting-plan-discussion=""
                 onClick={() => setSheet('discussion')}
               >
-                Talk about it in Discussion
+                {t('agent:appFrame.waiting.plan.talk')}
               </Button>
             </div>
           ) : null}
@@ -157,7 +165,7 @@ export function WaitingCard({ waiting, line }: { waiting: FirstVersionWaiting; l
 
 /** How long building a first version usually takes (bot-thanks-card.tsx's words), while it builds. */
 export function lineNote(line: BuildLineState | null): string | null {
-  return line === 'building' ? 'usually 10 to 25 min' : null;
+  return line === 'building' ? translate('agent:appFrame.waiting.buildNote') : null;
 }
 
 /**
@@ -165,6 +173,7 @@ export function lineNote(line: BuildLineState | null): string | null {
  * read: read afresh as the sheet opens, so the room is the one there is now.
  */
 function DiscussionBody({ slug, name }: { slug: string; name: string }): ReactNode {
+  const t = useMessages('agent');
   const data = useCommunity(slug);
   const [read, setRead] = useState(false);
   useEffect(() => {
@@ -175,7 +184,7 @@ function DiscussionBody({ slug, name }: { slug: string; name: string }): ReactNo
   if (!data) {
     return (
       <p className="px-1 py-6 text-center text-sm text-zinc-500 dark:text-zinc-400" data-waiting-discussion-state="">
-        {read ? 'The discussion could not be opened. Try again in a moment.' : 'Loading…'}
+        {read ? t('agent:appFrame.waiting.discussion.failed') : t('agent:appFrame.waiting.discussion.loading')}
       </p>
     );
   }
@@ -195,6 +204,7 @@ function WaitSheet({ id, title, tall = false, onClose, children }: {
   onClose: () => void;
   children: ReactNode;
 }): ReactNode {
+  const t = useMessages('core');
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const close = useRef<HTMLButtonElement | null>(null);
@@ -238,7 +248,7 @@ function WaitSheet({ id, title, tall = false, onClose, children }: {
             ref={close}
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t('core:common.close')}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-zinc-500 transition-colors hover:text-zinc-900 dark:hover:text-zinc-100 un-touch-target"
           >
             <XIcon className="h-5 w-5" aria-hidden="true" />

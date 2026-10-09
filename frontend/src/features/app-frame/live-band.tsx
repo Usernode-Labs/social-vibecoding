@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Replayer } from 'rrweb';
 
+import { useMessages } from '../../lib/i18n/react';
 import type { FirstVersionScreens } from './first-version-screens';
 import { GLOW_RULES, GlowTracker } from './live-glow';
 import { type FirstVersionLive, type LivePhase, livePill } from './live-switch';
@@ -68,6 +69,8 @@ export default function LiveBand({ live, firstLook, name }: {
   firstLook: FirstVersionScreens | null;
   name: string;
 }): ReactNode {
+  // Subscribed: the pill's words (livePill) are read in the language on screen.
+  const t = useMessages('agent');
   const host = useRef<HTMLDivElement | null>(null);
   const [drawn, setDrawn] = useState(false);
   const [state, setState] = useState<LiveAnswer['state'] | null>(null);
@@ -188,7 +191,9 @@ export default function LiveBand({ live, firstLook, name }: {
       <div className="flex h-full w-full items-end justify-center pb-6">
         <div
           className="relative h-[270px] w-[125px] shrink-0 overflow-hidden rounded-[22px] bg-white shadow-[0_10px_28px_rgba(0,0,0,0.22),0_0_0_4px_rgba(17,17,20,0.9)]"
-          aria-label={phase === 'starting' ? `${name} is starting` : `${name}, live while it is built`}
+          aria-label={phase === 'starting'
+            ? t('agent:appFrame.live.frame.starting', { project: name })
+            : t('agent:appFrame.live.frame.live', { project: name })}
           role="img"
         >
           {look && !drawn ? (

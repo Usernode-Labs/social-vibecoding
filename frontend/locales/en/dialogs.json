@@ -151,6 +151,170 @@
     "text": "Also at {{address}}",
     "description": "Small line under the link field in the Share dialog when the link offered is the project's own custom domain: the project's Homeroom address also works. {{address}} is that address without https://."
   },
+  "appDomain.title": {
+    "text": "Custom domain",
+    "description": "Heading of the dialog in which a project's managers give the project a web address of its own, beside its Homeroom address. The project's name is shown under it."
+  },
+  "appDomain.loading": {
+    "text": "Loading…",
+    "description": "Shown in the Custom domain dialog, where a project's managers give the project a web address of its own, while the project's current address settings are being fetched."
+  },
+  "appDomain.error.load": {
+    "text": "Could not load the custom domain.",
+    "description": "Error in the Custom domain dialog, where a project's managers give the project a web address of its own, when the current settings could not be fetched and the server gave no message of its own."
+  },
+  "appDomain.error.generic": {
+    "text": "Something went wrong. Try again.",
+    "description": "Error in the Custom domain dialog, where a project's managers give the project a web address of its own, when adding, checking or removing the address failed and the server gave no message of its own."
+  },
+  "appDomain.error.empty": {
+    "text": "Enter a web address, for example app.example.com.",
+    "description": "Error in the Custom domain dialog, where a project's managers give the project a web address of its own, when \"Add domain\" was pressed with the address box empty. app.example.com is a sample address; leave it as it is."
+  },
+  "appDomain.error.copy": {
+    "text": "Could not copy. Select the value and copy it yourself.",
+    "description": "Error in the Custom domain dialog, where a project's managers give the project a web address of its own, when a DNS record's value could not be copied to the clipboard. \"The value\" is the text in the table's Value column."
+  },
+  "appDomain.add.intro": {
+    "text": "Give this project a web address you own, beside {{host}}.",
+    "description": "First line of the Custom domain dialog, where a project's managers give the project a web address of its own, when no address has been added yet. {{host}} is the project's Homeroom address, for example recipes.homeroom.example, which keeps working."
+  },
+  "appDomain.add.label": {
+    "text": "Web address",
+    "description": "Label of the text box in the Custom domain dialog, where a project's managers give the project a web address of its own: the hostname to use, such as app.example.com."
+  },
+  "appDomain.add.hint": {
+    "text": "A subdomain, for example app.example.com or www.example.com. Apex domains like example.com are not supported yet.",
+    "description": "Help text under the address box in the Custom domain dialog, where a project's managers give the project a web address of its own. A subdomain has a name in front of the domain; an apex domain is the bare domain with nothing in front. The three example addresses stay as they are."
+  },
+  "appDomain.add.submit": {
+    "text": "Add domain",
+    "description": "Main button of the Custom domain dialog, where a project's managers give the project a web address of its own, when none has been added yet: registers the address that was typed. Add is a verb."
+  },
+  "appDomain.add.adding": {
+    "text": "Adding…",
+    "description": "Replaces \"Add domain\" on the button in the Custom domain dialog, where a project's managers give the project a web address of its own while the address is being registered."
+  },
+  "appDomain.status.pending.plain": {
+    "text": "Waiting for DNS. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet, and it has not been checked so far. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedJustNow": {
+    "text": "Waiting for DNS. Checked just now. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet, and Homeroom looked for them less than a minute ago. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedMinutes_one": {
+    "text": "Waiting for DNS. Checked {{count}} minute ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many minutes ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedMinutes_other": {
+    "text": "Waiting for DNS. Checked {{count}} minutes ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many minutes ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedHours_one": {
+    "text": "Waiting for DNS. Checked {{count}} hour ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many hours ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedHours_other": {
+    "text": "Waiting for DNS. Checked {{count}} hours ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many hours ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedDays_one": {
+    "text": "Waiting for DNS. Checked {{count}} day ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many days ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedDays_other": {
+    "text": "Waiting for DNS. Checked {{count}} days ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many days ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pendingReason": {
+    "text": "Waiting for DNS. {{reason}}",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records have not been seen yet. {{reason}} is a whole sentence from the server saying what it found, already worded. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.verified": {
+    "text": "Getting a certificate. This usually takes a minute or two.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records were found, and Homeroom is now obtaining the security certificate that lets the address be served over https."
+  },
+  "appDomain.status.verifiedReason": {
+    "text": "Getting a certificate. {{reason}}",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records were found and Homeroom is obtaining the security certificate for the address. {{reason}} is a whole sentence from the server saying what happened, already worded."
+  },
+  "appDomain.status.live": {
+    "text": "Live.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own, after a check mark: the address works and shows the project. An adjective describing the address."
+  },
+  "appDomain.status.liveSince": {
+    "text": "Live since {{date}}.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own, after a check mark: the address works and shows the project. \"Live\" is an adjective describing the address. {{date}} is the day it started working, formatted for the reader's region."
+  },
+  "appDomain.status.failed": {
+    "text": "Not working.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: setting the address up failed and no reason was recorded."
+  },
+  "appDomain.status.failedReason": {
+    "text": "Not working. {{reason}}",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: setting the address up failed. {{reason}} is a whole sentence from the server saying why, already worded."
+  },
+  "appDomain.status.disabled": {
+    "text": "Disabled by an admin.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: a Homeroom administrator switched the address off."
+  },
+  "appDomain.status.disabledReason": {
+    "text": "Disabled by an admin. {{reason}}",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: a Homeroom administrator switched the address off. {{reason}} is a whole sentence from the server saying why, already worded."
+  },
+  "appDomain.records.add": {
+    "text": "Add these two records where you manage DNS for {{zone}}:",
+    "description": "Line over the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own, while the address is being set up. {{zone}} is the domain the address belongs to, for example example.com. \"Where you manage DNS\" is the website of the company the domain is registered with. Keep the colon: the table follows."
+  },
+  "appDomain.records.keep": {
+    "text": "Keep these two records where you manage DNS for {{zone}}:",
+    "description": "Line over the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own, once the address works: the records must stay in place. {{zone}} is the domain the address belongs to, for example example.com. Keep the colon: the table follows."
+  },
+  "appDomain.records.type": {
+    "text": "Type",
+    "description": "Column heading of the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own: the kind of record, CNAME or TXT. A noun."
+  },
+  "appDomain.records.name": {
+    "text": "Name",
+    "description": "Column heading of the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own: the record's name, the part typed in front of the domain. A noun."
+  },
+  "appDomain.records.value": {
+    "text": "Value",
+    "description": "Column heading of the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own: what the record must contain. A noun."
+  },
+  "appDomain.records.copy": {
+    "text": "Copy",
+    "description": "Small button after a DNS record's value in the Custom domain dialog, where a project's managers give the project a web address of its own: copies that value to the clipboard. A verb."
+  },
+  "appDomain.records.copied": {
+    "text": "Copied",
+    "description": "Replaces \"Copy\" for a moment after a DNS record's value was copied to the clipboard, in the Custom domain dialog, where a project's managers give the project a web address of its own."
+  },
+  "appDomain.records.staysChecking": {
+    "text": "Homeroom checks every minute. The project stays at {{host}} as well.",
+    "description": "Note under the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own, while the address is being set up: Homeroom looks for the records by itself once a minute. {{host}} is the project's Homeroom address, which keeps working. Homeroom is the product's name."
+  },
+  "appDomain.records.staysLive": {
+    "text": "The project stays at {{host}} as well.",
+    "description": "Note under the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own, once the address works. {{host}} is the project's Homeroom address, which keeps working."
+  },
+  "appDomain.check.submit": {
+    "text": "Check now",
+    "description": "Main button of the Custom domain dialog, where a project's managers give the project a web address of its own, while the address is being set up or has failed: looks for the DNS records straight away instead of waiting for the next automatic check."
+  },
+  "appDomain.check.checking": {
+    "text": "Checking…",
+    "description": "Replaces \"Check now\" on the button in the Custom domain dialog, where a project's managers give the project a web address of its own while the check is running."
+  },
+  "appDomain.open": {
+    "text": "Open",
+    "description": "Link in the Custom domain dialog, where a project's managers give the project a web address of its own, once the address works: opens the project at that address in a new tab. A verb."
+  },
+  "appDomain.remove": {
+    "text": "Remove domain",
+    "description": "Quiet red button in the Custom domain dialog, where a project's managers give the project a web address of its own: takes the custom address off the project, which stays at its Homeroom address. Remove is a verb."
+  },
   "rename.title": {
     "text": "Rename app",
     "description": "Heading of the dialog for proposing a new display name for an app."

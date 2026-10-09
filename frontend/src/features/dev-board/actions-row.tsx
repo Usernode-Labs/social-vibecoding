@@ -445,8 +445,8 @@ export function DevPlusMenu({
             {typeof window !== 'undefined' && window.AppView?.appData?.can_manage && !selfHosted ? <PlusRow
               data-plus="domain"
               icon={<GlobeIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Custom domain"
-              sub="Use your own web address for this project"
+              title={t('project:menu.domain.title')}
+              sub={t('project:menu.domain.sub')}
             /> : null}
             {canManageIllustration ? <PlusRow
               data-plus="featured-illustration"

@@ -235,6 +235,10 @@
     "text": "Switch back",
     "description": "Button in the banner for an administrator previewing as an ordinary member: returns to the administrator view."
   },
+  "banner.offline.text": {
+    "text": "Reconnecting to Homeroom. Showing saved content",
+    "description": "Banner across the top while the device cannot reach Homeroom's servers and the screens show what was saved earlier. Homeroom is the product's name. No full stop at the end."
+  },
   "list.pair": {
     "text": "{{first}}, {{second}}",
     "description": "How two independent facts are joined when an accessible name lists several, for example \"App: Recipe Box, still open, unread\". {{first}} is everything said so far and {{second}} the next fact. Only the punctuation between them is translated."

@@ -40,6 +40,7 @@ import { useVisibility } from '../../lib/visibility-store';
  * classes to shell nodes at runtime. See lib/legacy-dom.ts.
  */
 export function OfflineBanner() {
+  const t = useMessages();
   const ref = useRef<HTMLDivElement>(null);
   // `false` = the state the prerendered markup shipped with (`hidden`), so
   // the hydrating render always matches the server markup exactly.
@@ -48,7 +49,7 @@ export function OfflineBanner() {
 
   return (
     <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" startHidden>
-      Reconnecting to Homeroom. Showing saved content
+      {t('core:banner.offline.text')}
     </Alert>
   );
 }

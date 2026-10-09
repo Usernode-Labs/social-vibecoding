@@ -31,6 +31,18 @@
     "text": "Send",
     "description": "Label, tooltip and accessible name of the button that sends the chat message the person typed. Send is a verb."
   },
+  "group.composer.page.attachFiles": {
+    "text": "Attach files",
+    "description": "Tooltip and accessible name of the + button beside the reply box at the foot of a request's or a change's page: opens the file chooser to add files to the reply."
+  },
+  "group.composer.page.reply": {
+    "text": "Reply",
+    "description": "Accessible name of the reply box at the foot of a request's or a change's page, where the person writes a reply to it. A noun: the reply being written."
+  },
+  "group.composer.page.send": {
+    "text": "Send",
+    "description": "Tooltip and accessible name of the round arrow button beside the reply box at the foot of a request's or a change's page: sends the reply the person typed. A verb."
+  },
   "group.composer.placeholder": {
     "text": "Type a message...",
     "description": "Placeholder inside the empty message box of a community's channel."
@@ -801,11 +813,11 @@
   },
   "group.row.repeated_one": {
     "text": "Posted {{count}} times in a row; this is the latest",
-    "description": "Tooltip of the ×N mark after an automatic line in a chat that was posted several times running and is shown once. {{count}} is how many times. Posted is a verb form."
+    "description": "Tooltip of the ×N mark after an automatic line that was posted several times running and is shown once, in a chat and among the replies on a request's or a change's page. {{count}} is how many times. Posted is a verb form."
   },
   "group.row.repeated_other": {
     "text": "Posted {{count}} times in a row; this is the latest",
-    "description": "Tooltip of the ×N mark after an automatic line in a chat that was posted several times running and is shown once. {{count}} is how many times. Posted is a verb form."
+    "description": "Tooltip of the ×N mark after an automatic line that was posted several times running and is shown once, in a chat and among the replies on a request's or a change's page. {{count}} is how many times. Posted is a verb form."
   },
   "group.row.unreadMention": {
     "text": "Unread mention",
