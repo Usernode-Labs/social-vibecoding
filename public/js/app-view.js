@@ -4146,6 +4146,15 @@ const AppView = {
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     if (subTab !== 'topic') { AppView._devTopic = null; AppView._devTopicInPanel = false; }
+    // #4480: a topic PAGE replaces the Workshop, so whatever its side panel
+    // held is no longer the panel's. A link inside the panel (a change's
+    // "Addresses #N" chip, a plan's request) lands here with the panel still
+    // mounted, its host detached but not yet swept; the sweep comes at the
+    // page's first portal mount, inside GroupChat.mountThread, and the
+    // panel's cleanup used to unmount the thread that had just been made
+    // active. The page drew its head and composer with no replies and no
+    // plan cards until a reload.
+    else AppView._devTopicInPanel = false;
 
     // The topic sub-view used to be an `innerHTML` template, so it had to
     // retire whatever interim root the previous surface had left on
@@ -7563,8 +7572,12 @@ const AppView = {
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (current()) AppView._renderTopicHead();
   },
-  closeTopicPanel() {
+  // `kind`/`id` name the panel's own item: a panel closing after its page
+  // gave way to another topic (#4480) leaves that topic's thread alone.
+  closeTopicPanel(kind, id) {
     if (!AppView._devTopicInPanel) return;
+    const t = AppView._devTopic;
+    if (kind && id && (!t || t.kind !== kind || t.id !== id)) return;
     AppView._devTopicInPanel = false;
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     if (typeof App === 'undefined' || App.currentSubTab !== 'topic') AppView._devTopic = null;

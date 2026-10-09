@@ -39,7 +39,7 @@ export function TopicSidePanel({ item, onClose }: { item: TopicRef; onClose: () 
   // the panel (or before the next item's).
   useEffect(() => {
     void callAppView('openTopicInPanel', item.kind, item.id);
-    return () => { callAppView('closeTopicPanel'); };
+    return () => { callAppView('closeTopicPanel', item.kind, item.id); };
   }, [item.kind, item.id]);
   // Escape closes it, as it closes a sheet.
   useEffect(() => {

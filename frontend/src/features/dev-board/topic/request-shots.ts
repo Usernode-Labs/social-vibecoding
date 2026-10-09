@@ -10,10 +10,9 @@
  *     card beside it, and a small "Hide comment" button on the picture's
  *     corner that takes the layer away and puts it back. The picture itself
  *     stays clean. Everyone sees this.
- *   - #4481: with the experimental "Press C to comment on the page" switch
- *     on for this device, the blocks that hold a screenshot are lifted out of
- *     the words, so the fold at four lines folds only the words and the
- *     pictures are always shown under them.
+ *   - #4481: the blocks that hold a screenshot are lifted out of the words,
+ *     so the fold at four lines folds only the words and the pictures are
+ *     always shown under them. Everyone sees this too.
  *
  * Both work on the markup DevChat.renderMarkdown built and sanitised: it is
  * parsed with DOMParser (an inert document: nothing in it loads or runs),
@@ -176,16 +175,16 @@ function blocksOf(root: Element): Element {
 }
 
 /**
- * The request's words, with each pinned picture's comment as a layer and,
- * when `lift` is on, the blocks that hold a screenshot apart from the words.
+ * The request's words, with each pinned picture's comment as a layer and
+ * the blocks that hold a screenshot apart from the words.
  */
 export function requestShots(
   html: string,
-  { lift = false, parse = parseHtml }: { lift?: boolean; parse?: ParseHtml } = {},
+  { parse = parseHtml }: { parse?: ParseHtml } = {},
 ): RequestShots {
   const same = { words: html, shots: '' };
   const pins = html.includes('#pin=');
-  const lifts = lift && html.includes(SHOT_PATH);
+  const lifts = html.includes(SHOT_PATH);
   if (!html || !(pins || lifts)) return same;
   const root = parse(html);
   const doc = root && root.ownerDocument;
