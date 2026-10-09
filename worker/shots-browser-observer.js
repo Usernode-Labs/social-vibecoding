@@ -242,6 +242,140 @@ function createObserver({
   };
 }
 
+// A button the pointer was left on is shot in its hover colour: the agent
+// clicks "Send code", the page moves on, and the next screenshot shows the
+// button pale. Before each browser_take_screenshot that follows a click, the
+// observer moves the pointer off the page itself and holds the screenshot
+// until that move is answered; the move's answer never reaches the agent.
+// (-1, -1) is outside the viewport, so nothing is under the pointer, and it
+// stays so when an element screenshot scrolls the page; (0, 0) is a pixel of
+// the page and hovers whatever is drawn there. A pointer the agent placed
+// itself (browser_hover, browser_mouse_move_xy) is left where it is: the
+// hover may be the very change being shown.
+const PARK_ID_PREFIX = 'usernode-shots-park-';
+const PARK_TIMEOUT_MS = 12_000;
+const PARK_RESPONSE_MAX_BYTES = 256 * 1024;
+const POINTER_LEFT_ON_PAGE = new Set([
+  'browser_click', 'browser_drag', 'browser_fill_form', 'browser_select_option',
+  'browser_mouse_click_xy', 'browser_mouse_drag_xy', 'browser_file_upload',
+]);
+const POINTER_PLACED = new Set(['browser_hover', 'browser_mouse_move_xy', 'browser_close']);
+
+function parkRequest(id) {
+  return `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: {
+    name: 'browser_mouse_move_xy',
+    arguments: { element: 'Pointer off the page before a screenshot', x: -1, y: -1 },
+  } })}\n`;
+}
+
+function createPointerParker({ timeoutMs = PARK_TIMEOUT_MS } = {}) {
+  let leftOnPage = false;
+  let parks = 0;
+  let waitingFor = null;
+  let timer = null;
+  let flushed = null;
+  const queue = [];
+  let input;
+  const release = (id) => {
+    if (id !== waitingFor) return;
+    waitingFor = null;
+    clearTimeout(timer);
+    timer = null;
+    drain();
+  };
+  // Forward queued request lines in order, stopping at a screenshot that
+  // waits for its pointer move.
+  const drain = () => {
+    while (!waitingFor && queue.length) {
+      const line = queue.shift();
+      let message = null;
+      try { message = JSON.parse(line); } catch { /* forwarded unchanged */ }
+      const tool = message?.method === 'tools/call' ? message.params?.name : null;
+      if (tool === 'browser_take_screenshot' && leftOnPage) {
+        leftOnPage = false;
+        waitingFor = `${PARK_ID_PREFIX}${++parks}`;
+        input.push(parkRequest(waitingFor));
+        // A move that is never answered must not hold the screenshot forever.
+        const id = waitingFor;
+        timer = setTimeout(() => release(id), timeoutMs);
+        timer.unref?.();
+        queue.unshift(line);
+        continue;
+      }
+      if (POINTER_LEFT_ON_PAGE.has(tool)) leftOnPage = true;
+      else if (POINTER_PLACED.has(tool)) leftOnPage = false;
+      input.push(`${line}\n`);
+    }
+    if (!waitingFor && !queue.length && flushed) { const done = flushed; flushed = null; done(); }
+  };
+  let pending = '';
+  input = new Transform({
+    transform(chunk, _encoding, callback) {
+      pending += chunk.toString('utf8');
+      let end;
+      while ((end = pending.indexOf('\n')) >= 0) {
+        queue.push(pending.slice(0, end));
+        pending = pending.slice(end + 1);
+      }
+      drain();
+      callback();
+    },
+    flush(callback) {
+      if (pending) { queue.push(pending); pending = ''; }
+      flushed = () => callback();
+      drain();
+    },
+  });
+  // Drops the answer to each move the parker sent; every other line passes
+  // through unchanged. A line is held only while it is small enough to be
+  // such an answer: a screenshot's answer streams on as soon as it is not.
+  let held = [];
+  let heldBytes = 0;
+  let passing = false;
+  const output = new Transform({
+    transform(chunk, _encoding, callback) {
+      let offset = 0;
+      for (;;) {
+        const end = chunk.indexOf(10, offset);
+        const part = chunk.subarray(offset, end < 0 ? chunk.length : end + 1);
+        if (passing) this.push(part);
+        else {
+          held.push(part);
+          heldBytes += part.length;
+          if (end < 0 && heldBytes > PARK_RESPONSE_MAX_BYTES) {
+            this.push(Buffer.concat(held));
+            held = []; heldBytes = 0; passing = true;
+          }
+        }
+        if (end < 0) break;
+        if (!passing) {
+          const line = Buffer.concat(held);
+          held = []; heldBytes = 0;
+          let id = null;
+          if (line.includes(PARK_ID_PREFIX)) {
+            try { id = JSON.parse(line.toString('utf8')).id; } catch { /* not ours */ }
+          }
+          if (typeof id === 'string' && id.startsWith(PARK_ID_PREFIX)) release(id);
+          else this.push(line);
+        }
+        passing = false;
+        offset = end + 1;
+        if (offset >= chunk.length) break;
+      }
+      callback();
+    },
+    flush(callback) {
+      if (held.length) this.push(Buffer.concat(held));
+      callback();
+    },
+  });
+  return {
+    input, output,
+    // The browser is gone: stop waiting, and send nothing more.
+    close() { clearTimeout(timer); timer = null; waitingFor = null; queue.length = 0; },
+  };
+}
+
 // The Playwright MCP command. The worker image's own install unless the
 // local dry run names another (scripts/shots-dry-run.js), as a JSON array.
 function browserCommand(value = process.env.SHOTS_BROWSER_MCP_COMMAND) {
@@ -273,8 +407,10 @@ function start({ persona, args, binary = null,
   const child = spawn(command, [...prefix, ...list], { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => { /* Child exit is reported by the close handler. */ });
   const inputTap = lineTap((line, meta) => observer.request(line, meta));
-  stdin.pipe(inputTap).pipe(child.stdin);
-  child.stdout.pipe(lineTap((line, meta) => observer.response(line, meta))).pipe(stdout);
+  const parker = createPointerParker();
+  stdin.pipe(inputTap).pipe(parker.input).pipe(child.stdin);
+  child.stdout.pipe(parker.output)
+    .pipe(lineTap((line, meta) => observer.response(line, meta))).pipe(stdout);
   child.stderr.pipe(stderr);
   const pending = setInterval(() => observer.pending(), PENDING_INTERVAL_MS);
   pending.unref?.();
@@ -292,6 +428,7 @@ function start({ persona, args, binary = null,
     // Release that handle so the observer exits with its child.
     stdin.unpipe(inputTap);
     inputTap.destroy();
+    parker.close();
     stdin.pause();
     observer.exit(code, signal);
     process.exitCode = Number.isInteger(code) ? code : 1;
@@ -306,5 +443,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  MARKER, lineTap, createObserver, start, reportedPageUrl, savedScreenshotPath, browserCommand,
+  MARKER, lineTap, createObserver, createPointerParker, start, reportedPageUrl, savedScreenshotPath, browserCommand,
 };

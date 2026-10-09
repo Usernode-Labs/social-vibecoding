@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
-const { createObserver, lineTap, MARKER } = require('../worker/shots-browser-observer');
+const { createObserver, createPointerParker, lineTap, MARKER } = require('../worker/shots-browser-observer');
 
 test('browser boundary reports real pending/completion time and response shape without page content', () => {
   const events = [];
@@ -180,6 +180,88 @@ process.stdin.on('data', chunk => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// #4087: a button left under the pointer after a click was shot in its hover
+// colour. The observer parks the pointer outside the page before a
+// screenshot that follows a click, and keeps a pointer the agent placed.
+const call = (id, name, args = {}) => `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call',
+  params: { name, arguments: args } })}\n`;
+
+test('the observer moves the pointer off the page before a screenshot that follows a click', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-browser-park-'));
+  const received = path.join(dir, 'received.log');
+  try {
+    const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
+    const stub = `const fs=require('fs');process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>{b+=c;let i;while((i=b.indexOf('\\n'))>=0){const line=b.slice(0,i);b=b.slice(i+1);fs.appendFileSync(${JSON.stringify(received)},line+'\\n');const m=JSON.parse(line);process.stdout.write(JSON.stringify({result:{content:[{type:'text',text:'### Ran '+m.params.name}]},jsonrpc:'2.0',id:m.id})+'\\n')}});`;
+    const launcher = `require(${JSON.stringify(observerPath)}).start({persona:'member',binary:process.execPath,args:['-e',${JSON.stringify(stub)}]});`;
+    const child = spawn(process.execPath, ['-e', launcher], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.stdin.end([
+      call(1, 'browser_click', { element: 'Send code', ref: 'e5' }),
+      call(2, 'browser_take_screenshot', { filename: 'a.png' }),
+      call(3, 'browser_take_screenshot', { filename: 'b.png' }),
+      call(4, 'browser_hover', { element: 'Reactions', ref: 'e9' }),
+      call(5, 'browser_take_screenshot', { filename: 'c.png' }),
+    ].join(''));
+    const [code] = await once(child, 'close');
+    assert.equal(code, 0, Buffer.concat(stderr).toString());
+    const sent = fs.readFileSync(received, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(sent.map((message) => message.params.name), [
+      'browser_click', 'browser_mouse_move_xy', 'browser_take_screenshot',
+      'browser_take_screenshot', 'browser_hover', 'browser_take_screenshot',
+    ]);
+    assert.deepEqual(sent[1].params.arguments, {
+      element: 'Pointer off the page before a screenshot', x: -1, y: -1,
+    });
+    assert.match(sent[1].id, /^usernode-shots-park-\d+$/);
+    // The agent sees exactly its own calls answered, never the move.
+    const answers = Buffer.concat(stdout).toString().trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(answers.map((message) => message.id), [1, 2, 3, 4, 5]);
+    assert.doesNotMatch(Buffer.concat(stdout).toString(), /mouse_move|usernode-shots-park/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the pointer parker holds the screenshot until the move is answered, and not forever', async () => {
+  const parker = createPointerParker({ timeoutMs: 30 });
+  const forwarded = [];
+  parker.input.on('data', (chunk) => forwarded.push(...chunk.toString().trim().split('\n').map((l) => JSON.parse(l))));
+  const answered = [];
+  parker.output.on('data', (chunk) => answered.push(chunk.toString()));
+  parker.input.write(call(1, 'browser_mouse_click_xy', { element: 'x', x: 5, y: 5 }) + call(2, 'browser_take_screenshot'));
+  parker.input.write(call(3, 'browser_snapshot'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(forwarded.map((m) => m.params.name), ['browser_mouse_click_xy', 'browser_mouse_move_xy']);
+  // The move's answer is dropped and releases the queue in order; a split
+  // line is reassembled first.
+  const answer = JSON.stringify({ result: { content: [] }, jsonrpc: '2.0', id: forwarded[1].id });
+  parker.output.write(answer.slice(0, 10));
+  parker.output.write(`${answer.slice(10)}\n${JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} })}\n`);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(forwarded.map((m) => m.params.name), [
+    'browser_mouse_click_xy', 'browser_mouse_move_xy', 'browser_take_screenshot', 'browser_snapshot',
+  ]);
+  assert.deepEqual(answered.join('').trim().split('\n').map((l) => JSON.parse(l).id), [1]);
+  // A move that is never answered lets the screenshot through after the timeout.
+  parker.input.write(call(4, 'browser_drag') + call(5, 'browser_take_screenshot'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(forwarded.at(-1).params.name, 'browser_mouse_move_xy');
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(forwarded.at(-1).params.name, 'browser_take_screenshot');
+  // A large answer streams through untouched.
+  const big = `${JSON.stringify({ jsonrpc: '2.0', id: 6, result: { content: [{ type: 'image', data: 'A'.repeat(400_000) }] } })}\n`;
+  answered.length = 0;
+  parker.output.write(big.slice(0, 300_000));
+  assert.ok(answered.join('').length > 0, 'the start of a large answer is not held');
+  parker.output.end(big.slice(300_000));
+  await once(parker.output, 'end').catch(() => {});
+  assert.equal(answered.join(''), big);
+  parker.close();
 });
 
 test('observer exits after a client stops the browser while stdin remains open', async () => {
