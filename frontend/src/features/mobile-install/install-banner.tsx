@@ -51,6 +51,8 @@ import { InstallStepsSheet } from './install-steps-sheet';
  * the day an admin pastes a URL into App version.
  */
 
+// The shots worker writes this same key before every page it shoots
+// (worker/shots-page-init.js, #4087); tests/shots-page-init.test.js pins the pair.
 const DISMISS_KEY = 'mobileInstallBannerDismissed';
 const BODY_CLASS = 'has-install-strip';
 
