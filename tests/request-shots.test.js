@@ -7,9 +7,8 @@
 //     and the request's page draws it over the picture as a layer the reader
 //     can hide (features/dev-board/topic/request-shots.ts, used by
 //     request-head.tsx `RequestWords`). The picture stays clean.
-//   - #4481: with the experimental C switch on for the device, the blocks
-//     that hold a screenshot leave the four-line fold and are always shown
-//     under it.
+//   - #4481: the blocks that hold a screenshot leave the four-line fold and
+//     are always shown under it, for everyone.
 //
 // What is pinned, and each is a way it can be quietly wrong:
 //
@@ -17,9 +16,9 @@
 //      and a link that is not a point on the picture is no pin.
 //   2. THE LAYER. Only a picture with a pin gets one; the words go in as
 //      text; the note sits where there is room; the button toggles it.
-//   3. THE LIFT. Only with the switch, only the blocks with a screenshot,
-//      and the words are what is left.
-//   4. NOTHING ELSE MOVES. Without a pin or the switch, or without a parser,
+//   3. THE LIFT. Only the blocks with a screenshot, and the words are what
+//      is left.
+//   4. NOTHING ELSE MOVES. Without a pin or a screenshot, or without a parser,
 //      the markup is returned byte for byte.
 //
 // There is no HTML parser under node, so the DOM half runs against the
@@ -236,10 +235,9 @@ test('the note sits right of the pin and above the point, flipping near the righ
 test('a pinned picture gets the comment as a layer over it and a button; the picture is untouched', () => {
   const html = words('<p class="dc-p">The header is too small.</p>', `<p class="dc-p"><strong>Screenshot:</strong><br>${picture(PINNED)}</p>`);
   const out = shots.requestShots(html, { parse });
-  assert.equal(out.shots, '', 'no lift without the switch');
+  assert.equal(out.words, words('<p class="dc-p">The header is too small.</p>', ''), 'the screenshot leaves the words');
   const escaped = PINNED.replace(/&/g, '&amp;');
-  assert.equal(out.words, words(
-    '<p class="dc-p">The header is too small.</p>',
+  assert.equal(out.shots, words(
     '<p class="dc-p"><strong>Screenshot:</strong><br>'
       + '<span class="pin-shot" data-pin-shot="">'
       + `<a class="dc-inline-img-link" href="${escaped}" target="_blank" rel="noopener noreferrer" aria-label="View image full size">`
@@ -256,13 +254,13 @@ test('the note is text, never markup, and a pin with no words is a pin alone', (
   const note = '<img src=x onerror=alert(1)> & <b>bold</b>';
   const src = `${SRC}${pins.pinFragment({ x: 0.8, y: 0.1, note })}`;
   const out = shots.requestShots(words(`<p>${picture(src)}</p>`), { parse });
-  assert.match(out.words, /data-side="left" data-rise="down"/);
-  assert.match(out.words, /<span class="pin-shot-note">&lt;img src=x onerror=alert\(1\)&gt; &amp; &lt;b&gt;bold&lt;\/b&gt;<\/span>/);
-  assert.equal((out.words.match(/<img/g) || []).length, 1, 'the only picture is the screenshot');
+  assert.match(out.shots, /data-side="left" data-rise="down"/);
+  assert.match(out.shots, /<span class="pin-shot-note">&lt;img src=x onerror=alert\(1\)&gt; &amp; &lt;b&gt;bold&lt;\/b&gt;<\/span>/);
+  assert.equal((out.shots.match(/<img/g) || []).length, 1, 'the only picture is the screenshot');
 
   const bare = shots.requestShots(words(`<p>${picture(`${SRC}${pins.pinFragment({ x: 0.5, y: 0.5, note: '' })}`)}</p>`), { parse });
-  assert.match(bare.words, /<span class="pin-shot-mark"[^>]*><span class="pin-shot-pin"><\/span><\/span>/);
-  assert.doesNotMatch(bare.words, /pin-shot-note/);
+  assert.match(bare.shots, /<span class="pin-shot-mark"[^>]*><span class="pin-shot-pin"><\/span><\/span>/);
+  assert.doesNotMatch(bare.shots, /pin-shot-note/);
 });
 
 test('a picture with several comments\' pins numbers each, with its own note and place, under one button', () => {
@@ -275,9 +273,9 @@ test('a picture with several comments\' pins numbers each, with its own note and
     { x: 0.9, y: 0.1, n: 2, note: 'Second thing' },
   ]);
   const out = shots.requestShots(words(`<p>${picture(`${SRC}${frag}`)}</p>`), { parse });
-  assert.match(out.words, /<button class="pin-shot-toggle touch-target-32" type="button" data-shown="true" data-many="">Hide comments<\/button>/);
-  assert.match(out.words, /<span class="pin-shot-mark" data-side="right" data-rise="up" style="--pin-x: 20%; --pin-y: 50%"><span class="pin-shot-pin">1<\/span><span class="pin-shot-note">First thing<\/span><\/span>/);
-  assert.match(out.words, /<span class="pin-shot-mark" data-side="left" data-rise="down" style="--pin-x: 90%; --pin-y: 10%"><span class="pin-shot-pin">2<\/span><span class="pin-shot-note">Second thing<\/span><\/span>/);
+  assert.match(out.shots, /<button class="pin-shot-toggle touch-target-32" type="button" data-shown="true" data-many="">Hide comments<\/button>/);
+  assert.match(out.shots, /<span class="pin-shot-mark" data-side="right" data-rise="up" style="--pin-x: 20%; --pin-y: 50%"><span class="pin-shot-pin">1<\/span><span class="pin-shot-note">First thing<\/span><\/span>/);
+  assert.match(out.shots, /<span class="pin-shot-mark" data-side="left" data-rise="down" style="--pin-x: 90%; --pin-y: 10%"><span class="pin-shot-pin">2<\/span><span class="pin-shot-note">Second thing<\/span><\/span>/);
   assert.equal(shots.pinToggleLabel(false, true), 'Show comments');
   // A number that is not a small whole number is no number, and a note before any pin belongs to none.
   assert.deepEqual(pins.readPins(`${SRC}#note=stray&pin=0.5,0.5&n=x&note=ok`), [{ x: 0.5, y: 0.5, n: null, note: 'ok' }]);
@@ -289,14 +287,14 @@ test('only pictures with a pin are wrapped: a plain screenshot, a bad pin and an
   const authored = '<a href="https://example.com/notes"><img src="https://example.com/a.png" alt="A"></a>';
   const bareImg = `<img class="dc-inline-img" src="${PINNED.replace(/&/g, '&amp;')}" alt="Screenshot 2" loading="lazy">`;
   const out = shots.requestShots(words(`<p>${plain}<br>${bad}<br>${authored}<br>${bareImg}</p>`), { parse });
-  assert.equal((out.words.match(/class="pin-shot"/g) || []).length, 1);
-  assert.ok(out.words.includes(`<p>${plain}<br>${bad}<br>${authored}<br><span class="pin-shot" data-pin-shot=""><img class="dc-inline-img"`),
+  assert.equal((out.shots.match(/class="pin-shot"/g) || []).length, 1);
+  assert.ok(out.shots.includes(`<p>${plain}<br>${bad}<br>${authored}<br><span class="pin-shot" data-pin-shot=""><img class="dc-inline-img"`),
     'the three unpinned pictures are byte for byte, and a picture with no link of its own is wrapped itself');
 });
 
 test('the corner button hides the comment and shows it again, and nothing else is a toggle', () => {
   const out = shots.requestShots(words(`<p>${picture(PINNED)}</p>`), { parse });
-  const scope = parse(out.words);
+  const scope = parse(out.shots);
   const shot = scope.childNodes[0].childNodes[0].childNodes[0];
   assert.equal(shot.getAttribute('class'), 'pin-shot');
   const [link, button, layer] = shot.childNodes;
@@ -326,62 +324,61 @@ test('the corner button hides the comment and shows it again, and nothing else i
 
 // ── 3. The lift ───────────────────────────────────────────────────────
 
-test('with the switch, the blocks that hold a screenshot leave the words, in the renderer\'s box', () => {
+test('the blocks that hold a screenshot leave the words, in the renderer\'s box', () => {
   const ask = '<p class="dc-p">The header is too small.</p>';
   const after = '<p class="dc-p"><strong>Saved offline:</strong> today</p>';
   const html = words(ask, SHOT_BLOCK(), after);
-  const out = shots.requestShots(html, { lift: true, parse });
+  const out = shots.requestShots(html, { parse });
   assert.equal(out.words, words(ask, '', after));
   assert.equal(out.shots, words(SHOT_BLOCK()));
 
   const two = `<p class="dc-p"><strong>Screenshots:</strong><br>${picture(`${SRC}1`, 'Screenshot 1')}<br>${picture(PINNED, 'Screenshot 2')}</p>`;
-  const both = shots.requestShots(words(ask, two), { lift: true, parse });
+  const both = shots.requestShots(words(ask, two), { parse });
   assert.equal(both.words, words(ask, ''));
   assert.match(both.shots, /^<div class="dev-issue-body"><p class="dc-p"><strong>Screenshots:<\/strong><br><a [^>]*><img [^>]*alt="Screenshot 1"[^>]*><\/a><br><span class="pin-shot"/,
     'one block, both pictures, and the pinned one keeps its layer');
 
-  const only = shots.requestShots(words(SHOT_BLOCK()), { lift: true, parse });
+  const only = shots.requestShots(words(SHOT_BLOCK()), { parse });
   assert.deepEqual({ ...only }, { words: '', shots: words(SHOT_BLOCK()) }, 'nothing left to fold');
 
-  const loose = shots.requestShots(`${ask}\n${SHOT_BLOCK()}`, { lift: true, parse });
+  const loose = shots.requestShots(`${ask}\n${SHOT_BLOCK()}`, { parse });
   assert.deepEqual({ ...loose }, { words: `${ask}\n`, shots: SHOT_BLOCK() }, 'markup with no box of its own');
 });
 
-test('with the switch, a picture that is not a screenshot stays in the words', () => {
+test('a picture that is not a screenshot stays in the words', () => {
   const other = `<p>${picture('https://example.com/diagram.png', 'A diagram')}</p>`;
   const html = words('<p>See</p>', other);
-  assert.equal(shots.requestShots(html, { lift: true, parse }).words, html);
-  assert.equal(shots.requestShots(html, { lift: true, parse }).shots, '');
+  assert.equal(shots.requestShots(html, { parse }).words, html);
+  assert.equal(shots.requestShots(html, { parse }).shots, '');
 });
 
 // ── 4. Nothing else moves ─────────────────────────────────────────────
 
-test('without a pin or the switch, or without a parser, the markup is returned as it came', () => {
-  const html = words('<p class="dc-p">Words &amp; more</p>', SHOT_BLOCK());
+test('without a pin or a screenshot, or without a parser, the markup is returned as it came', () => {
+  const html = words('<p class="dc-p">Words &amp; more</p>', `<p>${picture('https://example.com/diagram.png', 'A diagram')}</p>`);
   let parsed = 0;
   const counting = (h) => { parsed += 1; return parse(h); };
   for (const out of [
     shots.requestShots(html, { parse: counting }),
-    shots.requestShots(words('<p>Just words</p>'), { lift: true, parse: counting }),
-    shots.requestShots('', { lift: true, parse: counting }),
+    shots.requestShots(words('<p>Just words</p>'), { parse: counting }),
+    shots.requestShots('', { parse: counting }),
   ]) assert.equal(out.shots, '');
   assert.equal(shots.requestShots(html, { parse: counting }).words, html);
   assert.equal(parsed, 0, 'nothing to change, nothing parsed');
 
   const pinned = words(`<p>${picture(PINNED)}</p>`);
-  assert.deepEqual({ ...shots.requestShots(pinned, { lift: true, parse: () => null }) }, { words: pinned, shots: '' });
+  assert.deepEqual({ ...shots.requestShots(pinned, { parse: () => null }) }, { words: pinned, shots: '' });
   assert.equal(typeof DOMParser, 'undefined', 'node has no DOMParser');
-  assert.deepEqual({ ...shots.requestShots(pinned, { lift: true }) }, { words: pinned, shots: '' }, 'a server render draws the markup as given');
+  assert.deepEqual({ ...shots.requestShots(pinned) }, { words: pinned, shots: '' }, 'a server render draws the markup as given');
   // A pin's text with no picture under it changes nothing.
   const said = words('<p>The link ended in #pin=0.5,0.5 and /issue-images/ was in it</p>');
-  assert.equal(shots.requestShots(said, { lift: true, parse }).words, said);
+  assert.equal(shots.requestShots(said, { parse }).words, said);
 });
 
 // ── The words on the page ─────────────────────────────────────────────
 
-function withSwitch(on, run) {
-  const before = { window: global.window, DOMParser: global.DOMParser };
-  global.window = { localStorage: { getItem: (key) => (on && key === 'usernode:suggest-shortcut' ? '1' : null) } };
+function withParser(run) {
+  const before = { DOMParser: global.DOMParser };
   global.DOMParser = class { parseFromString(html) { return { body: parse(html) }; } };
   try {
     return run();
@@ -392,22 +389,17 @@ function withSwitch(on, run) {
   }
 }
 
-test('the page folds the words and, with the switch, shows the screenshots after the fold', () => {
+test('the page folds the words and always shows the screenshots after the fold (#4481)', () => {
   const { RequestWords } = loadTsx(HEAD);
   const html = words('<p class="dc-p">The header is too small.</p>', `<p class="dc-p"><strong>Screenshot:</strong><br>${picture(PINNED)}</p>`);
 
-  const off = withSwitch(false, () => renderToHtml(createElement(RequestWords, { html })));
-  assert.match(off, /^<div class="dev-request-ask"><div class="dev-request-ask-text line-clamp-4" data-request-words=""><div class="dev-issue-body">[\s\S]*class="pin-shot"[\s\S]*<\/div><\/div><\/div>$/,
-    'switch off: the screenshot stays in the words, with its comment');
-  assert.doesNotMatch(off, /data-request-shots/);
-
-  const on = withSwitch(true, () => renderToHtml(createElement(RequestWords, { html })));
-  assert.equal(on, '<div class="dev-request-ask">'
+  const out = withParser(() => renderToHtml(createElement(RequestWords, { html })));
+  assert.equal(out, '<div class="dev-request-ask">'
     + '<div class="dev-request-ask-text line-clamp-4" data-request-words=""><div class="dev-issue-body"><p class="dc-p">The header is too small.</p>\n</div></div>'
-    + `<div class="dev-request-shots" data-request-shots="">${shots.requestShots(html, { lift: true, parse }).shots}</div>`
-    + '</div>');
+    + `<div class="dev-request-shots" data-request-shots="">${shots.requestShots(html, { parse }).shots}</div>`
+    + '</div>', 'the screenshot, with its comment, is outside the fold');
 
-  const only = withSwitch(true, () => renderToHtml(createElement(RequestWords, { html: words(SHOT_BLOCK()) })));
+  const only = withParser(() => renderToHtml(createElement(RequestWords, { html: words(SHOT_BLOCK()) })));
   assert.equal(only, `<div class="dev-request-ask"><div class="dev-request-shots" data-request-shots="">${words(SHOT_BLOCK())}</div></div>`,
     'a request that is only a screenshot has no fold to open');
 
@@ -417,12 +409,10 @@ test('the page folds the words and, with the switch, shows the screenshots after
   assert.equal(renderToHtml(createElement(RequestWords, { html: '' })), '');
 });
 
-test('the words read the switch once, take the toggle\'s click, and keep the viewer\'s scope', () => {
+test('the words lift the screenshots for everyone, take the toggle\'s click, and keep the viewer\'s scope', () => {
   const src = read(HEAD);
-  assert.match(src, /import \{ suggestShortcutEnabled \} from '\.\.\/\.\.\/improve\/suggest-settings';/);
-  assert.doesNotMatch(src, /suggest-shortcut'/, 'the settings, not the shortcut and its listeners');
-  assert.match(src, /const \[lift\] = useState\(\(\) => suggestShortcutEnabled\(\)\);/);
-  assert.match(src, /const \{ words, shots \} = useMemo\(\(\) => requestShots\(html, \{ lift \}\), \[html, lift\]\);/);
+  assert.doesNotMatch(src, /suggest-settings'|suggestShortcutEnabled/, 'no device switch decides where the screenshots go');
+  assert.match(src, /const \{ words, shots \} = useMemo\(\(\) => requestShots\(html\), \[html\]\);/);
   assert.match(src, /const inner = useInnerHtml\(words\);\n\s+const shotsInner = useInnerHtml\(shots\);/,
     'the same wrapper while the string is the same, so a hidden comment stays hidden');
   assert.match(src, /if \(togglePinShot\(event\.target, event\.currentTarget\)\) event\.preventDefault\(\);/);

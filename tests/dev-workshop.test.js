@@ -2136,9 +2136,9 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   // keyed by the item, filled by AppView exactly as the full page is.
   assert.match(PANEL, /<div key=\{`\$\{item\.kind\}:\$\{item\.id\}`\} id="dev-topic-thread" className="dev-ws-side-page" \/>/);
   assert.match(PANEL, /callAppView\('openTopicInPanel', item\.kind, item\.id\)/);
-  assert.match(PANEL, /return \(\) => \{ callAppView\('closeTopicPanel'\); \};/);
+  assert.match(PANEL, /return \(\) => \{ callAppView\('closeTopicPanel', item\.kind, item\.id\); \};/);
   assert.match(PANEL, /callAppView\('openTopic', item\.kind, item\.id\)/, 'Open as a page is the page\'s own route');
-  const open = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('async openTopicInPanel(kind, id) {'), APP_VIEW_SRC.indexOf('closeTopicPanel() {'));
+  const open = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('async openTopicInPanel(kind, id) {'), APP_VIEW_SRC.indexOf('closeTopicPanel(kind, id) {'));
   assert.match(open, /AppView\._devTopic = \{ kind, id \};/);
   assert.match(open, /AppView\._mountTopicThread\(\);\s*AppView\._renderTopicHead\(\);/, 'the full page\'s own mount and paint');
   assert.match(APP_VIEW_SRC, /if \(subTab !== 'topic'\) \{ AppView\._devTopic = null; AppView\._devTopicInPanel = false; \}/,
@@ -2150,6 +2150,49 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   // The list makes room and keeps its place; the open row is lit.
   assert.match(CSS, /#dev-workshop:has\(> \.dev-ws\[data-ws-side-open\]\) \{/);
   assert.match(CSS, /\.dev-ws-wrow\[data-on\] \{ background: var\(--lit-tint\); \}/);
+});
+
+test('#4480: a page opened from the side panel keeps its thread when the panel goes', () => {
+  // The panel's change page is up; its "Addresses #77" chip opens the
+  // request's page. The panel outlives the switch (its host is detached but
+  // not yet swept), and its cleanup runs only when the request page's first
+  // portal mount sweeps it: after GroupChat.mountThread has made the
+  // request's thread the active one.
+  let unmounts = 0;
+  const GroupChat = { activeThread: null, unmountThread() { unmounts += 1; this.activeThread = null; } };
+  const App = { user: { id: 1, username: 'me' }, currentApp: 'demo-app', currentSubTab: 'forum' };
+  const AppView = makeAppView({ App, globals: { GroupChat } });
+  AppView._devTopic = { kind: 'proposal', id: 51 };
+  AppView._devTopicInPanel = true;
+
+  // What renderDevView('topic') and _renderTopicSubView do on the way in.
+  App.currentSubTab = 'topic';
+  const view = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('async renderDevView(subTab, ref) {'));
+  assert.match(view, /if \(subTab !== 'topic'\) \{ AppView\._devTopic = null; AppView\._devTopicInPanel = false; \}\n(?:\s*\/\/[^\n]*\n)*\s*else AppView\._devTopicInPanel = false;/,
+    'a topic page takes the topic from the panel');
+  AppView._devTopicInPanel = false;
+  AppView._devTopic = { kind: 'issue', id: 77 };
+  GroupChat.activeThread = { type: 'issue', ref: 77 };
+
+  // The panel's cleanup, as side-panel.tsx calls it.
+  AppView.closeTopicPanel('proposal', 51);
+  assert.equal(unmounts, 0, 'the request\'s thread stays mounted');
+  assert.deepEqual(plain(GroupChat.activeThread), { type: 'issue', ref: 77 });
+  assert.deepEqual(plain(AppView._devTopic), { kind: 'issue', id: 77 });
+
+  // Even with the flag still up, a panel only closes its own item.
+  AppView._devTopicInPanel = true;
+  AppView.closeTopicPanel('proposal', 51);
+  assert.equal(unmounts, 0, 'another topic is not the panel\'s to close');
+  assert.equal(AppView._devTopicInPanel, true);
+
+  // Its own item it still takes down, as ✕ does.
+  App.currentSubTab = 'forum';
+  AppView._devTopic = { kind: 'proposal', id: 51 };
+  AppView.closeTopicPanel('proposal', 51);
+  assert.equal(unmounts, 1);
+  assert.equal(AppView._devTopicInPanel, false);
+  assert.equal(AppView._devTopic, null);
 });
 
 test('#2496: the mine-ness predicate reads every live mark the board writes', () => {
