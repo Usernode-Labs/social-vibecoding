@@ -126,6 +126,18 @@ external agent (`visible_changes` on the CLI's `proposal_submit_build`). The sha
   changes with no shots (7 of 24 in about 125 merged proposals). These are
   warnings too: the declaration is recorded either way. `submit_work`'s
   answer does not carry them.
+- Nothing on the copies answers with a model: they have no model key, so
+  the Homeroom bot only says it cannot reach its model there, and an app's
+  own AI features get no answer. `dataNote` says so on every declaration,
+  and a change whose words make a step wait for a reply ("ask the Homeroom
+  bot to…", "DM the bot", "the bot replies") is warned whatever its
+  `hints.setup` says and whatever states are ready-made: neither makes a
+  model answer. Start such a change from a ready-made state or a seeded
+  message that already holds the reply. The Homeroom bot's own builds are
+  told the same when asked to declare (`homeroom-bot-live.js`
+  `BUILD_VISIBLE_CHANGES_LINES`). The bot's offer to close a request
+  (PR 4536) was declared as asking the bot, and its shots ended on "I can't
+  reach my model".
 - On an app built on Homeroom, no persona is the app's creator or one of
   its admins (see "Roles in an app built on Homeroom" below). The same
   response warns about a change declared there for `read_only_admin` or
@@ -197,7 +209,13 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    - for the member: in the same chat with the Homeroom bot, the answered
      plan for a new project's first version, and under it the bot's thanks
      with the project's card and its build line (Building it). The project
-     has no first-version record, so no Home tile turns a build line for it.
+     has no first-version record, so no Home tile turns a build line for it;
+   - for the member: last in the same chat, their message saying request
+     #900001 (a staging mock) is done and the bot's offer quoting it to open
+     a vote on closing it, with Propose to close and Keep it open, waiting
+     for an answer. Its action row is real, so a tap goes the bot's own way,
+     but it cannot open the vote: GitHub does not have the mock, and the bot
+     answers that it couldn't propose closing it just now.
 
    Each state goes into both copies or neither. A state the base or head
    revision cannot hold is left out of the run, as is one that fails to
