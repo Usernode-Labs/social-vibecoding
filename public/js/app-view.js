@@ -17005,7 +17005,7 @@ const AppView = {
       // Under this many, folding costs a click and saves nothing.
       foldPasses: passCount > AppView.PASS_FOLD_AT,
       advisoryNote: (!failing && advisoryRows.length)
-        ? 'Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.'
+        ? 'Advisory checks have not yet passed on a change that merged, so they report without blocking. Fix one, and once the fix merges it guards every change after it.'
         : null,
       checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
       // #1442 — WHICH main the verdict is a statement about. `stale` above
