@@ -1262,6 +1262,14 @@ const GroupChat = {
 
     const form = container.querySelector('#gc-thread-form');
     const input = container.querySelector('#gc-thread-input');
+    // #4517: the shell is React's now, so moving from one topic's page to
+    // another's in the same host keeps the SAME form and input nodes. Every
+    // listener below closes over this mount's `{ type, ref }`, and the ones
+    // an earlier mount bound were still on those nodes — the oldest ran first
+    // and sent the message to the topic opened earlier, emptying the input
+    // before this mount's own handler could see it. Each mount drops the
+    // previous mount's listeners before it binds its own.
+    const signal = GroupChat._rewireThreadComposer();
     if (form && input) {
       const saved = GroupChat.getDraft(slug, threadKey);
       if (saved) input.value = saved;
@@ -1284,12 +1292,12 @@ const GroupChat = {
       form.addEventListener('submit', (e) => {
         e.preventDefault();
         submitThread();
-      });
+      }, { signal });
       input.addEventListener('input', () => {
         GroupChat.setDraft(slug, input.value, threadKey);
         GroupChat._autoGrowTextarea(input);
         GroupChat.sendTyping({ type, ref });
-      });
+      }, { signal });
       // Multi-line submit semantics, same as the general composer: Enter
       // sends, Shift+Enter inserts a newline, touch keyboards always insert
       // a newline (Send button sends) — and ⌘/Ctrl+Enter sends anywhere
@@ -1303,10 +1311,10 @@ const GroupChat = {
           e.preventDefault();
           submitThread();
         }
-      });
+      }, { signal });
       // #694: paperclip / paste / drag-and-drop attachment wiring for
       // this thread's composer.
-      GroupChat.setupAttachments({ type, ref });
+      GroupChat.setupAttachments({ type, ref }, signal);
       // #87/#130 parity with the general composer: @mention, #/PR#
       // reference and `:emoji` autocomplete on the thread input.
       if (typeof MentionAutocomplete !== 'undefined') {
@@ -1326,7 +1334,7 @@ const GroupChat = {
           e.preventDefault();
           GroupChat.clearQuote();
         }
-      });
+      }, { signal });
     }
 
     GroupChat.renderThread();
@@ -1349,7 +1357,21 @@ const GroupChat = {
     // general composer (replyDraft is global).
     if (GroupChat.activeThread && GroupChat.replyDraft) GroupChat.clearQuote();
     GroupChat.activeThread = null;
+    // #4517: nothing typed into a left thread's composer may still post to it.
+    GroupChat._threadComposerWiring?.abort();
+    GroupChat._threadComposerWiring = null;
     clearTimeout(GroupChat._threadTypingTimer);
+  },
+
+  // #4517: the thread composer's listeners belong to ONE mount, the topic it
+  // was mounted for. The form and input outlive a mount (React keeps them
+  // across topics), so each mount aborts the last one's listeners here and
+  // binds its own with the signal this returns.
+  _threadComposerWiring: null,
+  _rewireThreadComposer() {
+    GroupChat._threadComposerWiring?.abort();
+    GroupChat._threadComposerWiring = new AbortController();
+    return GroupChat._threadComposerWiring.signal;
   },
 
   async loadThreadHistory(type, ref) {
@@ -3296,8 +3318,10 @@ const GroupChat = {
   // Wire the paperclip button, hidden file input, clipboard paste, and
   // drag-and-drop for one composer. `thread` null = the general composer
   // (ids gc-*), else the thread composer (ids gc-thread-*). Idempotent
-  // per mount — both composers are fresh DOM on every (re)render.
-  setupAttachments(thread) {
+  // per mount: the thread composer's nodes survive a remount (#4517), so its
+  // caller passes the mount's `signal` and the previous mount's listeners,
+  // which carry the previous topic's scope, are gone before these bind.
+  setupAttachments(thread, signal) {
     const t = thread || null;
     const btn = document.getElementById(t ? 'gc-thread-attach-btn' : 'gc-attach-btn');
     const fileInput = document.getElementById(t ? 'gc-thread-file-input' : 'gc-file-input');
@@ -3309,11 +3333,12 @@ const GroupChat = {
     GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a.scope === key);
     GroupChat._renderAttachStrip(t);
 
-    btn.addEventListener('click', () => fileInput.click());
+    const opts = signal ? { signal } : undefined;
+    btn.addEventListener('click', () => fileInput.click(), opts);
     fileInput.addEventListener('change', () => {
       if (fileInput.files?.length) GroupChat._addFiles(fileInput.files, t);
       fileInput.value = '';
-    });
+    }, opts);
 
     // Paste an image straight from the clipboard (screenshots).
     const textarea = document.getElementById(t ? 'gc-thread-input' : 'gc-input');
@@ -3340,7 +3365,7 @@ const GroupChat = {
           e.preventDefault();
           GroupChat._addFiles(files, t);
         }
-      });
+      }, opts);
     }
 
     // Drag-and-drop onto the message area or the composer.
@@ -3350,13 +3375,13 @@ const GroupChat = {
     ];
     for (const el of dropEls) {
       if (!el) continue;
-      el.addEventListener('dragover', (e) => { e.preventDefault(); });
+      el.addEventListener('dragover', (e) => { e.preventDefault(); }, opts);
       el.addEventListener('drop', (e) => {
         if (e.dataTransfer?.files?.length) {
           e.preventDefault();
           GroupChat._addFiles(e.dataTransfer.files, t);
         }
-      });
+      }, opts);
     }
     GroupChat._wireDropZone(dropEls, t);
   },
