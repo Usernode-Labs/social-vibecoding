@@ -14,11 +14,10 @@ import type { ChatFailure, Incidents, RolloutHealthData } from './admin-homeroom
 //
 // The bot reads each open request with the app's repository open and decides
 // what it would do: ask one question, build it, hand it to a person, or say
-// there is nothing to build. On a LIVE app it acts on that: it posts, asks,
-// specs and builds proposals for the group to vote on. On a SHADOW app it
-// only records the verdict, for an admin to rate here; those ratings are the
-// calibration signal that decides where it goes live next. A PAUSED app is
-// left alone. services/homeroom-bot.js has the full reasoning; routes/admin.js
+// there is nothing to build, and it acts on that on every app but a PAUSED
+// one: it posts, asks, specs and builds proposals for the group to vote on.
+// An admin rates its verdicts here. Older runs were made in shadow (recorded,
+// never acted on) while it was tried out, and keep that label. services/homeroom-bot.js has the full reasoning; routes/admin.js
 // the endpoints.
 //
 // Three tabs, each with an address of its own (#admin/homeroom-bot,
@@ -28,10 +27,10 @@ import type { ChatFailure, Incidents, RolloutHealthData } from './admin-homeroom
 //   Overview   is it on, is it healthy, what is it doing (running now, the
 //              queue, spend, agreement), and the verdicts to rate.
 //   Settings   ONE form, grouped by decision: on or off and the budgets,
-//              where it works (one row per app: Live, Shadow or Paused),
-//              the model per stage (picked from the benchmark's catalog,
-//              with each model's latest result there), who it talks to in a
-//              DM, shadow builds, and the tuning knobs folded away. Nothing
+//              where it works (one row per app: Live or Paused), the model
+//              per stage (picked from the benchmark's catalog, with each
+//              model's latest result there), its DMs, side builds, and the
+//              tuning knobs folded away. Nothing
 //              saves until "Save changes", one request for the whole form
 //              (the route validates the whole patch before it writes any of
 //              it). It used to save three ways: on change, on blur and on a
@@ -56,17 +55,15 @@ import type { ChatFailure, Incidents, RolloutHealthData } from './admin-homeroom
 
 interface Settings {
   mode: 'off' | 'shadow' | 'live';
-  concurrency: number;
   batchSize: number;
   // The apps it leaves alone. It acts for real on every other one.
   pausedApps: string[];
   turnSeconds: number;
   turnInputTokens: number;
-  // Shadow builds: ready verdicts on an app it does not act on for real
-  // (every app on a staging copy) built on a branch nobody is shown, in a
-  // lane of their own, this many at once. The platform's own repository is
-  // left out unless included.
-  shadowBuilds: boolean;
+  // How many live builds the benchmark's trials and a later change's side
+  // builds wait behind (isLiveLaneSaturated), and whether side builds are
+  // made on the platform's own repository (laterSideSkipReason). Both are
+  // named for the shadow builds they also governed.
   buildConcurrency: number;
   shadowBuildPlatform: boolean;
   // #3624: what each person's requests may cost the platform in a week
@@ -121,16 +118,6 @@ const MODEL_STAGES: { key: ModelStage; label: string }[] = [
 ];
 // The server's own rule (MODEL_ID_RE in services/homeroom-bot.js).
 const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
-
-interface BuildLane {
-  queued: number;
-  building: number;
-  built: number;
-  failed: number;
-  costUsd: number;
-  lane: { at: string; started: number; inFlight: number; paused: string | null; detail?: string } | null;
-  fault: { error: string; retryAt: string } | null;
-}
 
 interface Bot {
   id: number;
@@ -284,7 +271,6 @@ interface Payload {
   runs: Run[];
   apps: { slug: string; name: string }[];
   caps: { proposalsPerApp: number; proposalsTotal: number; questionsPerAppPerDay: number };
-  builds: BuildLane;
   mentionOptOuts: { total: number; items: MentionOptOut[] };
   workingNow?: Working[];
   dmChat?: DmChat;
@@ -746,20 +732,10 @@ function AddToSuite({ run, busy }: { run: Run; busy: boolean }) {
   );
 }
 
-function buildLaneLine(b: BuildLane | undefined): string {
-  if (!b) return '';
-  const parts = [
-    `${b.queued} queued`,
-    `${b.building} building`,
-    `${b.built} built`,
-    `${b.failed} failed`,
-    `${money(b.costUsd)} spent on builds`,
-  ];
-  let line = `${parts.join(', ')}.`;
-  if (b.fault) line += ` Backing off after a platform fault until ${when(b.fault.retryAt)}: ${b.fault.error}.`;
-  else if (b.lane?.paused === 'budget') line += ' Waiting on the weekly cap.';
-  else if (b.lane?.paused === 'github') line += ' Waiting for GitHub\'s hourly limit to reset.';
-  return line;
+/** Under Running now: who the work is for, or just that it is live. Pure. */
+export function workingFor(items: Working[]): string {
+  const people = new Set(items.map((w) => w.person).filter(Boolean)).size;
+  return people ? `for ${people} ${people === 1 ? 'person' : 'people'}` : 'live';
 }
 
 /** One whole-number field of the Settings form. */
@@ -973,13 +949,11 @@ interface Form {
   dmChat: boolean;
   continueReads: boolean;
   liveBuildStream: boolean;
-  shadowBuilds: boolean;
   shadowBuildPlatform: boolean;
   buildConcurrency: string;
   liveAtOnce: string;
   perPerson: string;
   proposalCeiling: string;
-  concurrency: string;
   turnMinutes: string;
   turnTokens: string;
   batchSize: string;
@@ -995,13 +969,11 @@ const FIELD_LABEL: Record<FormKey, string> = {
   dmChat: 'reading DMs',
   continueReads: 'continuing its last read',
   liveBuildStream: 'Live while a first version builds',
-  shadowBuilds: 'shadow builds',
-  shadowBuildPlatform: 'shadow builds of the platform',
-  buildConcurrency: 'shadow builds at once',
+  shadowBuildPlatform: 'side builds of Homeroom',
+  buildConcurrency: 'live builds before side builds wait',
   liveAtOnce: 'live requests at once',
   perPerson: 'per person at once',
   proposalCeiling: 'proposals at once',
-  concurrency: 'shadow apps at once',
   turnMinutes: 'minutes per issue',
   turnTokens: 'the token warning',
   batchSize: 'issues per app',
@@ -1021,13 +993,11 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     dmChat: s.dmChat !== false,
     continueReads: s.continueReads !== false,
     liveBuildStream: s.liveBuildStream !== false,
-    shadowBuilds: !!s.shadowBuilds,
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     buildConcurrency: String(s.buildConcurrency ?? 2),
     liveAtOnce: String(s.liveAtOnce ?? 12),
     perPerson: String(s.perPerson ?? 3),
     proposalCeiling: String(s.proposalCeiling ?? 0),
-    concurrency: String(s.concurrency ?? 1),
     turnMinutes: String(Math.round((s.turnSeconds ?? 1200) / 60)),
     turnTokens: String(Math.round((s.turnInputTokens ?? 10_000_000) / 1_000_000)),
     batchSize: String(s.batchSize ?? 100),
@@ -1070,7 +1040,7 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
   for (const key of dirty) {
     if (key === 'mode') patch.mode = form.mode;
     else if (key === 'pausedApps') patch.pausedApps = [...new Set(form.pausedApps.filter(Boolean))];
-    else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuilds' || key === 'shadowBuildPlatform') patch[key] = form[key];
+    else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuildPlatform') patch[key] = form[key];
     else if (key === 'models') {
       const changed: Record<string, string> = {};
       for (const m of MODEL_STAGES) {
@@ -1082,11 +1052,10 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
       if (Object.keys(changed).length) patch.models = changed;
     } else if (key === 'botCap') patch.weeklyLimitCents = dollars('botCap', "The bot's weekly budget", '');
     else if (key === 'userCap') patch.userWeeklyCents = dollars('userCap', 'The budget per person', ' (0 for no limit)');
-    else if (key === 'buildConcurrency') patch.buildConcurrency = whole(key, 1, 4, 'Shadow builds at once');
+    else if (key === 'buildConcurrency') patch.buildConcurrency = whole(key, 1, 4, 'Live builds before side builds wait');
     else if (key === 'liveAtOnce') patch.liveAtOnce = whole(key, 1, 24, 'Live requests at once');
     else if (key === 'perPerson') patch.perPerson = whole(key, 1, 6, 'Per person at once');
     else if (key === 'proposalCeiling') patch.proposalCeiling = whole(key, 0, 1000, 'Proposals up for a vote at once');
-    else if (key === 'concurrency') patch.concurrency = whole(key, 1, 4, 'Shadow apps at once');
     else if (key === 'turnMinutes') {
       const n = whole(key, 1, 180, 'Minutes per issue');
       if (n != null) patch.turnSeconds = n * 60;
@@ -1260,40 +1229,6 @@ function HomeroomBotSection() {
     if (data) { setRunIssue(''); load(); }
   };
 
-  // Every open request whose latest verdict is ready and that has no build
-  // yet, into the build lane. The lane works through it at its own pace.
-  const backfill = async () => {
-    const data = await write('/api/admin/homeroom-bot/shadow-builds/backfill', 'POST', {}, 'Queued.');
-    if (!data || !alive.current) return;
-    const left = data.left || {};
-    const notes = [
-      left.live ? `${left.live} on live apps` : null,
-      left.platform ? `${left.platform} on the platform's own repository` : null,
-      left.paused ? `${left.paused} on paused apps` : null,
-    ].filter(Boolean);
-    setStatus({
-      text: data.queued
-        ? `Queued ${data.queued} build${data.queued === 1 ? '' : 's'} across ${data.apps} app${data.apps === 1 ? '' : 's'}.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`
-        : `Nothing new to build.${notes.length ? ` Left out: ${notes.join(', ')}.` : ''}`,
-      tone: 'ok',
-    });
-    load();
-  };
-
-  // The questions the bot asked under an older bar, triaged again under the
-  // current prompt: old and new verdicts sit side by side in the export.
-  const retriage = async () => {
-    const data = await write('/api/admin/homeroom-bot/retriage-questions', 'POST', {}, 'Queued.');
-    if (!data || !alive.current) return;
-    setStatus({
-      text: data.queued
-        ? `${data.queued} question${data.queued === 1 ? '' : 's'} will be triaged again.${data.live ? ` ${data.live} on live apps left alone.` : ''}`
-        : `No questions to triage again.${data.live ? ` ${data.live} on live apps left alone.` : ''}`,
-      tone: 'ok',
-    });
-    load();
-  };
-
   // A live app's open issues, all of them, as if just posted (#3480): the
   // loop takes them one at a time, as it takes new ones.
   const retriageApp = async (slug: string) => {
@@ -1419,7 +1354,7 @@ function HomeroomBotSection() {
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {tile('Running now', String(working.length), 'admin-homeroom-bot-tile-working',
-              working.length ? `${working.filter((w) => w.lane === 'live').length} live, ${working.filter((w) => w.lane !== 'live').length} shadow` : 'nothing')}
+              working.length ? workingFor(working) : 'nothing')}
             {tile('Waiting in the queue', payload ? String(payload.queue.depth) : '–', 'admin-homeroom-bot-tile-queue')}
             {tile('Spent this week', bot ? dollarsFromCents(bot.weeklySpentCents) : '–', 'admin-homeroom-bot-tile-spend',
               bot ? `of ${dollarsFromCents(bot.weeklyLimitCents)}` : undefined)}
@@ -1530,12 +1465,6 @@ function HomeroomBotSection() {
               </div>
               <button type="button" className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={runNow}>
                 Queue it first
-              </button>
-              <button
-                type="button" id="admin-homeroom-bot-retriage"
-                className={AdminUI.btn.outlineSm} disabled={busy !== ''} onClick={retriage}
-              >
-                Triage every open question again
               </button>
             </div>
           ) : null}
@@ -1770,7 +1699,7 @@ function HomeroomBotSection() {
                     onChange={(e) => setField('botCap', e.target.value)}
                   />
                   <p className={`${AdminUI.muted} mt-1`}>
-                    {bot ? `${dollarsFromCents(bot.weeklySpentCents)} spent this week. Triage, plans, builds and shadow builds all come out of it.` : ''}
+                    {bot ? `${dollarsFromCents(bot.weeklySpentCents)} spent this week. Triage, plans, builds and side builds all come out of it.` : ''}
                   </p>
                 </div>
                 <div>
@@ -1863,55 +1792,30 @@ function HomeroomBotSection() {
               </p>
             </div>
 
-            <div className={`${AdminUI.card} p-4`}>
+            <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-side-builds">
               <div className={AdminUI.cardHeader}>
-                <h3 className={AdminUI.cardTitle}>Shadow builds</h3>
+                <h3 className={AdminUI.cardTitle}>Side builds and the benchmark</h3>
               </div>
-              <div className="grid gap-4 md:grid-cols-3">
-                <div>
-                  <label className={AdminUI.label} htmlFor="admin-homeroom-bot-shadow-builds">Build ready requests on Shadow apps</label>
-                  <select
-                    id="admin-homeroom-bot-shadow-builds"
-                    className={`${AdminUI.select} mt-1`}
-                    value={form.shadowBuilds ? 'on' : 'off'}
-                    disabled={!canWrite}
-                    onChange={(e) => setField('shadowBuilds', e.target.value === 'on')}
-                  >
-                    <option value="off">Off</option>
-                    <option value="on">On</option>
-                  </select>
-                  <label className="flex items-center gap-2 mt-3 text-sm" htmlFor="admin-homeroom-bot-shadow-build-platform">
-                    <input
-                      id="admin-homeroom-bot-shadow-build-platform" type="checkbox"
-                      className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
-                      checked={form.shadowBuildPlatform}
-                      disabled={!canWrite}
-                      onChange={(e) => setField('shadowBuildPlatform', e.target.checked)}
-                    />
-                    <span>Include the platform&apos;s own repository</span>
-                  </label>
-                </div>
-                <NumberField id="admin-homeroom-bot-build-concurrency" label="Shadow builds at once"
+              <div className="grid gap-4 md:grid-cols-2">
+                <NumberField id="admin-homeroom-bot-build-concurrency" label="Live builds before side builds wait"
                   value={form.buildConcurrency} min={1} max={4} canWrite={canWrite}
                   onChange={(v) => setField('buildConcurrency', v)} />
-                <div>
-                  <p className={AdminUI.label}>The build lane</p>
-                  <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-build-lane">{buildLaneLine(payload?.builds)}</p>
-                  {canWrite ? (
-                    <button
-                      type="button" id="admin-homeroom-bot-shadow-backfill"
-                      className={`${AdminUI.btn.outlineSm} mt-2`}
-                      disabled={busy !== '' || !saved.shadowBuilds || dirty.includes('shadowBuilds')}
-                      title={!saved.shadowBuilds ? 'Turn shadow builds on and save first.' : undefined}
-                      onClick={backfill}
-                    >Build every open ready request</button>
-                  ) : null}
-                </div>
+                <label className="flex items-center gap-2 text-sm md:mt-6" htmlFor="admin-homeroom-bot-shadow-build-platform">
+                  <input
+                    id="admin-homeroom-bot-shadow-build-platform" type="checkbox"
+                    className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                    checked={form.shadowBuildPlatform}
+                    disabled={!canWrite}
+                    onChange={(e) => setField('shadowBuildPlatform', e.target.checked)}
+                  />
+                  <span>Make side builds on Homeroom&apos;s own repository too</span>
+                </label>
               </div>
-              <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-shadow-builds-note">
-                A ready request on a Shadow app is built on a branch of the app&apos;s repository, and nothing else happens:
-                no proposal, no post, nothing in the app. Each build writes a plan first and works from it, runs beside
-                triage, and comes out of the bot&apos;s weekly budget. Each verdict on the Overview shows its branch and plan.
+              <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-side-builds-note">
+                A side build is another configuration of the bot building the same change quietly, beside the one that
+                builds it for real, so the two can be compared (Benchmark). Side builds and the benchmark&apos;s own trials
+                start only while fewer live builds than this are running, so they never take a worker somebody is waiting
+                on. Each comes out of the bot&apos;s weekly budget.
               </p>
             </div>
 
@@ -1924,8 +1828,6 @@ function HomeroomBotSection() {
                   value={form.perPerson} min={1} max={6} canWrite={canWrite} onChange={(v) => setField('perPerson', v)} />
                 <NumberField id="admin-homeroom-bot-proposal-ceiling" label="Proposals up for a vote at once (0: automatic)"
                   value={form.proposalCeiling} min={0} max={1000} canWrite={canWrite} onChange={(v) => setField('proposalCeiling', v)} />
-                <NumberField id="admin-homeroom-bot-concurrency" label="Shadow apps at once"
-                  value={form.concurrency} min={1} max={4} canWrite={canWrite} onChange={(v) => setField('concurrency', v)} />
                 <NumberField id="admin-homeroom-bot-turn-minutes" label="Minutes one issue may take"
                   value={form.turnMinutes} min={1} max={180} canWrite={canWrite} onChange={(v) => setField('turnMinutes', v)} />
                 <NumberField id="admin-homeroom-bot-turn-tokens" label="Warn above, million tokens read"
@@ -1940,10 +1842,9 @@ function HomeroomBotSection() {
                   value={form.batchSize} min={1} max={500} canWrite={canWrite} onChange={(v) => setField('batchSize', v)} />
               </div>
               <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-at-once-note">
-                Live requests, counted across the whole platform, are the ones on Live apps and the projects it builds for
-                people. It takes one request per app at a time and shares the slots between people in turns. Shadow triage
-                runs in slots of its own, so it never holds up live work. Each slot uses a worker from the same pool as
-                people&apos;s own coding sessions.
+                Live requests are counted across the whole platform. It takes one request per app at a time and shares the
+                slots between people in turns. Each slot uses a worker from the same pool as people&apos;s own coding
+                sessions.
               </p>
               <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-continue-reads">
                 <input
