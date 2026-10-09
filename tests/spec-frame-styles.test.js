@@ -23,10 +23,13 @@
 //      platform spec and a kit spec through the shell's own renderSpecHtml +
 //      fitSpecFrames (window.UsernodeReact.specHtml) and reads a computed
 //      style inside each sandboxed frame that only the stylesheet provides.
-//      It skips where Playwright or Chromium is missing. The platform's
-//      unit-suite container is the worker image (unit-suite.js
-//      UNIT_SUITE_IMAGE), which installs Playwright and Chromium
-//      (worker/Dockerfile, @playwright/mcp), so it runs there.
+//      It is opt-in: it runs only when SPEC_FRAME_PLAYWRIGHT names a
+//      Playwright module, or when the repository's own dependencies include
+//      one. It does not reach for the worker image's global copy: the first
+//      run inside the platform's unit-suite container failed all three of
+//      its tests without naming them, and a browser test that cannot be
+//      diagnosed there must not hold every proposal's merge gate. The
+//      header guard above runs everywhere and is what protects the frames.
 //
 // Run with: node --test tests/spec-frame-styles.test.js
 //
@@ -36,7 +39,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createRequire } = require('node:module');
 
 const ROOT = path.join(__dirname, '..');
 const CSS_PATHS = ['/usernode-native/v1/native.css', '/css/app.css', '/css/tailwind.css'];
@@ -153,16 +155,12 @@ test('the shell document sends no policy that would stop its spec frames styling
 // ── The browser half ────────────────────────────────────────────────────────
 
 function playwrightPath() {
-  const candidates = [process.env.SPEC_FRAME_PLAYWRIGHT, process.env.BENCH_PLAYWRIGHT, 'playwright', 'playwright-core',
-    '/opt/node-tools/node_modules/playwright', '/usr/local/lib/node_modules/@playwright/mcp/node_modules/playwright'];
+  const candidates = [process.env.SPEC_FRAME_PLAYWRIGHT, 'playwright', 'playwright-core'];
   for (const candidate of candidates) {
     if (!candidate) continue;
     try { return require.resolve(candidate); } catch { /* next */ }
   }
-  // The worker image's copy, wherever npm put it beside the MCP server.
-  try {
-    return createRequire('/usr/local/lib/node_modules/@playwright/mcp/package.json').resolve('playwright');
-  } catch { return null; }
+  return null;
 }
 
 async function launchChromium() {
