@@ -76,6 +76,9 @@ function firstVersionLive() { return require('./first-version-live'); }
 function botReview() { return require('./bot-review'); }
 // #4210: interrupted builds, kept for admins.
 function incidents() { return require('./platform-incidents'); }
+// #4530: whether the new words on a request the bot already answered were
+// for the bot, so a repeat note is held back when they were not.
+function addressedMod() { return require('./homeroom-bot-addressed'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -3438,6 +3441,11 @@ async function runTriage(pool, config, {
       acted = await actOnVerdict({
         pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
         seed, seedReadAt, postedAt, turnBudgetMs, botLogin: botUsername,
+        // #4530: a look the request's own changes started repeats a note
+        // only for the bot; everything else speaks as it did. The comments
+        // the read fetched, so a mention on the GitHub issue counts too.
+        relook: item.reason === 'changed' || item.reason === READ_AGAIN_REASON,
+        comments,
         model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
         quietHold: item.reason === APP_AGAIN_REASON,
         proposalCeiling: botProposalCeiling(settings),
@@ -6043,7 +6051,7 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, deps,
+  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, comments = [], deps,
 }) {
   const { github, ws } = deps;
   const say = liveSayer({
@@ -6051,7 +6059,21 @@ async function actOnVerdict({
     notifications: deps.notifications || null, postedAt,
   });
   let acted = capSuppressed ? 'held' : parsed.verdict;
-  if (capSuppressed) {
+  // #4530: a look the request's own changes started (a 'changed' or
+  // 'read_again' reason) repeats one of the note verdicts only when somebody
+  // has addressed the bot since its last note: mentioned it, replied to one
+  // of its messages, or answered a question it asked. People working
+  // something out among themselves are not for it. Fails open, and never
+  // holds a ready verdict or a note a cap is already quiet about.
+  const gate = relook && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict)
+    ? await addressedMod().shouldSpeak(pool, { appId: app.id, issueNumber, botId: bot.id, comments, botLogin })
+    : { speak: true };
+  if (!gate.speak) {
+    log.info('homeroom-bot', 'Live note not repeated: nobody addressed the bot', {
+      app: app.slug, issueNumber, verdict: parsed.verdict,
+    });
+    acted = 'unaddressed';
+  } else if (capSuppressed) {
     const kind = live.heldKind(capSuppressed);
     const already = await live.lastPostKind(pool, app.id, issueNumber) === kind;
     log.info('homeroom-bot', 'Live verdict held by a cap', {

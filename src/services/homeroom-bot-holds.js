@@ -141,6 +141,15 @@ function decide({ holds = [], mentions = [], notes = [] }) {
   return { action: 'leave', mention, holds: others };
 }
 
+/**
+ * #4530: the text of the regex a mention of the bot matches, so every place
+ * that looks for one matches it identically: @homeroom_bot, and not
+ * @homeroom_bot_x or the tail of an email address.
+ */
+function mentionPattern() {
+  return `(^|[^a-z0-9_])@${live.BOT_USERNAME}([^a-z0-9_-]|$)`;
+}
+
 /** Recent mentions of the bot by people, in the discussions of `numbers`, oldest first. */
 async function recentMentions(pool, appId, numbers, { windowHours = MENTION_WINDOW_HOURS } = {}) {
   const { rows } = await pool.query(
@@ -153,7 +162,7 @@ async function recentMentions(pool, appId, numbers, { windowHours = MENTION_WIND
         AND m.content ~* $3
         AND m.created_at > NOW() - make_interval(hours => $4)
       ORDER BY m.created_at, m.id`,
-    [appId, numbers, `(^|[^a-z0-9_])@${live.BOT_USERNAME}([^a-z0-9_-]|$)`, windowHours],
+    [appId, numbers, mentionPattern(), windowHours],
   );
   return rows;
 }
@@ -265,6 +274,7 @@ module.exports = {
   GOING_KIND,
   MENTION_WINDOW_HOURS,
   ageText,
+  mentionPattern,
   holdsByPerson,
   leavingText,
   goingText,
