@@ -52,6 +52,49 @@ test('Dockerfile smoke-tests a headless Chromium launch at image build time, as 
   assert.ok(userNodeIdx !== -1 && smokeIdx > userNodeIdx, 'smoke test runs as node');
 });
 
+// #4087: the shots browser renders the shell's system-ui stack with a font
+// that has real weights, not a regular-only fallback.
+test('Dockerfile gives the browser a system-ui font with real weights (Inter)', () => {
+  const df = read('Dockerfile');
+  assert.match(df, /install -y --no-install-recommends \\\n\s+fontconfig fonts-inter/);
+  assert.match(df, /COPY fonts-local\.conf \/etc\/fonts\/local\.conf/);
+  assert.match(df, /fc-cache -f/);
+  // the image build fails if fontconfig would not give an 800 Inter ExtraBold
+  assert.ok(df.includes(`test "$(fc-match -f '%{family[0]}|%{style[0]}' 'system-ui:weight=205')" = 'Inter|Extra Bold'`));
+  // ...and if the bundled Chromium itself does not draw the shell's stack in
+  // Inter: the font check rides the Chromium smoke test, as node.
+  assert.match(df, /COPY verify-shots-browser-fonts\.js \/usr\/local\/bin\/verify-shots-browser-fonts\.js/);
+  assert.match(df, /chromium\.launch\([^\n]*\n\s+&& node \/usr\/local\/bin\/verify-shots-browser-fonts\.js\n/);
+  assert.ok(df.indexOf('&& node /usr/local/bin/verify-shots-browser-fonts.js\n') > df.lastIndexOf('USER node'));
+  // before the daily cache-bust layer, so it stays cached
+  assert.ok(df.indexOf('fonts-inter') < df.indexOf('ARG CLAUDE_CODE_CACHE_BUST'));
+
+  const conf = read('fonts-local.conf');
+  for (const family of ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'ui-sans-serif']) {
+    assert.match(conf, new RegExp(`<test name="family" qual="any"><string>${family}</string></test>\\s*` +
+      '<edit name="family" mode="assign" binding="strong"><string>Inter</string></edit>'));
+  }
+  assert.match(conf, /<family>sans-serif<\/family>\s*<prefer><family>Inter<\/family><\/prefer>/);
+  // Chromium reaches its bare system-ui font only through this preference.
+  // fontconfig rejects the whole file on a malformed comment ("--" inside one)
+  for (const comment of conf.match(/<!--([\s\S]*?)-->/g) || []) {
+    assert.doesNotMatch(comment.slice(4, -3), /--/);
+  }
+
+  // The verifier checks the shell's real stack and bare system-ui at the
+  // weights the shell draws with, by the face Chromium actually used.
+  const fonts = require(path.join(WORKER_DIR, 'verify-shots-browser-fonts.js'));
+  assert.equal(fonts.SHELL_STACK.split(',')[0], 'ui-sans-serif');
+  assert.match(fonts.SHELL_STACK, /^ui-sans-serif, system-ui, sans-serif,/);
+  assert.deepEqual(fonts.STACKS, [fonts.SHELL_STACK, 'system-ui']);
+  assert.deepEqual(fonts.EXPECTED, { 400: 'Inter-Regular', 650: 'Inter-Bold', 700: 'Inter-Bold', 800: 'Inter-ExtraBold' });
+  assert.match(read('verify-shots-browser-fonts.js'), /CSS\.getPlatformFontsForNode/);
+  const good = { 400: ['Inter|Inter-Regular'], 650: ['Inter|Inter-Bold'], 700: ['Inter|Inter-Bold'], 800: ['Inter Extra Bold|Inter-ExtraBold'] };
+  assert.deepEqual(fonts.wrongFaces(good), []);
+  assert.equal(fonts.wrongFaces({ ...good, 800: ['DejaVu Sans|DejaVuSans-Bold'] }).length, 1);
+  assert.equal(fonts.wrongFaces({ ...good, 400: ['Inter|Inter-Regular', 'DejaVu Sans|DejaVuSans'] }).length, 1);
+});
+
 // ── worker-run.sh: seed the MCP config at bootstrap ──────────────────────
 
 test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json restore', () => {
