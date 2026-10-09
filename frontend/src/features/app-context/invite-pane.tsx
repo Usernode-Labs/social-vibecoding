@@ -95,7 +95,6 @@ const SENTENCE = {
     withinDayFor: 'agent:appContext.invite.sentence.build.withinDayFor',
     withinDayForMore: 'agent:appContext.invite.sentence.build.withinDayForMore',
     inDaysFor: 'agent:appContext.invite.sentence.build.inDaysFor',
-    inDaysForMore: 'agent:appContext.invite.sentence.build.inDaysForMore',
   },
   join: {
     untilOff: 'agent:appContext.invite.sentence.join.untilOff',
@@ -106,7 +105,6 @@ const SENTENCE = {
     withinDayFor: 'agent:appContext.invite.sentence.join.withinDayFor',
     withinDayForMore: 'agent:appContext.invite.sentence.join.withinDayForMore',
     inDaysFor: 'agent:appContext.invite.sentence.join.inDaysFor',
-    inDaysForMore: 'agent:appContext.invite.sentence.join.inDaysForMore',
   },
 } as const;
 
@@ -122,7 +120,11 @@ export function linkSentence(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'u
   const count = link.uses ? Math.max(0, link.maxUses - link.uses) : link.maxUses;
   if (days == null) return t(link.uses ? ids.noEndForMore : ids.noEndFor, { count });
   if (days <= 1) return t(link.uses ? ids.withinDayForMore : ids.withinDayFor, { count });
-  return t(link.uses ? ids.inDaysForMore : ids.inDaysFor, { count, days });
+  // Two counts, and each picks its own plural form: the days are the
+  // sentence's `count`, and the people are a counted statement of their own
+  // that the sentence places.
+  const uses = t(link.uses ? 'agent:appContext.invite.fact.worksForMore' : 'agent:appContext.invite.fact.worksFor', { count });
+  return t(ids.inDaysFor, { count: days, uses });
 }
 
 /** "3 of 25 used · 5 days left", for a row of Your links. */

@@ -255,6 +255,21 @@ test('the words: the landing card, the invite pane', () => {
   const now = Date.parse('2026-09-27T12:00:00Z');
   const fresh = { expiresAt: '2026-10-04T12:00:00Z', maxUses: 25, uses: 0 };
   assert.equal(pane.linkSentence(fresh, 'member', now), 'Anyone with this link can join. It expires in 7 days and works for 25 people.');
+  // Every pair of days and people reads as it did when one sentence held both
+  // numbers; each now chooses its own plural form.
+  for (const grant of ['member', 'collaborator']) {
+    const lead = grant === 'collaborator' ? 'Anyone with this link can join and build with you.' : 'Anyone with this link can join.';
+    for (const days of [2, 5, 21, 30]) {
+      for (const [maxUses, uses] of [[1, 0], [2, 0], [25, 0], [25, 24], [25, 4], [21, 0], [100, 79]]) {
+        const left = uses ? maxUses - uses : maxUses;
+        const people = uses ? `${left} more ${left === 1 ? 'person' : 'people'}` : `${left} ${left === 1 ? 'person' : 'people'}`;
+        const link = { expiresAt: new Date(now + days * 86400000).toISOString(), maxUses, uses };
+        assert.equal(pane.linkSentence(link, grant, now), `${lead} It expires in ${days} days and works for ${people}.`, `${grant} ${days} ${maxUses} ${uses}`);
+      }
+    }
+  }
+  assert.match(read('frontend/src/features/app-context/invite-pane.tsx'), /return t\(ids\.inDaysFor, \{ count: days, uses \}\);/,
+    'the days are the sentence\'s plural count, and the people a counted statement of their own');
   assert.equal(pane.linkSentence({ ...fresh, uses: 24 }, 'collaborator', now),
     'Anyone with this link can join and build with you. It expires in 7 days and works for 1 more person.');
   assert.equal(pane.linkDetail({ ...fresh, uses: 3 }, now), '3 of 25 used · 7 days left');

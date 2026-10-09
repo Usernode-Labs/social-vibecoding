@@ -1751,21 +1751,29 @@
     "text": "Anyone with this link can join and build with you. It expires within a day and works for {{count}} more people.",
     "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{count}} is how many more people may still use the link, after those who already did."
   },
+  "appContext.invite.fact.worksFor_one": {
+    "text": "works for {{count}} person",
+    "description": "A counted statement about an invite link that completes a sentence under the link in the Invite pane, where the sentence has {{uses}} (\"It expires in 3 days and works for 5 people.\"). Its subject is the link. It has its own plural forms because the sentence also counts days. {{count}} is how many people the link was made for. No capital and no full stop: the sentence around it supplies them."
+  },
+  "appContext.invite.fact.worksFor_other": {
+    "text": "works for {{count}} people",
+    "description": "A counted statement about an invite link that completes a sentence under the link in the Invite pane, where the sentence has {{uses}} (\"It expires in 3 days and works for 5 people.\"). Its subject is the link. It has its own plural forms because the sentence also counts days. {{count}} is how many people the link was made for. No capital and no full stop: the sentence around it supplies them."
+  },
+  "appContext.invite.fact.worksForMore_one": {
+    "text": "works for {{count}} more person",
+    "description": "A counted statement about an invite link that completes a sentence under the link in the Invite pane, where the sentence has {{uses}} (\"It expires in 3 days and works for 5 people.\"). Its subject is the link. It has its own plural forms because the sentence also counts days. {{count}} is how many more people the link still lets in, after some have used it. No capital and no full stop: the sentence around it supplies them."
+  },
+  "appContext.invite.fact.worksForMore_other": {
+    "text": "works for {{count}} more people",
+    "description": "A counted statement about an invite link that completes a sentence under the link in the Invite pane, where the sentence has {{uses}} (\"It expires in 3 days and works for 5 people.\"). Its subject is the link. It has its own plural forms because the sentence also counts days. {{count}} is how many more people the link still lets in, after some have used it. No capital and no full stop: the sentence around it supplies them."
+  },
   "appContext.invite.sentence.build.inDaysFor_one": {
-    "text": "Anyone with this link can join and build with you. It expires in {{days}} days and works for {{count}} person.",
-    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many people may use it, and nobody has yet."
+    "text": "Anyone with this link can join and build with you. It expires in {{count}} day and {{uses}}.",
+    "description": "Sentence under an invite link in the Invite pane of the app menu, for a link that lets people join and build, has an end date more than a day away and a limit on how many people can use it. {{count}} is the number of days until it expires. {{uses}} is a counted statement about the people, already in its own plural form (agent:appContext.invite.fact.worksFor or .worksForMore, for example \"works for 5 people\"); place it wherever your language needs it."
   },
   "appContext.invite.sentence.build.inDaysFor_other": {
-    "text": "Anyone with this link can join and build with you. It expires in {{days}} days and works for {{count}} people.",
-    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many people may use it, and nobody has yet."
-  },
-  "appContext.invite.sentence.build.inDaysForMore_one": {
-    "text": "Anyone with this link can join and build with you. It expires in {{days}} days and works for {{count}} more person.",
-    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many more people may still use it."
-  },
-  "appContext.invite.sentence.build.inDaysForMore_other": {
-    "text": "Anyone with this link can join and build with you. It expires in {{days}} days and works for {{count}} more people.",
-    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used on a project where building is by invitation: the link makes the person a builder. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many more people may still use it."
+    "text": "Anyone with this link can join and build with you. It expires in {{count}} days and {{uses}}.",
+    "description": "Sentence under an invite link in the Invite pane of the app menu, for a link that lets people join and build, has an end date more than a day away and a limit on how many people can use it. {{count}} is the number of days until it expires. {{uses}} is a counted statement about the people, already in its own plural form (agent:appContext.invite.fact.worksFor or .worksForMore, for example \"works for 5 people\"); place it wherever your language needs it."
   },
   "appContext.invite.sentence.join.untilOff": {
     "text": "Anyone with this link can join. It works until you turn it off.",
@@ -1816,20 +1824,12 @@
     "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{count}} is how many more people may still use the link, after those who already did."
   },
   "appContext.invite.sentence.join.inDaysFor_one": {
-    "text": "Anyone with this link can join. It expires in {{days}} days and works for {{count}} person.",
-    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many people may use it, and nobody has yet."
+    "text": "Anyone with this link can join. It expires in {{count}} day and {{uses}}.",
+    "description": "Sentence under an invite link in the Invite pane of the app menu, for a link that lets people join, has an end date more than a day away and a limit on how many people can use it. {{count}} is the number of days until it expires. {{uses}} is a counted statement about the people, already in its own plural form (agent:appContext.invite.fact.worksFor or .worksForMore, for example \"works for 5 people\"); place it wherever your language needs it."
   },
   "appContext.invite.sentence.join.inDaysFor_other": {
-    "text": "Anyone with this link can join. It expires in {{days}} days and works for {{count}} people.",
-    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many people may use it, and nobody has yet."
-  },
-  "appContext.invite.sentence.join.inDaysForMore_one": {
-    "text": "Anyone with this link can join. It expires in {{days}} days and works for {{count}} more person.",
-    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many more people may still use it."
-  },
-  "appContext.invite.sentence.join.inDaysForMore_other": {
-    "text": "Anyone with this link can join. It expires in {{days}} days and works for {{count}} more people.",
-    "description": "Sentence under the invite link in the Invite pane of the app menu: who the link lets in and how long it works. Used where the link makes the person a member. {{days}} is how many days the link still works, always 2 or more; {{count}} is how many more people may still use it."
+    "text": "Anyone with this link can join. It expires in {{count}} days and {{uses}}.",
+    "description": "Sentence under an invite link in the Invite pane of the app menu, for a link that lets people join, has an end date more than a day away and a limit on how many people can use it. {{count}} is the number of days until it expires. {{uses}} is a counted statement about the people, already in its own plural form (agent:appContext.invite.fact.worksFor or .worksForMore, for example \"works for 5 people\"); place it wherever your language needs it."
   },
   "appContext.invite.detail.joined_one": {
     "text": "{{count}} joined",

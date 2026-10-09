@@ -2363,21 +2363,25 @@
     "text": "its author, now",
     "description": "Small text beside \"Sync with main\" on a proposal's page when the change's author has to do the sync by hand and their name is not known."
   },
-  "ledger.sync.blocked.commitsOneFile_one": {
-    "text": "<0>Blocked.</0> Main has moved {{count}} commit ahead, and 1 file changed on both sides, so the automatic sync cannot finish this one.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  "ledger.sync.fact.moved_one": {
+    "text": "Main has moved {{count}} commit ahead",
+    "description": "A complete counted fact used inside the sentences of the \"Sync with main\" row on a proposal's page, where the sentence has {{moved}} (for example \"Main has moved 3 commits ahead, and 2 files changed on both sides, so …\"). It has its own plural forms because the sentence holds two different counts. {{count}} is how many commits the project's main branch has gained since this change was started. No full stop: the sentence around it supplies the punctuation."
   },
-  "ledger.sync.blocked.commitsOneFile_other": {
-    "text": "<0>Blocked.</0> Main has moved {{count}} commits ahead, and 1 file changed on both sides, so the automatic sync cannot finish this one.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  "ledger.sync.fact.moved_other": {
+    "text": "Main has moved {{count}} commits ahead",
+    "description": "A complete counted fact used inside the sentences of the \"Sync with main\" row on a proposal's page, where the sentence has {{moved}} (for example \"Main has moved 3 commits ahead, and 2 files changed on both sides, so …\"). It has its own plural forms because the sentence holds two different counts. {{count}} is how many commits the project's main branch has gained since this change was started. No full stop: the sentence around it supplies the punctuation."
   },
-  "ledger.sync.blocked.commitsFiles_one": {
-    "text": "<0>Blocked.</0> Main has moved {{count}} commit ahead, and {{files}} files changed on both sides, so the automatic sync cannot finish this one.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  "ledger.sync.fact.overlap_one": {
+    "text": "{{count}} file changed on both sides",
+    "description": "A complete counted fact used inside the sentences of the \"Sync with main\" row on a proposal's page, where the sentence has {{overlap}} (for example \"Main has moved 3 commits ahead, and 2 files changed on both sides, so …\"). It has its own plural forms because the sentence holds two different counts. {{count}} is how many files were edited both in this change and on main. It follows other words in the sentence, so it does not start with a capital unless your language requires one. No full stop."
   },
-  "ledger.sync.blocked.commitsFiles_other": {
-    "text": "<0>Blocked.</0> Main has moved {{count}} commits ahead, and {{files}} files changed on both sides, so the automatic sync cannot finish this one.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  "ledger.sync.fact.overlap_other": {
+    "text": "{{count}} files changed on both sides",
+    "description": "A complete counted fact used inside the sentences of the \"Sync with main\" row on a proposal's page, where the sentence has {{overlap}} (for example \"Main has moved 3 commits ahead, and 2 files changed on both sides, so …\"). It has its own plural forms because the sentence holds two different counts. {{count}} is how many files were edited both in this change and on main. It follows other words in the sentence, so it does not start with a capital unless your language requires one. No full stop."
+  },
+  "ledger.sync.blocked.commitsAndFiles": {
+    "text": "<0>Blocked.</0> {{moved}}, and {{overlap}}, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{moved}} is the complete fact about how far the main branch has moved (changes:ledger.sync.fact.moved, for example \"Main has moved 3 commits ahead\") and {{overlap}} the complete fact about the files edited on both sides (changes:ledger.sync.fact.overlap, for example \"2 files changed on both sides\"); each already carries its own number in the right plural form. Place the two wherever your language needs them. The word inside <0></0> is shown in bold."
   },
   "ledger.sync.blocked.commitsLines_one": {
     "text": "<0>Blocked.</0> Main has moved {{count}} commit ahead, and the two changes touch the same lines, so the automatic sync cannot finish this one.",
@@ -2387,33 +2391,21 @@
     "text": "<0>Blocked.</0> Main has moved {{count}} commits ahead, and the two changes touch the same lines, so the automatic sync cannot finish this one.",
     "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.blocked.aheadOneFile": {
-    "text": "<0>Blocked.</0> Main has moved ahead, and 1 file changed on both sides, so the automatic sync cannot finish this one.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. Used when the number of new commits on the main branch is not known. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  "ledger.sync.blocked.aheadFiles_one": {
+    "text": "<0>Blocked.</0> Main has moved ahead, and {{count}} file changed on both sides, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. Used when the number of new commits on the main branch is not known. {{count}} is how many files were edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.blocked.aheadFiles": {
-    "text": "<0>Blocked.</0> Main has moved ahead, and {{files}} files changed on both sides, so the automatic sync cannot finish this one.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. Used when the number of new commits on the main branch is not known. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  "ledger.sync.blocked.aheadFiles_other": {
+    "text": "<0>Blocked.</0> Main has moved ahead, and {{count}} files changed on both sides, so the automatic sync cannot finish this one.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. Used when the number of new commits on the main branch is not known. {{count}} is how many files were edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
   "ledger.sync.blocked.aheadLines": {
     "text": "<0>Blocked.</0> Main has moved ahead, and the two changes touch the same lines, so the automatic sync cannot finish this one.",
     "description": "Text of the \"Sync with main\" row on a proposal's page when a person has to resolve the conflict by hand. Used when the number of new commits on the main branch is not known. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.resolvingNow.commitsOneFile_one": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and 1 file changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
-  },
-  "ledger.sync.resolvingNow.commitsOneFile_other": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and 1 file changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
-  },
-  "ledger.sync.resolvingNow.commitsFiles_one": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and {{files}} files changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
-  },
-  "ledger.sync.resolvingNow.commitsFiles_other": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and {{files}} files changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  "ledger.sync.resolvingNow.commitsAndFiles": {
+    "text": "<0>Syncing.</0> {{moved}}, and {{overlap}}. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{moved}} is the complete fact about how far the main branch has moved (changes:ledger.sync.fact.moved, for example \"Main has moved 3 commits ahead\") and {{overlap}} the complete fact about the files edited on both sides (changes:ledger.sync.fact.overlap, for example \"2 files changed on both sides\"); each already carries its own number in the right plural form. Place the two wherever your language needs them. The word inside <0></0> is shown in bold."
   },
   "ledger.sync.resolvingNow.commitsLines_one": {
     "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and the two changes touch the same lines. Homeroom is resolving it now, then it tries the merge again.",
@@ -2423,33 +2415,21 @@
     "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and the two changes touch the same lines. Homeroom is resolving it now, then it tries the merge again.",
     "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.resolvingNow.aheadOneFile": {
-    "text": "<0>Syncing.</0> Main has moved ahead, and 1 file changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. Used when the number of new commits on the main branch is not known. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  "ledger.sync.resolvingNow.aheadFiles_one": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and {{count}} file changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. Used when the number of new commits on the main branch is not known. {{count}} is how many files were edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.resolvingNow.aheadFiles": {
-    "text": "<0>Syncing.</0> Main has moved ahead, and {{files}} files changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. Used when the number of new commits on the main branch is not known. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  "ledger.sync.resolvingNow.aheadFiles_other": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and {{count}} files changed on both sides. Homeroom is resolving it now, then it tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. Used when the number of new commits on the main branch is not known. {{count}} is how many files were edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
   "ledger.sync.resolvingNow.aheadLines": {
     "text": "<0>Syncing.</0> Main has moved ahead, and the two changes touch the same lines. Homeroom is resolving it now, then it tries the merge again.",
     "description": "Text of the \"Sync with main\" row on a proposal's page while Homeroom is resolving the conflict automatically. Used when the number of new commits on the main branch is not known. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.afterVote.commitsOneFile_one": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and 1 file changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
-  },
-  "ledger.sync.afterVote.commitsOneFile_other": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and 1 file changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
-  },
-  "ledger.sync.afterVote.commitsFiles_one": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and {{files}} files changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
-  },
-  "ledger.sync.afterVote.commitsFiles_other": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and {{files}} files changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  "ledger.sync.afterVote.commitsAndFiles": {
+    "text": "<0>Syncing.</0> {{moved}}, and {{overlap}}. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{moved}} is the complete fact about how far the main branch has moved (changes:ledger.sync.fact.moved, for example \"Main has moved 3 commits ahead\") and {{overlap}} the complete fact about the files edited on both sides (changes:ledger.sync.fact.overlap, for example \"2 files changed on both sides\"); each already carries its own number in the right plural form. Place the two wherever your language needs them. The word inside <0></0> is shown in bold."
   },
   "ledger.sync.afterVote.commitsLines_one": {
     "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and the two changes touch the same lines. Homeroom resolves it once the group approves, then tries the merge again.",
@@ -2459,33 +2439,21 @@
     "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and the two changes touch the same lines. Homeroom resolves it once the group approves, then tries the merge again.",
     "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.afterVote.aheadOneFile": {
-    "text": "<0>Syncing.</0> Main has moved ahead, and 1 file changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. Used when the number of new commits on the main branch is not known. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  "ledger.sync.afterVote.aheadFiles_one": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and {{count}} file changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. Used when the number of new commits on the main branch is not known. {{count}} is how many files were edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.afterVote.aheadFiles": {
-    "text": "<0>Syncing.</0> Main has moved ahead, and {{files}} files changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. Used when the number of new commits on the main branch is not known. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  "ledger.sync.afterVote.aheadFiles_other": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and {{count}} files changed on both sides. Homeroom resolves it once the group approves, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. Used when the number of new commits on the main branch is not known. {{count}} is how many files were edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
   "ledger.sync.afterVote.aheadLines": {
     "text": "<0>Syncing.</0> Main has moved ahead, and the two changes touch the same lines. Homeroom resolves it once the group approves, then tries the merge again.",
     "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict after the vote passes. Used when the number of new commits on the main branch is not known. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.automatic.commitsOneFile_one": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and 1 file changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
-  },
-  "ledger.sync.automatic.commitsOneFile_other": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and 1 file changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
-  },
-  "ledger.sync.automatic.commitsFiles_one": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and {{files}} files changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
-  },
-  "ledger.sync.automatic.commitsFiles_other": {
-    "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and {{files}} files changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  "ledger.sync.automatic.commitsAndFiles": {
+    "text": "<0>Syncing.</0> {{moved}}, and {{overlap}}. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{moved}} is the complete fact about how far the main branch has moved (changes:ledger.sync.fact.moved, for example \"Main has moved 3 commits ahead\") and {{overlap}} the complete fact about the files edited on both sides (changes:ledger.sync.fact.overlap, for example \"2 files changed on both sides\"); each already carries its own number in the right plural form. Place the two wherever your language needs them. The word inside <0></0> is shown in bold."
   },
   "ledger.sync.automatic.commitsLines_one": {
     "text": "<0>Syncing.</0> Main has moved {{count}} commit ahead, and the two changes touch the same lines. Homeroom resolves it automatically, then tries the merge again.",
@@ -2495,13 +2463,13 @@
     "text": "<0>Syncing.</0> Main has moved {{count}} commits ahead, and the two changes touch the same lines. Homeroom resolves it automatically, then tries the merge again.",
     "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. {{count}} is how many commits the project's main branch has gained since this change was started. Used when the conflicting files are not known. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.automatic.aheadOneFile": {
-    "text": "<0>Syncing.</0> Main has moved ahead, and 1 file changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. Used when the number of new commits on the main branch is not known. Exactly one file was edited both in this change and on main. The word inside <0></0> is shown in bold."
+  "ledger.sync.automatic.aheadFiles_one": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and {{count}} file changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. Used when the number of new commits on the main branch is not known. {{count}} is how many files were edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
-  "ledger.sync.automatic.aheadFiles": {
-    "text": "<0>Syncing.</0> Main has moved ahead, and {{files}} files changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
-    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. Used when the number of new commits on the main branch is not known. {{files}} is how many files were edited both in this change and on main, always two or more; word it so that any such number reads correctly. The word inside <0></0> is shown in bold."
+  "ledger.sync.automatic.aheadFiles_other": {
+    "text": "<0>Syncing.</0> Main has moved ahead, and {{count}} files changed on both sides. Homeroom resolves it automatically, then tries the merge again.",
+    "description": "Text of the \"Sync with main\" row on a proposal's page when Homeroom will resolve the conflict by itself. Used when the number of new commits on the main branch is not known. {{count}} is how many files were edited both in this change and on main. The word inside <0></0> is shown in bold."
   },
   "ledger.sync.automatic.aheadLines": {
     "text": "<0>Syncing.</0> Main has moved ahead, and the two changes touch the same lines. Homeroom resolves it automatically, then tries the merge again.",

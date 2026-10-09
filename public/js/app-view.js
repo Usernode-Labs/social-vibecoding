@@ -6165,56 +6165,40 @@ const AppView = {
     }
   },
 
-  // Message ids for the "Sync with main" row of the ledger: state, then how
-  // far main moved, then what overlaps. Each is a whole sentence.
+  // Message ids for the "Sync with main" row of the ledger, by state and by
+  // what is known. Each is a whole sentence, and each NUMBER in it picks its
+  // own plural form:
+  //   commitsLines   the commits main gained (its plural count); files unknown
+  //   aheadFiles     the files changed on both sides (its plural count); commits unknown
+  //   commitsAndFiles  both are known. Two counts cannot share one plural
+  //                  choice, so each is a complete counted fact of its own
+  //                  (ledger.sync.fact.moved / .overlap) and the sentence
+  //                  places the two.
+  //   aheadLines     neither is known
   SYNC_TEXT_IDS: {
     blocked: {
-      commits: {
-        oneFile: 'changes:ledger.sync.blocked.commitsOneFile',
-        files: 'changes:ledger.sync.blocked.commitsFiles',
-        lines: 'changes:ledger.sync.blocked.commitsLines',
-      },
-      ahead: {
-        oneFile: 'changes:ledger.sync.blocked.aheadOneFile',
-        files: 'changes:ledger.sync.blocked.aheadFiles',
-        lines: 'changes:ledger.sync.blocked.aheadLines',
-      },
+      commitsAndFiles: 'changes:ledger.sync.blocked.commitsAndFiles',
+      commitsLines: 'changes:ledger.sync.blocked.commitsLines',
+      aheadFiles: 'changes:ledger.sync.blocked.aheadFiles',
+      aheadLines: 'changes:ledger.sync.blocked.aheadLines',
     },
     resolvingNow: {
-      commits: {
-        oneFile: 'changes:ledger.sync.resolvingNow.commitsOneFile',
-        files: 'changes:ledger.sync.resolvingNow.commitsFiles',
-        lines: 'changes:ledger.sync.resolvingNow.commitsLines',
-      },
-      ahead: {
-        oneFile: 'changes:ledger.sync.resolvingNow.aheadOneFile',
-        files: 'changes:ledger.sync.resolvingNow.aheadFiles',
-        lines: 'changes:ledger.sync.resolvingNow.aheadLines',
-      },
+      commitsAndFiles: 'changes:ledger.sync.resolvingNow.commitsAndFiles',
+      commitsLines: 'changes:ledger.sync.resolvingNow.commitsLines',
+      aheadFiles: 'changes:ledger.sync.resolvingNow.aheadFiles',
+      aheadLines: 'changes:ledger.sync.resolvingNow.aheadLines',
     },
     afterVote: {
-      commits: {
-        oneFile: 'changes:ledger.sync.afterVote.commitsOneFile',
-        files: 'changes:ledger.sync.afterVote.commitsFiles',
-        lines: 'changes:ledger.sync.afterVote.commitsLines',
-      },
-      ahead: {
-        oneFile: 'changes:ledger.sync.afterVote.aheadOneFile',
-        files: 'changes:ledger.sync.afterVote.aheadFiles',
-        lines: 'changes:ledger.sync.afterVote.aheadLines',
-      },
+      commitsAndFiles: 'changes:ledger.sync.afterVote.commitsAndFiles',
+      commitsLines: 'changes:ledger.sync.afterVote.commitsLines',
+      aheadFiles: 'changes:ledger.sync.afterVote.aheadFiles',
+      aheadLines: 'changes:ledger.sync.afterVote.aheadLines',
     },
     automatic: {
-      commits: {
-        oneFile: 'changes:ledger.sync.automatic.commitsOneFile',
-        files: 'changes:ledger.sync.automatic.commitsFiles',
-        lines: 'changes:ledger.sync.automatic.commitsLines',
-      },
-      ahead: {
-        oneFile: 'changes:ledger.sync.automatic.aheadOneFile',
-        files: 'changes:ledger.sync.automatic.aheadFiles',
-        lines: 'changes:ledger.sync.automatic.aheadLines',
-      },
+      commitsAndFiles: 'changes:ledger.sync.automatic.commitsAndFiles',
+      commitsLines: 'changes:ledger.sync.automatic.commitsLines',
+      aheadFiles: 'changes:ledger.sync.automatic.aheadFiles',
+      aheadLines: 'changes:ledger.sync.automatic.aheadLines',
     },
     catchingUp: {
       commits: 'changes:ledger.sync.catchingUp.commits',
@@ -15733,13 +15717,26 @@ const AppView = {
       ? pr.integration.blockReasons : [];
     // The row's sentence is one whole message for each combination of what
     // is known: how far main moved (a count, or not known) and what overlaps
-    // (one file, several files, or files not known).
+    // (a count of files, or files not known). Every count picks its own
+    // plural form (SYNC_TEXT_IDS says how).
     const movedKey = behindN > 0 ? 'commits' : 'ahead';
-    const overlapKey = conflictFiles.length === 1 ? 'oneFile' : (conflictFiles.length ? 'files' : 'lines');
-    const syncValues = { ...(behindN > 0 ? { count: behindN } : {}), files: conflictFiles.length };
-    const syncText = (state, tone) => AppView._boldLeadText(
-      state === 'catchingUp' ? AppView.SYNC_TEXT_IDS.catchingUp[movedKey] : AppView.SYNC_TEXT_IDS[state][movedKey][overlapKey],
-      syncValues, tone);
+    const filesN = conflictFiles.length;
+    const syncText = (state, tone) => {
+      if (state === 'catchingUp') {
+        return AppView._boldLeadText(AppView.SYNC_TEXT_IDS.catchingUp[movedKey], behindN > 0 ? { count: behindN } : {}, tone);
+      }
+      const ids = AppView.SYNC_TEXT_IDS[state];
+      if (behindN > 0 && filesN) {
+        return AppView._boldLeadText(ids.commitsAndFiles, {
+          moved: PlatformI18n.t('changes:ledger.sync.fact.moved', { count: behindN }),
+          overlap: PlatformI18n.t('changes:ledger.sync.fact.overlap', { count: filesN }),
+        }, tone);
+      }
+      if (behindN > 0) return AppView._boldLeadText(ids.commitsLines, { count: behindN }, tone);
+      return filesN
+        ? AppView._boldLeadText(ids.aheadFiles, { count: filesN }, tone)
+        : AppView._boldLeadText(ids.aheadLines, {}, tone);
+    };
     sync.label = PlatformI18n.t('changes:ledger.sync.label');
     sync.tone = manual ? 'bad' : 'warn';
     // Who acts sits under the label only when it is a PERSON. An automatic
