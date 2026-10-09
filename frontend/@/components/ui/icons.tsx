@@ -152,6 +152,21 @@ export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H
  */
 export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0l-5 5m5-5H6');
 
+/**
+ * A four-way move arrow — a plus shaft with an arrowhead at each end, the
+ * "drag me anywhere" mark. The comment bar's grip renders it (#4514): three
+ * dots said nothing about dragging. It is the one glyph here not transcribed
+ * from markup it replaces, because no existing glyph is this shape; drawn in
+ * the factory's round cap and join so its stroke rhythm matches the set.
+ */
+export const MoveIcon = stroked('MoveIcon', [
+  'M12 3v18M3 12h18',
+  'M9 6l3-3 3 3',
+  'M9 18l3 3 3-3',
+  'M6 9l-3 3 3 3',
+  'M18 9l3 3-3 3',
+]);
+
 export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
 
 /**

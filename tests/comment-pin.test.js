@@ -472,10 +472,16 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /if \(inUse \+ d\.images\.length >= MAX_PICTURES\) return \{ pictures: d\.pictures, picture: null \};/);
   // Kudos is one line that says who it is for.
   assert.match(src, />Kudos for whoever solves it</);
-  // The bar: moved by its handle and kept on the device; out of the way after a rest, not a pass.
+  // The bar: moved by its handle and kept on the device, and never moved out
+  // of the way on its own (#4514) — every control on it is clickable at any
+  // moment, so nothing of the old pointer-rest duck is left.
   assert.match(src, /const BAR_KEY = 'usernode:comment-bar';/);
-  assert.match(src, /const DUCK_AFTER_MS = 280;/);
-  assert.match(src, /if \(e\.pointerType !== 'mouse' \|\| drag\.current \|\| confirm\) return;/, 'a finger never makes it duck');
+  assert.doesNotMatch(src, /DUCK_AFTER_MS|ducked|onBarEnter/, 'no trace of the auto-duck');
+  // The handle looks draggable: a four-way move arrow from the kit, not three dots.
+  assert.match(src, /<MoveIcon className="h-4 w-4" \/>/);
+  assert.doesNotMatch(src, /EllipsisVerticalIcon/, 'the three dots have left the bar');
+  // The tooltip names the drag and the double-click return to the foot.
+  assert.match(src, /title="Drag to move the bar\. Double-click puts it back at the foot\."/);
   // A finger: a tap is a comment, a drag scrolls.
   assert.match(src, /if \(!t\.moved\) place\(\{ x: e\.clientX, y: e\.clientY \}\);/);
   // The form is called the form.
