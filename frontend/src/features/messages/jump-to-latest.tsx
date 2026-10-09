@@ -13,6 +13,13 @@ import { jumpLabel, useUnreadAffordances, type UnreadRow } from './unread-anchor
  * listener takes the reader as following again. It writes nothing inside the
  * scroller.
  *
+ * `docked` (#4553) is for a page whose cards would sit under the disc — a
+ * change's or a request's page, a project topic: there the button docks into
+ * its own thin strip between the scroller and the composer instead of
+ * floating over the transcript's foot, and the strip goes with it at the
+ * bottom, so the page gets its full height back. Chats keep the floating
+ * disc: floating over messages is the normal pattern there.
+ *
  * The conversation itself (./index.tsx) draws the same button from the same
  * hook beside its banner.
  */
@@ -20,19 +27,33 @@ import { jumpLabel, useUnreadAffordances, type UnreadRow } from './unread-anchor
 const NO_LINE: RefObject<HTMLElement | null> = { current: null };
 const NO_ROWS: readonly UnreadRow[] = [];
 
-export function JumpToLatest({ scroller, slack, rows = NO_ROWS }: {
+export function JumpToLatest({ scroller, slack, rows = NO_ROWS, docked = false }: {
   scroller: RefObject<HTMLElement | null>;
   /** The allowance the transcript follows new messages within. */
   slack?: number;
   /** The transcript's messages, oldest first, when the caller has them: the dot counts what arrives. */
   rows?: readonly UnreadRow[];
+  /** Dock into a shrink-0 strip below the scroller instead of floating over its foot. */
+  docked?: boolean;
 }) {
   const { view, toLatest } = useUnreadAffordances(scroller, NO_LINE, {
     conversation: null, markKey: '', lineAt: null, rows, slack, watchContent: true,
   });
+  const button = (
+    <JumpToLatestButton shown={view.jump} dot={view.arrived > 0} aria-label={jumpLabel(view.arrived)} title="Jump to latest" onClick={toLatest} />
+  );
+  if (docked) {
+    // One class string or the other, never both on the node: `hidden` beside
+    // a display utility is the clap-chip bug again — the utility wins.
+    return (
+      <div data-transcript-strip="foot" className={view.jump ? 'flex shrink-0 justify-center px-4 py-1' : 'hidden'}>
+        {button}
+      </div>
+    );
+  }
   return (
     <TranscriptOverlay edge="foot">
-      <JumpToLatestButton shown={view.jump} dot={view.arrived > 0} aria-label={jumpLabel(view.arrived)} title="Jump to latest" onClick={toLatest} />
+      {button}
     </TranscriptOverlay>
   );
 }

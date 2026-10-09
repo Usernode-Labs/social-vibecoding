@@ -120,7 +120,9 @@ const Kudos = {
     // #4455: on a change page's Addresses row (`opts.thread`) the thanks is
     // "👏 Thank snait" (app.css hides the tail there), and the count pill
     // says nothing while it is zero: the wrap is left out of the row until
-    // it is not.
+    // it is not. _refreshButton keeps that true afterwards — the wrap
+    // reappears on the first thanks and hides again when the count drops
+    // back to 0.
     const thread = !!opts.thread;
     const face = thanks
       ? `<span aria-hidden="true">\u{1F44F}</span><span class="dev-thanks-label">Thank ${escapeHtml(thanks)}<span class="dev-thanks-tail"> for putting this up</span></span><span data-kudos-count class="hidden">${count}</span>`
@@ -425,6 +427,14 @@ const Kudos = {
         wrap.setAttribute('data-kudos-variant', 'count');
         btn.classList.remove('dev-thanks-pill');
         btn.innerHTML = `<span aria-hidden="true">\u{1F44F}</span><span data-kudos-count>${entry.count || 0}</span>`;
+      }
+      // #4455: the Addresses row chip keeps its zero quiet in both
+      // directions — the wrap reappears on the first thanks and hides again
+      // when the count drops back to 0 (the viewer's own retract included).
+      // renderButton wrote the first state; this maintains it across give,
+      // retract and a live kudos_update.
+      if (wrap.classList.contains('dev-change-thanks')) {
+        wrap.hidden = wrap.getAttribute('data-kudos-variant') === 'count' && !((entry.count || 0) > 0);
       }
       // Locked buttons (self-PR / explicit opts.disabled at render
       // time) only ever get count updates — never enable/disable.
