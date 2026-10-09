@@ -38,6 +38,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -255,4 +256,93 @@ test('the general chat pane is mounted, not assigned', () => {
   // Discussion tab says what it is.
   assert.doesNotMatch(fn[1], /usernode_seen_gc_intro|introAppName/);
   assert.doesNotMatch(read('frontend/src/features/group-chat/general-chat.tsx'), /talks and votes on proposed changes|introAppName/);
+});
+
+// ── #4513: typing keeps a bottom-anchored thread pinned ───────────────
+
+// A vm harness in the style of tests/group-chat-own-message-scroll.test.js:
+// mountThread runs for real against a stub shell host, and the scroller's
+// geometry is whatever the test sets. Only collaborators are stubbed —
+// _autoGrowTextarea and the new input listener are the code under test.
+function setupThreadMount({ scrollHeight, scrollTop, clientHeight }) {
+  const listeners = {};
+  const scroller = { id: 'gc-thread-scroll', scrollHeight, scrollTop, clientHeight };
+  const input = {
+    value: '',
+    style: {},
+    scrollHeight: 60, // what _autoGrowTextarea grows the textarea to fit
+    // The autocomplete controllers' idempotency guards: attach() then wires
+    // nothing, so mountThread's own listener is the only one to fire.
+    _gcMentionBound: true,
+    _gcRefBound: true,
+    _gcEmojiBound: true,
+    addEventListener: (name, fn) => { (listeners[name] ||= []).push(fn); },
+  };
+  const container = {
+    querySelector: (sel) => {
+      if (sel === '#gc-thread-messages') return { dataset: {} };
+      if (sel === '#gc-thread-form') return { addEventListener: () => {} };
+      if (sel === '#gc-thread-input') return input;
+      return null;
+    },
+  };
+  const sandbox = {
+    window: {}, URLSearchParams, location: { search: '' },
+    App: { user: { id: 7, username: 'evan' } },
+    document: { getElementById: (id) => (id === 'gc-thread-scroll' ? scroller : null) },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(read('public/js/group-chat.js'), sandbox);
+  const gc = sandbox.window.GroupChat;
+  gc._app = { slug: 'test-app', name: 'Test' };
+  gc.connect = () => {};
+  gc._react = () => null;
+  gc._attachQuoteHandlers = () => {};
+  gc._renderQuotePreview = () => {};
+  gc.setupAttachments = () => {};
+  gc.sendTyping = () => {};
+  gc.renderThread = () => {};
+  gc.loadThreadHistory = () => {};
+  gc.mountThread({ type: 'topic', ref: 1, container });
+  assert.ok(listeners.input, 'the thread input has an input listener');
+  return {
+    scroller,
+    grew: () => input.style.height !== '' && input.style.height !== 'auto',
+    fireInput: (text) => {
+      input.value = text;
+      for (const fn of listeners.input) fn();
+    },
+  };
+}
+
+test('typing into a thread re-pins a reader who is at the bottom', () => {
+  // 2000 - 1450 - 500 = 50px from the bottom: inside the follow slack. The
+  // composer grows (fill layout: the scroller above shrinks), so the guard
+  // moves the view down to the new bottom.
+  const h = setupThreadMount({ scrollHeight: 2000, scrollTop: 1450, clientHeight: 500 });
+  h.fireInput('a few\nlines');
+  assert.ok(h.grew(), 'the composer grew');
+  assert.equal(h.scroller.scrollTop, h.scroller.scrollHeight);
+});
+
+test('typing never moves a reader who has scrolled up', () => {
+  // 2000 - 1000 - 500 = 500px up: well outside the slack, so scrollTop is
+  // left exactly where the reader put it.
+  const h = setupThreadMount({ scrollHeight: 2000, scrollTop: 1000, clientHeight: 500 });
+  h.fireInput('a few\nlines');
+  assert.ok(h.grew(), 'the composer grew');
+  assert.equal(h.scroller.scrollTop, 1000);
+});
+
+test('the legacy module\'s follow slack is the shell\'s THREAD_FOLLOW_PX', () => {
+  // The IIFE cannot import the export thread-shell.tsx hands JumpToLatest;
+  // the two copies are pinned equal instead, the way
+  // tests/message-timestamp.test.js pins the shared timestamp table.
+  const legacy = stripped(gcJs).match(/THREAD_FOLLOW_PX: (\d+)/);
+  assert.ok(legacy, 'public/js/group-chat.js declares THREAD_FOLLOW_PX');
+  const shell = read('frontend/src/features/group-chat/thread-shell.tsx')
+    .match(/export const THREAD_FOLLOW_PX = (\d+)/);
+  assert.ok(shell, 'thread-shell.tsx exports THREAD_FOLLOW_PX');
+  assert.equal(Number(legacy[1]), Number(shell[1]));
+  assert.equal(Number(legacy[1]), 80);
 });

@@ -34,6 +34,13 @@ const GroupChat = {
   _syncedMax: -Infinity,
   // One array per read in flight: the socket events that arrived meanwhile.
   _liveWindows: new Set(),
+  // How close to the bottom (px) a reader must be for the thread to follow
+  // the newest content on its own: live replies in `_handleThreadIncoming`
+  // and the composer's growth in mountThread both use it. Mirrors the export
+  // of the same name in frontend/src/features/group-chat/thread-shell.tsx
+  // (the JumpToLatest slack) — this legacy IIFE cannot import it, and
+  // tests/group-chat-composer.test.js pins the two copies equal.
+  THREAD_FOLLOW_PX: 80,
   // Scroll-position memory. `_lockedToBottom` drives "should new incoming
   // messages auto-scroll?". `_savedScrollTop` is the last observed scroll
   // offset so we can restore it when the tab is re-mounted (group-chat DOM
@@ -704,7 +711,8 @@ const GroupChat = {
         // near the bottom — otherwise a live message would yank someone who
         // has scrolled up to read the topic body or older replies.
         const nearBottom =
-          scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80
+          scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight
+            < GroupChat.THREAD_FOLLOW_PX
           || GroupChat._isOwnMessage(msg);
         // Appended to the MODEL. #gc-thread-messages is the same React
         // transcript #gc-messages is (mounted with the 'thread' key a few
@@ -1276,8 +1284,21 @@ const GroupChat = {
       });
       input.addEventListener('input', () => {
         GroupChat.setDraft(slug, input.value, threadKey);
+        // #4513: growing the composer takes its extra height out of the
+        // scroller above it (fill layout: the composer is a shrink-0
+        // sibling BELOW #gc-thread-scroll), so scrollTop stands still while
+        // the bottom edge rises and a reader at the bottom watches the
+        // newest replies slide under the fold as they type. Measure before
+        // the grow, re-pin after — the same slack live replies follow by.
+        const scroll = GroupChat._threadScrollEl();
+        const follow = !!scroll
+          && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight
+             < GroupChat.THREAD_FOLLOW_PX;
         GroupChat._autoGrowTextarea(input);
         GroupChat.sendTyping({ type, ref });
+        // Reading scrollHeight after the height change forces layout, so
+        // the re-pin lands on the grown layout.
+        if (follow) scroll.scrollTop = scroll.scrollHeight;
       });
       // Multi-line submit semantics, same as the general composer: Enter
       // sends, Shift+Enter inserts a newline, touch keyboards always insert
