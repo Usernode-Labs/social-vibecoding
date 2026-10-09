@@ -146,6 +146,8 @@ const EXEMPT = new Map([
   ['auth.js POST /api/auth/otp/request', JSON_FIELD],
   ['auth.js POST /api/auth/otp/verify', JSON_FIELD],
   ['auth.js POST /api/auth/otp/set-password', JSON_FIELD],
+  // #4594: the release mail's one-time link, read from the JSON body.
+  ['auth.js POST /api/auth/release-link', JSON_FIELD],
   ['auth.js POST /api/auth/register', JSON_FIELD],
   ['auth.js POST /api/me/api-key', JSON_FIELD],
   ['auth.js POST /api/me/password', JSON_FIELD],

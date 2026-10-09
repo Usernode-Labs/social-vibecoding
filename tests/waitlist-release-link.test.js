@@ -117,3 +117,14 @@ test('the whole thing stays inside a try/catch', () => {
   assert.ok(body.indexOf('try {') < body.indexOf('URLSearchParams'));
   assert.match(body, /\} catch \(_\) \{\}/);
 });
+
+test('the release mail\'s one-time sign-in link is its own credential, kept off the GET (#4594)', () => {
+  const fn = MAIL.slice(MAIL.indexOf('async function sendWaitlistReleaseMail'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /signInToken \? `&\$\{CREDENTIAL_PARAM\}=/, 'a separate parameter, not more_token');
+  // Arrival keeps it for the sheet, which spends it with a POST.
+  assert.match(AUTH_SCREENS, /signIn: route === 'signup' && key && \/\^\[A-Za-z0-9_-\]\{43\}\$\/\.test\(key\) \? key : null/);
+  assert.doesNotMatch(AUTH_SCREENS, /release-link/, 'nothing spends it on arrival');
+  const sheet = fs.readFileSync(path.join(ROOT, 'frontend/src/features/auth/sign-in-sheet.tsx'), 'utf8');
+  assert.match(sheet, /fetchSessionMint\('\/api\/auth\/release-link', \{\s*method: 'POST'/);
+});

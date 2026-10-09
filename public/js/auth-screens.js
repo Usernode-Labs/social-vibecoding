@@ -257,9 +257,13 @@
                 : null;
           if (route === 'signup' || route === 'login') {
             const t = params.get('t');
+            // #4594: `key` is the mail's one-time sign-in link. Kept here,
+            // never spent on this GET: the sheet spends it with a POST.
+            const key = params.get('key');
             AuthScreens._releaseLink = {
               route,
               token: route === 'signup' && t && /^[A-Za-z0-9_-]{8,128}$/.test(t) ? t : null,
+              signIn: route === 'signup' && key && /^[A-Za-z0-9_-]{43}$/.test(key) ? key : null,
             };
             history.replaceState(null, '', '/');
           } else if (route) history.replaceState(null, '', `/#${route}`);

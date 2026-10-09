@@ -36,7 +36,8 @@ const AUTH = read('src/routes/auth.js');
 const SIGNUP = read('src/services/email-signup.js');
 
 test('the verify answer says what happened, additively, and suggests a name from the address', () => {
-  const route = AUTH.slice(AUTH.indexOf("router.post('/api/auth/otp/verify'"));
+  // The code's answer and the release link's (#4594) are one: answerProvenEmail.
+  const route = AUTH.slice(AUTH.indexOf('async function answerProvenEmail'));
   // #4596 (overturning #3575 for this step): a suggestion made from the
   // address, only for an account that still owes its handle (null when
   // none fits), and absent otherwise.

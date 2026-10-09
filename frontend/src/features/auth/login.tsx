@@ -948,7 +948,10 @@ export function LoginScreen() {
     }
   }, [clearConfirmation, finishLogin, otpShowStep, showLoginBaseView, st]);
 
-  const onOtpSetPassword = useCallback(async () => {
+  // #4595: the password is optional. "Skip for now" (`skip`), or both
+  // fields left empty, finishes without one; the account then signs in with
+  // an email code and can add a password in Settings.
+  const onOtpSetPassword = useCallback(async (skip = false) => {
     clearConfirmation();
     setOtpError(null);
     setOtpDetails(null);
@@ -961,26 +964,27 @@ export function LoginScreen() {
       otpUsername.current?.focus();
       return;
     }
-    const value = otpNewPassword.current?.value || '';
-    const confirm = otpConfirmPassword.current?.value || '';
-    if (value.length < 8) {
-      setOtpError('Password must be at least 8 characters');
-      return;
-    }
-    if (value !== confirm) {
-      setOtpError('Passwords do not match');
-      return;
+    const value = skip ? '' : otpNewPassword.current?.value || '';
+    const confirm = skip ? '' : otpConfirmPassword.current?.value || '';
+    if (value || confirm) {
+      if (value.length < 8) {
+        setOtpError('Password must be at least 8 characters');
+        return;
+      }
+      if (value !== confirm) {
+        setOtpError('Passwords do not match');
+        return;
+      }
     }
     if (blockedOffline(setOtpError)) return;
-    setOtpStatus('Setting password...');
+    setOtpStatus(value ? 'Setting password...' : 'Finishing...');
     try {
       const res = await fetchSessionMint('/api/auth/otp/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
-          password: value,
-          passwordConfirmation: confirm,
+          ...(value ? { password: value, passwordConfirmation: confirm } : {}),
           ...(handle ? { username: handle } : {}),
         }),
       });
@@ -1847,10 +1851,17 @@ export function LoginScreen() {
                 type="button"
                 data-offline-disabled=""
                 {...SOLID}
-                onClick={onOtpSetPassword}
+                onClick={() => { void onOtpSetPassword(); }}
               >
                 {otpSignup?.created ? 'Create account & sign in' : 'Set password & sign in'}
               </Button>
+              <button
+                type="button"
+                className="block w-full py-1 text-center text-[15px] font-medium text-violet-700 dark:text-violet-400 hover:underline"
+                onClick={() => { void onOtpSetPassword(true); }}
+              >
+                Skip the password for now
+              </button>
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
               {otpError}

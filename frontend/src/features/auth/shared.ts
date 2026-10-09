@@ -540,7 +540,7 @@ export async function passwordSignIn(username: string, password: string): Promis
 
 /**
  * What a waitlist "you're in" mail's link asked for. The mail links to
- * `/?signup=1&t=<token>` for a new account and `/?login=1` for one that
+ * `/?signup=1&t=<token>[&key=<one-time link>]` for a new account and `/?login=1` for one that
  * exists (src/services/mail/index.js); AuthScreens.enter() reads either off
  * the query, keeps it here and puts the address back to `/`, so the story
  * (./landing.tsx) opens with the sign-in sheet over it at this step.
@@ -549,9 +549,16 @@ export interface ReleaseLink {
   route: 'signup' | 'login';
   /** The waitlist row's more_token, which names the address to sign up with. */
   token: string | null;
+  /**
+   * #4594: the mail's one-time sign-in link (src/services/release-links.js),
+   * spent by the sheet's POST to /api/auth/release-link. Null when the mail
+   * carried none; an expired or used one falls back to `token`'s code.
+   */
+  signIn?: string | null;
 }
 
 const RELEASE_TOKEN_RE = /^[A-Za-z0-9_-]{8,128}$/;
+const RELEASE_SIGN_IN_RE = /^[A-Za-z0-9_-]{43}$/;
 
 /** The release link, once: whoever shows it takes it. */
 export function takeReleaseLink(): ReleaseLink | null {
@@ -561,7 +568,9 @@ export function takeReleaseLink(): ReleaseLink | null {
   host._releaseLink = null;
   if (link.route !== 'signup' && link.route !== 'login') return null;
   const token = typeof link.token === 'string' && RELEASE_TOKEN_RE.test(link.token) ? link.token : null;
-  return { route: link.route, token };
+  const signIn = link.route === 'signup' && typeof link.signIn === 'string' && RELEASE_SIGN_IN_RE.test(link.signIn)
+    ? link.signIn : null;
+  return { route: link.route, token, signIn };
 }
 
 /** Hand the link on, for the sign-in screen to take when the story is switched off. */

@@ -620,51 +620,74 @@ test('an email code branches on the account it matches (#1586)', async (t) => {
       assert.equal(secondBody.next, 'signed-in');
       assert.equal(secondBody.user.id, createdId);
 
-      // ── The password-less branch is unchanged, and stamps the address ──
-      const setupId = await seed('no.password@example.com', {
+      // ── #4595: no password, username chosen → signed in by the code ──
+      // The password is optional, so an email code is how such an account
+      // signs in. Reading the code still proves the mailbox and stamps it.
+      const noPasswordId = await seed('no.password@example.com', {
         email_confirmed: false, password_set: false, is_admin: false,
       });
-      const setup = await verify(
+      const noPassword = await verify(
         'no.password@example.com',
         await freshCode('no.password@example.com'),
       );
+      assert.equal(noPassword.status, 200);
+      const noPasswordBody = await noPassword.json();
+      assert.equal(noPasswordBody.next, 'signed-in');
+      assert.equal(noPasswordBody.user.id, noPasswordId);
+      assert.match(cookieValue(noPassword.headers, 'session'), /^[0-9a-f]{64}$/);
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM web_signup_sessions WHERE user_id = $1',
+        [noPasswordId],
+      )).rows[0].count, 0, 'nothing left to set up, so no continuation');
+      assert.equal((await pool.query(
+        'SELECT email_confirmed, password_set FROM users WHERE id = $1',
+        [noPasswordId],
+      )).rows[0].email_confirmed, true);
+
+      // ── Still owes a username → the account step, where the password is optional ──
+      const setupId = await seed('owes.name@example.com', {
+        email_confirmed: true, password_set: false, is_admin: false, needs_username_choice: true,
+      });
+      const setup = await verify(
+        'owes.name@example.com',
+        await freshCode('owes.name@example.com'),
+      );
       assert.equal(setup.status, 200);
-      // QA 2026-09-24 Q12: an account that already existed is not "created",
-      // and one that never owed a handle is not asked for one.
       assert.deepEqual(await setup.json(), {
         ok: true,
         next: 'set-password',
         created: false,
-        needsUsername: false,
+        needsUsername: true,
+        // #4596: the field arrives holding a suggestion from the address.
+        suggestedUsername: 'owesname',
         waitlisted: true,
       });
-      assert.match(cookieValue(setup.headers, 'usernode_signup'), /^[0-9a-f]{64}$/);
       assert.equal((await pool.query(
         'SELECT COUNT(*)::int AS count FROM web_signup_sessions WHERE user_id = $1',
         [setupId],
       )).rows[0].count, 1);
-      // Reading the code proves the mailbox, so the confirmation is stamped
-      // here — which stops the row ageing into the refusal branch above.
-      assert.equal((await pool.query(
-        'SELECT email_confirmed FROM users WHERE id = $1',
-        [setupId],
-      )).rows[0].email_confirmed, true);
-
-      // #3575 is about NEW accounts. One that already existed and never owed
-      // a handle finishes without being asked, and keeps the one it has.
-      const setupDone = await fetch(`${base}/api/auth/otp/set-password`, {
+      // "Skip for now": a username and no password finishes sign-up.
+      const skipped = await fetch(`${base}/api/auth/otp/set-password`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           cookie: `usernode_signup=${cookieValue(setup.headers, 'usernode_signup')}`,
         },
-        body: JSON.stringify({
-          password: 'correct horse battery staple',
-          passwordConfirmation: 'correct horse battery staple',
-        }),
+        body: JSON.stringify({ username: 'Owes_Name' }),
       });
-      assert.equal(setupDone.status, 200);
-      assert.equal((await setupDone.json()).user.username, 'no.password@example.com');
+      assert.equal(skipped.status, 200);
+      assert.equal((await skipped.json()).user.username, 'Owes_Name');
+      assert.match(cookieValue(skipped.headers, 'session'), /^[0-9a-f]{64}$/);
+      assert.equal((await pool.query(
+        'SELECT password_set FROM users WHERE id = $1',
+        [setupId],
+      )).rows[0].password_set, false, 'no password was set');
+      // And from now on, the code signs it in.
+      const again = await verify(
+        'owes.name@example.com',
+        await freshCode('owes.name@example.com'),
+      );
+      assert.equal((await again.json()).next, 'signed-in');
     } finally {
       await new Promise((resolve) => server.close(resolve));
       mail.sendOtpMail = originalSend;

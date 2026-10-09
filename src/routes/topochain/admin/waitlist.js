@@ -23,6 +23,7 @@ const waitlist = require('../../../services/waitlist');
 const firstSession = require('../../../services/first-session');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
+const releaseLinks = require('../../../services/release-links');
 const { loadMobileAppUrls } = require('../../../services/mobile-store-links');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
@@ -300,9 +301,22 @@ function waitlistAdminRoutes(config) {
       await waitlist.sendReleaseText(pool, released);
       return;
     }
+    const hasAccount = released.linked_user_id != null;
+    // #4594: a new account's one-time sign-in link. A failure to mint drops
+    // the link, not the mail: the mail's link still prefills the address
+    // and sends a code, as it did before.
+    let signInToken = null;
+    if (!hasAccount) {
+      try {
+        signInToken = await releaseLinks.mint(pool, { signupId: released.id, email: released.email });
+      } catch (err) {
+        log.error('topochain-admin', 'release sign-in link not minted', { signupId: released.id, message: err.message });
+      }
+    }
     await sendWaitlistReleaseMail(config, released.email, {
       mobile,
-      hasAccount: released.linked_user_id != null,
+      hasAccount,
+      signInToken,
       // #1548: lets the signup screen prefill the address and send the
       // code without a second step. An unguessable capability already
       // delivered to this address, so it carries nothing the recipient
