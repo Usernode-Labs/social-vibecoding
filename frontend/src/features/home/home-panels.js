@@ -795,8 +795,8 @@ const HomePanels = {
   // the content had to follow: a phone got the title bar and the featured
   // lane and nothing else, because the second lane would not fit the one row
   // it owned. THE UI OVERHAUL made Discover a fixed section, so the Popular
-  // lane — the most-used apps this viewer doesn't have yet
-  // (Home.popularApps) — renders everywhere. That is the point of an area
+  // lane — the public communities this viewer hasn't joined, most members
+  // first (Home.popularApps) — renders everywhere. That is the point of an area
   // called Discover rather than a strip of curated tiles: the curated lane
   // alone is whatever an admin got round to featuring.
   //
