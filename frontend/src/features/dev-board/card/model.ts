@@ -538,6 +538,14 @@ export interface DevWorkshopView {
      * shot, one still per side. Null when there is none, and the feed then
      * leaves the space under the summary empty rather than faking one.
      */
+    /**
+     * The declared changes' texts, copied in the client (AppView.voteRow)
+     * from `item.shots.claims[].claim` — the same lines the checks shoot
+     * pictures from. The Needs-you card reads them for its change diagram
+     * when the run shot no pictures; null when the item has no shots record
+     * at all, and on rows that are not proposals.
+     */
+    changeClaims?: string[] | null;
     visuals?: {
       path: string;
       mobile: boolean;

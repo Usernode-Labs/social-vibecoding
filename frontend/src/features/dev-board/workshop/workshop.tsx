@@ -1613,6 +1613,102 @@ function ShotsPicture({ v, near, wide }: {
   );
 }
 
+/* ── The change diagram: the card's own words as a picture ───────────── */
+
+/**
+ * The quoted rename pairs across the given sources, in order.
+ *
+ * Only QUOTED, adjacent pairs count — `"spec" to "plan"`, `"spec" → "plan"`,
+ * `"spec" -> "plan"` — so prose like "rename the file to keep it" cannot
+ * produce a pair. Pairs are trimmed, deduplicated case-insensitively,
+ * skipped when both sides are the same word, and capped at three; the card
+ * shows no more, and the full words stay in the Description sheet.
+ */
+export function renamePairs(sources: string[]): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const seen = new Set<string>();
+  for (const source of sources) {
+    if (typeof source !== 'string' || !source) continue;
+    const re = /"([^"\n]{1,60})"\s*(?:->|→|to)\s*"([^"\n]{1,60})"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source))) {
+      const from = m[1].trim();
+      const to = m[2].trim();
+      if (!from || !to || from.toLowerCase() === to.toLowerCase()) continue;
+      const key = `${from.toLowerCase()}→${to.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push([from, to]);
+      if (out.length >= 3) return out;
+    }
+  }
+  return out;
+}
+
+/**
+ * What the card's diagram shows, worked out from the row's own words: its
+ * declared changes first, then the title, then the summary. Renames win —
+ * they are the picture the card can actually draw — and the declared
+ * changes are the fallback strip. Null when neither gives anything, and the
+ * card keeps today's blank space rather than inventing a picture.
+ */
+export function changeDiagram(row: QueueRow): { renames: Array<[string, string]>; changes: Array<{ n: number; text: string }> } | null {
+  const declared = row.visuals && Array.isArray(row.visuals.changes) && row.visuals.changes.length
+    ? row.visuals.changes.map((c) => c.text)
+    : (row.changeClaims || []);
+  const summary = row.kind === 'vote' ? row.summary : row.body;
+  const sources = [...declared, row.card.title.text || row.card.title.title, summary || ''];
+  const renames = renamePairs(sources);
+  if (renames.length) return { renames, changes: [] };
+  const changes = declared
+    .filter((text) => typeof text === 'string' && text.trim())
+    .slice(0, 4)
+    .map((text, i) => ({ n: i + 1, text }));
+  return changes.length ? { renames: [], changes } : null;
+}
+
+/**
+ * The picture a change shows when its checks shot none: its renames as
+ * before-to-after chips, or its declared changes as the numbered list the
+ * Description sheet already renders. The spacer when there is nothing to
+ * draw. Not a button and it opens nothing — the title stays the way into
+ * the full card.
+ */
+function ChangeDiagram({ row }: { row: QueueRow }): ReactNode {
+  const diagram = changeDiagram(row);
+  if (!diagram) return <div className="dev-ws-item-spacer" aria-hidden="true" />;
+  return (
+    <div className="dev-ws-diagram" data-ws-diagram="">
+      {diagram.renames.length ? (
+        <>
+          <h4 className="dev-ws-desc-head">Renames</h4>
+          <ul className="dev-ws-rename-list">
+            {diagram.renames.map(([from, to]) => (
+              <li key={`${from}→${to}`} className="dev-ws-rename">
+                <span className="dev-ws-rename-from">{from}</span>
+                <span className="dev-ws-rename-arrow" aria-hidden="true">→</span>
+                <span className="dev-ws-rename-to">{to}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <>
+          <h4 className="dev-ws-desc-head">What changes</h4>
+          <ol className="dev-ws-shot-changes">
+            {diagram.changes.map((c) => (
+              <li key={c.n} className="dev-ws-shot-change">
+                <span className="dev-ws-shot-n">{c.n}</span>
+                <span className="dev-ws-shot-text">{c.text}</span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ── One item of the feed ────────────────────────────────────────────── */
 
 /**
@@ -1785,7 +1881,10 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       )}
       {shots && row.visuals ? <ShotsPicture v={row.visuals} near={near} wide={wide} />
         : row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} />
-          : <div className="dev-ws-item-spacer" aria-hidden="true" />}
+          // No pictures: the card's own words draw a small picture instead —
+          // its renames, or its declared changes — and the blank spacer when
+          // neither gives anything.
+          : <ChangeDiagram row={row} />}
       <div className="dev-ws-item-caption">
         {facts.length ? (
           <button type="button" className="dev-ws-item-facts" data-ws-facts="" aria-haspopup="dialog" onClick={onDescribe}>

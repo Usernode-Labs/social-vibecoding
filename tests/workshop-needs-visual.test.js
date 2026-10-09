@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const AppView = require('../public/js/app-view.js');
+const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -169,4 +170,134 @@ test('the deck\'s top by-line does not move the change page\'s', () => {
   // scoped to the item.
   assert.match(CSS, /\n\.dev-ws-item > \.dev-ws-item-by \{ margin: 14px 74px 0 0; \}/);
   assert.doesNotMatch(CSS, /\n\.dev-ws-item-by \{[^}]*margin: 14px/);
+});
+
+/* ── The change diagram, for a card with no pictures ─────────────────── */
+
+test('a proposal row carries its declared changes, shots record or not', () => {
+  // The claims thread through regardless of the run's state, so a card
+  // whose checks shot no pictures can still say what the change does.
+  assert.match(APP_VIEW, /changeClaims: kind === 'proposal' && item && item\.shots && Array\.isArray\(item\.shots\.claims\)/);
+  assert.match(APP_VIEW, /item\.shots\.claims\.slice\(0, 6\)\.map\(\(c\) => \(c && typeof c\.claim === 'string' \? c\.claim\.trim\(\) : ''\)\)\.filter\(Boolean\)/);
+  // A run that produced no pictures still answers null — the diagram, not
+  // a faked capture, is what the card shows then.
+  assert.equal(AppView._workshopVisuals(null, shots({ artifacts: [], screens: [] })), null);
+});
+
+test('renamePairs: quoted adjacent pairs only, trimmed, deduped, capped', () => {
+  const { renamePairs } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  // The three spellings the spec names.
+  assert.deepEqual(renamePairs(['"spec" to "plan"']), [['spec', 'plan']]);
+  assert.deepEqual(renamePairs(['"spec" → "plan"']), [['spec', 'plan']]);
+  assert.deepEqual(renamePairs(['"spec" -> "plan"']), [['spec', 'plan']]);
+  // Unquoted prose is never a pair.
+  assert.deepEqual(renamePairs(['rename the file to keep it']), []);
+  // Equal sides and duplicates are skipped; the cap is three.
+  assert.deepEqual(renamePairs(['"a" to "a"']), []);
+  assert.deepEqual(renamePairs(['"a" to "b"', '"A" to "B"']), [['a', 'b']]);
+  assert.deepEqual(renamePairs(['"1" to "2"', '"2" to "3"', '"3" to "4"', '"4" to "5"']).length, 3);
+  // Sources read in order: the declared changes before the title before
+  // the summary, and a pair found early keeps its place.
+  assert.deepEqual(
+    renamePairs(['"late" to "last"', '"first" to "second"']),
+    [['late', 'last'], ['first', 'second']],
+  );
+});
+
+function diagramRow(overrides = {}) {
+  return {
+    t: 'card',
+    key: 'vote:test',
+    kind: 'vote',
+    ask: 'Does this look right to you?',
+    yes: null,
+    no: null,
+    who: 'snait',
+    ago: '55m ago',
+    number: 101,
+    body: null,
+    summary: 'Everywhere you used to see "spec" in the app, it now says "plan".',
+    card: {
+      key: 'test',
+      cls: 'dev-card',
+      attrs: {},
+      icon: null,
+      title: { text: 'Rename user-facing "spec" to "plan" and fix shell build test failures', title: '' },
+      meta: [],
+      badges: [],
+      actions: [],
+      rail: { chevron: false },
+      extra: [],
+      dense: false,
+      uncapped: false,
+    },
+    ...overrides,
+  };
+}
+
+function feedHtml(rows) {
+  const { NeedsFeed } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  return renderToHtml(createElement(NeedsFeed, {
+    rows,
+    total: rows.length,
+    models: { list: [], selected: null },
+    slug: 'demo',
+    canPost: false,
+    onDone: () => {},
+  }));
+}
+
+test('the card with no shots draws its renames, where the blank space was', async () => {
+  const html = await feedHtml([diagramRow()]);
+  assert.match(html, /data-ws-diagram=""/);
+  assert.match(html, /Renames<\/h4>/);
+  assert.match(html, /dev-ws-rename-from">spec</);
+  assert.match(html, /dev-ws-rename-arrow" aria-hidden="true">→</);
+  assert.match(html, /dev-ws-rename-to">plan</);
+  assert.doesNotMatch(html, /dev-ws-item-spacer/);
+});
+
+test('a card with no rename lists its declared changes as the numbered strip', async () => {
+  const row = diagramRow({
+    summary: 'The board gains a command palette and a way to close any open sheet from the keyboard.',
+    card: {
+      key: 'test', cls: 'dev-card', attrs: {}, icon: null,
+      title: { text: 'Add keyboard shortcuts to the dev board', title: '' },
+      meta: [], badges: [], actions: [], rail: { chevron: false }, extra: [], dense: false, uncapped: false,
+    },
+    changeClaims: ['Cmd+K opens the command palette', 'Esc closes any open sheet'],
+  });
+  const html = await feedHtml([row]);
+  assert.match(html, /data-ws-diagram=""/);
+  assert.match(html, /What changes<\/h4>/);
+  assert.match(html, /dev-ws-shot-n">1</);
+  assert.match(html, /dev-ws-shot-text">Cmd\+K opens the command palette</);
+  assert.doesNotMatch(html, /dev-ws-item-spacer/);
+});
+
+test('a card with nothing derivable keeps the blank spacer, and a pictured card keeps its picture', async () => {
+  const bare = await feedHtml([diagramRow({
+    summary: 'Only the wording changes; layout and behavior stay the same.',
+    card: {
+      key: 'test', cls: 'dev-card', attrs: {}, icon: null,
+      title: { text: 'Fix shell build test failures', title: '' },
+      meta: [], badges: [], actions: [], rail: { chevron: false }, extra: [], dense: false, uncapped: false,
+    },
+  })]);
+  assert.match(bare, /dev-ws-item-spacer/);
+  assert.doesNotMatch(bare, /data-ws-diagram/);
+
+  // A picture always beats the diagram: a row with the run's screens draws
+  // ShotsPicture and never the diagram.
+  const pictured = await feedHtml([diagramRow({ visuals: AppView._workshopVisuals(null, shots()) })]);
+  assert.match(pictured, /data-ws-shots=""/);
+  assert.doesNotMatch(pictured, /data-ws-diagram/);
+
+  // A row with visuals but no screens draws the legacy pair, also never the
+  // diagram.
+  const legacy = await feedHtml([diagramRow({
+    visuals: { path: 'home', mobile: false, before: url('1'), after: url('2'), beforeWebm: null, afterWebm: null },
+  })]);
+  assert.match(legacy, /data-ws-media=""/);
+  assert.doesNotMatch(legacy, /data-ws-diagram/);
 });

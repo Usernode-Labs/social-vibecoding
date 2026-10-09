@@ -10895,6 +10895,14 @@ const AppView = {
         visuals: kind === 'proposal'
           ? AppView._workshopVisuals(item && item.visuals, item && item.shots)
           : (kind === 'session' && item && item.shots ? AppView._workshopVisuals(null, item.shots) : null),
+        // The declared changes' texts, for the Needs-you card's change
+        // diagram when the run shot no pictures. Copied whatever the run's
+        // state — pending, failed, not_required — so the card can still
+        // say what the change does; null when the item has no shots record,
+        // and on rows that are not proposals.
+        changeClaims: kind === 'proposal' && item && item.shots && Array.isArray(item.shots.claims)
+          ? item.shots.claims.slice(0, 6).map((c) => (c && typeof c.claim === 'string' ? c.claim.trim() : '')).filter(Boolean)
+          : null,
       };
       return kind ? AppView._attachRowConversation(row, kind, item) : row;
     };
