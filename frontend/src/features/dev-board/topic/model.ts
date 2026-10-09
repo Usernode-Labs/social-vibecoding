@@ -555,6 +555,8 @@ export interface ChangeGateView {
   label: string;
   /** The one line under the card, as its sentences. */
   note: string[];
+  /** The note line's tooltip (Testing, deferred: why the tests wait). */
+  noteTitle?: string;
   /** Testing only: its re-run, or a retry of the preview. */
   actions?: ActionSpec[];
   /** Testing only: a "See what failed" door into Details. */

@@ -355,6 +355,18 @@ test('the card says "Waiting for a checks slot (2 ahead)", offers no re-run, and
   assert.equal(AppView._changeTestingView(QUEUED).done, false);
 });
 
+// #4502: a deferred run's Testing card carries the reason in the note line's
+// tooltip, the same sentence the board's "Checks deferred" chip shows.
+test('the deferred Testing card keeps its short note and carries the reason as its tooltip', () => {
+  const AppView = makeAppView();
+  const DEFERRED = { ...QUEUED, check_phase: 'deferred', checks_progress: null, staging_url: 'https://staging.example/77' };
+  const view = AppView._changeTestingView(DEFERRED);
+  assert.equal(view.note.join(' '), 'Checks deferred', 'the visible line stays short');
+  assert.equal(view.noteTitle, AppView._checksPhaseCopy('deferred').detail, 'the tooltip is the reason the app already gives');
+  assert.doesNotMatch(view.noteTitle, /—/, 'user-facing copy carries no em dash');
+  assert.equal(AppView._changeTestingView(QUEUED).noteTitle, undefined, 'queued waits a normal wait, with no tooltip');
+});
+
 test('the status pill says the run is waiting, with its place, and keeps the running treatment', () => {
   const MergeStatus = require('../public/js/merge-status.js');
   const pill = MergeStatus.lifecycle(QUEUED);
