@@ -24,8 +24,12 @@ import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
-import { BotActivitySync, isMovedActivity } from './bot-activity';
+import { BotActivitySync, isActivityMessage, isMovedActivity } from './bot-activity';
+import { botHead } from './bot-head-card';
 import { NO_PLAN_LAYOUT, planLayout } from './bot-plan';
+import { botMeta } from './bot-question';
+import { isReadyMessage } from './bot-ready';
+import { changeBlocks, type ChangeBlock } from './bot-shared';
 import { BotWorkButton, BotWorkPanel, BotWorkStatusLine, BotWorkSync, newestBotMessageId } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
@@ -1236,6 +1240,17 @@ function dayKey(message: ConversationMessage): string {
   return Number.isNaN(date.getTime()) ? '' : date.toDateString();
 }
 
+/**
+ * #4564: whether a ready card names its request — "Request #N: …", what
+ * ./bot-ready.tsx `changeLine` leads with — so a later row of its change
+ * block may drop the request card it would otherwise repeat.
+ */
+function readyNamesRequest(message: ConversationMessage): boolean {
+  const meta = botMeta(message);
+  const n = Number(meta?.issueNumber);
+  return isReadyMessage(message) && !!meta?.appSlug && Number.isInteger(n) && n > 0 && !meta?.firstVersion;
+}
+
 function dayLabel(message: ConversationMessage): string {
   const date = new Date(message.createdAt);
   if (Number.isNaN(date.getTime())) return '';
@@ -1643,6 +1658,32 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const unreadRows = useMemo(() => snap.messages.map((message) => messageRow(message, viewerId)), [snap.messages, viewerId]);
   const lineAt = mark ? firstUnreadId(unreadRows, mark.lastReadId) : null;
   const holdLine = useLineHold(conversationId);
+  // #3692: a conversation with the Homeroom bot carries its activity tray,
+  // and #4564 its rows draw as change blocks (see the memo below).
+  const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
+    && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
+  // #4046 and #4564, decided once per drawn transcript so a row's layout and
+  // its block stay the same object between publishes and its memo() holds:
+  // the plans (a first version's plan carries its request's step,
+  // ./bot-plan.tsx) and, in the bot's DM, the change blocks — one outlined
+  // block per change, the change's card first (./bot-shared.ts
+  // changeBlocks, ./message-row.tsx). Other kinds of chat get neither.
+  const layout = useMemo(() => {
+    if (!botDm) return { plans: NO_PLAN_LAYOUT, blocks: null as ReadonlyMap<number, ChangeBlock> | null };
+    const plans = planLayout(snap.messages);
+    const blocks = changeBlocks(snap.messages, {
+      // The rows the loop skips: passed over without breaking a run.
+      hidden: (message) => isMovedActivity(message) || plans.hidden.has(message.id),
+      // The same stretch of transcript: same day, and no unread line between.
+      together: (previous, next) => dayKey(previous) === dayKey(next)
+        && !(lineAt !== null && previous.id < lineAt && next.id >= lineAt),
+      // Who shows the request, so a later row of the block may drop its card.
+      showsRequest: (message) => isActivityMessage(message)
+        || botHead(message.content, botMeta(message))?.kind === 'request'
+        || readyNamesRequest(message),
+    });
+    return { plans, blocks };
+  }, [botDm, snap.messages, lineAt]);
 
   useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
@@ -1749,9 +1790,6 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // safe-area test pins. It no longer changes the rows' shape: every kind is
   // the same named-row transcript (#2783).
   const kind = snap.active?.kind || 'direct';
-  // #3692: a conversation with the Homeroom bot carries its activity tray.
-  const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
-    && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
   const rows: ReactNode[] = [];
   let previousDay = '';
   let previous: ConversationMessage | null = null;
@@ -1767,10 +1805,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // item — draw as the first and a "… N more" row (../../lib/card-runs.ts).
   // A day divider breaks a run, so folding never hides one.
   const runs = cardRunStarts(snap.messages, isCardMessage, (a, b) => dayKey(a) === dayKey(b));
-  // #4046: a first version's plan carries its request's step, and while a
-  // plan or a question offers its own answers the bot's questions to tap
-  // give way (./bot-plan.tsx).
-  const plans = botDm ? planLayout(snap.messages) : NO_PLAN_LAYOUT;
+  const { plans, blocks } = layout;
   for (let index = 0; index < snap.messages.length; index += 1) {
     const message = snap.messages[index];
     // B6: a card Build it moved under its plan is drawn there, not here.
@@ -1822,6 +1857,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       focused={flashId === message.id}
       planCardId={plans.cardOf.get(message.id) ?? null}
       hidePrompts={plans.answersOpen && !!message.sender.bot}
+      // #4564: this row's part of its change's block, in the bot's DM alone.
+      block={blocks?.get(message.id) ?? null}
     />);
     previous = message;
     const length = runs.get(index);

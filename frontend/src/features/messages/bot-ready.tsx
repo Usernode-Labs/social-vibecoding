@@ -292,12 +292,21 @@ export function ReadyCardView({
   const what = changeLine(meta);
   const changeUrl = what ? changeLink(meta, actions) : null;
   const line = readyLine(state, next, now || new Date(Date.now()), locale);
+  // #4564: the request this card names — "Request #N: …", what changeLine
+  // leads with — so a `#N` chip elsewhere in its block finds this card
+  // (./ref-cards.tsx findRequestCard) when the block's lead row dropped its
+  // own request card. Nothing visible; no key when the card names no request.
+  const n = Number(meta.issueNumber);
+  const requestKey = meta.appSlug && Number.isInteger(n) && n > 0 && !meta.firstVersion
+    ? `${meta.appSlug}#${n}`
+    : undefined;
   return (
     <div
       className="mt-1 flex max-w-[480px] flex-col gap-2.5 rounded-2xl bg-[color:var(--messages-surface)] px-3 py-2.5"
       role="group"
       aria-label={readyTitle(meta)}
       data-bot-ready={state}
+      data-bot-ready-request={requestKey}
     >
       <div className="flex items-center gap-3">
         {readyMoving(state, next) ? (
