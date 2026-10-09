@@ -85,6 +85,8 @@ export interface HomeAppView {
   showRetry: boolean;
   /** Resolved live name of the app this was forked from, or null. */
   forkName: string | null;
+  /** The original app is gone; `forkName` is a placeholder and the badge has its own wording. */
+  forkDeleted?: boolean;
   /**
    * Who the project is for (communities; services/communities.js): 'open'
    * (a Public community), 'invited' (a Private community) or 'solo' (Just

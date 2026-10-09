@@ -62,6 +62,8 @@ export interface ShareDestination {
   kind: 'direct' | 'group' | 'channel' | 'discussion';
   /** What the row says, and the toast after: "@ada", "Design crew", "#general", "Recipe Box". */
   label: string;
+  /** `label` is the stand-in for a conversation with no name: the toast has its own wording. */
+  unnamed?: boolean;
   /** The muted line under it. */
   detail: string;
   conversation?: ConversationSummary;
@@ -132,6 +134,7 @@ export function shareDestinations(
       rows.push({
         key: `c:${conversation.id}`, kind: 'direct', conversation,
         label: peer ? `@${peer.username}` : conversation.title, detail: translate('messages:shareTo.detail.direct'),
+        ...(!peer && conversation.untitled ? { unnamed: true } : {}),
       });
     } else if (conversation.kind === 'channel') {
       rows.push({
@@ -142,6 +145,7 @@ export function shareDestinations(
       rows.push({
         key: `c:${conversation.id}`, kind: 'group', conversation,
         label: conversation.title, detail: translate('messages:shareTo.detail.group', { count: conversation.memberCount }),
+        ...(conversation.untitled ? { unnamed: true } : {}),
       });
     }
   }
@@ -234,7 +238,7 @@ export function ShareToDialog() {
         await api.postAppMessage(choice.slug, words ? `${words}\n\n${link}` : link);
       }
       busy.current = false; setSending(false);
-      toast(t('messages:shareTo.sharedTo', { destination: choice.label }));
+      toast(choice.unnamed ? t('messages:shareTo.sharedToUntitled') : t('messages:shareTo.sharedTo', { destination: choice.label }));
       dialog.close();
     } catch (err) {
       busy.current = false; setSending(false);

@@ -59,6 +59,10 @@
     "text": "Remixed from {{app}}",
     "description": "Tooltip and accessible name of the small ⑂ badge on an app's tile: this app was made as a copy (a remix) of another. {{app}} is the original app's name."
   },
+  "grid.tile.remixedFromDeleted": {
+    "text": "Remixed from {{open}}deleted{{close}}",
+    "description": "Tooltip and accessible name of the small ⑂ badge on an app's tile: this app was made as a copy (a remix) of another. Used when the original app has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
+  },
   "grid.tile.audience.invited": {
     "text": "Private community",
     "description": "Tooltip and accessible name of the small people badge on an app's tile: the app belongs to a community people join by invitation."

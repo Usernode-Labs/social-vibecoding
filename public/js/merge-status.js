@@ -160,8 +160,9 @@
 
   // The whole sentence and the whole line for each reason, as message ids:
   // a translator gets each one entire, never a phrase to fit into a frame.
-  // `phrase` stays the English the server also holds, for the callers that
-  // still read it.
+  // `phrase` stays the English the server also holds; nothing on screen is
+  // built from it (tests/explicit-approval-vote-panel.test.js holds the two
+  // tables equal).
   var EXPLICIT_SENTENCES = {
     admins: 'session:explicitApproval.sentence.admins',
     governance: 'session:explicitApproval.sentence.governance',
@@ -182,6 +183,8 @@
   function explicitApprovalCopy(reason) {
     var known = Object.prototype.hasOwnProperty.call(EXPLICIT_PHRASES, reason);
     return {
+      // Which protected setting, for a caller that picks a whole message by it.
+      reason: known ? reason : null,
       phrase: known ? EXPLICIT_PHRASES[reason] : null,
       sentence: t(known ? EXPLICIT_SENTENCES[reason] : 'session:explicitApproval.sentence.other'),
       line: t(known ? EXPLICIT_LINES[reason] : 'session:explicitApproval.line.other'),

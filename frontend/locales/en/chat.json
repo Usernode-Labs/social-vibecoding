@@ -19,6 +19,14 @@
     "text": "↩ Replying to {{name}}",
     "description": "Line above the message box in a community chat while the person is writing a reply to an earlier message. {{name}} is whose message it is: an @username, or a label such as a proposal's name. Keep the arrow first."
   },
+  "group.composer.replyingToPr": {
+    "text": "↩ Replying to PR #{{number}}",
+    "description": "Label over the message box while the person replies to a line about a pull request. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
+  },
+  "group.composer.replyingToPrUnnumbered": {
+    "text": "↩ Replying to PR #",
+    "description": "Label over the message box while the person replies to a line about a pull request whose number is not known."
+  },
   "group.composer.cancelReply": {
     "text": "Cancel reply",
     "description": "Accessible name of the ✕ button beside the 'Replying to' line above the chat message box: the message stops being a reply."
@@ -783,17 +791,37 @@
     "text": "{{file}}: open full size",
     "description": "Tooltip of a picture attached to a chat message: clicking it opens the picture at full size. {{file}} is the file's name. Open is a verb."
   },
+  "group.attachment.openFullSizeUnnamed": {
+    "text": "file: open full size",
+    "description": "Tooltip of a picture attached to a chat message: clicking it opens the picture at full size. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
   "group.attachment.download": {
     "text": "Download {{file}}",
     "description": "Tooltip and accessible name of the download control on a file attached to a chat message. {{file}} is the file's name. Download is a verb."
+  },
+  "group.attachment.downloadUnnamed": {
+    "text": "Download file",
+    "description": "Tooltip and accessible name of the download control on a file attached to a chat message. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
   },
   "group.attachment.view": {
     "text": "View {{file}}",
     "description": "Tooltip of a Markdown file attached to a chat message: clicking its name opens the file for reading in the side panel. {{file}} is the file's name. View is a verb."
   },
+  "group.attachment.viewUnnamed": {
+    "text": "View file",
+    "description": "Tooltip of a Markdown file attached to a chat message: clicking its name opens the file for reading in the side panel. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
   "group.attachment.previewTitle": {
     "text": "Open sandboxed preview of {{file}}",
     "description": "Tooltip of the Preview link on an HTML file attached to a chat message: opens the page in a new tab, isolated ('sandboxed') so it cannot touch the person's account. {{file}} is the file's name. Open is a verb."
+  },
+  "group.attachment.previewTitleUnnamed": {
+    "text": "Open sandboxed preview of file",
+    "description": "Tooltip of the Preview link on an HTML file attached to a chat message: opens the page in a new tab, isolated ('sandboxed') so it cannot touch the person's account. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
+  "group.attachment.unnamed": {
+    "text": "file",
+    "description": "Stands where a file's name would be on a chat attachment that has none. Shown alone, as the chip's label. A noun, lower case."
   },
   "group.attachment.preview": {
     "text": "Preview",
@@ -951,6 +979,10 @@
     "text": "Block @{{username}}",
     "description": "Item in the menu of someone else's chat message: asks for confirmation, then hides that person's messages from the reader. {{username}} is the author's username; keep the @ before it. Block is a verb."
   },
+  "group.menu.blockUnknown": {
+    "text": "Block @System",
+    "description": "Item in the menu of someone else's chat message: asks for confirmation, then hides that person's messages from the reader. Used on a message whose author did not come with it and is shown as \"System\"."
+  },
   "group.menu.blockFailed": {
     "text": "Couldn’t block this person.",
     "description": "Alert shown when blocking a chat message's author failed and the server gave no reason. Block is a verb: to hide a person's messages."
@@ -971,6 +1003,10 @@
     "text": "Block @{{username}}?",
     "description": "Title of the confirmation dialog before a chat message's author is blocked. {{username}} is that person's username; keep the @ before it. Block is a verb: to hide a person's messages."
   },
+  "group.blockConfirm.titleUnknown": {
+    "text": "Block @System?",
+    "description": "Title of the confirmation dialog before a chat message's author is blocked. Used on a message whose author did not come with it and is shown as \"System\"."
+  },
   "group.blockConfirm.message": {
     "text": "Their messages in Messages and app discussions will be hidden.",
     "description": "Body of the confirmation dialog before a person is blocked from a chat message's menu. The second 'Messages' is the name of the Messages tab; 'app discussions' are the projects' channels."
@@ -982,6 +1018,10 @@
   "group.report.label": {
     "text": "Message from @{{username}}",
     "description": "Names what is being reported, at the top of the report form opened from a chat message. {{username}} is the message author's username; keep the @ before it."
+  },
+  "group.report.labelUnknown": {
+    "text": "Message from @System",
+    "description": "Names what is being reported, at the top of the report form opened from a chat message. Used on a message whose author did not come with it and is shown as \"System\"."
   },
   "group.sheet.reply": {
     "text": "Reply",
@@ -1102,6 +1142,18 @@
   "group.quote.file": {
     "text": "file",
     "description": "Stands in for an attached file's name when it has none, after a paperclip, in the preview of the message being replied to above the chat message box. A noun, lower case."
+  },
+  "group.quote.pr": {
+    "text": "PR #{{number}}",
+    "description": "Stands where an author's name would be on a quoted line that came from a pull request, and in a shared spec's subtitle. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
+  },
+  "group.quote.prUnnumbered": {
+    "text": "PR #",
+    "description": "Stands where an author's name would be on a quoted line that came from a pull request whose number is not known."
+  },
+  "group.quote.system": {
+    "text": "system",
+    "description": "Stands where an author's name would be on a quoted line that no person wrote. Lower case, one word: the platform itself."
   },
   "group.bookmark.saveFailed": {
     "text": "Couldn't save that message",

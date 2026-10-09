@@ -410,3 +410,138 @@ test('a stand-in for a missing name never reaches a sentence as the name, wherev
   assert.equal(message('discover:detail.contributor.unknownHandle'), '@unknown', 'the row shows what it always showed');
   assert.match(read('frontend/src/features/apps/browse-detail.tsx'), /row\.unnamed \? t\('discover:detail\.contributor\.unknownHandle'\) : `@\$\{row\.who\}`/);
 });
+
+test('a normalizer says whether the name it gives is real, and the sentence downstream uses that', async (t) => {
+  const es = {
+    'messages:bot.job.unnamedProject': 'Un proyecto',
+    'messages:bot.job.firstVersion': 'Primera versión de {{project}}',
+    'messages:bot.job.firstVersionUnnamed': 'Primera versión de un proyecto',
+    'messages:bot.job.request': '{{project}} n.º {{number}}',
+    'messages:bot.job.requestUnnamed': 'Un proyecto, n.º {{number}}',
+    'messages:api.conversationTitle': 'Conversación',
+    'messages:api.unknownUser': 'desconocido',
+  };
+  const { module: api } = await loadInSpanish(t, 'frontend/src/features/messages/api.ts', es);
+  const { module: bot } = await loadInSpanish(t, 'frontend/src/features/messages/bot-shared.ts', es);
+
+  // The Homeroom bot's tray: Now, Needs you and History all come through here.
+  const work = api.normalizeBotWork({
+    now: [{ firstVersion: true, phase: 'building' }, { appSlug: 'recetas', issueNumber: 7, phase: 'building' },
+      { appName: 'A project', firstVersion: true, phase: 'building' }],
+    needs: [{ issueNumber: 3, kind: 'question' }],
+    history: [{ firstVersion: true, outcome: 'merged' }],
+  });
+  const [nameless, slugged, calledAProject] = work.now;
+  assert.equal(nameless.appUnnamed, true);
+  assert.equal(nameless.appName, 'Un proyecto', 'alone, the stand-in is the catalog\'s label');
+  assert.equal(bot.jobName(nameless), 'Primera versión de un proyecto');
+  assert.doesNotMatch(bot.jobName(nameless), /A project|de Un proyecto/);
+  assert.equal(slugged.appUnnamed, false, 'a slug names the project');
+  assert.equal(bot.jobName(slugged), 'recetas n.º 7');
+  assert.equal(calledAProject.appUnnamed, false, 'a project really called "A project" is named');
+  assert.equal(bot.jobName(calledAProject), 'Primera versión de A project');
+  for (const section of [work.needs, work.history]) {
+    if (!section || !section.length) continue;
+    assert.equal(section[0].appUnnamed, true);
+    assert.doesNotMatch(bot.jobName(section[0]), /A project|de Un proyecto|^Un proyecto n/);
+  }
+
+  // A conversation nobody named, and one that is really called "Conversation".
+  const untitled = api.normalizeConversation({ id: 4, kind: 'group', members: [] });
+  assert.equal(untitled.title, 'Conversación');
+  assert.equal(untitled.untitled, true);
+  const titled = api.normalizeConversation({ id: 5, kind: 'group', title: 'Conversación', members: [] });
+  assert.equal(titled.untitled, false);
+  const direct = api.normalizeConversation({ id: 6, kind: 'direct', peer: { id: 2, username: 'ada' }, members: [] });
+  assert.equal(direct.untitled, false);
+  assert.equal(direct.title, 'ada');
+
+  // A person whose username did not come with the row.
+  assert.equal(api.normalizeUser({ id: 9 }).unnamed, true);
+  assert.equal(api.normalizeUser({ id: 9 }).username, 'desconocido');
+  assert.equal(api.normalizeUser({ id: 9, username: 'unknown' }).unnamed, undefined, 'an account really called "unknown" is named');
+  assert.equal(api.normalizeUser({ id: 9, username: '' }).username, '', 'an empty username stays empty, as before');
+
+  // The consumers read the flag: source pins for each sentence.
+  const read = (file) => require('node:fs').readFileSync(require('node:path').join(__dirname, '..', file), 'utf8');
+  const members = read('frontend/src/features/messages/members-dialog.tsx');
+  assert.match(members, /active\?\.untitled \? t\('messages:members\.leave\.titleUntitled'\)\s*: active\?\.title \? t\('messages:members\.leave\.title', \{ group: active\.title \}\)/);
+  assert.match(read('frontend/src/features/messages/share-to-dialog.tsx'), /choice\.unnamed \? t\('messages:shareTo\.sharedToUntitled'\)/);
+  assert.match(read('frontend/src/features/messages/message-row.tsx'), /message\.sender\.unnamed \? \(message\.sender\.id \? t\('messages:row\.block\.titleUnknownHandle'\)/);
+  assert.doesNotMatch(read('frontend/src/features/messages/api.ts'), /'A project'|'unknown'\)/);
+});
+
+test('every unnamed wording added for a stand-in reads as the named one did with that stand-in', () => {
+  const pairs = [
+    ['messages:members.leave.title', 'messages:members.leave.titleUntitled', { group: 'Conversation' }],
+    ['messages:shareTo.sharedTo', 'messages:shareTo.sharedToUntitled', { destination: 'Conversation' }],
+    ['messages:members.remove.title', 'messages:members.remove.titleUnknown', { username: 'unknown' }],
+    ['messages:create.block.title', 'messages:create.block.titleUnknown', { username: 'unknown' }],
+    ['messages:create.result.blockNamed', 'messages:create.result.blockUnknown', { username: 'unknown' }],
+    ['messages:invitation.invitedBy', 'messages:invitation.invitedByUnknown', { username: 'unknown' }],
+    ['messages:invitation.declineAndBlock', 'messages:invitation.declineAndBlockUnknown', { username: 'unknown' }],
+    ['messages:attachments.removeNamed', 'messages:attachments.removeUnnamed', { file: 'file' }],
+    ['chat:group.attachment.openFullSize', 'chat:group.attachment.openFullSizeUnnamed', { file: 'file' }],
+    ['chat:group.attachment.download', 'chat:group.attachment.downloadUnnamed', { file: 'file' }],
+    ['chat:group.attachment.view', 'chat:group.attachment.viewUnnamed', { file: 'file' }],
+    ['chat:group.attachment.previewTitle', 'chat:group.attachment.previewTitleUnnamed', { file: 'file' }],
+    ['chat:group.menu.block', 'chat:group.menu.blockUnknown', { username: 'System' }],
+    ['chat:group.blockConfirm.title', 'chat:group.blockConfirm.titleUnknown', { username: 'System' }],
+    ['chat:group.report.label', 'chat:group.report.labelUnknown', { username: 'System' }],
+    ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPr', { name: 'PR #12', number: 12 }],
+    ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPrUnnumbered', { name: 'PR #' }],
+    ['devchat:transcript.attachment.openFullSize', 'devchat:transcript.attachment.openFullSizeUnnamed', { name: 'file' }],
+    ['devchat:transcript.attachment.download', 'devchat:transcript.attachment.downloadUnnamed', { name: 'file' }],
+    ['agent:appContext.about.lineage.linkTitle', 'agent:appContext.about.lineage.linkTitleDeleted', { app: '<deleted>' }],
+    ['agent:appContext.about.lineage.remixedFrom', 'agent:appContext.about.lineage.remixedFromDeleted', { app: '<deleted>' }],
+    ['discover:detail.remixedFrom.line', 'discover:detail.remixedFrom.lineDeleted', { app: '<deleted>' }],
+    ['discover:detail.remixedFrom.openOriginal', 'discover:detail.remixedFrom.openOriginalDeleted', { app: '<deleted>' }],
+    ['home:grid.tile.remixedFrom', 'home:grid.tile.remixedFromDeleted', { app: '<deleted>' }],
+    ['project:communityCard.inviteCard.join', 'project:communityCard.inviteCard.joinUnnamed', { project: 'this community' }],
+  ];
+  for (const base of ['messages:composer.replyingTo', 'messages:row.block.title', 'messages:row.reportLabel',
+    'messages:row.menu.block', 'messages:header.block.title']) {
+    pairs.push([base, `${base}UnknownHandle`, { name: '@unknown' }], [base, `${base}Unknown`, { name: 'unknown' }]);
+  }
+  for (const [named, unnamed, standIn] of pairs) {
+    assert.equal(message(unnamed, { open: '<', close: '>', ...standIn }), message(named, standIn), unnamed);
+  }
+  // Stand-ins that are shown alone, and sentences that used to be bare literals.
+  assert.equal(message('messages:api.unknownUser'), 'unknown');
+  assert.equal(message('chat:group.attachment.unnamed'), 'file');
+  assert.equal(message('devchat:attach.unnamedFile'), 'file');
+  assert.equal(message('chat:group.quote.system'), 'system');
+  assert.equal(message('shell:invitePreview.unnamed'), 'this community');
+  assert.equal(message('shell:invitePreview.privateCommunity'), 'Private community');
+  assert.equal(message('messages:store.error.groupNeedsName'), 'A group needs a name.');
+  assert.equal(message('messages:store.error.groupNameTooLong'), 'Group names can be up to 80 characters.');
+  assert.equal(message('messages:store.error.chooseConversation'), 'Choose a conversation.');
+  // Each protected setting has its own whole sentences; no phrase is fitted into a frame.
+  const phrases = { admins: 'who runs this app', governance: 'how changes are approved', visibility: 'who can see this app',
+    platformEnv: 'this app’s platform settings', secrets: 'this app’s keys' };
+  for (const [key, phrase] of Object.entries(phrases)) {
+    assert.equal(message(`changes:explicit.lead.${key}`), `It changes ${phrase}.`);
+    assert.equal(message(`changes:explicit.adminMerge.${key}`),
+      `Admin: merge this change to ${phrase} right now, without the vote or another member’s Yes`);
+  }
+});
+
+test('the remaining-literals report reads what the earlier version skipped', () => {
+  // eslint-disable-next-line global-require
+  const ts = require('typescript');
+  const found = (code) => literalsIn('x.js', code, ts).map((literal) => literal.text);
+  // A sentence that starts with a one-letter word, or with an acronym.
+  assert.equal(looksLikeProse('A project'), true);
+  assert.equal(looksLikeProse('PR #12'), true);
+  // A stand-in for a missing name in a name-like field, in lower case.
+  assert.deepEqual(found("const row = { name: a.filename || 'file', who: c.username || 'unknown' };"), ['file', 'unknown']);
+  assert.deepEqual(found("const row = { kind: a.kind || 'file', id: x || 'main' };"), [], 'an identifier elsewhere is left alone');
+  // Text inside a callback handed to a call whose own arguments are not text.
+  assert.deepEqual(found("el.addEventListener('click', () => { toast('Saved for later'); });"), ['Saved for later']);
+  // Text on the other side of a comparison.
+  assert.deepEqual(found("return open({ title: 'Private community' }) !== false;"), ['Private community']);
+  assert.deepEqual(found("if (kind === 'Private community') go();"), []);
+  // A thrown message written to a person; a developer's reason is left alone.
+  assert.deepEqual(found("throw new Error('A group needs a name.');"), ['A group needs a name.']);
+  assert.deepEqual(found("throw new Error('fetch failed');"), []);
+});

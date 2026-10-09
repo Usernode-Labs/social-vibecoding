@@ -14764,9 +14764,23 @@ const AppView = {
   _explicitLead(pr) {
     const copy = AppView._explicitCopy(pr && pr.explicit_approval_reason);
     if (pr && pr.needs_other_member_yes) return copy.sentence;
-    return copy.phrase
-      ? PlatformI18n.t('changes:explicit.lead.changes', { setting: copy.phrase })
-      : PlatformI18n.t('changes:explicit.lead.changesProtected');
+    return PlatformI18n.t(AppView._EXPLICIT_LEAD_IDS[copy.reason] || 'changes:explicit.lead.changesProtected');
+  },
+  // One whole sentence for each protected setting: which one it is decides
+  // the wording, and no phrase is fitted into a frame.
+  _EXPLICIT_LEAD_IDS: {
+    admins: 'changes:explicit.lead.admins',
+    governance: 'changes:explicit.lead.governance',
+    visibility: 'changes:explicit.lead.visibility',
+    platform_env: 'changes:explicit.lead.platformEnv',
+    secrets: 'changes:explicit.lead.secrets',
+  },
+  _EXPLICIT_ADMIN_MERGE_IDS: {
+    admins: 'changes:explicit.adminMerge.admins',
+    governance: 'changes:explicit.adminMerge.governance',
+    visibility: 'changes:explicit.adminMerge.visibility',
+    platform_env: 'changes:explicit.adminMerge.platformEnv',
+    secrets: 'changes:explicit.adminMerge.secrets',
   },
 
   // The Admin merge control's tooltip. Only a platform admin sees it on a
@@ -14775,10 +14789,8 @@ const AppView = {
     if (!pr || !pr.requires_explicit_approval) {
       return PlatformI18n.t('changes:explicit.adminMerge.plain');
     }
-    const phrase = AppView._explicitCopy(pr.explicit_approval_reason).phrase;
-    return phrase
-      ? PlatformI18n.t('changes:explicit.adminMerge.setting', { setting: phrase })
-      : PlatformI18n.t('changes:explicit.adminMerge.protected');
+    const reason = AppView._explicitCopy(pr.explicit_approval_reason).reason;
+    return PlatformI18n.t(AppView._EXPLICIT_ADMIN_MERGE_IDS[reason] || 'changes:explicit.adminMerge.protected');
   },
 
   requirementsSpec(pr) {

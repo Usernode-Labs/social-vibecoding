@@ -181,14 +181,15 @@ function ActionRow({ id, icon, label, sub = null, onClick }: {
  * original resolves to "<deleted>" and is text, not a link. Pure; the line
  * it feeds is pinned by tests/app-about-pane.test.js.
  */
-function lineageOf(row: AppRow | null | undefined): { name: string; href: string | null } | null {
+function lineageOf(row: AppRow | null | undefined): { name: string; deleted: boolean; href: string | null } | null {
   const ref = row ? row.forked_from : null;
   if (!ref || typeof ref !== 'object') return null;
   const name = typeof ref.name === 'string' && ref.name ? ref.name : '<deleted>';
   const href = ref.linkable && typeof ref.slug === 'string' && ref.slug
     ? `#app/${encodeURIComponent(ref.slug)}`
     : null;
-  return { name, href };
+  // `deleted`: the original is gone and `name` is only a placeholder; the line says so in its own words.
+  return { name, deleted: !(typeof ref.name === 'string' && ref.name), href };
 }
 
 /**
@@ -460,13 +461,13 @@ export function AboutPane({ label, unnamed = false }: { label: string; unnamed?:
                 <a
                   href={lineage.href}
                   className="hover:underline"
-                  title={t('agent:appContext.about.lineage.linkTitle', { app: lineage.name })}
+                  title={lineage.deleted ? t('agent:appContext.about.lineage.linkTitleDeleted', { open: '<', close: '>' }) : t('agent:appContext.about.lineage.linkTitle', { app: lineage.name })}
                   onClick={() => { void AppContext.dismissForNav(); }}
                 >
-                  {t('agent:appContext.about.lineage.remixedFrom', { app: lineage.name })}
+                  {lineage.deleted ? t('agent:appContext.about.lineage.remixedFromDeleted', { open: '<', close: '>' }) : t('agent:appContext.about.lineage.remixedFrom', { app: lineage.name })}
                 </a>
               ) : (
-                <span title={t('agent:appContext.about.lineage.goneTitle')}>{t('agent:appContext.about.lineage.remixedFrom', { app: lineage.name })}</span>
+                <span title={t('agent:appContext.about.lineage.goneTitle')}>{lineage.deleted ? t('agent:appContext.about.lineage.remixedFromDeleted', { open: '<', close: '>' }) : t('agent:appContext.about.lineage.remixedFrom', { app: lineage.name })}</span>
               )}
             </p>
           ) : null}

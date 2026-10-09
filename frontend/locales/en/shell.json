@@ -295,6 +295,14 @@
     "text": "Not now",
     "description": "Declining button of the question \"Join …?\" asked of a person who followed an invite link: closes it without joining."
   },
+  "invitePreview.unnamed": {
+    "text": "this community",
+    "description": "Stands where the community's name would be at the top of the preview of a private community's invite, when no name came with the link. Shown alone, as the heading."
+  },
+  "invitePreview.privateCommunity": {
+    "text": "Private community",
+    "description": "Label under the name on the preview of a private community's invite, used when the link did not say who the community is for."
+  },
   "invite.joined": {
     "text": "You're in.",
     "description": "Toast shown right after a person joined a community through an invite link."

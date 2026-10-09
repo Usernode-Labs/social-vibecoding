@@ -1421,8 +1421,8 @@ export async function renameConversation(title: string): Promise<void> {
   const id = state.route.conversationId;
   if (!id) return;
   const next = title.trim().replace(/\s+/g, ' ');
-  if (!next) throw new Error('A group needs a name.');
-  if (next.length > 80) throw new Error('Group names can be up to 80 characters.');
+  if (!next) throw new Error(t('messages:store.error.groupNeedsName'));
+  if (next.length > 80) throw new Error(t('messages:store.error.groupNameTooLong'));
   if (next === state.active?.title) return;
   try {
     upsertConversation(await api.updateConversation(id, { title: next }));
@@ -2323,7 +2323,7 @@ export async function share(reference?: SharedObjectReference): Promise<void> {
  * is re-read so the conversation moves to the top.
  */
 export async function shareToConversation(conversationId: number, object: SharedObjectReference, note = ''): Promise<void> {
-  if (!validId(conversationId)) throw new Error('Choose a conversation.');
+  if (!validId(conversationId)) throw new Error(t('messages:store.error.chooseConversation'));
   const message = await api.sendMessage(conversationId, {
     content: note.trim().slice(0, 8000),
     object,

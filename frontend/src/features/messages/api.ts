@@ -92,9 +92,12 @@ function pick(source: JsonRecord, ...keys: string[]): unknown {
 
 export function normalizeUser(input: unknown): ConversationUser {
   const row = record(input);
+  const username = pick(row, 'username', 'name');
   return {
     id: strictId(pick(row, 'id', 'userId', 'user_id')) || 0,
-    username: text(pick(row, 'username', 'name'), 'unknown'),
+    username: typeof username === 'string' ? username : t('messages:api.unknownUser'),
+    // No username came with the row: `username` is a stand-in, never a name in a sentence.
+    ...(typeof username === 'string' ? {} : { unnamed: true }),
     avatarUrl: text(pick(row, 'avatarUrl', 'avatar_url')) || null,
     // #3624: a platform account (the Homeroom bot). Named here, or dropped.
     ...(pick(row, 'bot') === true ? { bot: true } : {}),
@@ -416,9 +419,13 @@ export function normalizeConversation(input: unknown): ConversationDetail {
   const membershipStatus = text(pick(row, 'membershipStatus', 'membership_status', 'myStatus', 'my_status', 'status'));
   const latestRaw = pick(row, 'latestMessage', 'latest_message', 'lastMessage', 'last_message');
   const latestMessage = latestRaw ? normalizeMessage(latestRaw, id) : null;
-  const title = text(pick(row, 'title', 'name'))
+  // What it is called: its own title, or in a direct conversation the other
+  // person. With neither, `title` is a stand-in to show where a name would be,
+  // and `untitled` tells a sentence to use its own wording, not that word.
+  const named = text(pick(row, 'title', 'name'))
     || (kind === 'direct' ? peer?.username || members.find((member) => member.status === 'member')?.username : '')
-    || t('messages:api.conversationTitle');
+    || '';
+  const title = named || t('messages:api.conversationTitle');
   const canSendValue = pick(row, 'canSend', 'can_send');
   const homeroomBot = kind === 'direct' && pick(row, 'homeroomBot') === true;
   const summary = plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || '');
@@ -426,6 +433,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     id,
     kind,
     title,
+    untitled: !named,
     avatarUrl: text(pick(row, 'avatarUrl', 'avatar_url')) || peer?.avatarUrl || null,
     members,
     memberCount: Number(pick(row, 'memberCount', 'member_count')) || members.filter((member) => member.status === 'member').length,
@@ -863,10 +871,13 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
   const appSlug = text(pick(row, 'appSlug')) || null;
   const issueNumber = strictId(pick(row, 'issueNumber'));
   const firstVersion = pick(row, 'firstVersion') === true;
+  const named = text(pick(row, 'appName')) || appSlug;
   return {
     key: text(pick(row, 'key')) || `${appSlug || ''}#${issueNumber || 'first'}`,
     appSlug,
-    appName: text(pick(row, 'appName')) || appSlug || 'A project',
+    appName: named || t('messages:bot.job.unnamedProject'),
+    // A slug is the project's own address and names it; only the stand-in is unnamed.
+    appUnnamed: !named,
     iconUrl: appIconUrl(pick(row, 'iconUrl')),
     iconEmoji: text(pick(row, 'iconEmoji')) || null,
     issueNumber,

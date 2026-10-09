@@ -42,6 +42,8 @@ export type InvitePreviewInfo = Pick<
   InviteOffer,
   'token' | 'name' | 'inviter' | 'inviterName' | 'inviterMadeIt' | 'building' | 'note' | 'welcome' | 'settle'
 > & {
+  /** `name` is a stand-in: no name came with the link. */
+  unnamed?: boolean;
   iconEmoji: string | null;
   iconUrl: string | null;
   /** The colour its dapp.json sets, or null to read one off the icon. */
@@ -100,7 +102,7 @@ export function InvitePreviewPage({ info, busy, onJoin, onClose }: {
       </header>
       <div className="mx-auto w-full max-w-xl px-4 pb-8 pt-4">
         <section className="dev-ws-hero" data-ws-invite-preview="">
-          <InviteCard offer={info} name={info.name} busy={busy} onJoin={onJoin} />
+          <InviteCard offer={info} name={info.name} unnamed={info.unnamed} busy={busy} onJoin={onJoin} />
           <HeroPeople members={[]} count={info.memberCount} audience="invited" audienceLabel={info.audienceLabel} />
           {info.description ? (
             <p className="dev-ws-hero-desc" data-invite-preview-description="">{info.description}</p>

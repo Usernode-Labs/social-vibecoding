@@ -11,6 +11,10 @@
     "text": "Remove {{file}}",
     "description": "Accessible name of the × button on a file waiting to be sent in the message box. {{file}} is the file's name."
   },
+  "attachments.removeUnnamed": {
+    "text": "Remove file",
+    "description": "Accessible name of the × button on a file waiting to be sent in the message box. Used for a file with no name; \"file\" is written as it has always been shown."
+  },
   "attachments.refusedMore_one": {
     "text": "{{reason}} {{count}} more file wasn’t attached.",
     "description": "Error under the message box when several chosen files were refused. {{reason}} is a complete sentence saying why the first one was refused, kept first; {{count}} is how many other files were also left out."
@@ -1531,6 +1535,14 @@
     "text": "Replying to {{name}}",
     "description": "Bar above the message box while writing a reply to one message. {{name}} is the author of that message, as shown in the conversation (for a person, their username with @)."
   },
+  "composer.replyingToUnknownHandle": {
+    "text": "Replying to @unknown",
+    "description": "Bar above the message box while writing a reply to one message. Used when the username is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "composer.replyingToUnknown": {
+    "text": "Replying to unknown",
+    "description": "Bar above the message box while writing a reply to one message. Used when the username is not known and the account has no id; \"unknown\" is written as it has always been shown."
+  },
   "composer.replyAttachment": {
     "text": "Attachment",
     "description": "Shown in the reply bar above the message box in place of the quoted message's words when that message is only a file or picture. A noun."
@@ -1779,6 +1791,22 @@
     "text": "Deleted user",
     "description": "Stands in for the author's username on a quoted message whose author's account no longer exists."
   },
+  "api.unknownUser": {
+    "text": "unknown",
+    "description": "Stands where a username would be, for an account whose username did not come from the server. Shown alone, sometimes after an @. Lower case; keep it one short word."
+  },
+  "store.error.groupNeedsName": {
+    "text": "A group needs a name.",
+    "description": "Brief message shown when a person renames a group chat and leaves the name empty."
+  },
+  "store.error.groupNameTooLong": {
+    "text": "Group names can be up to 80 characters.",
+    "description": "Brief message shown when a person renames a group chat with a name longer than 80 characters."
+  },
+  "store.error.chooseConversation": {
+    "text": "Choose a conversation.",
+    "description": "Error line in the \"Share to…\" dialog when what was picked is not a conversation that can be shared to."
+  },
   "api.conversationTitle": {
     "text": "Conversation",
     "description": "Title of a conversation that has no name and whose other member is not known. A noun."
@@ -1822,6 +1850,10 @@
   "create.block.title": {
     "text": "Block @{{username}}?",
     "description": "Title of the confirmation before blocking a person, so they can no longer message you. \"Block\" is a verb. {{username}} is that person; keep the @."
+  },
+  "create.block.titleUnknown": {
+    "text": "Block @unknown?",
+    "description": "Title of the confirmation before blocking a person, so they can no longer message you. \"Block\" is a verb. Used when the username is not known; \"@unknown\" is written as it has always been shown."
   },
   "create.block.message": {
     "text": "Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.",
@@ -1883,6 +1915,10 @@
     "text": "Block @{{username}}",
     "description": "Accessible name of the \"Block\" button beside a person in the search results. \"Block\" is a verb: stop this person from messaging you. {{username}} is that person; keep the @."
   },
+  "create.result.blockUnknown": {
+    "text": "Block @unknown",
+    "description": "Accessible name of the \"Block\" button beside a person in the search results. \"Block\" is a verb: stop this person from messaging you. Used when the username is not known; \"@unknown\" is written as it has always been shown."
+  },
   "create.result.block": {
     "text": "Block",
     "description": "Button beside a person in the search results of the \"New message\" dialog. A verb: stop this person from messaging you."
@@ -1931,6 +1967,10 @@
     "text": "Remove @{{username}} from this group?",
     "description": "Title of the confirmation before removing a person from a group chat. {{username}} is that person; keep the @."
   },
+  "members.remove.titleUnknown": {
+    "text": "Remove @unknown from this group?",
+    "description": "Title of the confirmation before removing a person from a group chat. Used when the username is not known; \"@unknown\" is written as it has always been shown."
+  },
   "members.remove.confirm": {
     "text": "Remove",
     "description": "Confirm button of the confirmation before removing a person from a group chat."
@@ -1942,6 +1982,10 @@
   "members.leave.title": {
     "text": "Leave {{group}}?",
     "description": "Title of the confirmation before leaving a group chat. \"Leave\" is a verb: stop being a member. {{group}} is the group chat's name."
+  },
+  "members.leave.titleUntitled": {
+    "text": "Leave Conversation?",
+    "description": "Title of the confirmation before leaving a group chat. \"Leave\" is a verb: stop being a member. Used for a conversation that has no name and whose other member is not known; \"Conversation\" is written as the title has always shown it."
   },
   "members.leave.titleUnnamed": {
     "text": "Leave this conversation?",
@@ -2203,6 +2247,10 @@
     "text": "Shared to {{destination}}",
     "description": "Brief confirmation after sharing something from the \"Share to…\" dialog. {{destination}} is where it went: a person as @username, a group's name, a channel as #name or a project's name."
   },
+  "shareTo.sharedToUntitled": {
+    "text": "Shared to Conversation",
+    "description": "Brief confirmation after sharing something from the \"Share to…\" dialog. Used when it went to a conversation that has no name; \"Conversation\" is written as the toast has always shown it."
+  },
   "shareTo.title": {
     "text": "Share to…",
     "description": "Title of the dialog for sending an app, request or change to a conversation or a project's discussion. \"Share\" is a verb."
@@ -2287,6 +2335,14 @@
     "text": "Block {{name}}?",
     "description": "Title of the confirmation before blocking the author of a message. \"Block\" is a verb: stop this person from messaging you. {{name}} is the author as shown on the message, a username with @."
   },
+  "row.block.titleUnknownHandle": {
+    "text": "Block @unknown?",
+    "description": "Title of the confirmation before blocking the author of a message. \"Block\" is a verb: stop this person from messaging you. Used when the username is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "row.block.titleUnknown": {
+    "text": "Block unknown?",
+    "description": "Title of the confirmation before blocking the author of a message. \"Block\" is a verb: stop this person from messaging you. Used when the username is not known and the account has no id; \"unknown\" is written as it has always been shown."
+  },
   "row.block.message": {
     "text": "Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.",
     "description": "Body of the confirmation before blocking the author of a message: what blocking does."
@@ -2355,9 +2411,25 @@
     "text": "Message from {{name}}",
     "description": "Names what is being reported in the report dialog opened from a message. {{name}} is the message's author as shown on it, a username with @."
   },
+  "row.reportLabelUnknownHandle": {
+    "text": "Message from @unknown",
+    "description": "Names what is being reported in the report dialog opened from a message. Used when the username is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "row.reportLabelUnknown": {
+    "text": "Message from unknown",
+    "description": "Names what is being reported in the report dialog opened from a message. Used when the username is not known and the account has no id; \"unknown\" is written as it has always been shown."
+  },
   "row.menu.block": {
     "text": "Block {{name}}",
     "description": "Item in a message's actions menu: stops the message's author from messaging you and hides their messages. \"Block\" is a verb. {{name}} is the author as shown on the message, a username with @."
+  },
+  "row.menu.blockUnknownHandle": {
+    "text": "Block @unknown",
+    "description": "Item in a message's actions menu: stops the message's author from messaging you and hides their messages. \"Block\" is a verb. Used when the username is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "row.menu.blockUnknown": {
+    "text": "Block unknown",
+    "description": "Item in a message's actions menu: stops the message's author from messaging you and hides their messages. \"Block\" is a verb. Used when the username is not known and the account has no id; \"unknown\" is written as it has always been shown."
   },
   "row.sheet.reply": {
     "text": "Reply",
@@ -2595,6 +2667,10 @@
     "text": "@{{username}} invited you. Accepting gives you access to the complete retained conversation history.",
     "description": "Text of the invitation banner at the top of a conversation. {{username}} is who invited you; keep the @. \"Retained\" means the messages the conversation still keeps."
   },
+  "invitation.invitedByUnknown": {
+    "text": "@unknown invited you. Accepting gives you access to the complete retained conversation history.",
+    "description": "Text of the invitation banner at the top of a conversation. Used when the username is not known; \"@unknown\" is written as it has always been shown."
+  },
   "invitation.invitedBySomeone": {
     "text": "Someone invited you. Accepting gives you access to the complete retained conversation history.",
     "description": "Text of the invitation banner at the top of a conversation when it is not known who invited you. \"Retained\" means the messages the conversation still keeps."
@@ -2606,6 +2682,10 @@
   "invitation.declineAndBlock": {
     "text": "Decline & block @{{username}}",
     "description": "Button on the invitation banner: turns the request down and also stops that person from messaging you again. \"Block\" is a verb. {{username}} is who sent the request; keep the @."
+  },
+  "invitation.declineAndBlockUnknown": {
+    "text": "Decline & block @unknown",
+    "description": "Button on the invitation banner: turns the request down and also stops that person from messaging you again. \"Block\" is a verb. Used when the username is not known; \"@unknown\" is written as it has always been shown."
   },
   "invitation.accept": {
     "text": "Accept",
@@ -2622,6 +2702,14 @@
   "header.block.title": {
     "text": "Block {{name}}?",
     "description": "Title of the confirmation before blocking the other person in a direct conversation. \"Block\" is a verb: stop this person from messaging you. {{name}} is that person as shown in the header, a username with @."
+  },
+  "header.block.titleUnknownHandle": {
+    "text": "Block @unknown?",
+    "description": "Title of the confirmation before blocking the other person in a direct conversation. \"Block\" is a verb: stop this person from messaging you. Used when the username is not known; \"@unknown\" is written as it has always been shown."
+  },
+  "header.block.titleUnknown": {
+    "text": "Block unknown?",
+    "description": "Title of the confirmation before blocking the other person in a direct conversation. \"Block\" is a verb: stop this person from messaging you. Used when the username is not known and the account has no id; \"unknown\" is written as it has always been shown."
   },
   "header.block.message": {
     "text": "Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.",

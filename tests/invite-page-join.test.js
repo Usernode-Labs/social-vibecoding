@@ -267,7 +267,7 @@ test('signed in and not in a private community: its invite preview, from the sta
   assert.deepEqual(
     Object.keys(info).sort(),
     ['audienceLabel', 'building', 'description', 'iconColor', 'iconEmoji', 'iconUrl', 'inviter', 'inviterMadeIt',
-      'inviterName', 'land', 'memberCount', 'name', 'note', 'settle', 'token', 'welcome'],
+      'inviterName', 'land', 'memberCount', 'name', 'note', 'settle', 'token', 'unnamed', 'welcome'],
     'what the preview is handed: no slug, no members, no items',
   );
   assert.deepEqual(

@@ -289,8 +289,8 @@ function AppCardTile({ app, style, yours, live }: {
         {app.forkName ? (
           <span
             className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
-            title={t('home:grid.tile.remixedFrom', { app: app.forkName })}
-            aria-label={t('home:grid.tile.remixedFrom', { app: app.forkName })}
+            title={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
+            aria-label={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
           >
             ⑂
           </span>

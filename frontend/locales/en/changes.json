@@ -1779,9 +1779,25 @@
     "text": "It changes a protected setting",
     "description": "Short line under the \"A Yes from another member\" step of a proposal's list of steps, saying why the step applies. No full stop."
   },
-  "explicit.lead.changes": {
-    "text": "It changes {{setting}}.",
-    "description": "First sentence of the tooltip and note on a proposal that needs explicit approval, saying why. {{setting}} is a short noun phrase naming the protected setting, for example \"who can vote\"."
+  "explicit.lead.admins": {
+    "text": "It changes who runs this app.",
+    "description": "First sentence of the tooltip and note on a proposal that needs explicit approval, saying why: it changes the list of people who administer the app."
+  },
+  "explicit.lead.governance": {
+    "text": "It changes how changes are approved.",
+    "description": "First sentence of the tooltip and note on a proposal that needs explicit approval, saying why: it changes the rule for how changes are approved."
+  },
+  "explicit.lead.visibility": {
+    "text": "It changes who can see this app.",
+    "description": "First sentence of the tooltip and note on a proposal that needs explicit approval, saying why: it changes who is allowed to see the app."
+  },
+  "explicit.lead.platformEnv": {
+    "text": "It changes this app’s platform settings.",
+    "description": "First sentence of the tooltip and note on a proposal that needs explicit approval, saying why: it changes the settings the platform holds for the app."
+  },
+  "explicit.lead.secrets": {
+    "text": "It changes this app’s keys.",
+    "description": "First sentence of the tooltip and note on a proposal that needs explicit approval, saying why: it changes the app's secret keys."
   },
   "explicit.lead.changesProtected": {
     "text": "It changes a protected setting.",
@@ -1815,9 +1831,25 @@
     "text": "Admin: merge this PR right now, bypassing the vote majority",
     "description": "Tooltip of the \"Admin merge\" item in a proposal's ⋯ menu, shown to administrators only. \"PR\" abbreviates pull request."
   },
-  "explicit.adminMerge.setting": {
-    "text": "Admin: merge this change to {{setting}} right now, without the vote or another member’s Yes",
-    "description": "Tooltip of the \"Admin merge\" item in the ⋯ menu of a proposal that changes a protected setting. {{setting}} is a short noun phrase naming that setting, for example \"who can vote\"."
+  "explicit.adminMerge.admins": {
+    "text": "Admin: merge this change to who runs this app right now, without the vote or another member’s Yes",
+    "description": "Tooltip of the \"Admin merge\" item in the ⋯ menu of a proposal that changes a protected setting: the list of people who administer the app. Shown to administrators only."
+  },
+  "explicit.adminMerge.governance": {
+    "text": "Admin: merge this change to how changes are approved right now, without the vote or another member’s Yes",
+    "description": "Tooltip of the \"Admin merge\" item in the ⋯ menu of a proposal that changes a protected setting: the rule for how changes are approved. Shown to administrators only."
+  },
+  "explicit.adminMerge.visibility": {
+    "text": "Admin: merge this change to who can see this app right now, without the vote or another member’s Yes",
+    "description": "Tooltip of the \"Admin merge\" item in the ⋯ menu of a proposal that changes a protected setting: who is allowed to see the app. Shown to administrators only."
+  },
+  "explicit.adminMerge.platformEnv": {
+    "text": "Admin: merge this change to this app’s platform settings right now, without the vote or another member’s Yes",
+    "description": "Tooltip of the \"Admin merge\" item in the ⋯ menu of a proposal that changes a protected setting: the settings the platform holds for the app. Shown to administrators only."
+  },
+  "explicit.adminMerge.secrets": {
+    "text": "Admin: merge this change to this app’s keys right now, without the vote or another member’s Yes",
+    "description": "Tooltip of the \"Admin merge\" item in the ⋯ menu of a proposal that changes a protected setting: the app's secret keys. Shown to administrators only."
   },
   "explicit.adminMerge.protected": {
     "text": "Admin: merge this change to a protected setting right now, without the vote or another member’s Yes",

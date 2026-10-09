@@ -927,9 +927,11 @@ export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_ma
  * community's invite preview (../../invite-preview). `children` hang under
  * the button: the hero's Join question.
  */
-export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
+export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef, children }: {
   offer: Pick<InviteOffer, 'inviter' | 'inviterName' | 'inviterMadeIt' | 'building' | 'note'>;
   name: string;
+  /** `name` is a stand-in for a community whose name did not come with the link. */
+  unnamed?: boolean;
   busy: boolean;
   onJoin: () => void;
   joinRef?: Ref<HTMLButtonElement>;
@@ -954,7 +956,7 @@ export function InviteCard({ offer, name, busy, onJoin, joinRef, children }: {
           disabled={busy}
           onClick={onJoin}
         >
-          {t('project:communityCard.inviteCard.join', { project: name })}
+          {unnamed ? t('project:communityCard.inviteCard.joinUnnamed') : t('project:communityCard.inviteCard.join', { project: name })}
         </Button>
         {children}
       </div>

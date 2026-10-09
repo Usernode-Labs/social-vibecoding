@@ -1044,10 +1044,10 @@ function InvitationBanner() {
   }
   return (
     <div className="messages-invitation">
-      <div className="min-w-0 flex-1"><strong>{active.kind === 'direct' ? t('messages:invitation.messageRequest') : t('messages:invitation.groupInvitation')}</strong><p>{requesterUser?.username ? t('messages:invitation.invitedBy', { username: requesterUser.username }) : t('messages:invitation.invitedBySomeone')}</p>{error ? <span role="alert">{error}</span> : null}</div>
+      <div className="min-w-0 flex-1"><strong>{active.kind === 'direct' ? t('messages:invitation.messageRequest') : t('messages:invitation.groupInvitation')}</strong><p>{requesterUser?.unnamed ? t('messages:invitation.invitedByUnknown') : requesterUser?.username ? t('messages:invitation.invitedBy', { username: requesterUser.username }) : t('messages:invitation.invitedBySomeone')}</p>{error ? <span role="alert">{error}</span> : null}</div>
       <div className="messages-invite-actions">
         <button type="button" disabled={busy} onClick={() => void answer('decline')} className="messages-invite-decline">{t('messages:invitation.decline')}</button>
-        {requesterUser?.id ? <button type="button" disabled={busy} onClick={() => void declineAndBlock()} className="messages-invite-block">{t('messages:invitation.declineAndBlock', { username: requesterUser.username })}</button> : null}
+        {requesterUser?.id ? <button type="button" disabled={busy} onClick={() => void declineAndBlock()} className="messages-invite-block">{requesterUser.unnamed ? t('messages:invitation.declineAndBlockUnknown') : t('messages:invitation.declineAndBlock', { username: requesterUser.username })}</button> : null}
         <button type="button" disabled={busy} onClick={() => void answer('accept')} className="messages-invite-accept">{t('messages:invitation.accept')}</button>
       </div>
     </div>
@@ -1145,7 +1145,7 @@ function ThreadHeader() {
     // QA 2026-09-24 Q15: the app's own confirm (lib/confirm.ts), not the
     // browser's, which some webview hosts suppress.
     const ok = await confirmAction({
-      title: t('messages:header.block.title', { name: senderName(peer) }),
+      title: peer.unnamed ? (peer.id ? t('messages:header.block.titleUnknownHandle') : t('messages:header.block.titleUnknown')) : t('messages:header.block.title', { name: senderName(peer) }),
       message: t('messages:header.block.message'),
       confirmLabel: t('messages:header.block.confirm'),
       danger: true,

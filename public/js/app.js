@@ -4658,13 +4658,15 @@ const App = {
     const project = standing.project || {};
     return island.open({
       token,
-      name: project.name || 'this community',
+      name: project.name || PlatformI18n.t('shell:invitePreview.unnamed'),
+      // No name came with the link: the Join button has its own wording.
+      unnamed: !project.name,
       iconEmoji: project.iconEmoji || null,
       iconUrl: project.iconUrl || null,
       iconColor: shown.iconColor || null,
       description: project.description || null,
       memberCount: Number(standing.memberCount) || 0,
-      audienceLabel: shown.audienceLabel || 'Private community',
+      audienceLabel: shown.audienceLabel || PlatformI18n.t('shell:invitePreview.privateCommunity'),
       inviter: standing.inviter || null,
       inviterName: standing.inviterName || null,
       inviterMadeIt: !!standing.inviterMadeIt,

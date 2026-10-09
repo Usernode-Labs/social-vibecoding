@@ -32,6 +32,8 @@ import type { PendingAttachmentView } from '../attachments/pending-strip';
 export interface QuoteChipView {
   /** Who is being replied to: "@alice", "PR #12". Empty when `unnamed` is set. */
   label: string;
+  /** The pull request being replied to, by number ('' when it has none); null for anything else. */
+  pr?: string | null;
   /**
    * A row with nobody to name: a platform message (`event`), or a message
    * whose author is gone (`message`). The strip then has a sentence of its own.

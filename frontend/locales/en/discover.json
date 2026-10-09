@@ -339,9 +339,17 @@
     "text": "⑂ Remixed from {{app}}",
     "description": "Line under an app's version on its page in Discover: this app was made as a copy (a remix) of another app. {{app}} is the original app's name. Keep the leading ⑂ symbol."
   },
+  "detail.remixedFrom.lineDeleted": {
+    "text": "⑂ Remixed from {{open}}deleted{{close}}",
+    "description": "Line under an app's version on its page in Discover: this app was made as a copy (a remix) of another app. Used when the original app has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
+  },
   "detail.remixedFrom.openOriginal": {
     "text": "Remixed from {{app}}: open the original",
     "description": "Tooltip of the \"Remixed from\" line on an app's page when the original app can be opened. {{app}} is the original app's name. \"Open\" is a verb."
+  },
+  "detail.remixedFrom.openOriginalDeleted": {
+    "text": "Remixed from {{open}}deleted{{close}}: open the original",
+    "description": "Tooltip of the \"Remixed from\" line on an app's page when the original app can be opened. Used when the original app has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
   },
   "detail.remixedFrom.originalGone": {
     "text": "The original app no longer exists",

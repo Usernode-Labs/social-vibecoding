@@ -203,7 +203,7 @@ function AttachmentImage({ att }: { att: Attachment }) {
         href={att.url}
         target="_blank"
         rel="noopener"
-        title={t('chat:group.attachment.openFullSize', { file: att.name })}
+        title={att.unnamed ? t('chat:group.attachment.openFullSizeUnnamed') : t('chat:group.attachment.openFullSize', { file: att.name })}
         data-image-open=""
         onClick={(event) => openInViewer(event, () => setViewing(true))}
       >
@@ -228,8 +228,8 @@ function AttachmentChip({ att }: { att: Attachment }) {
       className="gc-att-action"
       href={att.url}
       download={att.name}
-      title={t('chat:group.attachment.download', { file: att.name })}
-      aria-label={t('chat:group.attachment.download', { file: att.name })}
+      title={att.unnamed ? t('chat:group.attachment.downloadUnnamed') : t('chat:group.attachment.download', { file: att.name })}
+      aria-label={att.unnamed ? t('chat:group.attachment.downloadUnnamed') : t('chat:group.attachment.download', { file: att.name })}
     >
       <span aria-hidden="true">↓</span>
     </a>
@@ -243,7 +243,7 @@ function AttachmentChip({ att }: { att: Attachment }) {
           className="dc-attach-name gc-att-open"
           data-att-md={att.url}
           data-att-name={att.name}
-          title={t('chat:group.attachment.view', { file: att.name })}
+          title={att.unnamed ? t('chat:group.attachment.viewUnnamed') : t('chat:group.attachment.view', { file: att.name })}
         >
           {att.name}
         </button>
@@ -263,7 +263,7 @@ function AttachmentChip({ att }: { att: Attachment }) {
           href={`${att.url}/view`}
           target="_blank"
           rel="noopener"
-          title={t('chat:group.attachment.previewTitle', { file: att.name })}
+          title={att.unnamed ? t('chat:group.attachment.previewTitleUnnamed') : t('chat:group.attachment.previewTitle', { file: att.name })}
         >
           {t('chat:group.attachment.preview')}
         </a>
@@ -276,7 +276,7 @@ function AttachmentChip({ att }: { att: Attachment }) {
       className="dc-msg-att-chip"
       href={att.url}
       download={att.name}
-      title={t('chat:group.attachment.download', { file: att.name })}
+      title={att.unnamed ? t('chat:group.attachment.downloadUnnamed') : t('chat:group.attachment.download', { file: att.name })}
     >
       <AttachmentBadge badge={att.badge} />
       <span className="dc-attach-name">{att.name}</span>
@@ -687,12 +687,12 @@ export function messageMenuItems(
   } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
     items.push({ key: 'report', label: translate('chat:group.menu.report'), icon: FlagIcon, separated: true, onSelect: onReportMessage });
     items.push({
-      key: 'block', label: translate('chat:group.menu.block', { username: msg.username }), icon: NoSymbolIcon, danger: true,
+      key: 'block', label: msg.usernameMissing ? translate('chat:group.menu.blockUnknown') : translate('chat:group.menu.block', { username: msg.username }), icon: NoSymbolIcon, danger: true,
       onSelect: () => {
         const senderId = msg.senderId;
         if (!senderId) return;
         void confirmAction({
-          title: translate('chat:group.blockConfirm.title', { username: msg.username }),
+          title: msg.usernameMissing ? translate('chat:group.blockConfirm.titleUnknown') : translate('chat:group.blockConfirm.title', { username: msg.username }),
           message: translate('chat:group.blockConfirm.message'),
           confirmLabel: translate('chat:group.blockConfirm.confirm'),
           danger: true,
@@ -732,7 +732,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   // appear. Nothing is asked for a row without a picture.
   useCanSaveImage((msg.attachments || []).find((att) => att.kind === 'image')?.url || '');
   const longPress = useLongPress(() => setSheet(true), { disabled: !live });
-  const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: t('chat:group.report.label', { username: msg.username }), userId: msg.senderId });
+  const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: msg.usernameMissing ? t('chat:group.report.labelUnknown') : t('chat:group.report.label', { username: msg.username }), userId: msg.senderId });
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
   const items = live ? messageMenuItems(msg, surface, reportMessage) : [];
   const sheetItems: MenuItem[] = live ? [

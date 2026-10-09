@@ -926,6 +926,8 @@ const GroupChat = {
       || (kindRaw === 'spec_share' && !isSpecShare);
     const kind = isSpecShare ? 'spec_share' : (isVote ? 'vote' : (isSystem ? 'system' : 'message'));
     const username = msg.username || PlatformI18n.t('chat:group.systemSender');
+    // No author came with the row: `username` is a stand-in, never a name in a sentence.
+    const usernameMissing = !msg.username;
     const me = App.user && App.user.username;
     const editedAt = msg.editedAt || msg.edited_at;
     const q = meta.quote;
@@ -951,6 +953,7 @@ const GroupChat = {
       senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,
+      usernameMissing,
       text: deleted ? '' : String(msg.content == null ? '' : msg.content),
       deleted,
       // The reply thread under a general-chat message (#2387), as the chip
@@ -989,7 +992,7 @@ const GroupChat = {
       showBookmark: !!(window.App && App.user),
       quote: q && !deleted ? {
         icon: q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9'),
-        username: q.author || (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system'),
+        username: q.author || (q.source === 'pr' ? (q.prNumber ? PlatformI18n.t('chat:group.quote.pr', { number: q.prNumber }) : PlatformI18n.t('chat:group.quote.prUnnumbered')) : PlatformI18n.t('chat:group.quote.system')),
         excerpt: GroupChat._collapseSnippet(q.snippet).slice(0, 160),
         source: q.source || '',
         href: q.source === 'pr' ? (q.href || '') : null,
@@ -1954,8 +1957,10 @@ const GroupChat = {
       // The name the strip says after "Replying to"; with nobody to name,
       // `unnamed` says which sentence the composer draws instead.
       label: q.source === 'pr'
-        ? `PR #${q.prNumber || ''}`.trim()
+        ? (q.prNumber ? PlatformI18n.t('chat:group.quote.pr', { number: q.prNumber }) : PlatformI18n.t('chat:group.quote.prUnnumbered'))
         : (q.author ? `@${q.author}` : ''),
+      // A pull request is not somebody's name: the strip has a sentence for it.
+      pr: q.source === 'pr' ? String(q.prNumber || '') : null,
       unnamed: q.source === 'pr' || q.author ? null : (q.source === 'event' ? 'event' : 'message'),
       snippet: GroupChat._collapseSnippet(q.snippet).slice(0, 120),
     } : null;
@@ -3529,7 +3534,8 @@ const GroupChat = {
     GroupChat._publishComposer(GroupChat._composerScope(thread), {
       attachments: GroupChat._pendingFor(thread).map((a) => ({
         key: a.key || `p${a.id || a.filename}`,
-        name: a.filename || 'file',
+        name: a.filename || PlatformI18n.t('chat:group.attachment.unnamed'),
+        unnamed: !a.filename,
         kind: a.kind,
         badge: GroupChat._attachKindBadge(a),
         size: GroupChat._humanAttSize(a.sizeBytes),
@@ -3576,7 +3582,9 @@ const GroupChat = {
       .map((a) => ({
         id: a.id,
         kind: a.kind,
-        name: a.filename || 'file',
+        name: a.filename || PlatformI18n.t('chat:group.attachment.unnamed'),
+        // No file name: the tooltips have their own wording, and `name` is only a label.
+        unnamed: !a.filename,
         url: `/api/apps/${encodeURIComponent(slug)}/chat-attachments/${a.id}`,
         size: GroupChat._humanAttSize(a.sizeBytes),
         badge: GroupChat._attachKindBadge(a),
@@ -4184,7 +4192,7 @@ const GroupChat = {
     const subtitleParts = [];
     if (version != null) subtitleParts.push(`v${version}`);
     if (builtStr) subtitleParts.push(builtStr);
-    if (prNumber) subtitleParts.push(`PR #${prNumber}`);
+    if (prNumber) subtitleParts.push(PlatformI18n.t('chat:group.quote.pr', { number: prNumber }));
     const subtitle = subtitleParts.join(' · ');
 
     // Render markdown for normal content; error / 404 messages are

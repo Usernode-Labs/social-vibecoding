@@ -23,7 +23,7 @@ export const SPINNING_OUTCOMES: ReadonlySet<HomeroomBotActivityOutcome> = new Se
  * names below then use their unnamed wording, and never take the stand-in as
  * a project's name.
  */
-type Named = Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'title' | 'firstVersion'> & { appUnnamed?: boolean };
+type Named = Pick<HomeroomBotJob, 'appName' | 'appUnnamed' | 'issueNumber' | 'title' | 'firstVersion'>;
 
 /** "Ear Trainer first version", "Ear Trainer #12": what the header's status line names. */
 export function jobName(job: Named): string {

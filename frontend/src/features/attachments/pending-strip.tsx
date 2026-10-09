@@ -33,6 +33,8 @@ export interface PendingAttachmentView {
   /** Stable per row — the module's own key, not the filename. */
   key: string;
   name: string;
+  /** The file has no name; `name` is a stand-in label. */
+  unnamed?: boolean;
   kind: string;
   /** MD / HTML / BIN / ZIP · N files, or null where the kind carries no tag. */
   badge: string | null;
@@ -60,7 +62,7 @@ function Row({
       type="button"
       className="dc-attach-remove"
       title={t('messages:attachments.remove')}
-      aria-label={t('messages:attachments.removeNamed', { file: item.name })}
+      aria-label={item.unnamed ? t('messages:attachments.removeUnnamed') : t('messages:attachments.removeNamed', { file: item.name })}
       onClick={() => onRemove(index)}
     >
       ×

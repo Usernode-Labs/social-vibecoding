@@ -2143,6 +2143,10 @@
     "text": "Join {{project}}",
     "description": "Large main button at the top of a project's page opened from an invite link, and on the preview of a private community's invite: joins the community through that link. {{project}} is the project's name."
   },
+  "communityCard.inviteCard.joinUnnamed": {
+    "text": "Join this community",
+    "description": "Large main button at the top of a project's page opened from an invite link, and on the preview of a private community's invite: joins the community through that link. Used when the community's name did not come with the link."
+  },
   "communityCard.join.button": {
     "text": "Join",
     "description": "Button in the action row at the top of a project's Hub, for a person who is not a member: opens a small popup asking whether to join the community."

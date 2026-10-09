@@ -1127,6 +1127,8 @@ const Browse = {
     const forkedFrom = (forkRef && typeof forkRef === 'object')
       ? {
           name: forkRef.name || '<deleted>',
+          // The original is gone: the line has its own wording, and `name` is a placeholder.
+          deleted: !forkRef.name,
           href: (forkRef.linkable && forkRef.slug)
             ? `#app/${encodeURIComponent(forkRef.slug)}`
             : null,

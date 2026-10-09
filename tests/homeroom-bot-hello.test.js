@@ -49,7 +49,7 @@ test('B5: every place Messages names the bot names it, with an AI badge beside i
   assert.match(row, /<span>\{senderName\(message\.reply\.sender\)\}<\/span>/, 'the quote');
   assert.match(row, /preview=\{\{ who: senderName\(message\.sender\)/, 'the action sheet');
   assert.equal(message('messages:row.reportLabel', { name: 'Homeroom bot' }), 'Message from Homeroom bot');
-  assert.match(row, /label: t\('messages:row\.reportLabel', \{ name: senderName\(message\.sender\) \}\)/, 'the report');
+  assert.match(row, /: t\('messages:row\.reportLabel', \{ name: senderName\(message\.sender\) \}\), userId/, 'the report');
   assert.doesNotMatch(row, /'@' : ''\}\{message\.(reply\.)?sender\.username\}/);
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.equal(message('messages:inbox.aiBadge'), 'AI');

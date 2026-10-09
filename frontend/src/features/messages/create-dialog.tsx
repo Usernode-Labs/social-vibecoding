@@ -92,7 +92,7 @@ export function CreateConversationDialog() {
   async function block(user: ConversationUser) {
     // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
     const ok = await confirmAction({
-      title: t('messages:create.block.title', { username: user.username }),
+      title: user.unnamed ? t('messages:create.block.titleUnknown') : t('messages:create.block.title', { username: user.username }),
       message: t('messages:create.block.message'),
       confirmLabel: t('messages:create.block.confirm'),
       danger: true,
@@ -149,7 +149,7 @@ export function CreateConversationDialog() {
                 <span className="text-sm font-medium truncate">@{user.username}</span>
                 <span className="ml-auto text-xs text-violet-700 dark:text-violet-400">{mode === 'group' ? t('messages:create.result.add') : t('messages:create.result.message')}</span>
               </button>
-              <button type="button" disabled={submitting} onClick={() => void block(user)} aria-label={t('messages:create.result.blockNamed', { username: user.username })} className="px-2 py-2 text-xs text-red-700 dark:text-red-400 disabled:opacity-50">{t('messages:create.result.block')}</button>
+              <button type="button" disabled={submitting} onClick={() => void block(user)} aria-label={user.unnamed ? t('messages:create.result.blockUnknown') : t('messages:create.result.blockNamed', { username: user.username })} className="px-2 py-2 text-xs text-red-700 dark:text-red-400 disabled:opacity-50">{t('messages:create.result.block')}</button>
             </div>
           ))}
         </div>

@@ -2011,9 +2011,17 @@
     "text": "Remixed from {{app}}: open the original",
     "description": "Tooltip of the \"Remixed from\" link in the About pane of the app menu. A remix is an app made as a copy of another; {{app}} is the original app's name. \"open\" is a verb."
   },
+  "appContext.about.lineage.linkTitleDeleted": {
+    "text": "Remixed from {{open}}deleted{{close}}: open the original",
+    "description": "Tooltip of the \"Remixed from\" link in the About pane of the app menu. A remix is an app made as a copy of another; Used when the original app has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
+  },
   "appContext.about.lineage.remixedFrom": {
     "text": "⑂ Remixed from {{app}}",
     "description": "Amber line under an app's description in the About pane of the app menu: this app was made as a copy (a remix) of another. {{app}} is the original app's name. Keep the fork sign first."
+  },
+  "appContext.about.lineage.remixedFromDeleted": {
+    "text": "⑂ Remixed from {{open}}deleted{{close}}",
+    "description": "Amber line under an app's description in the About pane of the app menu: this app was made as a copy (a remix) of another. Used when the original app has been deleted; the app is shown as the word \"deleted\" in angle brackets, as it always has been. {{open}} and {{close}} are the angle brackets < and > that the code puts around the word; keep them around the translated word."
   },
   "appContext.about.lineage.goneTitle": {
     "text": "The original app no longer exists",

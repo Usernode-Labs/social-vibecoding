@@ -149,7 +149,10 @@ test('the module publishes the staged reply to both scopes, and no longer paints
   assert.match(fn[1], /_publishComposer\('thread', \{ quote: !scope \|\| scope === 'thread' \? view : null \}\)/);
   // The label the sources produce: a PR number, an @author, or what an
   // authorless row is (#2391).
-  assert.match(fn[1], /`PR #\$\{q\.prNumber \|\| ''\}`\.trim\(\)/);
+  assert.match(fn[1], /q\.prNumber \? PlatformI18n\.t\('chat:group\.quote\.pr', \{ number: q\.prNumber \}\) : PlatformI18n\.t\('chat:group\.quote\.prUnnumbered'\)/);
+  assert.equal(message('chat:group.quote.pr', { number: 12 }), 'PR #12');
+  assert.equal(message('chat:group.quote.prUnnumbered'), 'PR #');
+  assert.match(fn[1], /pr: q\.source === 'pr' \? String\(q\.prNumber \|\| ''\) : null,/, 'a pull request is not passed as a name');
   assert.match(fn[1], /q\.author \? `@\$\{q\.author\}` : ''/);
   // An authorless row has a sentence of its own: the module says which, and
   // the strip reads it from the catalog.

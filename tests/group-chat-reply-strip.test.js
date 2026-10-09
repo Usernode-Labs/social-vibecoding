@@ -6,6 +6,7 @@
 // Messages screen's reply draft, and its label names what it replies to.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -47,6 +48,7 @@ function labelFor(replyDraft) {
     window: {}, URLSearchParams, location: { search: '' },
     document: { getElementById: () => null },
     App: { user: { id: 1 } },
+    PlatformI18n: englishPlatformI18n(),
   };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/group-chat.js'), 'utf8'), sandbox);
@@ -72,6 +74,11 @@ test('the label names what the reply is to', () => {
   assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }).label, 'PR #12');
   assert.equal(lineFor({ source: 'message', author: 'alice', snippet: 'hi' }), '↩ Replying to @alice');
   assert.equal(lineFor({ source: 'pr', prNumber: 12, snippet: 'x' }), '↩ Replying to PR #12');
+  // A pull request is told apart from a person: the strip has a sentence for it.
+  assert.equal(labelFor({ source: 'pr', prNumber: 12, snippet: 'x' }).pr, '12');
+  assert.equal(labelFor({ source: 'message', author: 'alice', snippet: 'hi' }).pr, null);
+  assert.equal(labelFor({ source: 'pr', snippet: 'x' }).label, 'PR #');
+  assert.equal(lineFor({ source: 'pr', snippet: 'x' }), '↩ Replying to PR #');
   // A row with nobody to name has a whole sentence of its own in the catalog.
   assert.equal(labelFor({ source: 'event', author: null, snippet: 'Proposed PR #12' }).unnamed, 'event');
   assert.equal(labelFor({ source: 'message', author: null, snippet: 'gone' }).unnamed, 'message');

@@ -75,9 +75,11 @@
         "Claude Code",
         "Codex",
         "No file bytes received.",
-        "lookupUser expects a username."
+        "lookupUser expects a username.",
+        "desktop",
+        "you"
       ],
-      "why": "Made-up sample apps for the ?shot= screenshot fixtures (showLaunchShot, showAppToneShot, showOfflineShot, showFirstVersionShot): their names and description, the sample plan, build caption and maker's note, and the labels drawn into the sample pictures (_firstVersionSampleScreen). They stand in for an app's own data, not interface text. _proposalsCtx.lockedHint is an HTML fragment that nothing reads any more; dead data, left untouched. ArrowDown, ArrowUp, Home and End are keyboard key names compared with event.key. Claude Code and Codex are product names (EXTERNAL_AGENT_NAMES), passed to messages as {{agent}}. The last two are error replies to an embedded app that only its developer can cause (a file save with no bytes, lookupUser called without a username)."
+      "why": "Made-up sample apps for the ?shot= screenshot fixtures (showLaunchShot, showAppToneShot, showOfflineShot, showFirstVersionShot): their names and description, the sample plan, build caption and maker's note, and the labels drawn into the sample pictures (_firstVersionSampleScreen). They stand in for an app's own data, not interface text. _proposalsCtx.lockedHint is an HTML fragment that nothing reads any more; dead data, left untouched. ArrowDown, ArrowUp, Home and End are keyboard key names compared with event.key. Claude Code and Codex are product names (EXTERNAL_AGENT_NAMES), passed to messages as {{agent}}. The last two are error replies to an embedded app that only its developer can cause (a file save with no bytes, lookupUser called without a username). 'desktop' is the default viewport key of a shots claim, looked up and mapped to a size word by _shotsSizeWord. 'you' is a key that picks a message id in _workStateNote ('you' | 'named' | 'someone')."
     },
     "frontend/src/features/auth/native-login-details.tsx": {
       "texts": [
@@ -117,9 +119,10 @@
         "Browser: ${…}",
         "Operating system: ${…}",
         "App version: ${…}",
-        "App build: ${…}"
+        "App build: ${…}",
+        "HTTP status: ${…}"
       ],
-      "why": "sessionConfirmationText and browserVersions build the same kind of support report (browser and OS product names, build ids). Kept in English for support; the notice around it is translated."
+      "why": "sessionConfirmationText and browserVersions build the same kind of support report (browser and OS product names, build ids). Kept in English for support; the notice around it is translated. One more line of the same support diagnostics a person copies for a maintainer."
     },
     "frontend/src/features/auth/recaptcha.ts": {
       "texts": [
@@ -172,9 +175,15 @@
     },
     "public/js/group-chat.js": {
       "texts": [
-        "Homeroom bot"
+        "Homeroom bot",
+        "PR #${…}: ${…}",
+        "ArrowUp",
+        "ArrowDown",
+        "Enter",
+        "Tab",
+        "Escape"
       ],
-      "why": "MentionAutocomplete.BOT_NAME: the assistant's name used as data (matched against what is typed after @, inserted into the message as the mention). A product name, never translated."
+      "why": "MentionAutocomplete.BOT_NAME: the assistant's name used as data (matched against what is typed after @, inserted into the message as the mention). A product name, never translated. `PR #n: title` is matched against the start of a server-composed line to cut it off, never drawn. The key names are KeyboardEvent.key values."
     },
     "frontend/src/features/global-chat/development-settings-editor.tsx": {
       "texts": [
@@ -238,9 +247,10 @@
         "Revise the spec",
         "What will this change?",
         "Make a change",
-        "What's the current state?"
+        "What's the current state?",
+        "included"
       ],
-      "why": "Product, venue and model names. They are passed to messages as {{venue}}, {{agent}}, {{product}} and never translated. DevChat.MODELS default table: a copy of the server's /api/models answer (label and changeSize), replaced wholesale by loadModels(). Server-worded data; the 'short' hints beside them are the same. System-row `content` in the server's own vocabulary: the server persists the same sentences (src/routes/sessions.js) and the client's live echo must equal the reloaded row; code also keys off them. stagingErrorName 'Error' is an error class name. Fixtures for ?shot= / demo states: they stand in for server sentences and for text a person typed. Key suffixes that pick an id from _OPENROUTER_TITLE_IDS, not text. Quick-reply pills (STARTER_QUICK_REPLIES, _starterQuickReplies and FALLBACK_QUICK_REPLIES): the server holds the same literals (RECOVERY_PILLS / BANNED_GENERIC_PILLS in src/services/recovery-pills.js, pinned equal by tests/quick-reply-fallback.test.js) and compares against them, and a pressed pill is sent as the person's message. They need a server-side decision before they can be worded per language."
+      "why": "Product, venue and model names. They are passed to messages as {{venue}}, {{agent}}, {{product}} and never translated. DevChat.MODELS default table: a copy of the server's /api/models answer (label and changeSize), replaced wholesale by loadModels(). Server-worded data; the 'short' hints beside them are the same. System-row `content` in the server's own vocabulary: the server persists the same sentences (src/routes/sessions.js) and the client's live echo must equal the reloaded row; code also keys off them. stagingErrorName 'Error' is an error class name. Fixtures for ?shot= / demo states: they stand in for server sentences and for text a person typed. Key suffixes that pick an id from _OPENROUTER_TITLE_IDS, not text. Quick-reply pills (STARTER_QUICK_REPLIES, _starterQuickReplies and FALLBACK_QUICK_REPLIES): the server holds the same literals (RECOVERY_PILLS / BANNED_GENERIC_PILLS in src/services/recovery-pills.js, pinned equal by tests/quick-reply-fallback.test.js) and compares against them, and a pressed pill is sent as the person's message. They need a server-side decision before they can be worded per language. 'included' is a key into the _OPENROUTER_TITLE_IDS table of message ids, never shown."
     },
     "frontend/src/features/dev-chat/launchpad.js": {
       "texts": [
@@ -442,9 +452,10 @@
         "Track your club’s weekly miles and see who keeps up",
         "Just you",
         "Private community",
-        "Hi, in for Sundays"
+        "Hi, in for Sundays",
+        "imrichl"
       ],
-      "why": "Made-up server payload for the ?shot=hub-first-week before/after captures: a project's name and description, a plan the bot would have written, a member's chat message, and the server's own audience_label field. It stands in for data (names, model output, a person's message, a server string), not interface text; hubShotPayload is pure and pinned by tests as a fixture."
+      "why": "Made-up server payload for the ?shot=hub-first-week before/after captures: a project's name and description, a plan the bot would have written, a member's chat message, and the server's own audience_label field. It stands in for data (names, model output, a person's message, a server string), not interface text; hubShotPayload is pure and pinned by tests as a fixture. A made-up username in the same screenshot fixture."
     },
     "frontend/src/features/dev-board/topic/topic-back.tsx": {
       "texts": [
@@ -521,11 +532,11 @@
     },
     "public/js/build-log.js": {
       "texts": [
-        "Build failure for ${slug}",
-        "Stage: …",
-        "At: …",
-        "Commit: …",
-        "Reason: …"
+        "Build failure for ${…}",
+        "Stage: ${…}",
+        "At: ${…}",
+        "Commit: ${…}",
+        "Reason: ${…}"
       ],
       "why": "The plain-text report 'Copy log' puts on the clipboard for pasting into an issue: log output, not interface. (The stage name inside it is the translated label; say if the copied report should stay fully English.)"
     },
@@ -578,7 +589,7 @@
         "this app’s platform settings",
         "this app’s keys"
       ],
-      "why": "EXPLICIT_PHRASES: the server holds the same phrases (src/services/explicit-approval.js reasonPhrase) and tests/explicit-approval-vote-panel.test.js pins the two equal. explicitApprovalCopy() still returns `phrase` for public/js/app-view.js (another unit), which builds its own sentences from it; `sentence` and `line` are whole catalog messages."
+      "why": "EXPLICIT_PHRASES: the server holds the same phrases (src/services/explicit-approval.js reasonPhrase) and tests/explicit-approval-vote-panel.test.js pins the two equal. They are not shown: explicitApprovalCopy() returns `reason`, `sentence` and `line`, and public/js/app-view.js picks a whole catalog message by the reason (changes:explicit.lead.* and changes:explicit.adminMerge.*)."
     },
     "frontend/src/features/settings/sections/connectors.tsx": {
       "texts": [
@@ -626,9 +637,12 @@
         "Weather",
         "Ledger",
         "Notes",
-        "Homeroom bridge diagnostics"
+        "Homeroom bridge diagnostics",
+        "Staging demo: there is no session to recover here.",
+        "Wallet recovery is not available on this screen.",
+        "Sign in before connecting a wallet."
       ],
-      "why": "Product names: the provider name passed as {{provider}}, the OpenRouter heading, a badge in the model list. Read-only demo fixtures standing in for the phone app's own messages and app names (?bridgediag=, ?widgeticons=demo). _bridgeDiagnosticsText: the copyable technical report meant to be pasted into an issue for the maintainers; key: value lines, kept in English."
+      "why": "Product names: the provider name passed as {{provider}}, the OpenRouter heading, a badge in the model list. Read-only demo fixtures standing in for the phone app's own messages and app names (?bridgediag=, ?widgeticons=demo). _bridgeDiagnosticsText: the copyable technical report meant to be pasted into an issue for the maintainers; key: value lines, kept in English. The three thrown by _openWalletRecovery are for the console: the button's catch (usernode-ui.tsx useAction) shows settings:usernode.actionFailed or the not-accepting message, never err.message."
     },
     "frontend/@/components/ui/tabs.tsx": {
       "texts": [
@@ -683,6 +697,18 @@
         "app.example.com"
       ],
       "why": "The address box's placeholder: a sample hostname on the reserved example.com domain, the same in every language."
+    },
+    "frontend/src/features/apps/browse.js": {
+      "texts": [
+        "unknown"
+      ],
+      "why": "'unknown' is the key of a contributor row with no username (data-username, openContributor). It is never drawn: the row shows discover:detail.contributor.unknownHandle and its tooltip has an unnamed wording."
+    },
+    "frontend/src/features/dev-board/release-stall-store.ts": {
+      "texts": [
+        "commit"
+      ],
+      "why": "A key into the STALL_TEXT table of message ids ('pr' | 'prCommit' | 'commit'), never shown."
     }
   }
 }

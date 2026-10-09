@@ -655,11 +655,11 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
       {r.attachments && r.attachments.length ? (
         <div className="dc-msg-attachments">
           {r.attachments.map((a) => (a.kind === 'image' ? (
-            <a key={a.href} href={a.href} target="_blank" rel="noopener noreferrer" title={t('devchat:transcript.attachment.openFullSize', { name: a.name })}>
+            <a key={a.href} href={a.href} target="_blank" rel="noopener noreferrer" title={a.unnamed ? t('devchat:transcript.attachment.openFullSizeUnnamed') : t('devchat:transcript.attachment.openFullSize', { name: a.name })}>
               <img className="dc-msg-att-img" src={a.href} alt={a.name} loading="lazy" />
             </a>
           ) : (
-            <a key={a.href} className="dc-msg-att-chip" href={a.href} download={a.name} title={t('devchat:transcript.attachment.download', { name: a.name })}>
+            <a key={a.href} className="dc-msg-att-chip" href={a.href} download={a.name} title={a.unnamed ? t('devchat:transcript.attachment.downloadUnnamed') : t('devchat:transcript.attachment.download', { name: a.name })}>
               <Html as="span" className="contents" html={a.badgeHtml || ''} />
               <span className="dc-attach-name">{a.name}</span>
               <span className="dc-attach-size">{a.size}</span>

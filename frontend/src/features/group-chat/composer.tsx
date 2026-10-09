@@ -110,7 +110,8 @@ function ReplyPreview({ scope, quote }: { scope: ComposerScope; quote: QuoteChip
             <span className="gc-reply-preview-label">
               {quote.unnamed === 'event' ? t('chat:group.composer.replyingToPlatform')
                 : quote.unnamed === 'message' ? t('chat:group.composer.replyingToMessage')
-                  : t('chat:group.composer.replyingTo', { name: quote.label })}
+                  : quote.pr != null ? (quote.pr ? t('chat:group.composer.replyingToPr', { number: quote.pr }) : t('chat:group.composer.replyingToPrUnnumbered'))
+                    : t('chat:group.composer.replyingTo', { name: quote.label })}
             </span>
             <span className="gc-reply-preview-snippet">{quote.snippet}</span>
           </div>

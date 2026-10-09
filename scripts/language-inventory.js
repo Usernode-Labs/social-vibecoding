@@ -142,7 +142,22 @@ function looksLikeProse(text) {
   // Class lists and other space-separated identifiers: no capital, no sentence end.
   if (!/[A-Z]/.test(value) && !/[.!?…:]$/.test(value)) return false;
   // Starts like a sentence or a label, or ends like one.
-  return /^[^A-Za-z]*[A-Z][a-z]/.test(value) || /[a-z][.!?…]$/.test(value);
+  // "A project" and "I agree" start with a one-letter word.
+  // …and "PR #12" or "AI credit" with an acronym.
+  return /^[^A-Za-z]*[A-Z](?:[a-z]|\s+[a-z])/.test(value) || /^[A-Z]{2,5} (?:#|[A-Za-z][a-z])/.test(value)
+    || /[a-z][.!?…]$/.test(value);
+}
+
+// A field or a variable that holds what a person or a thing is called.
+const NAME_LIKE = /^(?:\w*(?:name|title|label|author|owner|who|sharer|community|project|machine|device|channel|agent|model|file|user|username|handle|display|actor|by|subject|peer|sender|app))$/i;
+/**
+ * A stand-in for a missing name: the last operand of `a || b || 'unknown'`,
+ * `a ?? 'file'` or `cond ? name : 'someone'` that fills a name-like field.
+ * Lower-case words look like an identifier anywhere else; here they are what
+ * a person reads when the name is missing.
+ */
+function standInWords(text) {
+  return /^[A-Za-z][A-Za-z']*(?: [A-Za-z][A-Za-z']*){0,3}$/.test(text.trim());
 }
 
 /** The words a person would read in a string that builds HTML. */
@@ -184,6 +199,27 @@ function literalsIn(file, text, ts) {
     ? node.text
     : [node.head.text, ...node.templateSpans.map((span) => `\${…}${span.literal.text}`)].join(''));
 
+  // The string literals an expression falls back to when what comes first is missing.
+  const fallbackLiterals = (expression) => {
+    let node = expression;
+    while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node)) node = node.expression;
+    if (ts.isBinaryExpression(node) && /^(\|\||\?\?)$/.test(node.operatorToken.getText(source))) {
+      let right = node.right;
+      while (ts.isParenthesizedExpression(right)) right = right.expression;
+      return ts.isStringLiteral(right) ? [right] : fallbackLiterals(right);
+    }
+    if (ts.isConditionalExpression(node)) {
+      return [node.whenTrue, node.whenFalse].flatMap((branch) => {
+        let inner = branch;
+        while (ts.isParenthesizedExpression(inner)) inner = inner.expression;
+        // One branch a plain word and the other a value: `name ? name : 'someone'`.
+        const other = branch === node.whenTrue ? node.whenFalse : node.whenTrue;
+        return ts.isStringLiteral(inner) ? (ts.isStringLiteral(other) ? [] : [inner]) : fallbackLiterals(inner);
+      });
+    }
+    return [];
+  };
+
   const visit = (node, silent) => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node) || ts.isTypeNode(node)
         || ts.isImportEqualsDeclaration(node)) return;
@@ -203,17 +239,51 @@ function literalsIn(file, text, ts) {
       if (value) visit(value, false);
       return;
     }
+    // A function is its own ground: a listener handed to addEventListener, or
+    // a callback handed to replace(), can still show a person text.
+    if ((ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)
+        || ts.isMethodDeclaration(node)) && silent) {
+      visit(node, false);
+      return;
+    }
+    // An error's message is for a log, unless it is written to a person: a
+    // whole sentence with its full stop ("A group needs a name.") is what a
+    // catch block then shows through `err.message`.
+    if ((ts.isNewExpression(node) || ts.isCallExpression(node)) && /Error$/.test(calleeName(node))) {
+      for (const argument of node.arguments || []) {
+        if (ts.isStringLiteral(argument) && /^[A-Z][^.!?]*[a-z][.!?]$/.test(argument.text)
+            && argument.text.split(' ').length > 2) report(argument, argument.text, 'error');
+        else if (!ts.isStringLiteral(argument)) visit(argument, true);
+      }
+      return;
+    }
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       const quiet = SILENT_CALLS.test(calleeName(node));
       visit(node.expression, silent);
       for (const argument of node.arguments || []) visit(argument, silent || quiet);
       return;
     }
-    if (ts.isThrowStatement(node)) return;
-    if (ts.isBinaryExpression(node) && /^(===|!==|==|!=)$/.test(node.operatorToken.getText(source))) return;
+    if (ts.isThrowStatement(node)) {
+      if (node.expression) visit(node.expression, true);
+      return;
+    }
+    // A literal that is compared is a value, not text. What stands on the other
+    // side of the comparison (a call, an object) is read as usual.
+    if (ts.isBinaryExpression(node) && /^(===|!==|==|!=)$/.test(node.operatorToken.getText(source))) {
+      for (const side of [node.left, node.right]) {
+        if (!ts.isStringLiteral(side) && !ts.isNoSubstitutionTemplateLiteral(side)) visit(side, silent);
+      }
+      return;
+    }
     // A component's name for React DevTools, not for a person.
     if (ts.isBinaryExpression(node) && ts.isPropertyAccessExpression(node.left)
         && node.left.name.text === 'displayName') return;
+    if ((ts.isPropertyAssignment(node) || ts.isVariableDeclaration(node)) && node.initializer && !silent
+        && NAME_LIKE.test(node.name.getText(source))) {
+      for (const fallback of fallbackLiterals(node.initializer)) {
+        if (standInWords(fallback.text) && !looksLikeProse(fallback.text)) report(fallback, fallback.text, 'stand-in');
+      }
+    }
     if (ts.isPropertyAssignment(node) || ts.isPropertySignature(node)) {
       if (node.initializer) visit(node.initializer, silent);
       return;

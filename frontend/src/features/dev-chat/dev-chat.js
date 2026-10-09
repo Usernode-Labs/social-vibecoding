@@ -7407,11 +7407,12 @@ const DevChat = {
       const idOk = typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id);
       const url = a.objectUrl || (idOk && sid ? `/api/sessions/${sid}/attachments/${a.id}` : null);
       if (!url) continue;
-      const name = String(a.filename || 'file');
-      if (a.kind === 'image') out.push({ kind: 'image', href: url, name });
+      const name = String(a.filename || PlatformI18n.t('devchat:attach.unnamedFile'));
+      const unnamed = !a.filename;
+      if (a.kind === 'image') out.push({ kind: 'image', href: url, name, unnamed });
       else {
         out.push({
-          kind: 'file', href: url, name, download: true,
+          kind: 'file', href: url, name, unnamed, download: true,
           badgeHtml: DevChat._attachKindBadgeHtml(a),
           size: DevChat._humanSize(a.sizeBytes),
         });
@@ -10950,7 +10951,8 @@ const DevChat = {
     react.publishAttachStrip({
       items: DevChat.pendingAttachments.map((a, i) => ({
         key: a.id || `p${i}:${a.filename}`,
-        name: a.filename || 'file',
+        name: a.filename || PlatformI18n.t('devchat:attach.unnamedFile'),
+        unnamed: !a.filename,
         kind: a.kind,
         badge: DevChat._attachKindBadge(a),
         size: DevChat._humanSize(a.sizeBytes),

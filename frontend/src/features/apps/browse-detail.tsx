@@ -81,7 +81,7 @@ export type DetailView =
     name: string;
     slug: string;
     versionPillHtml: string;
-    forkedFrom: { name: string; href: string | null } | null;
+    forkedFrom: { name: string; deleted?: boolean; href: string | null } | null;
     updatedRel: string | null;
     canOpen: boolean;
     openLabel: string;
@@ -248,13 +248,13 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
                 <a
                   href={view.forkedFrom.href}
                   className="hover:underline"
-                  title={t('discover:detail.remixedFrom.openOriginal', { app: view.forkedFrom.name })}
+                  title={view.forkedFrom.deleted ? t('discover:detail.remixedFrom.openOriginalDeleted', { open: '<', close: '>' }) : t('discover:detail.remixedFrom.openOriginal', { app: view.forkedFrom.name })}
                 >
-                  {t('discover:detail.remixedFrom.line', { app: view.forkedFrom.name })}
+                  {view.forkedFrom.deleted ? t('discover:detail.remixedFrom.lineDeleted', { open: '<', close: '>' }) : t('discover:detail.remixedFrom.line', { app: view.forkedFrom.name })}
                 </a>
               ) : (
                 <span className="opacity-90" title={t('discover:detail.remixedFrom.originalGone')}>
-                  {t('discover:detail.remixedFrom.line', { app: view.forkedFrom.name })}
+                  {view.forkedFrom.deleted ? t('discover:detail.remixedFrom.lineDeleted', { open: '<', close: '>' }) : t('discover:detail.remixedFrom.line', { app: view.forkedFrom.name })}
                 </span>
               )}
             </p>

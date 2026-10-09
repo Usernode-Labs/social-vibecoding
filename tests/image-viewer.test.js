@@ -77,7 +77,7 @@ test('it covers the screen, above the message sheet, and only exists after a tap
 test('the channel and a conversation both open their thumbnails in it, and keep the file as the link', () => {
   const transcript = read('frontend/src/features/group-chat/transcript.tsx');
   const image = transcript.slice(transcript.indexOf('function AttachmentImage('), transcript.indexOf('function AttachmentChip('));
-  assert.match(image, /<a\n\s*href=\{att\.url\}\n\s*target="_blank"\n\s*rel="noopener"\n\s*title=\{t\('chat:group\.attachment\.openFullSize', \{ file: att\.name \}\)\}\n\s*data-image-open=""\n\s*onClick=\{\(event\) => openInViewer\(event, \(\) => setViewing\(true\)\)\}/);
+  assert.match(image, /<a\n\s*href=\{att\.url\}\n\s*target="_blank"\n\s*rel="noopener"\n\s*title=\{att\.unnamed \? t\('chat:group\.attachment\.openFullSizeUnnamed'\) : t\('chat:group\.attachment\.openFullSize', \{ file: att\.name \}\)\}\n\s*data-image-open=""\n\s*onClick=\{\(event\) => openInViewer\(event, \(\) => setViewing\(true\)\)\}/);
   assert.equal(message('chat:group.attachment.openFullSize', { file: 'cat.png' }), 'cat.png: open full size');
   assert.match(image, /\{viewing \? <ImageViewer src=\{att\.url\} alt=\{att\.name\} onClose=\{\(\) => setViewing\(false\)\} \/> : null\}/);
 

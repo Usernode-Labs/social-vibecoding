@@ -1034,6 +1034,7 @@ const Home = {
     // creator / collaborators / admins, so it is simply absent for outsiders.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
+    const forkDeleted = !!forkName && !app.forked_from.name;
     return {
       slug: app.slug,
       name: String(app.name || ''),
@@ -1052,6 +1053,7 @@ const Home = {
       failureReason: isError && app.last_failure_reason ? String(app.last_failure_reason) : null,
       showRetry,
       forkName,
+      forkDeleted,
       // The tile's audience mark (communities, stage 4): GET /api/apps
       // derives it per row, and anything it does not say reads as a
       // public community, which draws no mark.
@@ -2571,8 +2573,9 @@ const Home = {
     // in the tooltip. `forked_from` is null for non-forks.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
+    const forkDeleted = !!forkName && !app.forked_from.name;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="${htmlText('home:grid.tile.remixedFrom', { app: forkName })}" aria-label="${htmlText('home:grid.tile.remixedFrom', { app: forkName })}">⑂</span>`
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}" aria-label="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}">⑂</span>`
       : '';
 
     const icon = Home.iconTileFor(app);

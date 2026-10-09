@@ -241,7 +241,7 @@ export type TranscriptRow =
     live?: boolean;
     /** A user row's attachment strip. */
     attachments?: {
-      kind: 'image' | 'file'; href: string; name: string;
+      kind: 'image' | 'file'; href: string; name: string; unnamed?: boolean;
       download?: boolean; badgeHtml?: string; size?: string;
     }[];
     /** The `[CHAT_ONLY]` raw-output disclosure. */

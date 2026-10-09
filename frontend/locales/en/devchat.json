@@ -771,9 +771,17 @@
     "text": "{{name}}: open full size",
     "description": "Tooltip on an image attached to a dev chat message. {{name}} is the file's name; pressing the image opens it at full size."
   },
+  "transcript.attachment.openFullSizeUnnamed": {
+    "text": "file: open full size",
+    "description": "Tooltip on an image attached to a dev chat message. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
   "transcript.attachment.download": {
     "text": "Download {{name}}",
     "description": "Tooltip on a file attached to a dev chat message. {{name}} is the file's name."
+  },
+  "transcript.attachment.downloadUnnamed": {
+    "text": "Download file",
+    "description": "Tooltip on a file attached to a dev chat message. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
   },
   "transcript.reasoning": {
     "text": "Agent reasoning (raw)",
@@ -1994,6 +2002,10 @@
   "attach.zipBadge_other": {
     "text": "ZIP · {{files}} files",
     "description": "Small badge on a zip archive attached to a dev chat message. {{files}} is how many files the archive holds. ZIP is the file type and stays in capitals."
+  },
+  "attach.unnamedFile": {
+    "text": "file",
+    "description": "Stands where a file's name would be on an attachment that has none, in the dev chat's message box and transcript. Shown alone. A noun, lower case."
   },
   "drafts.toast.dropped_one": {
     "text": "That's {{limit}} saved drafts. {{count}} newer draft was dropped. Send or delete one first.",

@@ -198,7 +198,7 @@ test('#2905: report and block are one ⋯ menu on both transcripts', () => {
   // #2387: the app chat's rows carry the shared hover bar too, and its ⋯
   // menu holds report and block after the everyday acts.
   assert.match(TRANSCRIPT, /<MessageActionBar[\s\S]*?moreClassName="gc-msg-more-action"/);
-  assert.match(TRANSCRIPT, /label: translate\('chat:group\.menu\.report'\)[\s\S]*?label: translate\('chat:group\.menu\.block', \{ username: msg\.username \}\)/);
+  assert.match(TRANSCRIPT, /label: translate\('chat:group\.menu\.report'\)[\s\S]*?label: msg\.usernameMissing \? translate\('chat:group\.menu\.blockUnknown'\) : translate\('chat:group\.menu\.block', \{ username: msg\.username \}\)/);
   assert.equal(message('chat:group.menu.report'), 'Report message');
   assert.equal(message('chat:group.menu.block', { username: 'ada' }), 'Block @ada');
   assert.doesNotMatch(TRANSCRIPT, /report-user|onReportUser|targetType: 'user'/,

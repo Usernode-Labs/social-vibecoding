@@ -64,7 +64,7 @@ export function ConversationMembersDialog() {
 
   async function remove(user: ConversationUser) {
     // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
-    const ok = await confirmAction({ title: t('messages:members.remove.title', { username: user.username }), confirmLabel: t('messages:members.remove.confirm'), danger: true });
+    const ok = await confirmAction({ title: user.unnamed ? t('messages:members.remove.titleUnknown') : t('messages:members.remove.title', { username: user.username }), confirmLabel: t('messages:members.remove.confirm'), danger: true });
     if (!ok) return;
     setBusy(true); setError('');
     try { await removeMember(user.id); }
@@ -76,7 +76,8 @@ export function ConversationMembersDialog() {
     const transfer = active?.myRole === 'owner' && (active.memberCount || 0) > 1
       ? t('messages:members.leave.transfer') : '';
     const ok = await confirmAction({
-      title: active?.title ? t('messages:members.leave.title', { group: active.title }) : t('messages:members.leave.titleUnnamed'),
+      title: active?.untitled ? t('messages:members.leave.titleUntitled')
+        : active?.title ? t('messages:members.leave.title', { group: active.title }) : t('messages:members.leave.titleUnnamed'),
       message: transfer || undefined,
       confirmLabel: t('messages:members.leave.confirm'),
       danger: true,

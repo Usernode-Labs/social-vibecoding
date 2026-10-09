@@ -253,6 +253,8 @@ export interface Attachment {
   kind: string;
   /** The filename, as a text child — never interpolated into an attribute. */
   name: string;
+  /** The file has no name; `name` is a stand-in label and the tooltips use their unnamed wording. */
+  unnamed?: boolean;
   url: string;
   /** Pre-formatted by the module: "2 KB", "3.0 MB". */
   size: string;
@@ -284,6 +286,8 @@ export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
   username: string;
+  /** No author came with the row; `username` is a stand-in and sentences use their own wording. */
+  usernameMissing?: boolean;
   senderId?: number | null;
   /**
    * Rendered stamp — formatted by the module, whose locale rules these are.

@@ -176,7 +176,7 @@ export const MessageRow = memo(function MessageRow({
     if (mine || !message.sender.id) return;
     // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
     const ok = await confirmAction({
-      title: t('messages:row.block.title', { name: senderName(message.sender) }),
+      title: message.sender.unnamed ? (message.sender.id ? t('messages:row.block.titleUnknownHandle') : t('messages:row.block.titleUnknown')) : t('messages:row.block.title', { name: senderName(message.sender) }),
       message: t('messages:row.block.message'),
       confirmLabel: t('messages:row.block.confirm'),
       danger: true,
@@ -231,10 +231,10 @@ export const MessageRow = memo(function MessageRow({
   } else {
     items.push({
       key: 'report', label: t('messages:row.menu.report'), icon: FlagIcon, separated: true,
-      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: t('messages:row.reportLabel', { name: senderName(message.sender) }), userId: message.sender.id }),
+      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: message.sender.unnamed ? (message.sender.id ? t('messages:row.reportLabelUnknownHandle') : t('messages:row.reportLabelUnknown')) : t('messages:row.reportLabel', { name: senderName(message.sender) }), userId: message.sender.id }),
     });
     if (message.sender.id) {
-      items.push({ key: 'block', label: t('messages:row.menu.block', { name: senderName(message.sender) }), icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
+      items.push({ key: 'block', label: message.sender.unnamed ? (message.sender.id ? t('messages:row.menu.blockUnknownHandle') : t('messages:row.menu.blockUnknown')) : t('messages:row.menu.block', { name: senderName(message.sender) }), icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
     }
   }
 
