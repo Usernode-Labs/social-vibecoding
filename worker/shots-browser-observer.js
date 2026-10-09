@@ -12,6 +12,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { Transform } = require('node:stream');
 const { performance } = require('node:perf_hooks');
+const crypto = require('node:crypto');
 const boundary = require('./shots-boundary');
 
 const MARKER = '__USERNODE_SHOTS_BROWSER__ ';
@@ -246,121 +247,175 @@ function createObserver({
 // clicks "Send code", the page moves on, and the next screenshot shows the
 // button pale. Before each browser_take_screenshot that follows a click, the
 // observer moves the pointer off the page itself and holds the screenshot
-// until that move is answered; the move's answer never reaches the agent.
-// (-1, -1) is outside the viewport, so nothing is under the pointer, and it
-// stays so when an element screenshot scrolls the page; (0, 0) is a pixel of
-// the page and hovers whatever is drawn there. A pointer the agent placed
-// itself (browser_hover, browser_mouse_move_xy) is left where it is: the
-// hover may be the very change being shown.
-const PARK_ID_PREFIX = 'usernode-shots-park-';
+// (and every call after it, in order) until that move is answered; the
+// move's answer never reaches the agent. (-1, -1) is outside the viewport,
+// so nothing is under the pointer, and it stays so when an element
+// screenshot scrolls the page; (0, 0) is a pixel of the page and hovers
+// whatever is drawn there. A pointer the agent placed itself (browser_hover,
+// browser_mouse_move_xy) is left where it is: the hover may be the very
+// change being shown. When clips are recorded, the pointer is parked before
+// browser_close too, so a clip's last frames are not hovered either.
 const PARK_TIMEOUT_MS = 12_000;
-const PARK_RESPONSE_MAX_BYTES = 256 * 1024;
+const PARK_TOMBSTONE_MS = 60_000;
+const PARK_TOMBSTONE_MAX = 32;
+const PARK_HELD_LINE_MAX_BYTES = 64 * 1024 * 1024;
 const POINTER_LEFT_ON_PAGE = new Set([
-  'browser_click', 'browser_drag', 'browser_fill_form', 'browser_select_option',
-  'browser_mouse_click_xy', 'browser_mouse_drag_xy', 'browser_file_upload',
+  'browser_click', 'browser_drag', 'browser_mouse_click_xy', 'browser_mouse_drag_xy',
 ]);
 const POINTER_PLACED = new Set(['browser_hover', 'browser_mouse_move_xy', 'browser_close']);
+const STRING_ID = /"id"\s*:\s*"([^"\\]{1,120})"/g;
 
 function parkRequest(id) {
-  return `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: {
+  return Buffer.from(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: {
     name: 'browser_mouse_move_xy',
     arguments: { element: 'Pointer off the page before a screenshot', x: -1, y: -1 },
-  } })}\n`;
+  } })}\n`);
 }
 
-function createPointerParker({ timeoutMs = PARK_TIMEOUT_MS } = {}) {
+// Splits a byte stream into complete newline-terminated lines without
+// decoding it: a character split across two chunks stays whole.
+function lineSplitter() {
+  let parts = [];
+  return {
+    push(chunk, onLine) {
+      let offset = 0;
+      for (;;) {
+        const end = chunk.indexOf(10, offset);
+        if (end < 0) { if (offset < chunk.length) parts.push(chunk.subarray(offset)); return; }
+        parts.push(chunk.subarray(offset, end + 1));
+        const line = Buffer.concat(parts);
+        parts = [];
+        onLine(line);
+        offset = end + 1;
+      }
+    },
+    rest() { const line = Buffer.concat(parts); parts = []; return line; },
+  };
+}
+
+function createPointerParker({
+  timeoutMs = PARK_TIMEOUT_MS, parkBeforeClose = false, emit = () => {}, persona = 'member',
+  now = () => performance.now(), nonce = crypto.randomBytes(6).toString('hex'),
+} = {}) {
   let leftOnPage = false;
   let parks = 0;
-  let waitingFor = null;
-  let timer = null;
+  let waiting = null; // { id, startedAt, timer }
+  const tombstones = new Map(); // id -> expiry timer: late answers still dropped
   let flushed = null;
-  const queue = [];
-  let input;
-  const release = (id) => {
-    if (id !== waitingFor) return;
-    waitingFor = null;
-    clearTimeout(timer);
-    timer = null;
-    drain();
-  };
-  // Forward queued request lines in order, stopping at a screenshot that
-  // waits for its pointer move.
-  const drain = () => {
-    while (!waitingFor && queue.length) {
-      const line = queue.shift();
-      let message = null;
-      try { message = JSON.parse(line); } catch { /* forwarded unchanged */ }
-      const tool = message?.method === 'tools/call' ? message.params?.name : null;
-      if (tool === 'browser_take_screenshot' && leftOnPage) {
-        leftOnPage = false;
-        waitingFor = `${PARK_ID_PREFIX}${++parks}`;
-        input.push(parkRequest(waitingFor));
-        // A move that is never answered must not hold the screenshot forever.
-        const id = waitingFor;
-        timer = setTimeout(() => release(id), timeoutMs);
-        timer.unref?.();
-        queue.unshift(line);
-        continue;
-      }
-      if (POINTER_LEFT_ON_PAGE.has(tool)) leftOnPage = true;
-      else if (POINTER_PLACED.has(tool)) leftOnPage = false;
-      input.push(`${line}\n`);
-    }
-    if (!waitingFor && !queue.length && flushed) { const done = flushed; flushed = null; done(); }
-  };
-  let pending = '';
-  input = new Transform({
+  let closed = false;
+  const queue = []; // { line: Buffer, tool, parked }
+  const input = new Transform({
     transform(chunk, _encoding, callback) {
-      pending += chunk.toString('utf8');
-      let end;
-      while ((end = pending.indexOf('\n')) >= 0) {
-        queue.push(pending.slice(0, end));
-        pending = pending.slice(end + 1);
-      }
+      inSplit.push(chunk, enqueue);
       drain();
       callback();
     },
     flush(callback) {
-      if (pending) { queue.push(pending); pending = ''; }
-      flushed = () => callback();
+      const rest = inSplit.rest();
+      if (rest.length) enqueue(rest);
+      flushed = callback;
       drain();
     },
   });
-  // Drops the answer to each move the parker sent; every other line passes
-  // through unchanged. A line is held only while it is small enough to be
-  // such an answer: a screenshot's answer streams on as soon as it is not.
+  const inSplit = lineSplitter();
+  const enqueue = (line) => {
+    let tool = null;
+    try {
+      const message = JSON.parse(line.toString('utf8'));
+      if (message?.method === 'tools/call') tool = message.params?.name || null;
+    } catch { /* forwarded unchanged */ }
+    queue.push({ line, tool, parked: false });
+  };
+  const bury = (id) => {
+    if (tombstones.size >= PARK_TOMBSTONE_MAX) {
+      const [oldest, timer] = tombstones.entries().next().value;
+      clearTimeout(timer);
+      tombstones.delete(oldest);
+    }
+    const timer = setTimeout(() => tombstones.delete(id), PARK_TOMBSTONE_MS);
+    timer.unref?.();
+    tombstones.set(id, timer);
+  };
+  const settle = (id, outcome) => {
+    if (!waiting || waiting.id !== id) return;
+    clearTimeout(waiting.timer);
+    const durationMs = Math.max(0, Math.round(now() - waiting.startedAt));
+    waiting = null;
+    // A move that failed leaves the pointer where it was: the next
+    // screenshot tries again. The held screenshot goes ahead either way.
+    if (outcome !== 'ok') leftOnPage = true;
+    emit({ kind: 'browser_pointer_park', persona, outcome, durationMs });
+    drain();
+  };
+  const drain = () => {
+    if (closed) return;
+    while (!waiting && queue.length) {
+      const item = queue[0];
+      const parksHere = item.tool === 'browser_take_screenshot'
+        || (parkBeforeClose && item.tool === 'browser_close');
+      if (parksHere && leftOnPage && !item.parked) {
+        item.parked = true;
+        leftOnPage = false;
+        const id = `usernode-shots-park-${nonce}-${++parks}`;
+        const timer = setTimeout(() => { bury(id); settle(id, 'timeout'); }, timeoutMs);
+        timer.unref?.();
+        waiting = { id, startedAt: now(), timer };
+        input.push(parkRequest(id));
+        continue;
+      }
+      queue.shift();
+      if (POINTER_LEFT_ON_PAGE.has(item.tool)) leftOnPage = true;
+      else if (POINTER_PLACED.has(item.tool)) leftOnPage = false;
+      input.push(item.line);
+    }
+    if (!waiting && !queue.length && flushed) { const done = flushed; flushed = null; done(); }
+  };
+  const ours = (id) => (waiting && waiting.id === id) || tombstones.has(id);
+  // Which of the parker's moves a whole answer line belongs to, if any. The
+  // SDK writes the id after the result, so both ends are read.
+  const parkIdOf = (line) => {
+    const ends = line.length > 16384
+      ? `${line.subarray(0, 8192).toString('utf8')}\n${line.subarray(-8192).toString('utf8')}`
+      : line.toString('utf8');
+    for (const match of ends.matchAll(STRING_ID)) if (ours(match[1])) return match[1];
+    return null;
+  };
+  // While a move is outstanding (or answered late), every answer line is
+  // held whole until its id is known; otherwise lines stream through.
   let held = [];
   let heldBytes = 0;
   let passing = false;
   const output = new Transform({
     transform(chunk, _encoding, callback) {
       let offset = 0;
-      for (;;) {
+      while (offset < chunk.length) {
         const end = chunk.indexOf(10, offset);
         const part = chunk.subarray(offset, end < 0 ? chunk.length : end + 1);
-        if (passing) this.push(part);
-        else {
-          held.push(part);
-          heldBytes += part.length;
-          if (end < 0 && heldBytes > PARK_RESPONSE_MAX_BYTES) {
-            this.push(Buffer.concat(held));
-            held = []; heldBytes = 0; passing = true;
-          }
+        offset += part.length;
+        if (!passing && !held.length && !waiting && !tombstones.size) passing = true;
+        if (passing) {
+          this.push(part);
+          if (end >= 0) passing = false;
+          continue;
         }
-        if (end < 0) break;
-        if (!passing) {
-          const line = Buffer.concat(held);
-          held = []; heldBytes = 0;
-          let id = null;
-          if (line.includes(PARK_ID_PREFIX)) {
-            try { id = JSON.parse(line.toString('utf8')).id; } catch { /* not ours */ }
+        held.push(part);
+        heldBytes += part.length;
+        if (end < 0) {
+          if (heldBytes > PARK_HELD_LINE_MAX_BYTES) {
+            this.push(Buffer.concat(held)); held = []; heldBytes = 0; passing = true;
           }
-          if (typeof id === 'string' && id.startsWith(PARK_ID_PREFIX)) release(id);
-          else this.push(line);
+          continue;
         }
-        passing = false;
-        offset = end + 1;
-        if (offset >= chunk.length) break;
+        const line = Buffer.concat(held);
+        held = []; heldBytes = 0;
+        const id = parkIdOf(line);
+        if (!id) { this.push(line); continue; }
+        let message = null;
+        try { message = JSON.parse(line.toString('utf8')); } catch { /* unparsed */ }
+        const outcome = !message ? 'unparsed' : message.error ? 'rpc_error'
+          : message.result?.isError === true ? 'tool_error' : 'ok';
+        if (tombstones.has(id)) { clearTimeout(tombstones.get(id)); tombstones.delete(id); }
+        settle(id, outcome);
       }
       callback();
     },
@@ -372,7 +427,14 @@ function createPointerParker({ timeoutMs = PARK_TIMEOUT_MS } = {}) {
   return {
     input, output,
     // The browser is gone: stop waiting, and send nothing more.
-    close() { clearTimeout(timer); timer = null; waitingFor = null; queue.length = 0; },
+    close() {
+      closed = true;
+      if (waiting) clearTimeout(waiting.timer);
+      waiting = null;
+      queue.length = 0;
+      for (const timer of tombstones.values()) clearTimeout(timer);
+      tombstones.clear();
+    },
   };
 }
 
@@ -407,7 +469,10 @@ function start({ persona, args, binary = null,
   const child = spawn(command, [...prefix, ...list], { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => { /* Child exit is reported by the close handler. */ });
   const inputTap = lineTap((line, meta) => observer.request(line, meta));
-  const parker = createPointerParker();
+  const parker = createPointerParker({
+    emit, persona: ['admin', 'full_admin', 'guest'].includes(persona) ? persona : 'member',
+    parkBeforeClose: list.some((arg) => /^--save-video(=|$)/.test(arg)),
+  });
   stdin.pipe(inputTap).pipe(parker.input).pipe(child.stdin);
   child.stdout.pipe(parker.output)
     .pipe(lineTap((line, meta) => observer.response(line, meta))).pipe(stdout);

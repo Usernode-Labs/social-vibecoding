@@ -217,7 +217,7 @@ test('the observer moves the pointer off the page before a screenshot that follo
     assert.deepEqual(sent[1].params.arguments, {
       element: 'Pointer off the page before a screenshot', x: -1, y: -1,
     });
-    assert.match(sent[1].id, /^usernode-shots-park-\d+$/);
+    assert.match(sent[1].id, /^usernode-shots-park-[0-9a-f]{12}-\d+$/);
     // The agent sees exactly its own calls answered, never the move.
     const answers = Buffer.concat(stdout).toString().trim().split('\n').map((line) => JSON.parse(line));
     assert.deepEqual(answers.map((message) => message.id), [1, 2, 3, 4, 5]);
@@ -253,15 +253,120 @@ test('the pointer parker holds the screenshot until the move is answered, and no
   assert.equal(forwarded.at(-1).params.name, 'browser_mouse_move_xy');
   await new Promise((resolve) => setTimeout(resolve, 60));
   assert.equal(forwarded.at(-1).params.name, 'browser_take_screenshot');
-  // A large answer streams through untouched.
-  const big = `${JSON.stringify({ jsonrpc: '2.0', id: 6, result: { content: [{ type: 'image', data: 'A'.repeat(400_000) }] } })}\n`;
-  answered.length = 0;
-  parker.output.write(big.slice(0, 300_000));
-  assert.ok(answered.join('').length > 0, 'the start of a large answer is not held');
-  parker.output.end(big.slice(300_000));
-  await once(parker.output, 'end').catch(() => {});
-  assert.equal(answered.join(''), big);
   parker.close();
+  // With no move outstanding, a large answer streams through untouched.
+  const fresh = createPointerParker();
+  const streamed = [];
+  fresh.output.on('data', (chunk) => streamed.push(chunk.toString()));
+  const big = `${JSON.stringify({ jsonrpc: '2.0', id: 6, result: { content: [{ type: 'image', data: 'A'.repeat(400_000) }] } })}\n`;
+  fresh.output.write(big.slice(0, 300_000));
+  assert.ok(streamed.join('').length > 0, 'the start of a large answer is not held');
+  fresh.output.end(big.slice(300_000));
+  await once(fresh.output, 'end').catch(() => {});
+  assert.equal(streamed.join(''), big);
+  fresh.close();
+});
+
+// A parker driven by hand: what it forwards to the browser, what it answers.
+function parkerHarness(options = {}) {
+  const events = [];
+  const parker = createPointerParker({ nonce: 'n0', emit: (event) => events.push(event), ...options });
+  const forwarded = [];
+  const raw = [];
+  parker.input.on('data', (chunk) => {
+    raw.push(chunk);
+    forwarded.push(...chunk.toString().trim().split('\n').map((line) => JSON.parse(line)));
+  });
+  const answered = [];
+  parker.output.on('data', (chunk) => answered.push(chunk));
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  const names = () => forwarded.map((message) => message.params?.name);
+  const answerIds = () => Buffer.concat(answered).toString().trim().split('\n').filter(Boolean)
+    .map((line) => JSON.parse(line).id);
+  return { parker, events, forwarded, raw, answered, tick, names, answerIds };
+}
+
+test('the parker forwards a character split across stdin chunks byte for byte', async () => {
+  const h = parkerHarness();
+  const line = Buffer.from(call(1, 'browser_type', { element: 'Name', ref: 'e1', text: 'café 😀' }));
+  const cut = line.indexOf(Buffer.from('😀')) + 2;
+  h.parker.input.write(line.subarray(0, cut));
+  h.parker.input.write(line.subarray(cut));
+  await h.tick();
+  assert.ok(Buffer.concat(h.raw).equals(line));
+  assert.equal(h.forwarded[0].params.arguments.text, 'café 😀');
+  h.parker.close();
+});
+
+test('an oversized park answer is still recognized and never reaches the agent', async () => {
+  const h = parkerHarness();
+  h.parker.input.write(call(1, 'browser_click', { element: 'Send', ref: 'e1' }) + call(2, 'browser_take_screenshot'));
+  await h.tick();
+  const parkId = h.forwarded[1].id;
+  // The SDK writes the id last, after a result that can be large.
+  const big = Buffer.from(`${JSON.stringify({ result: { content: [{ type: 'text', text: 'x'.repeat(400_000) }] }, jsonrpc: '2.0', id: parkId })}\n`);
+  h.parker.output.write(big.subarray(0, 300_000));
+  h.parker.output.write(big.subarray(300_000));
+  await h.tick();
+  assert.deepEqual(h.answerIds(), []);
+  assert.deepEqual(h.names(), ['browser_click', 'browser_mouse_move_xy', 'browser_take_screenshot']);
+  assert.equal(h.events[0].outcome, 'ok');
+  h.parker.close();
+});
+
+test('a failed or timed-out park keeps the pointer dirty, so the next screenshot parks again', async () => {
+  const h = parkerHarness({ timeoutMs: 20 });
+  h.parker.input.write(call(1, 'browser_click', { element: 'a', ref: 'e1' }) + call(2, 'browser_take_screenshot'));
+  await h.tick();
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: h.forwarded[1].id, result: { isError: true, content: [{ type: 'text', text: 'No open tab' }] } })}\n`);
+  await h.tick();
+  assert.deepEqual(h.answerIds(), [], 'the park error is not forwarded');
+  assert.equal(h.names().at(-1), 'browser_take_screenshot');
+  h.parker.input.write(call(3, 'browser_take_screenshot'));
+  await h.tick();
+  assert.equal(h.names().at(-1), 'browser_mouse_move_xy', 'the next screenshot retries the park');
+  const lateId = h.forwarded.at(-1).id;
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(h.names().at(-1), 'browser_take_screenshot', 'a timeout lets the screenshot through');
+  h.parker.input.write(call(4, 'browser_take_screenshot'));
+  await h.tick();
+  assert.equal(h.names().at(-1), 'browser_mouse_move_xy', 'and keeps the pointer dirty');
+  assert.deepEqual(h.events.map((event) => event.outcome), ['tool_error', 'timeout']);
+  // The timed-out move's late answer is still dropped.
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: lateId, result: { content: [] } })}\n`);
+  await h.tick();
+  assert.deepEqual(h.answerIds(), []);
+  h.parker.close();
+});
+
+test('a client id that looks like a park id passes through, and only clicks dirty the pointer', async () => {
+  const h = parkerHarness();
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: 'usernode-shots-park-n0-1', result: {} })}\n`);
+  for (const [id, tool] of [[1, 'browser_fill_form'], [2, 'browser_select_option'],
+    [3, 'browser_file_upload'], [4, 'browser_type'], [5, 'browser_take_screenshot']]) {
+    h.parker.input.write(call(id, tool));
+  }
+  await h.tick();
+  assert.deepEqual(h.answerIds(), ['usernode-shots-park-n0-1']);
+  assert.deepEqual(h.names(), ['browser_fill_form', 'browser_select_option',
+    'browser_file_upload', 'browser_type', 'browser_take_screenshot']);
+  h.parker.close();
+});
+
+test('with clips recorded, the pointer is parked before the session closes', async () => {
+  const h = parkerHarness({ parkBeforeClose: true });
+  h.parker.input.write(call(1, 'browser_click', { element: 'a', ref: 'e1' }) + call(2, 'browser_close'));
+  await h.tick();
+  assert.deepEqual(h.names(), ['browser_click', 'browser_mouse_move_xy']);
+  h.parker.output.write(`${JSON.stringify({ jsonrpc: '2.0', id: h.forwarded[1].id, result: { content: [] } })}\n`);
+  await h.tick();
+  assert.deepEqual(h.names(), ['browser_click', 'browser_mouse_move_xy', 'browser_close']);
+  const plain = parkerHarness();
+  plain.parker.input.write(call(1, 'browser_click', { element: 'a', ref: 'e1' }) + call(2, 'browser_close'));
+  await plain.tick();
+  assert.deepEqual(plain.names(), ['browser_click', 'browser_close']);
+  h.parker.close();
+  plain.parker.close();
 });
 
 test('observer exits after a client stops the browser while stdin remains open', async () => {
