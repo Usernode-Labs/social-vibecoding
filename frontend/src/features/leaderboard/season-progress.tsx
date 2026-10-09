@@ -1,13 +1,13 @@
 /**
- * How far through a scope of challenges the viewer is: "3/9 done in Season 2"
- * over one short segment per challenge.
+ * How far through a scope of challenges the viewer is: "3/9 done in this
+ * event" over one short segment per challenge.
  *
  * The ITERATION 03 board's quiet season summary. It is SHARED on purpose, like
  * ./challenge-card.tsx: Home's Challenges block and the Leaderboard screen's
  * Challenges tab draw this one component, so the same season reads the same
  * figure, words and bar on both. The board's rule is that progress has a scope
  * ("First challenges is 2 steps; the season is 9"), so the caller names it in
- * `caption` ("done in Season 2", "done in First challenges") and this file decides nothing
+ * `caption` ("done in this event", "done in First challenges") and this file decides nothing
  * about which challenges count.
  *
  * One segment per challenge is only legible while there are few. Past
@@ -23,7 +23,7 @@ export interface SeasonProgressView {
   done: number;
   /** Challenges in the scope. Nothing renders at zero. */
   total: number;
-  /** What follows the figure: "done in Season 2", or "done" alone. */
+  /** What follows the figure: "done in this event", or "done" alone. */
   caption: string;
 }
 

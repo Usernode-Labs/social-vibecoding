@@ -649,10 +649,11 @@ test('the challenges grid summarises and groups the completed set', () => {
   assert.match(chTsx, /id="tc-se-challenge-summary"/,
     'the summary line carries a stable id the dapp.json check anchors on');
   // ITERATION 03 moved the tally into the shared season progress
-  // ("3/9 done in Season 2" over one segment per challenge) rather than
+  // ("3/9 done in this event" over one segment per challenge) rather than
   // "3 of 9 challenges completed". This pin moved with it, deliberately.
-  // QA 2026-09-24 Q17: an event's tally says it is an event's.
-  assert.match(chJs, /caption: name \? `done in this event · \$\{name\}` : 'done'/, 'and states the tally in words');
+  // QA 2026-09-24 Q17: an event's tally says it is an event's; the event's
+  // own name stays out of the words (issue #4528).
+  assert.match(chJs, /caption: name \? 'done in this event' : 'done'/, 'and states the tally in words');
   assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
     'which is what the summary line carries');
   assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
