@@ -64,7 +64,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import {
-  ArrowsPointingOutIcon, ChatIcon, DescriptionIcon, DraftEditIcon, EllipsisVerticalIcon, PaperclipIcon, PlusIcon,
+  ArrowsPointingOutIcon, ChatIcon, DescriptionIcon, DraftEditIcon, ArrowsMoveIcon, PaperclipIcon, PlusIcon,
   SparklesIcon, XIcon,
 } from '@/components/ui/icons';
 
@@ -328,9 +328,6 @@ function saveBarAt(p: Point | null): void {
   } catch { /* private mode: it goes back to the foot next time */ }
 }
 
-/** How long the pointer rests on the bar before it moves out of the way. */
-const DUCK_AFTER_MS = 280;
-
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
 function CommentMode({ session, onClose }: { session: Session; onClose: () => void }): ReactNode {
@@ -349,7 +346,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const [cardAt, setCardAt] = useState<Point>({ x: -9999, y: -9999 });
   const [barAt, setBarAt] = useState<Point | null>(savedBarAt);
   const [barSize, setBarSize] = useState({ width: 0, height: 0 });
-  const [ducked, setDucked] = useState<Rect | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -358,7 +354,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const keys = useRef(0);
   const hoverFrame = useRef(0);
   const view = useRef(0);
-  const duckTimer = useRef(0);
   const drag = useRef<{ dx: number; dy: number } | null>(null);
   const touch = useRef<{ id: number; start: Point; last: Point; moved: boolean; scroller: Element | null } | null>(null);
   const draftRef = useRef(draft);
@@ -755,10 +750,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   //
   // At the foot, centred, until the person drags its handle; then where they
   // put it, kept on the device (a double-click on the handle puts it back).
-  // Resting the pointer on it moves it out of the way, so what is under it
-  // can be commented on; a quick pass on the way to one of its buttons, or a
-  // press, does not. It comes back when the pointer leaves that spot, unless
-  // the open comment's pin is there.
+  // It never moves out of the way on its own: what is under it is reached by
+  // dragging the handle, which wears the four-arrow move glyph and cursor.
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
@@ -766,31 +759,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     const height = bar.offsetHeight;
     if (width !== barSize.width || height !== barSize.height) setBarSize({ width, height });
   });
-  useEffect(() => () => window.clearTimeout(duckTimer.current), []);
-  useEffect(() => { if (confirm) setDucked(null); }, [confirm]);
-  useEffect(() => {
-    if (!ducked) return undefined;
-    const onMove = (e: PointerEvent) => {
-      if (inRect({ x: e.clientX, y: e.clientY }, ducked)) return;
-      const cur = activeComment(draftRef.current);
-      const pt = cur ? anchorPoint(cur.anchor) : null;
-      if (pt && inRect(pt, ducked)) return;
-      setDucked(null);
-    };
-    window.addEventListener('pointermove', onMove);
-    return () => window.removeEventListener('pointermove', onMove);
-  }, [ducked]);
-  const onBarEnter = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (e.pointerType !== 'mouse' || drag.current || confirm) return;
-    window.clearTimeout(duckTimer.current);
-    duckTimer.current = window.setTimeout(() => {
-      const r = barRef.current?.getBoundingClientRect();
-      if (r) setDucked({ x: r.left - 24, y: r.top - 24, width: r.width + 48, height: r.height + 48 });
-    }, DUCK_AFTER_MS);
-  };
   const onGripDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
     e.preventDefault();
-    window.clearTimeout(duckTimer.current);
     const r = barRef.current?.getBoundingClientRect();
     if (!r) return;
     drag.current = { dx: e.clientX - (r.left + r.width / 2), dy: e.clientY - (r.top + r.height / 2) };
@@ -812,7 +782,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       top: Math.round(Math.max(8, Math.min(window.innerHeight - barSize.height - 8, barAt.y * window.innerHeight - barSize.height / 2))),
     }
     : null;
-  const barUp = barPlace ? barPlace.top + barSize.height / 2 < window.innerHeight / 2 : false;
 
   // The box and an open marker's card sit beside their pins, clear of the bar at the foot.
   const viewport = () => ({ width: window.innerWidth, height: Math.max(200, window.innerHeight - (barAt ? 0 : BAR_SPACE)) });
@@ -1375,30 +1344,24 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         tabIndex={-1}
         role="toolbar"
         aria-label="Comment mode"
-        onPointerEnter={onBarEnter}
-        onPointerLeave={() => window.clearTimeout(duckTimer.current)}
-        onPointerDown={() => window.clearTimeout(duckTimer.current)}
         className={[
-          'absolute flex max-w-[calc(100vw-24px)] items-center gap-2 whitespace-nowrap rounded-full bg-white py-1.5 pl-1.5 pr-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.22)] outline-none ring-1 ring-black/10 transition-[transform,opacity] duration-200 motion-reduce:transition-none dark:bg-zinc-900 dark:ring-white/10 sm:gap-2.5',
+          'absolute flex max-w-[calc(100vw-24px)] items-center gap-2 whitespace-nowrap rounded-full bg-white py-1.5 pl-1.5 pr-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.22)] outline-none ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10 sm:gap-2.5',
           barPlace ? '' : 'bottom-4 left-1/2 -translate-x-1/2',
-          ducked ? 'pointer-events-none opacity-0' : '',
-          ducked && !barUp ? 'translate-y-[calc(100%+24px)]' : '',
-          ducked && barUp ? '-translate-y-[calc(100%+24px)]' : '',
         ].filter(Boolean).join(' ')}
         style={barPlace ? { left: barPlace.left, top: barPlace.top } : undefined}
       >
         <button
           type="button"
-          aria-label="Move the bar"
-          title="Drag to move the bar. Double-click to put it back."
+          aria-label="Move the bar: drag it anywhere, double-click to put it back"
+          title="Drag to move the bar anywhere. Double-click to put it back at the bottom."
           onPointerDown={onGripDown}
           onPointerMove={onGripMove}
           onPointerUp={onGripUp}
           onPointerCancel={onGripUp}
           onDoubleClick={() => { setBarAt(null); saveBarAt(null); }}
-          className="grid h-8 w-6 shrink-0 cursor-grab touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 active:cursor-grabbing dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+          className="grid h-8 w-6 shrink-0 cursor-move touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
         >
-          <EllipsisVerticalIcon className="h-4 w-4" />
+          <ArrowsMoveIcon className="h-4 w-4" />
         </button>
         {confirm ? (
           <>
