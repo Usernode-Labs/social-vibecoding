@@ -4145,7 +4145,17 @@ const AppView = {
     // Leaving whatever thread surface was open: drop the live render
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    if (subTab !== 'topic') { AppView._devTopic = null; AppView._devTopicInPanel = false; }
+    // #4480: the panel flag is dropped on EVERY sub-view change, the topic
+    // page included, not only on a move away from it. When a link inside the
+    // panel's page opens the full page, the panel stays mounted through the
+    // page's thread mount (the prune that drops the Workshop's portal runs in
+    // the same commit); if the flag were still set, the panel's late cleanup
+    // would call closeTopicPanel, whose unmountThread nulls the thread the
+    // page has just mounted — the page then shows its head but an empty
+    // stream until a refresh. Clearing the flag here makes that late close
+    // hit its early return.
+    AppView._devTopicInPanel = false;
+    if (subTab !== 'topic') AppView._devTopic = null;
 
     // The topic sub-view used to be an `innerHTML` template, so it had to
     // retire whatever interim root the previous surface had left on
@@ -7525,8 +7535,12 @@ const AppView = {
   // panel renders (workshop/side-panel.tsx), while the Workshop's own
   // sub-view stays up. `_devTopic` names the item, so every live refresh
   // that repaints an open topic (`_renderTopicHead`, the vote and roster
-  // reloads) reaches the panel the same way. `renderDevView` clears it on
-  // any move to another sub-view, and the panel closes itself with the tab.
+  // reloads) reaches the panel the same way. `renderDevView` clears the flag
+  // on any move to another sub-view AND on the move to the topic page itself
+  // (#4480): once a link inside the panel's page has opened the full page,
+  // the panel no longer owns `_devTopic` or the active thread, so its late
+  // cleanup leaves the page's thread alone. The panel closes itself with the
+  // tab.
   _devTopicInPanel: false,
   async openTopicInPanel(kind, id) {
     if (!kind || !id) return;

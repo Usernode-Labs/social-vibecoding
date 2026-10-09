@@ -2116,8 +2116,11 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   const open = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('async openTopicInPanel(kind, id) {'), APP_VIEW_SRC.indexOf('closeTopicPanel() {'));
   assert.match(open, /AppView\._devTopic = \{ kind, id \};/);
   assert.match(open, /AppView\._mountTopicThread\(\);\s*AppView\._renderTopicHead\(\);/, 'the full page\'s own mount and paint');
-  assert.match(APP_VIEW_SRC, /if \(subTab !== 'topic'\) \{ AppView\._devTopic = null; AppView\._devTopicInPanel = false; \}/,
-    'a move to another sub-view lets it go');
+  // #4480: the flag is dropped on EVERY sub-view change, the topic page
+  // included — the panel's late close must never unmount the full page's
+  // thread — and the item reset stays a move away from the topic.
+  assert.match(APP_VIEW_SRC, /AppView\._devTopicInPanel = false;\s*if \(subTab !== 'topic'\) AppView\._devTopic = null;/,
+    'every sub-view change clears the panel flag, before the item reset');
   // A plain click on a wide window; anything else is the row's own link.
   assert.match(WORKSHOP, /const SIDE_QUERY = '\(min-width: 1180px\)';/);
   assert.match(WORKSHOP, /if \(!sideWide\) return;\s*event\.preventDefault\(\);/);
@@ -2125,6 +2128,44 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   // The list makes room and keeps its place; the open row is lit.
   assert.match(CSS, /#dev-workshop:has\(> \.dev-ws\[data-ws-side-open\]\) \{/);
   assert.match(CSS, /\.dev-ws-wrow\[data-on\] \{ background: var\(--lit-tint\); \}/);
+});
+
+test('#4480: the panel\'s late close leaves the page\'s thread alone', () => {
+  // A link inside the panel's page opens the full page while the panel is
+  // still mounted; the page's thread is up when the panel's cleanup finally
+  // runs. With the flag cleared (renderDevView does it on every sub-view
+  // change now), closeTopicPanel must hit its early return and leave the
+  // page's thread and item exactly as they are.
+  const GroupChat = {
+    activeThread: { kind: 'issue', id: 12 },
+    unmounts: 0,
+    unmountThread() { this.activeThread = null; this.unmounts++; },
+  };
+  const AppView = makeAppView({
+    App: { user: { id: 1, username: 'me' }, currentApp: 'demo-app', currentSubTab: 'topic' },
+    globals: { GroupChat },
+  });
+  AppView._devTopic = { kind: 'issue', id: 12 };
+  AppView._devTopicInPanel = false;
+  AppView.closeTopicPanel();
+  assert.equal(AppView._devTopicInPanel, false, 'the flag stays off');
+  assert.equal(GroupChat.unmounts, 0, 'the page\'s thread is not unmounted');
+  assert.deepEqual(plain(GroupChat.activeThread), { kind: 'issue', id: 12 },
+    'the thread the page mounted stays active');
+  assert.deepEqual(plain(AppView._devTopic), { kind: 'issue', id: 12 },
+    'the item stays the page\'s');
+
+  // With the flag still set — the panel's own close, from ✕, Escape, or the
+  // row-to-row move — the thread is dropped and the flag cleared, as today.
+  GroupChat.activeThread = { kind: 'issue', id: 12 };
+  AppView._devTopic = { kind: 'issue', id: 12 };
+  AppView._devTopicInPanel = true;
+  AppView.closeTopicPanel();
+  assert.equal(AppView._devTopicInPanel, false, 'the panel\'s own close clears the flag');
+  assert.equal(GroupChat.unmounts, 1, 'the panel\'s thread is unmounted once');
+  assert.equal(GroupChat.activeThread, null);
+  assert.equal(AppView._devTopic && AppView._devTopic.kind, 'issue',
+    'on the topic page itself the item stays (App.currentSubTab is topic)');
 });
 
 test('#2496: the mine-ness predicate reads every live mark the board writes', () => {
