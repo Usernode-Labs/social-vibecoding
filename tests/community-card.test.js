@@ -66,6 +66,17 @@ test('the approval rule is one sentence per regime, read from the server', () =>
   assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-rules-sub/, 'and its style with it');
 });
 
+test('#4527: the middle step gets room, and the card stacks when the card is narrow', () => {
+  const CSS = read('public/css/app.css');
+  // The faces crowd the middle step's words, so it takes the wider share.
+  assert.match(CSS, /^\.dev-ws-rule-step\[data-ws-rule-people\] \{ flex-grow: 2; \}$/m);
+  // The strip is its own container, so the stack fires when the CARD is too
+  // narrow, not only when the window is (the 640px media query stays).
+  assert.match(CSS, /^\.dev-ws-strip\[data-ws-approval-rules\] \{ container-type: inline-size; \}$/m);
+  assert.match(CSS, /@container \(max-width: 600px\) \{\s*\.dev-ws-rules \{ flex-direction: column; align-items: stretch; \}\s*\.dev-ws-rule-join \{ flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; \}\s*\}/);
+  assert.match(CSS, /@media \(max-width: 640px\) \{\s*\.dev-ws-rules \{ flex-direction: column; align-items: stretch; \}/);
+});
+
 test('the audience line uses the words on screen, and "Just you" counts nobody', () => {
   const { audienceLine } = loadTsx(CARD);
   assert.equal(audienceLine({ audience: 'open', audience_label: 'Public community', member_count: 12 }), 'Public community · 12 members');

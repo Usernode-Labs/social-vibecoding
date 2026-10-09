@@ -199,7 +199,7 @@ test('Your votes: still open, then decided, each saying your vote as it stands',
   });
   assert.deepEqual(view.sections.map((s) => [s.label, s.rows.map((r) => [r.title, r.meta, r.href])]), [
     ['Still open', [
-      ['Weekly distance leaderboard', 'Run Club · you voted yes', '#app/run-club/dev/proposals/31'],
+      ['Weekly distance leaderboard', 'Run Club · you voted yes', '#app/run-club/dev/changes/40'],
       ['Rename to Run Crew', 'Run Club · you voted yes', '#app/run-club/dev/governance/77'],
     ]],
     ['Decided', [

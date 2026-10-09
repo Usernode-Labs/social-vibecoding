@@ -5,6 +5,7 @@ const llm = require('./llm');
 const limits = require('./limits');
 const github = require('./github');
 const turnEffects = require('./turn-effects');
+const { changeHref } = require('./change-destination');
 const sessionTitles = require('./session-title');
 const proposalDescription = require('./proposal-description');
 const summaryFreshness = require('./summary-freshness');
@@ -116,14 +117,15 @@ function safeMarkdownText(value, max = 1000) {
 // GitHub's public image proxy. The block names the claims and links to the
 // authenticated proposal surface; its wording intentionally does not cache a
 // run state that could become false on the next pushed commit.
-function buildShotsBlock({ intent, appSlug, sessionId, domain }) {
+function buildShotsBlock({ intent, appSlug, sessionId, prNumber = null, domain }) {
   if (!intent || typeof intent !== 'object' || !appSlug || !domain
       || !Number.isInteger(Number(sessionId)) || Number(sessionId) <= 0) return '';
   const claims = Array.isArray(intent.stories)
     ? intent.stories.slice(0, 3).map((story) => safeMarkdownText(story?.claim)).filter(Boolean)
     : [];
   if (intent.impact !== 'none' && !claims.length) return '';
-  const url = `https://${domain}/#app/${encodeURIComponent(appSlug)}/dev/proposals/${Number(sessionId)}`;
+  // #4367: once the change has its pull request, its page goes by that number.
+  const url = `https://${domain}/${changeHref(appSlug, sessionId, prNumber)}`;
   const lines = [SHOTS_MARKER_START, '## Before & after', ''];
   if (intent.impact === 'none') {
     lines.push(`No user-visible change declared: ${safeMarkdownText(intent.rationale, 1000)}`, '');
@@ -310,6 +312,7 @@ async function syncShotsPrBlock(pool, sessionId) {
     intent,
     appSlug: session.app_slug,
     sessionId: Number(session.id),
+    prNumber: session.pr_number,
     domain: require('./caddy').USERNODE_DOMAIN,
   });
   if (!block) return { updated: false, reason: 'missing_intent' };
@@ -854,6 +857,7 @@ async function applyPrMetadata({
     intent: visibleChanges,
     appSlug: appSlug || session?.app_slug || session?.slug,
     sessionId: session?.id,
+    prNumber: session?.pr_number,
     domain: require('./caddy').USERNODE_DOMAIN,
   });
   // Enrollment in v2 retires public legacy image embeds. The authenticated

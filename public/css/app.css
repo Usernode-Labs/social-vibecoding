@@ -22235,10 +22235,16 @@ html.in-side-panel body {
 .dev-ws-week-lead { margin: 8px 0 0; font-size: 15px; line-height: 1.5; color: var(--text-primary); }
 
 /* Approval rules, drawn: three steps across, stacked on a phone and
-   beside the side panel. */
+   beside the side panel. The middle step wears the faces, so its words are
+   the first to run out of room: it takes the wider share, and when the
+   CARD itself is too narrow for three steps side by side (a container
+   query — the viewport media query below does not see the card) they stack
+   the same way (#4527). */
+.dev-ws-strip[data-ws-approval-rules] { container-type: inline-size; }
 .dev-ws-rules { list-style: none; margin: 10px 0 2px; padding: 0; display: flex; align-items: center; }
 .dev-ws-rule-step { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 10px; }
-.dev-ws-rule-join { flex: 0 0 28px; height: 2px; margin: 0 8px; border-radius: 2px; background: var(--app-sheet-line); }
+.dev-ws-rule-step[data-ws-rule-people] { flex-grow: 2; }
+.dev-ws-rule-join { flex: 0 0 20px; height: 2px; margin: 0 6px; border-radius: 2px; background: var(--app-sheet-line); }
 .dev-ws-rule-tile {
   flex: none; width: 36px; height: 36px; border-radius: 11px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -22260,6 +22266,13 @@ html.in-side-panel body {
 .dev-ws-rule-text span { font-size: 12.5px; color: var(--text-muted); line-height: 1.3; }
 .dev-ws[data-ws-side-open] .dev-ws-rules { flex-direction: column; align-items: stretch; }
 .dev-ws[data-ws-side-open] .dev-ws-rule-join { flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; }
+/* The card, not the window, ran out of room: the same stack the phone's
+   media query draws, wherever the strip is narrower than the three steps.
+   (The side panel above already stacks them, so this reads over it.) */
+@container (max-width: 600px) {
+  .dev-ws-rules { flex-direction: column; align-items: stretch; }
+  .dev-ws-rule-join { flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; }
+}
 
 /* The item's page beside the list, on a wide window (workshop/side-panel.tsx).
    The list moves left to make room and keeps its place. */

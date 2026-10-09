@@ -40,6 +40,8 @@
 // claimed queue rows alone, so a build (whose queue row is gone) and a
 // follow-up waiting its turn showed as nothing while the bot said otherwise.
 
+const { changeHref } = require('./change-destination');
+
 // Lazy: the live module is large, and only the queue readers below need it.
 function live() { return require('./homeroom-bot-live'); }
 
@@ -65,6 +67,9 @@ const BOT_USERNAME = 'homeroom_bot';
 // A live build older than this is not holding its project up any more (the
 // longest one, a platform build's plan and build turn, is under two hours).
 const BUSY_BUILD_HOURS = 4;
+// How many of one project's builds run at once (homeroom-bot.js). Lazy, as
+// every read of that module here is.
+function buildsPerProject() { return require('./homeroom-bot').BUILDS_PER_PROJECT; }
 
 // #4053: a first version's steps are named for what is happening, never as
 // an instruction: "Step 4 of 7: Build it" read to an invited member as if
@@ -233,13 +238,14 @@ function failedCount(results) {
   return results.filter((t) => t && t.status && t.status !== 'pass').length;
 }
 
-function links(domain, { slug, number = null, proposal = null }) {
+function links(domain, { slug, number = null, proposal = null, pr = null }) {
   if (!domain || !slug) return {};
   const base = `https://${domain}/#app/${encodeURIComponent(slug)}`;
   return {
     project: base,
     ...(number ? { request: `${base}/dev/issues/${Number(number)}` } : {}),
-    ...(proposal ? { proposal: `${base}/dev/proposals/${Number(proposal)}` } : {}),
+    // #4367: a change with a pull request goes by its number.
+    ...(proposal ? { proposal: `https://${domain}/${changeHref(slug, proposal, pr)}` } : {}),
   };
 }
 
@@ -320,8 +326,9 @@ function stageOf(input, { now = new Date() } = {}) {
         doing: 'the plan is ready and waits for Build it',
       };
     }
-    // Built after the turn that read it, one build per project at a time
-    // (homeroom-bot.js buildLive): waiting its turn until its build starts.
+    // Built after the turn that read it, up to BUILDS_PER_PROJECT per project
+    // at once (homeroom-bot.js buildLive): waiting its turn until its build
+    // starts.
     if (row.build_waiting_at && !row.build_session_id) {
       return { stage: 'build_queued', since: row.build_waiting_at, doing: 'ready to build; waiting its turn to be built' };
     }
@@ -612,8 +619,9 @@ async function queuePositions(pool, rows, settings) {
  * person's waits: a request it is reading now (a claimed queue row, other
  * than a follow-up on its own proposal, which runs beside it), or one it is
  * building (a live ready run with no proposal yet, whose queue row is gone).
- * The bot starts one request per project at a time, so either holds the
- * rest. By app id: [{ issueNumber, since, what }], newest first.
+ * A read holds the project's other reads (its one session); builds hold its
+ * other builds once BUILDS_PER_PROJECT are under way. By app id:
+ * [{ issueNumber, since, what }], newest first.
  */
 async function projectsBusy(pool, rows) {
   const appIds = [...new Set(rows.filter((r) => (r.queue_id && !r.started_at) || (r.build_waiting_at && !r.build_session_id))
@@ -761,7 +769,8 @@ async function waitingHolds(pool, staged) {
 
 /**
  * Pure (#3771): what a request in the queue waits for, as the `queued`
- * stage's words and `waitingFor`. Its project busy with another request;
+ * stage's words and `waitingFor`. Its project reading another request (a
+ * build runs on a session of its own and holds no read up);
  * the most the bot does for one person at once already under way; or, with
  * nothing in the way, its place in the queue. "Waiting in the queue
  * (number 4)" said none of that, and "when will you pick it up?" had no
@@ -775,16 +784,16 @@ function queuedWait(row, {
   // FIRST_VERSION_PENDING_SQL). That is what it waits for, whatever else is.
   const firstVersion = firstVersionWait(row, holds, { reason: row.queue_reason });
   if (firstVersion) return { doing: FIRST_VERSION_WAIT, waitingFor: firstVersion };
-  const ahead = (busy.get(Number(row.app_id)) || []).find((b) => b.issueNumber !== Number(row.issue_number));
+  const ahead = (busy.get(Number(row.app_id)) || [])
+    .find((b) => b.what === 'reading' && b.issueNumber !== Number(row.issue_number));
   if (ahead) {
     // How long the other one has run is its own; the entry's time so far is
     // this request's wait.
     const minutes = minutesSince(ahead.since, now);
-    const doing = ahead.what === 'building' ? 'building' : 'reading';
     return {
-      doing: `waiting its turn: ${row.name || row.slug} is ${doing} request #${ahead.issueNumber} first (one request per project at a time)`,
+      doing: `waiting its turn: ${row.name || row.slug} is reading request #${ahead.issueNumber} first (one read per project at a time)`,
       waitingFor: {
-        reason: 'project_busy', number: ahead.issueNumber, doing, ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
+        reason: 'project_busy', number: ahead.issueNumber, doing: 'reading', ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
       },
     };
   }
@@ -808,23 +817,30 @@ function queuedWait(row, {
 
 /**
  * Pure: what a build waiting its turn waits for, as the `build_queued`
- * stage's words and `waitingFor`: another build on its project (one at a
- * time), the most the bot does for one person at once, or nothing: it
- * starts next.
+ * stage's words and `waitingFor`: its project's other builds, once
+ * `perProject` are under way (homeroom-bot.js BUILDS_PER_PROJECT), the most
+ * the bot does for one person at once, or nothing: it starts next.
  */
-function buildWait(row, { busy = new Map(), working = 0, perPerson = 2, now = new Date(), holds = null } = {}) {
+function buildWait(row, {
+  busy = new Map(), working = 0, perPerson = 2, now = new Date(), holds = null, perProject = buildsPerProject(),
+} = {}) {
   // 2026-10-05: no build on a project starts while its first version is
   // not live (homeroom-bot.js liveBuildCandidates).
   const firstVersion = firstVersionWait(row, holds);
   if (firstVersion) return { doing: FIRST_VERSION_BUILD_WAIT, waitingFor: firstVersion };
-  const ahead = (busy.get(Number(row.app_id)) || [])
-    .find((b) => b.what === 'building' && b.issueNumber !== Number(row.issue_number));
-  if (ahead) {
+  const building = (busy.get(Number(row.app_id)) || [])
+    .filter((b) => b.what === 'building' && b.issueNumber !== Number(row.issue_number));
+  if (building.length >= perProject) {
+    // The one that started first is the one likely to finish first; the
+    // list is newest first.
+    const ahead = building[building.length - 1];
     const minutes = minutesSince(ahead.since, now);
+    const numbers = [...building].reverse().map((b) => `#${b.issueNumber}`).join(', ');
     return {
-      doing: `ready to build; ${row.name || row.slug} is building request #${ahead.issueNumber} first (one build per project at a time)`,
+      doing: `ready to build; ${row.name || row.slug} is building ${building.length === 1 ? 'request' : 'requests'} ${numbers} first (up to ${plural(perProject, 'build')} per project at a time)`,
       waitingFor: {
-        reason: 'project_building', number: ahead.issueNumber, ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
+        reason: 'project_building', number: ahead.issueNumber, building: building.length, most: perProject,
+        ...(Number.isInteger(minutes) ? { minutesSoFar: minutes } : {}),
       },
     };
   }
@@ -849,7 +865,7 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
     `SELECT cs.id, cs.app_id, a.slug,
             CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status,
             cs.check_state, cs.check_phase, cs.checks_progress,
-            cs.test_results, cs.session_title, cs.pr_title, cs.promoted_at, cs.created_at,
+            cs.test_results, cs.session_title, cs.pr_title, cs.pr_number, cs.promoted_at, cs.created_at,
             (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                 AND ${revision.countedVotePredicateSql('pv', 'cs')}) AS yes,
             (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'no'
@@ -868,7 +884,7 @@ async function proposalFacts(pool, sessionId, { domain = null } = {}) {
       needed = governance.computeGate(gov, electorate.active, s.yes, s.no, s.promoted_at || s.created_at).required;
     } catch { needed = null; }
   }
-  const link = links(domain, { slug: s.slug, proposal: s.id }).proposal;
+  const link = links(domain, { slug: s.slug, proposal: s.id, pr: s.pr_number }).proposal;
   return {
     proposal: Number(s.id),
     title: s.session_title || s.pr_title || null,

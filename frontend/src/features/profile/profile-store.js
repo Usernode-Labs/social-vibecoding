@@ -49,6 +49,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { changeHref } from '../../lib/change-href';
 
 /**
  * @typedef {Object} ProfileState
@@ -563,7 +564,7 @@ export function votesView(data) {
       if (!open) meta.push(voteOutcome(item));
       let href = null;
       if (slug && item.type === 'pr_vote' && Number(item.pr && item.pr.sessionId) > 0) {
-        href = `#app/${encodeURIComponent(slug)}/dev/proposals/${Number(item.pr.sessionId)}`;
+        href = changeHref(slug, item.pr.sessionId, item.pr.number);
       } else if (slug && item.type === 'proposal_vote' && Number(item.issue && item.issue.id) > 0) {
         href = `#app/${encodeURIComponent(slug)}/dev/governance/${Number(item.issue.id)}`;
       }

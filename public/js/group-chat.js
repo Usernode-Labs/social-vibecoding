@@ -4037,8 +4037,11 @@ const GroupChat = {
       || GroupChat.appSlug;
     const id = sessionId || (pr && pr.id != null ? String(pr.id) : '');
     if (!slug || !id) return null;
+    // #4367: the change's pull request number, when the PR resolved is it.
+    const prNumber = pr && pr.pr_number != null && String(pr.id) === String(id)
+      ? Number(pr.pr_number) || null : null;
     return (typeof App !== 'undefined' && App._appUrl)
-      ? App._appUrl(slug, 'dev', { kind: 'proposal', id: Number(id) }, 'topic')
+      ? App._appUrl(slug, 'dev', { kind: 'proposal', id: Number(id), ...(prNumber ? { pr: prNumber } : {}) }, 'topic')
       : `/app/${encodeURIComponent(slug)}/dev/proposals/${id}`;
   },
 

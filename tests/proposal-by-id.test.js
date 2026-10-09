@@ -343,3 +343,45 @@ test('#3669: a promoted row carries the governance fields the vote pill and ledg
   assert.equal(approvals.state, 'done', 'the vote has landed');
   assert.equal(approvals.detail && approvals.detail.note, '1 of 1');
 });
+
+// #4367: GET /api/apps/:slug/changes/:number turns a change's pull request
+// number into the session its page opens by, under the same view gate and
+// visibility rule as the by-id read above.
+async function callChange(routes, { slug = 'demo', number, query = {}, user = { id: 1 } }) {
+  const route = findRoute(routes, 'get', '/api/apps/:slug/changes/:number');
+  assert.ok(route, 'changes/:number route registered');
+  let payload = null;
+  let statusCode = 200;
+  await route.handler(
+    { params: { slug, number: String(number) }, user, query },
+    { json(p) { payload = p; }, status(c) { statusCode = c; return { json(p) { payload = p; } }; } }
+  );
+  return { payload, statusCode };
+}
+
+test('changes/:number resolves a PR number to its session, by app and visibility', async () => {
+  const { routes, captured } = loadVotes({
+    db: (sql) => (/cs\.pr_number = \$3/.test(sql) ? [{ id: 7296 }] : undefined),
+  });
+  const { payload, statusCode } = await callChange(routes, { number: 4509 });
+  assert.equal(statusCode, 200);
+  assert.deepEqual(payload, { sessionId: 7296, prNumber: 4509 });
+  const q = captured.calls.find((c) => /cs\.pr_number = \$3/.test(c.sql));
+  assert.match(q.sql, /cs\.app_id = \$1 AND cs\.pr_number = \$3/, 'by app and PR number, never by id');
+  assert.match(q.sql, /cs\.status IN \('promoted', 'merging', 'merged'\)/);
+  assert.match(q.sql, /cs\.user_id = \$2 OR cs\.shared_at IS NOT NULL/, 'a draft is its owner’s alone');
+  assert.deepEqual(q.params, [1, 1, 4509]);
+});
+
+test('changes/:number 404s for an unknown number, a bad number, or no access', async () => {
+  const none = loadVotes({ db: () => undefined });
+  assert.equal((await callChange(none.routes, { number: 4509 })).statusCode, 404);
+  for (const bad of ['abc', '0', '-3', '12x', '1e3']) {
+    const r = loadVotes({ db: () => [{ id: 1 }] });
+    assert.equal((await callChange(r.routes, { number: bad })).statusCode, 404, bad);
+    assert.ok(!r.captured.calls.some((c) => /pr_number = \$3/.test(c.sql)), `${bad} is never looked up`);
+  }
+  const gated = loadVotes({ gateApp: null });
+  assert.equal((await callChange(gated.routes, { number: 4509 })).statusCode, 404);
+  assert.ok(!gated.captured.calls.some((c) => /pr_number = \$3/.test(c.sql)), 'no row query past the gate');
+});

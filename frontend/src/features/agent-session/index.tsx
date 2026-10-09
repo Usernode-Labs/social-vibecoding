@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/icons';
 
 import { useInnerHtml } from '../../lib/html';
+import { changeHref as changeLink } from '../../lib/change-href';
 import { renderSpecHtml, useSpecFrames, type SpecHtmlDoc } from '../../lib/spec-html';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -755,7 +756,7 @@ export function PreviewCardView({ item, change, wide, action, busy }: {
   }
   const checks = checksSummary(change?.checkState, change?.checkFailing, change?.checkSkipReason);
   const changeHref = change && change.appSlug && item.changeId != null
-    ? `#app/${encodeURIComponent(change.appSlug)}/dev/proposals/${item.changeId}`
+    ? changeLink(change.appSlug, item.changeId, prNumber)
     : null;
   const inVote = change && (change.status === 'promoted' || change.status === 'merging');
   const merged = change && change.status === 'merged';
@@ -1618,7 +1619,7 @@ function useCredit(): CreditView | null {
 }
 
 const BUSY_PLACEHOLDER = 'The agent is working. Type your next message and save it for later.';
-const SAVE_TITLE = 'Save this as a draft (Enter). It stays here until you send it';
+const SAVE_TITLE = 'Save this as a draft (Ctrl+Enter or ⌘+Enter). It stays here until you send it';
 
 /**
  * The saved drafts above the composer (the dev chat's #798 list, per account):
@@ -1699,7 +1700,7 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
  * The message box. Its ONE button follows the dev chat's (#798, #810):
  * Send while the Mayor is free; while it works, Stop with nothing typed and
  * a green Save with something typed, which parks the text as a saved draft
- * (Enter does the same) so nothing typed mid-turn can leak into the running
+ * (Ctrl/Cmd+Enter does the same) so nothing typed mid-turn can leak into the running
  * turn. What is typed and not sent is kept for the conversation (./unsent.ts).
  *
  * THE OUTLINE IS THE CARD'S, as on Messages' composer (#1954, #2882, #2387):
@@ -1883,7 +1884,7 @@ function Composer({ id }: { id: string }) {
       return;
     }
     if (!text && !files.length) return;
-    // Files still uploading hold the send: the button says so, and Enter waits too.
+    // Files still uploading hold the send: the button says so, and Ctrl/Cmd+Enter waits too.
     if (uploading) return;
     update('');
     void sendAgentMessage(text);
@@ -1953,7 +1954,7 @@ function Composer({ id }: { id: string }) {
       ) : null}
       {saving ? (
         // Said in words, above what is typed, the moment it applies: while
-        // the Mayor works, Enter and the button keep this as a draft. It is
+        // the Mayor works, Ctrl/Cmd+Enter and the button keep this as a draft. It is
         // not sent, and nothing sends it on its own.
         <p className="px-2 text-[13px] text-zinc-600 dark:text-zinc-300" data-agent-session-save-note>
           The agent is still working, so this will be <span className="font-semibold">saved as a draft, not sent</span>. Send it from your drafts when it finishes.
@@ -1975,7 +1976,8 @@ function Composer({ id }: { id: string }) {
           if (takeFiles(event.clipboardData.files)) event.preventDefault();
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+          // Enter is a new line; Send (or Ctrl/Cmd+Enter, as in the dev chat) sends.
+          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) {
             event.preventDefault();
             submit();
           }
@@ -2166,7 +2168,7 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
               {active.appSlug ? (
                 <a
                   className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
-                  href={`#app/${encodeURIComponent(active.appSlug)}/dev/proposals/${active.id}`}
+                  href={changeLink(active.appSlug, active.id, active.prNumber)}
                 >
                   Proposal page
                 </a>

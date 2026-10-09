@@ -18,6 +18,15 @@
 // Advisory, like shots-identities.personaWarnings: a declaration is never
 // refused for it.
 //
+// One need is not a state but an answer: a change whose steps ask the
+// Homeroom bot (or an app's own AI feature) for something and wait for its
+// reply. The copies have no model key, so the bot only says it cannot reach
+// its model there; since the bot's own proposals got shots (#4487), its
+// changes to its own replies ended that way (PR 4536's offer to close a
+// request, 2026-10-09). No step through the UI and no ready-made state makes
+// a model answer, so that warning is given whatever hints.setup says and
+// whichever states are ready-made.
+//
 // Pure: the declare route reads the app once and passes `selfApp`.
 
 // Each demo state in a few words, with who it is for (its persona and
@@ -44,6 +53,8 @@ const READY_STATES = Object.freeze([
   ['shots-demo-standings-activities-v1', 'standings players with recorded point activities',
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-member-first-version-thanks-v1', 'an answered first-version plan with Homeroom bot\'s thanks under it',
+    ['member']],
+  ['shots-demo-member-bot-close-offer-v1', 'your chat with Homeroom bot, ending in its offer to close a request',
     ['member']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
@@ -88,6 +99,15 @@ const NEEDS = Object.freeze([
   },
   { needs: 'an account on the waitlist', test: /\bwait[- ]?list(?:ed)?\b/i, states: [] },
   {
+    // Words that make the bot answer, not ones that describe what it already
+    // said: "ask the Homeroom bot to close it" and "the bot replies", never
+    // "the bot's offer" or "your chat with Homeroom bot".
+    needs: 'a live reply from a model (the Homeroom bot, or an app\'s own AI feature)',
+    test: /\b(?:ask(?:s|ed|ing)?|tell(?:s|ing)?|told|messag(?:ed|ing)|dm(?:s|ed)?|writ(?:es?|ing) to|wrote to|send(?:s|ing)?|sent|mention(?:s|ed|ing)?) (?:the |your )?(?:@?homeroom[_ ]?)?(?:bot|assistant|ai)(?![\w-])|\b(?:@?homeroom[_ ]?)?(?:bot|assistant|ai) (?:answers|replies|responds|triages)\b/i,
+    states: [],
+    live: true,
+  },
+  {
     needs: 'an empty state, or an account with nothing of its own yet',
     test: /\b(?:new (?:user|member|account|player)s?|brand[- ]new (?:user|member|account)s?|first[- ]time (?:user|member|visitor)s?|(?:has|have)(?:n't| not| never) (?:\w+ ){0,2}yet|no \w+ (?:\w+ )?yet|empty state)\b/i,
     states: [],
@@ -127,26 +147,37 @@ function declarationAdvice(intent, { selfApp = false } = {}) {
   const seeds = selfApp ? SEEDS.self : SEEDS.child;
   const lacking = new Map();
   for (const story of stories) {
-    if (hasSetup(story)) continue;
+    const setup = hasSetup(story);
     const words = wordsOf(story);
     for (const need of NEEDS) {
       if ((need.skipPersonas || []).includes(story.persona)) continue;
-      if (!need.test.test(words) || need.states.some((id) => held.has(id))) continue;
-      if (!lacking.has(need.needs)) lacking.set(need.needs, []);
-      lacking.get(need.needs).push(String(story.id || 'A declared change'));
+      if (!need.live && (setup || need.states.some((id) => held.has(id)))) continue;
+      if (!need.test.test(words)) continue;
+      if (!lacking.has(need)) lacking.set(need, []);
+      lacking.get(need).push(String(story.id || 'A declared change'));
     }
   }
-  const warnings = [...lacking].map(([needs, ids]) => `${ids.join(', ')} ${ids.length > 1 ? 'seem' : 'seems'} to `
-    + `need ${needs}, and ${selfApp ? 'no ready-made state on these copies holds it (see availableStates)'
+  const warnings = [...lacking].map(([need, ids]) => {
+    const lead = `${ids.join(', ')} ${ids.length > 1 ? 'seem' : 'seems'} to need ${need.needs}, and `;
+    const seedIt = `seed it in ${seeds} in a change merged before this one: a seed this proposal adds reaches only `
+      + 'the after copy.';
+    if (need.live) {
+      return `${lead}nothing on these copies answers with a model: they have no model key, so the Homeroom bot `
+        + 'only says it cannot reach its model. Never make a step wait for a reply: start from '
+        + `${selfApp ? 'a ready-made state that already holds it (see availableStates)' : 'a reply the copies already hold'}, `
+        + `or ${seedIt}`;
+    }
+    return `${lead}${selfApp ? 'no ready-made state on these copies holds it (see availableStates)'
       : 'this app\'s copies have no ready-made states'}. Add hints.setup with the steps that make it through `
-    + `the UI, which the shots agent takes on both copies, or seed it in ${seeds} in a change merged before this `
-    + 'one: a seed this proposal adds reaches only the after copy.');
+      + `the UI, which the shots agent takes on both copies, or ${seedIt}`;
+  });
   return {
     availableStates: available.map(({ name, personas }) => ({ name, personas: [...personas] })),
     dataNote: `${selfApp ? 'Homeroom\'s before & after copies hold its staging seeds and the ready-made states in '
       + 'availableStates, on both sides' : `This app's before & after copies hold what ${seeds} writes, and no `
       + 'ready-made states'}. Anything else a change needs comes from hints.setup steps the shots agent takes `
-      + `through the UI on both copies, or from ${seeds}; a seed this proposal adds reaches only the after copy.`,
+      + `through the UI on both copies, or from ${seeds}; a seed this proposal adds reaches only the after copy. `
+      + `Nothing on them answers with a model${selfApp ? ', the Homeroom bot included' : ''}: they have no model key.`,
     warnings,
   };
 }

@@ -368,6 +368,9 @@ export interface RowTag {
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
   /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486). */
   glyph?: 'eye' | 'lock';
+  /** #4485: the fewer words the row draws ("Taking shots"); `label` stays
+   *  the chip's tooltip and what a screen reader says. */
+  short?: string;
   title?: string;
   progress?: ChecksProgress;
 }
@@ -386,6 +389,8 @@ export interface RowBrief {
   by: string;
   /** The viewer made it. */
   mine: boolean;
+  /** Homeroom bot built it from a request made for the viewer (#4538). */
+  requested: boolean;
   category: string;
   replies: number;
   /** The requests a change addresses ("for #4455"). */

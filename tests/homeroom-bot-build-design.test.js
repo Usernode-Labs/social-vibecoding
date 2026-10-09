@@ -241,6 +241,9 @@ test('a first version\'s build uses the starter\'s design kit and records its lo
     // #4487: and a later change is asked to declare its visible changes.
     const declare = live.BUILD_VISIBLE_CHANGES_LINES.join('\n');
     assert.ok(other.includes(declare) && !first.includes('declare_visible_changes'));
+    // The copies have no model key, so no declared step waits for the bot (PR 4536).
+    assert.match(declare.replace(/\n/g, ' '), /The before and after copies have no model key, so nothing on them answers with a model: Homeroom bot only says it cannot reach its model there/);
+    assert.match(declare.replace(/\n/g, ' '), /Never make a step ask Homeroom bot \(or any AI feature\) for something and wait for its reply\./);
     assert.equal(first.replace(`${lines}\n`, '').replace(`${progress}\n`, '').replace(`${pack4}\n`, ''), other.replace(`${declare}\n`, ''),
       'the record, the progress phrases, the skill\'s nudge, the look-and-fix loop and the declaration are the only differences');
     // Every build, a later one included, reads the note through the guidance.

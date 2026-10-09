@@ -4024,8 +4024,11 @@ export function DevWorkshop(): ReactNode {
   const weekUp = openWeek ? weeks.find((w) => sinceWeekStateKey(w) === openWeek) || null : null;
   // Own ongoing work is already in Your work. Once it merges, its outcome
   // belongs in catch-up too: it no longer appears in that ongoing list.
+  // #4538: so is a bot change built from the viewer's request — Your work
+  // has it while it is in flight, and the bot remains its maker either way.
   const sinceRows = (v.since ? v.since.rows : [])
-    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && (!r.brief.mine || r.brief.stage === 'live'));
+    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief
+      && (!(r.brief.mine || r.brief.requested) || r.brief.stage === 'live'));
   const openWeekPage = (key: string) => {
     setOpenWeek(key);
     scrollToHead(hostRef.current);

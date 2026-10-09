@@ -99,6 +99,9 @@ const STANDINGS_CHALLENGES = Object.freeze([
 ]);
 const FIRST_VERSION_SLUG = 'shots-demo-member-book-club';
 const FIRST_VERSION_NAME = '[shots fixture] Book club';
+// The staging mock request the Homeroom bot offers to close (src/routes/
+// issues.js stagingMockIssues), which no other state marks.
+const CLOSE_OFFER_REQUEST = Object.freeze({ number: 900001, title: '[Mock] Dark mode toggle resets after refresh' });
 
 const sessionPath = (id) => `/#messages/agent/${id}`;
 
@@ -1191,6 +1194,79 @@ const STATES = [
       return {
         shows: [{
           state: `Your chat with Homeroom bot: the plan for your new project ${name}, answered with Build it, and under it the bot's thanks for answering over the project's card, whose build line reads Building it. Nothing in it is unread.`,
+          path: `/#messages/${IDS.botConversation}`,
+        }],
+      };
+    },
+  },
+  {
+    // The member's chat with the Homeroom bot ending in an offer that waits
+    // for their answer (#4525): they said a request is done, and the bot
+    // offers to open a vote on closing it, with Propose to close and Keep
+    // it open. An offer is a reply, and a reply needs the bot's model, which
+    // no copy has: the shots of the change that added this offer ended on
+    // "I can't reach my model". The records are the real flow's
+    // (homeroom-bot-mayor.js offer): their message, the open action the
+    // buttons name, and the offer quoting their message. No request card
+    // under it: the request is a staging mock GitHub does not have, so the
+    // card would read unavailable, and a tap on Propose to close cannot open
+    // the vote here either. It shares the chat the bot run card's state
+    // opens, after every other state's messages: the bot's newest message.
+    id: 'shots-demo-member-bot-close-offer-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
+      conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
+      conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
+        'joined_at', 'last_read_message_id'],
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
+        'metadata', 'created_at'],
+      homeroom_bot_dm_actions: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
+        'details', 'status', 'source_issue_number', 'created_at'],
+    },
+    free: botChatFree,
+    async install(client, ctx) {
+      const mayor = require('./homeroom-bot-mayor');
+      const chat = await memberBotChat(client, ctx);
+      const app = (await client.query('SELECT slug, name FROM apps WHERE id = $1', [ctx.appId])).rows[0];
+      if (!app) throw new Error('The Homeroom bot\'s offer lost the platform app.');
+      const name = app.name || app.slug;
+      const { number, title } = CLOSE_OFFER_REQUEST;
+      const why = 'You said dark mode now stays on after a refresh, so this request looks done.';
+      const { rows: [ask] } = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-close-ask', '{}'::jsonb, NOW() - INTERVAL '3 minutes')
+         RETURNING id`,
+        [chat.conversationId, ctx.member.id, `Dark mode stays on after a refresh now. Can you close request #${number}?`]
+      );
+      // As offer() writes it: the action, then the message whose buttons name it.
+      const { rows: [action] } = await client.query(
+        `INSERT INTO homeroom_bot_dm_actions
+           (user_id, conversation_id, app_id, kind, title, details, source_issue_number, created_at)
+         VALUES ($1, $2, $3, 'close_request', $4, $5, $6, NOW() - INTERVAL '2 minutes')
+         RETURNING id`,
+        [ctx.member.id, chat.conversationId, ctx.appId, title, why, number]
+      );
+      const metadata = mayor.closeOfferMeta({ app, name, actionId: Number(action.id), issueNumber: number });
+      const { rows: [offer] } = await client.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, reply_to_id, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, $4, 'shots-fixture-hrbot-close-offer', $5::jsonb, NOW() - INTERVAL '2 minutes')
+         RETURNING id`,
+        [chat.conversationId, chat.botId, mayor.closeOfferText({ name, issueNumber: number, title, why }), ask.id,
+          JSON.stringify({ homeroomBot: metadata })]
+      );
+      await client.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, offer.id]);
+      await client.query('UPDATE conversations SET updated_at = NOW() - INTERVAL \'2 minutes\' WHERE id = $1',
+        [chat.conversationId]);
+      await client.query(
+        'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
+        [chat.conversationId, ctx.member.id, offer.id]
+      );
+      return {
+        shows: [{
+          state: `Your chat with Homeroom bot, at the bottom: your message saying request #${number} is done, and the bot's offer quoting it to open a vote on closing it, with Propose to close and Keep it open, waiting for your answer. Nothing in it is unread. A tap on Propose to close cannot open the vote on these copies (the request is a staging mock GitHub does not have): the bot answers that it couldn't propose closing it just now.`,
           path: `/#messages/${IDS.botConversation}`,
         }],
       };

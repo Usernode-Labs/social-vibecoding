@@ -272,6 +272,41 @@ test('#4457: the approval rule is drawn as three steps: its checks pass, who say
   assert.equal(typeof ApprovalRules, 'function');
 });
 
+test('#4527: the Approval rules card carries Edit, for exactly whom the rule lets propose', async () => {
+  const { ApprovalRules, reloadCommunity } = loadTsx(CARD);
+  const payload = (over = {}) => ({
+    slug: 'rules-card', name: 'Rules', member_count: 11, is_member: true, is_creator: true,
+    audience: 'open', audience_label: 'Public community',
+    members: [1, 2, 3].map((i) => ({ id: i, username: `u${i}` })),
+    channel: null,
+    approval: { policy: 'anyone', approvals_required: null, electorate: 11, required: 4 },
+    ...over,
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const slug = String(url).match(/\/api\/apps\/([^/]+)\/community/)[1];
+    return {
+      ok: true,
+      json: async () => payload({ slug, ...(slug === 'rules-manager' ? { can_manage: true } : {}) }),
+    };
+  };
+  try {
+    await reloadCommunity('rules-manager');
+    await reloadCommunity('rules-viewer');
+    // A manager sees Edit at the heading's end, drawn like "See all".
+    const managed = renderToHtml(createElement(ApprovalRules, { slug: 'rules-manager' }));
+    assert.match(managed, /<button type="button" class="dev-ws-hub-open dev-ws-head-end un-touch-target" data-ws-rules-edit="" aria-label="Edit approval rules"[^>]*>Edit<\/button>/);
+    // Everyone else sees the card as before, with no button.
+    const viewer = renderToHtml(createElement(ApprovalRules, { slug: 'rules-viewer' }));
+    assert.doesNotMatch(viewer, /data-ws-rules-edit/);
+    // The click asks the dialog to land on Proposal approvals.
+    const src = CARD_SRC.slice(CARD_SRC.indexOf('export function ApprovalRules('));
+    assert.match(src, /\(window as any\)\.AppView\?\.openMembersModal\?\.\(\{ focus: 'approvals' \}\)/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test('a person who has not joined sees "Recently" over the same rows', () => {
   assert.match(LANDER, /const outsider = !!community && !community\.is_member;/);
   // A first visit, with no last visit to be since, reads "Recently" too.
@@ -356,7 +391,7 @@ test('Make it public and Make it private are the ⋯\'s (Make it public stays on
   // The row appears once the read answers, after the menu was wired, so it
   // closes the menu through the close the wiring publishes.
   assert.match(read('public/js/app-view.js'), /AppView\._closePlusMenu = close;/);
-  assert.match(CARD_SRC, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/proposals\/\$\{data\.audience_change\.session_id\}`\}/);
+  assert.match(CARD_SRC, /href=\{changeHref\(slug, data\.audience_change\.session_id, data\.audience_change\.pr_number\)\}/);
   // The server offers it to exactly whom POST /visibility-pr accepts.
   const route = read('src/routes/apps.js');
   assert.match(route, /const canManage = !app\.self_hosted && !!app\.repo_url\s*&& await appAdmins\.canManageApp\(pool, app, req\.user\);/);

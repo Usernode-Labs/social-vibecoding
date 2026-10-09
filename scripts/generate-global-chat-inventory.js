@@ -252,7 +252,7 @@ const DOMAIN_RULES = [
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],
   [/^\/api\/(?:issues|apps\/[^/]+\/(?:issues|github-issues|board-order|board-search|topic))/, 'issues'],
   [/^\/api\/me\/proposals(?:\/|$)/, 'governance'],
-  [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|governance)|approver)/, 'governance'],
+  [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|changes|governance)|approver)/, 'governance'],
   [/^\/api\/(?:leaderboard|kudos|me\/(?:kudos|history|challenges)|v4\/leaderboard|v4\/season-events)/, 'leaderboards'],
   [/^\/api\/admin/, 'admin'],
   [/^\/api\/(?:me\/(?:credentials|coding-agent|api-key|llm-grants|permission-grants|agent-files|cli|connectors)|apps\/[^/]+\/(?:permissions|llm-grant|secrets|files))/, 'settings'],
@@ -541,6 +541,9 @@ function classicPathFor(domain, routePath) {
     if (inApp && governance) return appRoot + '/dev/governance/:' + governance[1];
     const proposal = value.match(/\/proposals\/:(id|sessionId)(?:\/|$)/);
     if (inApp && proposal) return appRoot + '/dev/proposals/:' + proposal[1];
+    // #4367: a change by its pull request's number.
+    const change = value.match(/\/changes\/:(number)(?:\/|$)/);
+    if (inApp && change) return appRoot + '/dev/changes/:' + change[1];
     return inApp ? appRoot + '/workshop' : '#workshop';
   }
   if (domain === 'apps') {

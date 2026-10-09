@@ -27,6 +27,7 @@ const { attachForkLineage } = require('../src/routes/apps');
 const suggestBack = require('../src/services/suggest-back');
 const conversations = require('../src/services/conversations');
 const botActivity = require('../src/services/homeroom-bot-activity');
+const mayor = require('../src/services/homeroom-bot-mayor');
 const { currentVotePredicateSql } = require('../src/services/pr-vote-revision');
 const { composeInProgress } = require('../src/routes/issues');
 const { resolveIssueProposalRefs } = require('../src/services/issue-proposal-ref');
@@ -434,7 +435,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // answered with Build it, and the bot's thanks under it: the card Build
   // it moved under the plan, read through the chat's own layout and the
   // cards' reader. Its build waits its turn, so its line is Building it,
-  // and the plan carries its state. The newest message, and read.
+  // and the plan carries its state. Newest but for the close offer below.
   const { messages } = await conversations.listMessages(pool, viewer, demoStates.IDS.botConversation);
   const { planLayout, isPlanMessage, planState } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
   const { isThanksMessage, thanksLine } = loadTsx('frontend/src/features/messages/bot-thanks-card.tsx');
@@ -443,7 +444,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(planState(plan.metadata.homeroomBot), 'built');
   assert.equal(plan.metadata.homeroomBot.firstVersion, true);
   assert.equal(thanks.content, botActivity.thanksText('[shots fixture] Book club'));
-  assert.equal(thanks.id, messages.at(-1).id);
+  assert.equal(thanks.id, messages.at(-3).id, 'under it only the close offer and the message it answers');
   assert.ok(newer.messageId < plan.id && plan.id < thanks.id, 'after the bot run card\'s cards');
   const layout = planLayout(messages);
   assert.equal(layout.cardOf.get(plan.id), thanks.id);
@@ -452,7 +453,6 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(thanksCard.links.request, '#app/shots-demo-member-book-club/dev/issues/1');
   assert.deepEqual([thanksCard.state, thanksCard.stage], ['working', 'build_queued']);
   assert.deepEqual(thanksLine(thanksCard), { line: 'building', note: 'usually 10 to 25 min', words: null });
-  assert.equal(chat.latestMessage.id, thanks.id);
   // The project is the member's, Just you, and has no first-version
   // record, so no Home tile turns a build line for it.
   const { rows: [project] } = await pool.query(
@@ -460,6 +460,35 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
             (SELECT COUNT(*)::int FROM homeroom_bot_first_versions f WHERE f.app_id = a.id) AS first_versions
        FROM apps a WHERE a.id = $1`, [demoStates.IDS.firstVersionApp]);
   assert.deepEqual(project, { created_by: member, view_visibility: 'private', first_versions: 0 });
+
+  // Last in the same chat, the bot's offer to open a vote on closing
+  // request #900001, quoting the member's message that says it is done,
+  // with the words, buttons and open action a live offer has
+  // (homeroom-bot-mayor.js offer). The chat's newest message, and read.
+  const [ask, offered] = messages.slice(-2);
+  assert.equal(ask.sender.id, member);
+  assert.equal(offered.reply.id, ask.id);
+  assert.equal(chat.latestMessage.id, offered.id);
+  const { rows: [action] } = await pool.query(
+    'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.id]);
+  assert.deepEqual([action.kind, action.status, action.source_issue_number, action.user_id],
+    ['close_request', 'open', 900001, member]);
+  const why = 'You said dark mode now stays on after a refresh, so this request looks done.';
+  assert.equal(action.details, why);
+  assert.equal(offered.content, mayor.closeOfferText({
+    name: 'Homeroom', issueNumber: 900001, title: '[Mock] Dark mode toggle resets after refresh', why }));
+  assert.deepEqual(offered.metadata.homeroomBot,
+    mayor.closeOfferMeta({ app: { slug: SLUG }, name: 'Homeroom', actionId: action.id, issueNumber: 900001 }));
+  assert.deepEqual(offered.metadata.homeroomBot.actions.map((a) => a.label), ['Propose to close', 'Keep it open']);
+  // A tap reads the request from GitHub again, which a copy cannot, and
+  // says so rather than opening a vote.
+  const tapped = await mayor.decideOfferTap(pool, {}, {
+    user: viewer, actionId: action.id, choice: 'yes', deps: { github: { isEnabled: () => false } },
+  });
+  assert.equal(tapped.ok, true);
+  const { messages: after } = await conversations.listMessages(pool, viewer, demoStates.IDS.botConversation);
+  assert.equal(after.at(-1).content, 'I couldn\'t propose closing it just now. Try again in a minute.');
+  assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
 
   // A request whose change waits for approval, as the Requests board reads
   // it (routes/issues.js GET /github-issues): the change in progress on it,
