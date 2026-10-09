@@ -317,7 +317,15 @@ function entryOfRuns(runs) {
     && (withProposal.proposal_status === 'merged' || CLOSED_PROPOSAL.has(withProposal.proposal_status))) {
     lead = withProposal;
   }
-  const outcome = outcomeOf(lead);
+  let outcome = outcomeOf(lead);
+  // #4539: the request itself was closed while its newest run still waited
+  // on its person (a plan waiting for Build it, or a question still open):
+  // the work stopped, which is History's news, not Needs you. Its earlier
+  // runs keep their own words (runOf).
+  if (newest.request_closed === true
+    && (outcome === 'question' || (!outcome && lead.awaiting_go_at))) {
+    outcome = 'stopped';
+  }
   // The newest run, still going, is not one of its earlier runs either.
   const going = outcomeOf(newest) ? null : newest;
   const proposalRow = withProposal && OPENABLE_PROPOSAL.has(withProposal.proposal_status) ? withProposal : null;
@@ -440,6 +448,13 @@ async function pastRuns(pool, { userId, limit = RUN_LIMIT }) {
   const { rows } = await pool.query(
     `SELECT r.id, r.issue_number, r.verdict, r.build_ok, r.build_error, r.cap_suppressed,
             r.proposal_session_id, cs.pr_number AS proposal_pr_number, r.created_at,
+            r.awaiting_go_at,
+            -- #4539: the request's own state, newest row by id (issues is not
+            -- unique on (app_id, github_issue_number), so a join could
+            -- duplicate rows). Null reads as not closed.
+            (SELECT ri.status = 'closed' FROM issues ri
+              WHERE ri.app_id = r.app_id AND ri.github_issue_number = r.issue_number
+              ORDER BY ri.id DESC LIMIT 1) AS request_closed,
             (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
               AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only,
             -- Merged but not live yet (live_at) reads as merging: going live.
