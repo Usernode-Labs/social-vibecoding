@@ -33,6 +33,7 @@ const summaryFreshness = require('../services/summary-freshness');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+const { botRequestedBySql } = require('../services/bot-requested-by');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -4300,6 +4301,11 @@ function voteRoutes(config) {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- #4538: this change was built by Homeroom bot from a request
+           -- made for the viewer, so their Workshop lists it in Your work.
+           -- The bot stays the row's author; this only says whose ask it
+           -- was (the shared fragment, services/bot-requested-by.js).
+           COALESCE(${botRequestedBySql('cs', '$2')}, FALSE) AS requested_by_me,
            -- Test accounts (D1): the viewer is a test account and a real
            -- person made this app, so their vote is recorded and shown but
            -- not counted. The vote picker says so in one line.

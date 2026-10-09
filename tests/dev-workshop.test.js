@@ -1091,7 +1091,9 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   assert.match(WORKSHOP, /<p className="dev-ws-none" data-ws-since-none="">Nothing new since you were last here\.<\/p>/);
   assert.match(WORKSHOP, /callAppView\('_workshopClearSince', slug, v\.since\.through\)/);
   // Own ongoing work is not repeated; its merged outcomes are retained.
-  assert.match(WORKSHOP, /!r\.brief\.mine \|\| r\.brief\.stage === 'live'/);
+  // #4538: nor is a bot change built from the viewer's request, while Your
+  // work is showing it.
+  assert.match(WORKSHOP, /!\(r\.brief\.mine \|\| r\.brief\.requested\) \|\| r\.brief\.stage === 'live'/);
   // The reveals keep their own shape.
   assert.match(CSS, /\.dev-ws-reveal-start \{[^}]*justify-content: flex-start;/);
   assert.match(CSS, /\.dev-ws-reveal \{[^}]*justify-content: center;/);
@@ -2030,6 +2032,51 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   // would hide the one thing on this screen you cannot find another way.
   AppView._kanbanFilters = { ...AppView._kanbanFilters, q: 'nothing matches this' };
   assert.equal(AppView._workshopView().mine.count, 3, 'a search does not hide your own work (the two, and the third session above)');
+});
+
+test('#4538: a change Homeroom bot built from your request is Your work, still by the bot', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // The bot's change from request #208 sits up for a vote. Its author is
+  // the bot's account, so the plain "yours" test fails it; the payload's
+  // `requested_by_me` is what brings it in.
+  AppView._proposals = [
+    { id: 71, pr_number: 212, pr_title: 'Dark mode toggle', status: 'promoted', username: 'homeroom_bot',
+      user_id: 900, requested_by_me: true, created_at: at(1), promoted_at: at(1),
+      last_message_at: at(1), linked_issues: [208], my_vote: null },
+    { id: 72, pr_number: 213, pr_title: 'Theirs by the bot', status: 'promoted', username: 'homeroom_bot',
+      user_id: 900, created_at: at(0.5), promoted_at: at(0.5),
+      last_message_at: at(0.5), linked_issues: [209], my_vote: null },
+  ];
+  const v = AppView._workshopView();
+  assert.deepEqual(plain(v.mine.rows).map((r) => r.key), ['mine:proposal:71'],
+    'the bot change from the viewer\'s request is in Your work; the bot\'s other one is not');
+
+  const html = workshopHtml(AppView, 'workshop');
+  const lane = html.split('data-ws-lane="mine"')[1] || '';
+  // The row names the bot as its maker and the request it is for — never
+  // "yours", because the bot made it.
+  assert.match(lane, /Dark mode toggle/);
+  assert.match(lane, /Change #212 · Homeroom bot · for #208/);
+  assert.ok(!lane.includes('yours'), 'the bot made it, so the line does not say yours');
+  // The other bot change keeps working as somebody's owed vote.
+  assert.match(workshopHtml(AppView, 'needs'), /Theirs by the bot/,
+    'a bot change from somebody else\'s request is still owed this viewer\'s vote');
+
+  // And the de-dup holds: your vote on it still counts, but it is not
+  // listed a second time among the votes the project needs from you.
+  assert.ok(!plain(v.votes.rows).some((r) => r.key.includes('proposal:71')),
+    'the bot change is not also in the vote deck');
+  assert.equal(v.votes.count, 1, 'only the bot change nobody asked this viewer for');
+
+  // Since your last visit does not repeat it while Your work shows it.
+  const seen = 'workshopSeen:demo-app';
+  const store = { [seen]: String(Date.now() - 3.5 * 86400000) };
+  const Since = makeAppView({ localStorage: store });
+  seed(Since);
+  Since._proposals = AppView._proposals;
+  const sinceHtml = workshopHtml(Since, 'workshop').split('data-ws-since=""')[1] || '';
+  assert.ok(!sinceHtml.includes('Dark mode toggle'), 'in review, it is Yours work\'s row, not the since list\'s');
 });
 
 test('#2496: an issue you are working on joins "What you are working on"', () => {

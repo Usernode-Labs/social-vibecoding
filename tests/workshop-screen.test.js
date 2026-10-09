@@ -44,6 +44,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const route = require('../src/routes/workshop-overview');
+const { botRequestedBySql } = require('../src/services/bot-requested-by');
 const appJs = read('public/js/app.js');
 const appViewJs = read('public/js/app-view.js');
 const sheetTsx = read('frontend/src/features/app-context/app-context-sheet.tsx');
@@ -64,6 +65,21 @@ test('"working" is the viewer\'s own work, in the lander\'s three shapes', () =>
   // returns 'promoted' AND 'merging', so a proposal mid-merge is still the
   // author's work in flight rather than vanishing off their row.
   assert.match(sql, /my_proposals AS \([\s\S]*?cs\.status IN \('promoted', 'merging'\)/);
+  // #4538: a change Homeroom bot built from a request made for the viewer is
+  // in that viewer's working count too, by the shared bot-request predicate
+  // on $1 — the same one /promoted selects `requested_by_me` with, so the
+  // Communities row and the strip it mirrors cannot disagree. OWED is
+  // untouched: the bot is not the viewer, and the viewer still votes on it.
+  assert.match(read('src/routes/workshop-overview.js'),
+    /OR \$\{botRequestedBySql\('cs', '\$1'\)\}/,
+    'the working predicate reads the shared fragment, spelled once');
+  assert.match(route.MY_PROPOSALS_WHERE, /cs\.status IN \('promoted', 'merging'\)/);
+  assert.ok(route.MY_PROPOSALS_WHERE.includes(botRequestedBySql('cs', '$1')),
+    'the predicate is the shared fragment, not a second copy of the rule');
+  assert.doesNotMatch(
+    /const OWED_PROPOSALS_WHERE = `([\s\S]*?)`;/.exec(read('src/routes/workshop-overview.js'))[1],
+    /botRequestedBySql/,
+    'a bot change still counts as a vote owed (the bot is not the viewer)');
   // #2227's case: a governance proposal you opened is your work too.
   assert.match(sql, /my_governance AS \([\s\S]*?i\.status = 'open'[\s\S]*?i\.created_by = \$1/);
   // Summed, not unioned — the three statuses are disjoint, so nothing is
@@ -165,8 +181,9 @@ test('every hand-written copy of the governance kinds still agrees with the cons
 test('every predicate names the viewer, and the route refuses one it has not got', async () => {
   const sql = route.COUNTS_SQL;
   // Five populations, each gated on $1. Without this the anonymous case is
-  // not a smaller answer, it is the whole platform's.
-  assert.equal((sql.match(/\$1/g) || []).length, 8,
+  // not a smaller answer, it is the whole platform's. #4538 added a ninth:
+  // MY_PROPOSALS_WHERE's bot-request predicate, also on $1.
+  assert.equal((sql.match(/\$1/g) || []).length, 9,
     'the viewer appears in every CTE predicate and in the collaborator join');
 
   // The refusal itself, driven rather than grepped: `getPool` is called once
