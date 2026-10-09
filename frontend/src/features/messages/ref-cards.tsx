@@ -34,10 +34,13 @@ export function findRequestCard(from: Element, appSlug: string, n: number): HTML
   const activity = `${appSlug}#${n}`;
   let above: HTMLElement | null = null;
   let below: HTMLElement | null = null;
-  for (const el of Array.from(scope.querySelectorAll<HTMLElement>('a.messages-object-card[href], [data-bot-activity-request]'))) {
+  // #4564: a ready card leading a change block names its request
+  // (`data-bot-ready-request`), so a chip in a row whose request card was
+  // dropped still finds the card at the top of its block.
+  for (const el of Array.from(scope.querySelectorAll<HTMLElement>('a.messages-object-card[href], [data-bot-activity-request], [data-bot-ready-request]'))) {
     const match = el.matches('a.messages-object-card')
       ? el.getAttribute('href') === href
-      : el.getAttribute('data-bot-activity-request') === activity;
+      : el.getAttribute('data-bot-activity-request') === activity || el.getAttribute('data-bot-ready-request') === activity;
     if (!match) continue;
     if (el.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING) above = el;
     else if (!below) below = el;
