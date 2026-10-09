@@ -1619,7 +1619,7 @@ function useCredit(): CreditView | null {
 }
 
 const BUSY_PLACEHOLDER = 'The agent is working. Type your next message and save it for later.';
-const SAVE_TITLE = 'Save this as a draft (Enter). It stays here until you send it';
+const SAVE_TITLE = 'Save this as a draft (Ctrl+Enter). It stays here until you send it';
 
 /**
  * The saved drafts above the composer (the dev chat's #798 list, per account):
@@ -1700,7 +1700,7 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
  * The message box. Its ONE button follows the dev chat's (#798, #810):
  * Send while the Mayor is free; while it works, Stop with nothing typed and
  * a green Save with something typed, which parks the text as a saved draft
- * (Enter does the same) so nothing typed mid-turn can leak into the running
+ * (Ctrl/Cmd+Enter does the same) so nothing typed mid-turn can leak into the running
  * turn. What is typed and not sent is kept for the conversation (./unsent.ts).
  *
  * THE OUTLINE IS THE CARD'S, as on Messages' composer (#1954, #2882, #2387):
@@ -1884,7 +1884,7 @@ function Composer({ id }: { id: string }) {
       return;
     }
     if (!text && !files.length) return;
-    // Files still uploading hold the send: the button says so, and Enter waits too.
+    // Files still uploading hold the send: the button says so, and Ctrl/Cmd+Enter waits too.
     if (uploading) return;
     update('');
     void sendAgentMessage(text);
@@ -1954,7 +1954,7 @@ function Composer({ id }: { id: string }) {
       ) : null}
       {saving ? (
         // Said in words, above what is typed, the moment it applies: while
-        // the Mayor works, Enter and the button keep this as a draft. It is
+        // the Mayor works, Ctrl/Cmd+Enter and the button keep this as a draft. It is
         // not sent, and nothing sends it on its own.
         <p className="px-2 text-[13px] text-zinc-600 dark:text-zinc-300" data-agent-session-save-note>
           The agent is still working, so this will be <span className="font-semibold">saved as a draft, not sent</span>. Send it from your drafts when it finishes.
@@ -1976,7 +1976,10 @@ function Composer({ id }: { id: string }) {
           if (takeFiles(event.clipboardData.files)) event.preventDefault();
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+          // Enter is a new line; Send (or Ctrl/Cmd+Enter, as in the dev chat)
+          // sends. preventDefault is unconditional for the chord (#920): the
+          // keystroke never leaves a stray newline as its only visible effect.
+          if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
             event.preventDefault();
             submit();
           }
@@ -2075,7 +2078,7 @@ function Composer({ id }: { id: string }) {
             aria-label={running ? 'Stop' : uploading ? 'Send (waiting for files to upload)' : 'Send'}
             title={running
               ? (snapshot.turnPhase === 'mayor2' ? 'The wrap-up cannot be stopped' : 'Stop')
-              : uploading ? 'Waiting for your files to upload' : 'Send'}
+              : uploading ? 'Waiting for your files to upload' : 'Send (Ctrl+Enter)'}
             onClick={running ? () => void stopAgentTurn() : undefined}
           >
             {running ? <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /> : <ArrowUpIcon className="h-5 w-5" aria-hidden="true" />}

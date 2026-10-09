@@ -313,7 +313,17 @@ test('the composer keeps what was typed per conversation, and the drafts list of
   assert.match(panel, /const saving = running && !snapshot\.stopping && !!value\.trim\(\);/,
     'Save only with something typed, and never while stopping: Stop fills the box under its own click');
   assert.match(panel, /key="save"\s+type="submit"/, 'Save and Stop are different buttons, so a type flip never lands on one click');
-  assert.match(panel, /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Enter mid-turn parks, never sends');
+  assert.match(panel, /if \(running\) \{\s*if \(saveComposerDraft\(text\)\) update\(''\);\s*return;\s*\}/, 'Ctrl+Enter mid-turn parks, never sends');
+  // Enter is a new line: only the Ctrl/Cmd+Enter chord reaches submit(), and
+  // its preventDefault is unconditional so the keystroke never leaves a stray
+  // newline behind (the dev chat's #920 rule).
+  assert.match(panel, /if \(\(event\.ctrlKey \|\| event\.metaKey\) && event\.key === 'Enter'\) \{\s*event\.preventDefault\(\);\s*submit\(\);\s*\}/,
+    'only Ctrl/Cmd+Enter submits, and it always preventDefaults');
+  assert.doesNotMatch(panel, /!event\.shiftKey && !event\.nativeEvent\.isComposing/,
+    'the old plain-Enter-sends branch is gone: Enter inserts a newline');
+  assert.match(panel, /Save this as a draft \(Ctrl\+Enter\)\. It stays here until you send it/,
+    'the Save draft tooltip names the chord');
+  assert.match(panel, /: 'Send \(Ctrl\+Enter\)'\}/, 'the idle Send button tooltip names the chord');
   assert.match(panel, /The agent is working\. Type your next message and save it for later\./);
 });
 
