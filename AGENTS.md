@@ -341,6 +341,22 @@ is no replay plan to write and nothing to verify locally.
   image build enforces the same ordering: its shell builder prerenders the
   current `index.html`, then the CSS builder scans that generated document.
   There is no loop — `tailwind.css` is not a shell input.
+- **In `Dockerfile.kubernetes` the commit id comes after the bundle and the
+  stylesheet, and nothing above it may read it.** A build arg above a `RUN`
+  is part of that step's cache key. With `GIT_SHA` above the Vite step, every
+  commit rebuilt the bundle and the stylesheet whatever it had changed (167
+  of 167 preview builds in the logs that prompted the move). So the shell
+  stage runs `build-shell.mjs --keep-prerender` and the Tailwind compile
+  first, declares `ARG GIT_SHA`, and only then runs
+  `build-shell.mjs --document`, the release file and the precompressed
+  copies. `--document` runs no Vite: it renders again with the prerender
+  bundle the first run kept and rewrites `public/index.html` alone. The id
+  may reach the document and nothing else. Read it in either Vite pass, or
+  move a step that needs it above the `ARG`, and the reuse is gone with no
+  test of the output failing. Tailwind therefore scans a `dev` document;
+  `tests/tailwind-build.test.js` holds that an id adds no class, and
+  `tests/kubernetes-deployment-contract.test.js` pins the order. Run with no
+  flag, as every local flow does, the script still does everything in one go.
 - **`Shell.tsx` is now hand-maintained; resolve conflicts in it directly.** The
   one-time generators that derived it from the hand-written document
   (`html-to-jsx.cjs`, `apply-step1-edits.cjs`) and the pre-migration fixture
