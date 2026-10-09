@@ -4683,6 +4683,7 @@ const AppView = {
     let concluded = false;
     let boardDone = false;
     let itemDone = false;
+    let ok = false;
     let finish;
     const settled = new Promise((resolve) => { finish = resolve; });
     // Their threads need no item to mount — the request's and the
@@ -4718,7 +4719,9 @@ const AppView = {
       }
       // #4367: an old `dev/proposals/<id>` address of a change that has a
       // pull request becomes `dev/changes/<N>`, in place (no Back entry).
-      if (ref.kind === 'proposal') AppView._canonicalizeChangeAddress(item);
+      if (ref.kind === 'proposal') {
+        AppView._canonicalizeChangeAddress(AppView._findTopicItem());
+      }
       // #363: mount the thread FIRST so its header slot (#gc-thread-head)
       // exists, then paint the topic card/body into it.
       if (!threadMounted) {
@@ -4731,7 +4734,8 @@ const AppView = {
       return true;
     };
     // Both sources settled and nothing painted, still on this topic: today's
-    // miss branch, unchanged.
+    // miss branch, unchanged. `settled` is released by the caller below, so
+    // the awaited openTopic callers are not held by the fallback itself.
     const onMiss = () => {
       concluded = true;
       note('failure', { errorCode: 'not_found' });
@@ -4747,12 +4751,14 @@ const AppView = {
       //
       // (#2776) Unless this was the Workshop tab returning to the card you
       // left: that one goes quietly back to the app selector instead.
-      if (App._abandonWorkshopResume?.()) { finish(); return; }
-      if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast('Couldn’t open that proposal’s discussion.');
+      if (!ok || !AppView._findTopicItem()) {
+        if (App._abandonWorkshopResume?.()) return;
+        if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
+          PlatformUI.toast('Couldn’t open that proposal’s discussion.');
+        }
+        App.switchTab('dev');
+        return;
       }
-      App.switchTab('dev');
-      finish();
     };
     const settle = () => {
       if (painted || concluded) return;
@@ -4764,6 +4770,7 @@ const AppView = {
         return;
       }
       onMiss();
+      finish();
     };
     // The Completed list is keyset-paginated, so a merged proposal beyond
     // the first page (deep link, shared URL, or one paged-in then lost when
@@ -4782,7 +4789,8 @@ const AppView = {
         settle();
       });
     }
-    AppView._loadDevData().then((ok) => {
+    AppView._loadDevData().then((loaded) => {
+      ok = loaded;
       boardDone = true;
       if (painted) {
         // The board's list row carries what the single-item row cannot
@@ -4875,11 +4883,17 @@ const AppView = {
     // (#4524). Issue numbers repeat across every app's repo, so the lists
     // answer only for the app their load named — `_devDataSlug`, set beside
     // `_devDataReady` and not cleared on an app switch, because the lists
-    // keep the previous app's rows until the new load overwrites them.
+    // keep the previous app's rows until the new load overwrites them. An
+    // UNSET slug means no board load has ever succeeded this visit, so there
+    // is no previous app the lists could belong to (they are empty, or a
+    // load that never finished for the app now open) and the lookup reads
+    // them as today's code always did — `openTopic`'s PR lookup at card tap
+    // time runs on exactly that state.
     // The one-shot caches are keyed differently (`_topicIssue` carries its
     // own slug; proposal and governance ids are global and the caches are
     // cleared per topic), so they need no guard here.
-    const listsCurrent = AppView._devDataSlug === (AppView.appData && AppView.appData.slug);
+    const listsCurrent = !AppView._devDataSlug
+      || AppView._devDataSlug === (AppView.appData && AppView.appData.slug);
     if (t.kind === 'issue') {
       // _ghIssues holds OPEN issues only; _topicIssue is the fetch-on-demand
       // fallback (#2365) for a closed one — checked last, and keyed by number

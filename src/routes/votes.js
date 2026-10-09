@@ -5128,10 +5128,21 @@ function voteRoutes(config) {
       // a staging tester deep-link a mock Completed proposal that never
       // reached the first page (ids ~9100021+) and confirm it opens on
       // demand. Strictly a no-op in production (gated on IS_STAGING).
+      //
+      // #4524: the topic page's fast open fires this read beside the board
+      // load, so it also lands here for the mock OWN and SHARED sessions the
+      // session lists append — ids the DB will never hold. Production's SQL
+      // above serves those states (an active or paused session the viewer
+      // owns or that is shared), so the demo generators answer them the same
+      // way; a 404 in the network log is a console error, which fails every
+      // declared check on the route.
       if (!proposal && IS_STAGING && req.query.demo === '1') {
+        const sessionMocks = require('./sessions');
         proposal = stagingMockMerged(req.user).find((m) => m.id === id)
           || stagingMockProposals().find((m) => m.id === id)
           || stagingDemoNeedsProposal(id, req.params.slug)
+          || sessionMocks.stagingMockSharedSessions().find((m) => m.id === id)
+          || sessionMocks.stagingMockOwnSessions(req.user?.id, config.selfAppSlug).find((m) => m.id === id)
           || null;
       }
 

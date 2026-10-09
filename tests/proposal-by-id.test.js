@@ -210,6 +210,28 @@ test('IS_STAGING + ?demo=1 resolves a mock merged id not in the DB', async () =>
   assert.equal(payload.proposal.status, 'merged');
 });
 
+test('#4524: IS_STAGING + ?demo=1 also resolves a mock session the board lists hold', async () => {
+  // The topic page's fast open asks this endpoint for its item BESIDE the
+  // board load, so the mock own session (990101, the session lists' own
+  // response) and the mock shared session (990002) must resolve here too —
+  // production's SQL serves those states, and a 404 in the network log is a
+  // console error, which fails every declared check on the route.
+  const { routes } = loadVotes({ row: null, staging: true });
+  const own = await callById(routes, { id: 990101, query: { demo: '1' } });
+  assert.equal(own.statusCode, 200);
+  assert.equal(own.payload.proposal.id, 990101);
+  assert.equal(own.payload.proposal.user_id, 1, 'the mock own session belongs to the viewer');
+  const shared = await callById(routes, { id: 990002, query: { demo: '1' } });
+  assert.equal(shared.statusCode, 200);
+  assert.equal(shared.payload.proposal.id, 990002);
+  assert.ok(shared.payload.proposal.shared_at, 'the mock shared session is shared');
+  const production = loadVotes({ row: null, staging: false });
+  assert.equal((await callById(production.routes, { id: 990002, query: { demo: '1' } })).statusCode, 404,
+    'production never fabricates a mock session');
+  assert.equal((await callById(routes, { id: 42, query: { demo: '1' } })).statusCode, 404,
+    'an id no generator holds still 404s');
+});
+
 test('#4505: the existing staging merged sample has the same viewer owner in list and detail', async () => {
   const viewer = { id: 777, username: 'sample-member' };
   const { routes } = loadVotes({ row: null, staging: true });
