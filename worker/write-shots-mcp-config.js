@@ -60,6 +60,8 @@ const browserArgs = (persona) => {
     // own loopback services behind the proxy's refusal if that default goes.
     '--proxy-bypass', '<-loopback>',
     '--timeout-action', '10000', '--timeout-navigation', '30000',
+    // #4087: every page starts with the install strip already dismissed.
+    '--init-script', '/usr/local/share/usernode/shots-page-init.js',
     '--output-dir', path.join(shotsDir, observed),
     ...(recordClips ? [`--save-video=${clipSize}`] : []),
   ];

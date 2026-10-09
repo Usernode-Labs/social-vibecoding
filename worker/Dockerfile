@@ -187,6 +187,8 @@ COPY shots-browser-observer.js /usr/local/bin/shots-browser-observer.js
 COPY shots-browser-bootstrap.js /usr/local/bin/shots-browser-bootstrap.js
 COPY session-bootstrap.js /usr/local/bin/session-bootstrap.js
 COPY write-shots-mcp-config.js /usr/local/bin/write-shots-mcp-config.js
+# #4087: run in every shots page before its scripts (dismisses the install strip).
+COPY shots-page-init.js /usr/local/share/usernode/shots-page-init.js
 # #2779: the coding agent's read-only Homeroom tools. The config carries no
 # secret: the bridge reads its per-turn grant from the environment.
 COPY homeroom-read-mcp.js /usr/local/bin/homeroom-read-mcp.js
