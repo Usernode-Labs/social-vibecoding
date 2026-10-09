@@ -370,7 +370,7 @@ async function finishProvenEmail(pool, email, result) {
     throw new EmailSignupError('admin_password_required', ADMIN_PASSWORD_REQUIRED_MESSAGE);
   }
   if (result.created) {
-    await waitlist.linkUserByEmail(pool, { userId: result.userId, email });
+    await waitlist.linkUserByEmail(pool, { userId: result.userId, email, newAccount: true });
   }
   // #4083: an account the code proved and nothing let in has a waitlist
   // spot of its own, so an admin can find it there and let it in.
