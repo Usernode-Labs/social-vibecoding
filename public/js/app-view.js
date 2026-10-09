@@ -9661,7 +9661,11 @@ const AppView = {
       const t = Date.parse(v || '');
       return Number.isFinite(t) ? t : 0;
     };
-    const who = AppView._devCardAuthor(kind === 'my-session' || kind === 'shared-session' ? 'session' : kind, it);
+    // The bot is "Homeroom bot" wherever it is named (the card model's own
+    // rule, _botBuilt), and a row Your work now draws is one more place a
+    // reader meets it: the raw account name read like a person's handle.
+    const rawWho = AppView._devCardAuthor(kind === 'my-session' || kind === 'shared-session' ? 'session' : kind, it);
+    const who = String(rawWho).toLowerCase() === 'homeroom_bot' ? 'Homeroom bot' : rawWho;
     const mineBy = kind === 'my-session'
       || (meId != null && (String(it.user_id) === String(meId) || String(it.created_by) === String(meId)))
       || (!!who && !!App.user && who === App.user.username);
@@ -9690,7 +9694,12 @@ const AppView = {
       else tags.push({ label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain' });
     };
     const base = {
-      kind: 'change', noun: 'Change', n: null, by: who || '', mine: !!mineBy, category: '',
+      kind: 'change', noun: 'Change', n: null, by: who || '', mine: !!mineBy,
+      // #4538: Homeroom bot built this change from a request made for the
+      // viewer, so Your work lists it — while `mine` stays "the viewer made
+      // it", so the line keeps saying Homeroom bot and never "yours".
+      requested: kind === 'proposal' && it.requested_by_me === true && !mineBy,
+      category: '',
       replies: 0, linked: [], closed: [], stage: 'worked', at: 0, tags, vote: null,
     };
     if (kind === 'issue') {
@@ -10942,8 +10951,14 @@ const AppView = {
     const mineItems = [
       ...mineOf(buckets.inProgress, (e) => e.kind === 'my-session')
         .map((e) => ({ kind: 'my-session', item: e.item })),
+      // #4538: a change Homeroom bot built from a request made for the
+      // viewer is their work to watch too, even though the bot made it —
+      // `requested_by_me` comes from the /promoted payload (the shared
+      // bot-request rule, services/bot-requested-by.js). The row still names
+      // Homeroom bot as its maker; the de-dup below keeps it out of "Needs
+      // your vote", where the viewer's own vote on it still counts.
       ...mineOf(buckets.inReview, (x) => x.kind === 'proposal' && meId != null
-        && String(x.item.user_id) === String(meId))
+        && (String(x.item.user_id) === String(meId) || x.item.requested_by_me === true))
         .map((x) => ({ kind: 'proposal', item: x.item })),
       // #2227: a governance proposal you opened — a propose-to-close, a
       // rename, a secret change — is your work in flight exactly as a code

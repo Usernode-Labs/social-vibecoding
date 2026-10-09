@@ -112,3 +112,35 @@ test('no warning when the author says how to make it, for the guest\'s own state
   assert.equal(warned(declare(story('steps', 'The card has a new line.',
     { steps: ['Open the hub as a member on the waitlist'] })), true).length, 1);
 });
+
+test('a change whose steps wait for a model\'s reply is warned about whatever setup or state it names', () => {
+  // PR 4536's own words: its shots ended on "I can't reach my model".
+  const asked = story('close-offer', 'When you ask the Homeroom bot in chat to close a request, or say one is done '
+    + 'and can be closed, it now offers a vote on closing it under its reply, with Propose to close and Keep it open.',
+  { setup: 'Open your chat with Homeroom bot first' });
+  const [own] = warned(declare(asked), true);
+  assert.match(own, /^close-offer seems to need a live reply from a model \(the Homeroom bot, or an app's own AI feature\)/);
+  assert.match(own, /nothing on these copies answers with a model: they have no model key/);
+  assert.match(own, /start from a ready-made state that already holds it \(see availableStates\), or seed it in the staging seeds in src\/db\/migrate\.js/);
+  const [child] = warned(declare(story('summary', 'Send the AI a page and it replies with a summary.')), false);
+  assert.match(child, /^summary seems to need a live reply from a model/);
+  assert.match(child, /start from a reply the copies already hold, or seed it in the app's own staging seed/);
+  for (const steps of [['Ask Homeroom bot to propose closing request 900003'], ['DM the bot: close it'],
+    ['Mention @homeroom_bot on the request'], ['Wait until the bot replies']]) {
+    assert.equal(warned(declare(story('asks', 'The card has a new line.', { steps })), true).length, 1, steps[0]);
+  }
+  // What the bot already said is a state, not an answer to wait for.
+  for (const claim of [
+    'Tapping Propose to close under the bot\'s offer opens the same vote.',
+    'In your chat with Homeroom bot, a plan card shows its choices.',
+    'The message the bot sent shows the request\'s card.',
+    'Send the AI-generated summary by email.',
+  ]) {
+    assert.deepEqual(warned(declare(story('said', claim)), true), [], claim);
+  }
+  // And every answer says the copies have no model.
+  assert.match(readyStates.declarationAdvice(declare(story('a', 'A change.')), { selfApp: true }).dataNote,
+    /Nothing on them answers with a model, the Homeroom bot included: they have no model key\.$/);
+  assert.match(readyStates.declarationAdvice(declare(story('a', 'A change.')), { selfApp: false }).dataNote,
+    /Nothing on them answers with a model: they have no model key\.$/);
+});

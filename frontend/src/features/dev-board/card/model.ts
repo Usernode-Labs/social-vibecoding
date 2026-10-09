@@ -388,6 +388,8 @@ export interface RowBrief {
   by: string;
   /** The viewer made it. */
   mine: boolean;
+  /** Homeroom bot built it from a request made for the viewer (#4538). */
+  requested: boolean;
   category: string;
   replies: number;
   /** The requests a change addresses ("for #4455"). */

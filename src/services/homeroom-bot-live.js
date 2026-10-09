@@ -1594,7 +1594,11 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
 // as the dev chat's hosted build does (routes/sessions.js
 // buildHostedCodingWorkflowGuidance); its declaration wins over the one
 // derived from the spec (spec-visible-changes.js). Not asked of a first
-// version, which gets no shots (buildAndPropose).
+// version, which gets no shots (buildAndPropose). The copies have no model
+// key: a change to the bot's own replies declared as "ask the bot" had its
+// shots end on "I can't reach my model" (PR 4536), so the build is told to
+// start from a reply already there. The tool's answer warns about it too
+// (shots-ready-states.js).
 const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
   '',
   'Once the change is built and committed, call the provided declare_visible_changes tool once, with the changes',
@@ -1608,6 +1612,10 @@ const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
   'When the change is a rename, a changed flow, a data or settings change, or a measured improvement, also call',
   'declare_diagram once with that kind (rename, flow, changes or numbers), in plain words; Homeroom draws it on the',
   'change\'s card when it has no before and after shots. Mermaid is only for a change you declared with impact "none".',
+  'The before and after copies have no model key, so nothing on them answers with a model: Homeroom bot only says',
+  'it cannot reach its model there, and an app\'s own AI features get no answer. Never make a step ask Homeroom bot',
+  '(or any AI feature) for something and wait for its reply. Start from a state that already holds the reply: a',
+  'ready-made state the tool\'s answer lists, or a message the app\'s staging seed writes.',
 ]);
 
 // A build of the platform's own repository runs its tests the way that

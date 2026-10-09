@@ -445,7 +445,7 @@ test('members: the island owns the lifecycle, the controller owns the card', () 
   // The controller's open/close became forwards to the island, so every
   // AppView call site reaches the same lifecycle.
   assert.match(ctl, /function dialogController\(\)/);
-  assert.match(ctl, /AppView\.openMembersModal = \(\) => \{[\s\S]*island\.open\(\)/);
+  assert.match(ctl, /AppView\.openMembersModal = \(opts\) => \{[\s\S]*island\.open\(\)/);
   // The prerender pass evaluates this module in Node, so every window touch is
   // guarded and the publication happens from init(), not at import time.
   assert.match(ctl, /export function init\(\) \{\n\s*if \(typeof window === 'undefined'\) return;/);

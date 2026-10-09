@@ -315,3 +315,29 @@ test('index.html carries the #members-approvals-propose button inside the govern
   );
   assert.match(section, /members-approvals-propose/, 'button lives in the governance section');
 });
+
+// ── #4527: Edit on the Approval rules card lands on Proposal approvals ──
+
+// Source-level, like the markup contract above: the controller's focus
+// flag is set by the entry point's options, honoured only when the section
+// is visible, and cleared so an ordinary open behaves as before.
+test('openMembersModal takes a focus option and _load lands on Proposal approvals only for it', () => {
+  const SRC = MEMBERS_SRC;
+  // The entry point accepts opts and sets the flag only for 'approvals'.
+  assert.match(SRC, /AppView\.openMembersModal = \(opts\) => \{[\s\S]*?MembersDialog\._focusApprovals = !!opts && opts\.focus === 'approvals';/);
+  // _load honours it: scroll the governance section to the top of the
+  // dialog and focus its current setting, but only when the section is
+  // showing (a non-manager, Homeroom's own project or a repo-less app
+  // keeps the dialog as it was), and clear the flag either way.
+  const honour = SRC.slice(SRC.indexOf('if (MembersDialog._focusApprovals) {'), SRC.indexOf('  },', SRC.indexOf('if (MembersDialog._focusApprovals) {')));
+  assert.match(honour, /MembersDialog\._focusApprovals = false;/);
+  assert.match(honour, /getElementById\('members-governance-section'\)/);
+  assert.match(honour, /!govSection\.classList\.contains\('hidden'\)/);
+  assert.match(honour, /govSection\.scrollIntoView\(\{ block: 'start' \}\)/);
+  assert.match(honour, /\[data-m-approver-policy\]\.active:not\(:disabled\)/);
+  // _reset clears it, so a later ordinary open from the menu does not
+  // inherit the last Edit's scroll.
+  assert.match(SRC, /_reset\(\) \{[\s\S]*?MembersDialog\._focusApprovals = false;/);
+  // The flag starts false, so a caller with no argument never sets it.
+  assert.match(SRC, /^  _focusApprovals: false,$/m);
+});
