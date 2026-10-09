@@ -325,13 +325,26 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
 /** One entry of the status band, dispatched over the tagged union. */
 export function Badge({ b }: { b: BadgeSpec }): ReactNode {
   switch (b.t) {
-    case 'chip':
+    case 'chip': {
+      // The checks-running tag with a known run size fills from the left,
+      // like the vote pill. The count rides the title and sr-only text.
+      if (b.progress) {
+        const pct = Math.max(0, Math.min(100, Math.round((b.progress.ran / b.progress.expected) * 100)));
+        return (
+          <span className={b.cls} title={b.title} {...(b.data || {})} data-checks-progress="">
+            <span className="dev-tag-progress-fill" aria-hidden="true" style={{ width: `${pct}%` }} />
+            <span className="dev-tag-progress-label">{b.label}</span>
+            <span className="sr-only">{` ${b.progress.ran} of ${b.progress.expected} checks run`}</span>
+          </span>
+        );
+      }
       return (
         <span className={b.cls} title={b.title} {...(b.data || {})}>
           {b.spinner ? <Spinner /> : null}
           {b.label}
         </span>
       );
+    }
     case 'chipBtn':
       return (
         <button

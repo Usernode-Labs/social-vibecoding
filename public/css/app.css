@@ -22209,6 +22209,16 @@ html.in-side-panel body {
 .dev-ws-tag[data-tone="ok"] { color: var(--state-ok); background: var(--state-ok-bg); }
 .dev-ws-tag[data-tone="warn"] { color: var(--state-attention); background: var(--state-attention-bg); }
 .dev-ws-tag[data-tone="bad"] { color: var(--state-blocked); background: var(--state-blocked-bg); }
+/* A checks tag that fills as the run goes: the share that has run is painted
+   in the tag's own ink, so no new colour is needed (the card's chip uses the
+   same three rules over .dev-badge). */
+[data-checks-progress] { position: relative; overflow: hidden; }
+.dev-tag-progress-fill {
+  position: absolute; left: 0; top: 0; height: 100%;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  pointer-events: none; transition: width .4s ease;
+}
+.dev-tag-progress-label { position: relative; z-index: 1; }
 /* A change's votes: one part per Yes it needs, the count, and Vote. The
    count is in the accent when this viewer's vote is wanted. */
 .dev-ws-wvote { position: relative; z-index: 1; margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }

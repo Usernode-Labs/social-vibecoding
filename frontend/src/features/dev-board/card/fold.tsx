@@ -155,7 +155,7 @@ export const ROW_BADGE_MAX = 3;
  */
 export function flatBadge(b: BadgeSpec): BadgeSpec {
   return b.t === 'chipBtn'
-    ? { t: 'chip', key: b.key, cls: b.cls, label: b.label, title: b.title, spinner: b.spinner, data: b.data }
+    ? { t: 'chip', key: b.key, cls: b.cls, label: b.label, title: b.title, spinner: b.spinner, progress: b.progress, data: b.data }
     : b;
 }
 

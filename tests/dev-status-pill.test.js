@@ -326,6 +326,44 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   assert.ok(starting.spinner);
 });
 
+test('a run with a known size fills its tag instead of printing the count', () => {
+  const AppView = makeAppView();
+  // The size is known: the words alone, the fill's share, no spinner, the
+  // count in the title.
+  const going = PR({ check_state: 'pending', checks_progress: { ran: 619, passed: 600, failed: 0, expected: 732 } });
+  const tag = AppView.statusTagSpecs(going, {}).find((t) => t.key === 'tag-checks-running');
+  assert.ok(tag);
+  assert.equal(tag.label, 'Checks running', 'the count leaves the visible label');
+  assert.ok(!tag.spinner, 'the filling bar says it is going');
+  assert.equal(tag.progress.ran, 619, 'the fill is ran of expected');
+  assert.equal(tag.progress.expected, 732);
+  assert.match(tag.title, /619 of 732 checks have run/, 'the count survives in the hover title');
+  assert.equal(tag.data['data-status-tag'], 'checks-running', 'the declared check keeps its hook');
+
+  // A late count past the expected size clamps the fill at 100%, it does not
+  // overshoot the tag.
+  const late = PR({ check_state: 'pending', checks_progress: { ran: 5, passed: 5, failed: 0, expected: 4 } });
+  const clamped = AppView.statusTagSpecs(late, {}).find((t) => t.key === 'tag-checks-running');
+  assert.equal(clamped.progress.ran, 4, 'ran is clamped to expected');
+  assert.equal(clamped.progress.expected, 4);
+
+  // The card draws the fill: the share painted in the tag's own ink, the
+  // count readable by a screen reader, no spinner arc.
+  const html = renderToHtml(createElement(api().Badge, { b: tag }));
+  assert.match(html, /data-checks-progress=""/);
+  assert.match(html, /class="dev-tag-progress-fill" aria-hidden="true" style="width:85%"/, '619 of 732 is 85%');
+  assert.match(html, /class="dev-tag-progress-label">Checks running</);
+  assert.match(html, /class="sr-only"> 619 of 732 checks run</);
+  assert.ok(!/dc-status-spinner-arc/.test(html), 'no spinner beside the bar');
+
+  // A chip without progress renders exactly as it did: spinner and words.
+  const plain = { t: 'chip', key: 'tag-x', cls: 'dev-badge bg-zinc-500/10 text-zinc-500', label: 'Checks running… 12', spinner: true };
+  const before = renderToHtml(createElement(api().Badge, { b: plain }));
+  assert.match(before, /dc-status-spinner-arc/);
+  assert.match(before, />Checks running… 12</);
+  assert.ok(!/data-checks-progress/.test(before));
+});
+
 test('a deferred run is not "running": the tag says deferred and does not spin (#2247)', () => {
   // check_state 'pending' with check_phase 'deferred' is a run that stopped
   // on purpose after the build: the head conflicts with main and the tests

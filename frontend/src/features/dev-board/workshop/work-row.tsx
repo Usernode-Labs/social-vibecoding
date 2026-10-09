@@ -92,6 +92,19 @@ const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
 };
 
 function Tag({ t }: { t: RowTag }): ReactNode {
+  // The checks-running tag with a known run size fills from the left, like
+  // the card's chip: the spinner is dropped, and the count rides as sr-only
+  // text beside the words.
+  if (t.progress) {
+    const pct = Math.max(0, Math.min(100, Math.round((t.progress.ran / t.progress.expected) * 100)));
+    return (
+      <span className="dev-ws-tag" data-tone={t.tone} data-checks-progress="">
+        <span className="dev-tag-progress-fill" aria-hidden="true" style={{ width: `${pct}%` }} />
+        <span className="dev-tag-progress-label">{t.label}</span>
+        <span className="sr-only">{` ${t.progress.ran} of ${t.progress.expected} checks run`}</span>
+      </span>
+    );
+  }
   return (
     <span className="dev-ws-tag" data-tone={t.tone}>
       {t.tone === 'run' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}

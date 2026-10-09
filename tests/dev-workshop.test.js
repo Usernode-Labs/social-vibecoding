@@ -2105,6 +2105,33 @@ test('#4457: a change up for a vote keeps its votes on the row: one part per yes
   assert.equal(topicRef({ attrs: {} }), null);
 });
 
+test('#4499: a running tag with a known run size fills instead of spinning, and the brief carries the share', () => {
+  const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
+  const AppView = makeAppView();
+  seed(AppView);
+  const v = AppView._workshopView();
+  const row = [...v.votes.rows, ...(v.since ? v.since.rows : [])].find((r) => r.t === 'card' && r.card.attrs['data-proposal-row']);
+  assert.ok(row, 'a proposal row');
+  const brief = { kind: 'change', noun: 'Change', n: 34, by: 'bob', mine: false, category: '', replies: 0, linked: [], closed: [], stage: 'vote', at: 0,
+    tags: [{ label: 'Checks running', tone: 'run', progress: { ran: 12, expected: 523 } }, { label: 'Preview ready', tone: 'plain', glyph: 'eye' }], vote: null };
+  const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
+  assert.match(html, /<span class="dev-ws-tag" data-tone="run" data-checks-progress="">/, 'the fill carries a hook');
+  assert.match(html, /<span class="dev-tag-progress-fill" aria-hidden="true" style="width:2%"><\/span>/, '12 of 523 is 2%');
+  assert.match(html, /<span class="dev-tag-progress-label">Checks running<\/span>/);
+  assert.match(html, /<span class="sr-only"> 12 of 523 checks run<\/span>/, 'the count is still readable');
+  assert.ok(!/dc-status-spinner-arc/.test(html), 'no spinner arc beside the bar');
+
+  // The brief builder passes the share through from statusTagSpecs.
+  const itemBrief = AppView._workshopBrief('proposal',
+    { id: 51, user_id: 999, status: 'promoted', pr_number: 51, check_state: 'pending', checks_progress: { ran: 458, passed: 440, failed: 0, expected: 732 } },
+    null);
+  const tag = itemBrief.tags.find((t) => t.label === 'Checks running');
+  assert.ok(tag, 'the row tag exists');
+  assert.equal(tag.tone, 'run');
+  assert.equal(tag.progress.ran, 458, 'the share rides the brief');
+  assert.equal(tag.progress.expected, 732);
+});
+
 test('#4457: a row opens its page beside the list on a wide window, and that page is the topic page itself', () => {
   const PANEL = read('frontend/src/features/dev-board/workshop/side-panel.tsx');
   // The panel hosts the SAME page: the host the full page's frame renders,

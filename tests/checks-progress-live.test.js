@@ -979,7 +979,36 @@ test('the board card and the running badge carry the live count', () => {
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
   assert.match(quiet, /Checks running…</, 'no count before the first frame');
   const src = APP_VIEW_SRC;
-  assert.match(src, /label: p\.check_state === 'pending' \? `Checks running…\$\{count\}` : 'Checks starting…',/);
+  assert.match(src, /label: p\.check_state === 'pending' \? \(fill \? 'Checks running' : `Checks running…\$\{count\}`\) : 'Checks starting…',/);
+});
+
+test('the board tag fills while the run is going: label without the count, progress carried, no spinner', () => {
+  const AppView = makeAppView();
+  const row = { id: 51, user_id: 1, status: 'promoted', check_state: 'pending', checks_progress: { ran: 12, passed: 12, failed: 0, expected: 523 } };
+  const tag = AppView.statusTagSpecs(row, {}).find((t) => t.key === 'tag-checks-running');
+  assert.ok(tag, 'the running tag exists');
+  assert.equal(tag.label, 'Checks running', 'the words alone; the x/y count leaves the visible label');
+  assert.ok(!tag.spinner, 'the bar says it is going, so the spinner is dropped');
+  assert.equal(tag.progress.ran, 12, 'the fill is ran of expected');
+  assert.equal(tag.progress.expected, 523);
+  assert.match(tag.title, /12 of 523 checks have run/, 'the count survives in the hover title');
+  assert.ok(!/12\/523/.test(tag.label), 'no raw x/y in the label');
+
+  // A run whose size is not known yet keeps today's spinning count.
+  const ranOnly = { id: 52, user_id: 1, status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } };
+  const spin = AppView.statusTagSpecs(ranOnly, {}).find((t) => t.key === 'tag-checks-running');
+  assert.ok(spin, 'the running tag exists');
+  assert.equal(spin.label, 'Checks running… 7');
+  assert.ok(spin.spinner, 'unknown size, so the spinner stays');
+  assert.equal(spin.progress, undefined, 'no fill without an expected count');
+
+  // The Your work row passes the fill through to its tags.
+  const brief = AppView._workshopBrief('proposal', { ...row, pr_number: 51 }, null);
+  const runTag = brief.tags.find((t) => t.label === 'Checks running');
+  assert.ok(runTag, 'the row tag exists');
+  assert.equal(runTag.tone, 'run');
+  assert.equal(runTag.progress.ran, 12, 'the fill rides the brief');
+  assert.equal(runTag.progress.expected, 523);
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {

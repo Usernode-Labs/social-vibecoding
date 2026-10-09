@@ -9557,7 +9557,9 @@ const AppView = {
     const tagTone = (cls) => (cls === AppView.STATUS_TAG_CLS.running ? 'run'
       : cls === AppView.STATUS_TAG_CLS.soft ? 'warn' : 'bad');
     const checkTags = (p) => {
-      for (const s of AppView.statusTagSpecs(p)) tags.push({ label: s.label, tone: tagTone(s.cls) });
+      for (const s of AppView.statusTagSpecs(p)) {
+        tags.push({ label: s.label, tone: tagTone(s.cls), ...(s.progress ? { progress: s.progress } : {}) });
+      }
       if (p.check_state === 'passing') tags.push({ label: 'Checks passed', tone: 'ok' });
     };
     const preview = !!(card && ((card.rail && card.rail.preview && card.rail.preview.state === 'live')
@@ -20742,12 +20744,24 @@ const AppView = {
       // that it is running.
       const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
       const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+      // When the run's size is known, the tag fills like the vote pill does
+      // (the ran of expected share) instead of printing the count: a board of
+      // cards reads how far each run is at a glance. The count survives in the
+      // hover title and as sr-only text; the spinner is dropped — a filling
+      // bar already says it is going. Unknown size (ran only) keeps today's
+      // spinning count.
+      const fill = live && live.bar.expected
+        ? { ran: Math.min(live.bar.ran, live.bar.expected), expected: live.bar.expected }
+        : null;
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
-        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
-        spinner: true, meta: true,
+        label: p.check_state === 'pending' ? (fill ? 'Checks running' : `Checks running…${count}`) : 'Checks starting…',
+        spinner: !fill, meta: true,
+        ...(fill ? { progress: fill } : {}),
         data: { 'data-status-tag': 'checks-running' },
-        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
+        title: fill
+          ? `${fill.ran} of ${fill.expected} checks have run. Automated tests are still running on the staging build. Merge is blocked until they pass.`
+          : 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
       });
     }
     return out;

@@ -177,9 +177,9 @@ export type BadgeSpec =
    *  `meta` rides the META LINE with the priority/assignee/category tags
    *  instead of the facts row — see metaLineNodes. The status tags set it, so
    *  the status row is left to the vote and its button alone. */
-  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; data?: Record<string, string> }
+  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; progress?: { ran: number; expected: number }; data?: Record<string, string> }
   /** The same chip with a click — the work-state chip that opens its target. */
-  | { t: 'chipBtn'; key: string; cls: string; hover: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string>; act: ActionRef }
+  | { t: 'chipBtn'; key: string; cls: string; hover: string; label: string; title?: string; spinner?: boolean; progress?: { ran: number; expected: number }; data?: Record<string, string>; act: ActionRef }
   /** 💬 N. Always rendered, hidden at 0, so a live bump has a target. */
   | { t: 'chat'; key: string; count: number }
   /** A metadata chip (priority / assignee / category). */
@@ -356,6 +356,8 @@ export interface RowTag {
   label: string;
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
   glyph?: 'eye';
+  /** A checks-run share: the tag fills from the left, ran of expected. */
+  progress?: { ran: number; expected: number };
 }
 
 /**
