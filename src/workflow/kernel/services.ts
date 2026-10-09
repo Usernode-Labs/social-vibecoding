@@ -16,6 +16,10 @@ export interface ServiceOptions {
   handlers: ReadonlyMap<string, WorkHandler>;
   serviceId: string;
   log: Logger;
+  // The version of each machine this process runs: work of an instance a
+  // newer version last wrote is left to a process that runs that version,
+  // as its events are (the mixed-version rule, pipeline.ts pickSql).
+  versions: ReadonlyMap<string, number>;
 }
 
 const DEFAULTS = { maxAttempts: 5, leaseMs: 60000 };
@@ -33,6 +37,8 @@ interface Claimed { id: string; machine: string; key: string; kind: string;
 // Claim up to `room` due items of one kind: queued and due, or running on
 // an expired lease. `room` is this process's free capacity for the kind;
 // services run in one process for now, so that is also the global limit.
+// An item whose instance a newer machine version last wrote is not claimed
+// here: during a rollout the older process would run it with older code.
 export async function claim(opts: ServiceOptions, kind: string, room: number): Promise<Claimed[]> {
   const leaseMs = opts.handlers.get(kind)!.leaseMs ?? DEFAULTS.leaseMs;
   const client = await checkout(opts.pool);
@@ -40,19 +46,22 @@ export async function claim(opts: ServiceOptions, kind: string, room: number): P
     await client.query('BEGIN');
     const { rows } = await client.query<Claimed & { previous_claim: string | null }>(
       `WITH due AS (
-         SELECT id, claim_id FROM wf_work
-          WHERE kind = $1
-            AND ((status = 'queued' AND due_at <= now()) OR (status = 'running' AND lease_until <= now()))
-          ORDER BY due_at, created_at
+         SELECT w.id, w.claim_id FROM wf_work w
+           LEFT JOIN wf_instances i ON i.machine = w.machine AND i.key = w.key
+           LEFT JOIN unnest($4::text[], $5::int[]) AS m(machine, version) ON m.machine = w.machine
+          WHERE w.kind = $1
+            AND ((w.status = 'queued' AND w.due_at <= now()) OR (w.status = 'running' AND w.lease_until <= now()))
+            AND (i.machine_version IS NULL OR m.version IS NULL OR i.machine_version <= m.version)
+          ORDER BY w.due_at, w.created_at
           LIMIT $2
-          FOR UPDATE SKIP LOCKED)
+          FOR UPDATE OF w SKIP LOCKED)
        UPDATE wf_work w SET status = 'running', claim_id = gen_random_uuid(),
               lease_until = now() + make_interval(secs => $3::float8 / 1000),
               attempt_count = w.attempt_count + 1
          FROM due WHERE w.id = due.id
        RETURNING w.id, w.machine, w.key, w.kind, w.work_key, w.input, w.checkpoint,
                  w.attempt_count, w.claim_id, due.claim_id AS previous_claim`,
-      [kind, room, leaseMs]);
+      [kind, room, leaseMs, [...opts.versions.keys()], [...opts.versions.values()]]);
     for (const r of rows) {
       if (r.previous_claim) {
         await client.query(`UPDATE wf_work_attempts SET outcome = 'lost', finished_at = now() WHERE id = $1`, [r.previous_claim]);

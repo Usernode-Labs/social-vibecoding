@@ -770,6 +770,21 @@ test('workflow kernel against the full PostgreSQL schema', { timeout: 120000 }, 
     await newer.drain();
     assert.equal((await event(pending)).result, 'accepted');
   });
+  await t.test('K15 a process never runs the work of an instance a newer version wrote', async () => {
+    const v2 = counter({ version: 2 });
+    const newer = make({ machine: v2 });
+    await create('k15-w');
+    // The newer version asks for work: the older process must not run it with its code.
+    await newer.append(v2, 'k15-w', { type: 'Work', payload: { workKey: 'w15' } }, { requestKey: 'v2-w', source: { kind: 'route' } });
+    await newer.drain();
+    assert.equal((await inst('k15-w')).machine_version, 2);
+    assert.equal(await rt.runServices(), 0, 'the old version leaves it queued');
+    const { rows: [queued] } = await pool.query(`SELECT status, attempt_count FROM wf_work WHERE key = 'k15-w'`);
+    assert.deepEqual({ ...queued }, { status: 'queued', attempt_count: 0 });
+    assert.ok(await newer.runServices() > 0, 'a process that runs that version takes it');
+    await newer.drain();
+    assert.deepEqual((await inst('k15-w')).data.results.map((r) => r.slice(0, 2)), [['ok', 'w15']]);
+  });
 
   await t.test('K12/K15 only the pipeline writes machine state and owned columns', async () => {
     await create('k12');
