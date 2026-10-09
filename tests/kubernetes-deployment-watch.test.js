@@ -213,39 +213,78 @@ test('deadline aborts an HTTP request that never receives headers', async t => {
   assert.match(error.message, /expired/);
 });
 
-test('the pinned real KubeConfig supplies bearer authentication through its proxy agent', async t => {
-  const { KubeConfig } = require('@kubernetes/client-node');
-  let asked;
-  const fixture = await serverFixture(t, (req, res) => {
-    asked = { url: req.url, auth: req.headers.authorization };
-    res.writeHead(200);
-    res.write(JSON.stringify({ type: 'MODIFIED', object: snapshot(true) }) + '\n');
-  });
-  fixture.server.on('connect', (request, socket, head) => {
-    const upstream = require('node:net').connect(fixture.server.address().port, '127.0.0.1', () => {
-      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      if (head.length) upstream.write(head);
-      socket.pipe(upstream); upstream.pipe(socket);
+for (const protocol of ['http:', 'https:']) {
+  for (const cancellation of ['abort', 'deadline']) {
+    test(`${protocol} proxy setup is excluded before CONNECT on ${cancellation}`, async t => {
+      t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+      const { KubeConfig } = require('@kubernetes/client-node');
+      let requests = 0;
+      for (const transport of [require('node:http'), require('node:https')]) {
+        t.mock.method(transport, 'request', () => { requests++; assert.fail('no outer watch or nested CONNECT may be attempted'); });
+      }
+      const kc = new KubeConfig();
+      kc.loadFromOptions({
+        clusters: [{ name: 'fixture', server: `${protocol}//apiserver.invalid`, skipTLSVerify: true,
+          proxyUrl: 'http://proxy.invalid:8080' }],
+        users: [{ name: 'fixture', token: 'test-only-token' }],
+        contexts: [{ name: 'fixture', cluster: 'fixture', user: 'fixture' }], currentContext: 'fixture',
+      });
+      let agents = 0;
+      const applyOptions = kc.applyToHTTPSOptions.bind(kc);
+      t.mock.method(kc, 'applyToHTTPSOptions', async options => { agents++; return applyOptions(options); });
+      let finishes = 0;
+      const handle = watchDeployment(kc,
+        { namespace: 'apps', name: 'demo', resourceVersion: 'opaque', timeoutMs: 30 }, () => assert.fail(),
+        error => { finishes++; assert.match(error.message, /configured proxy/); });
+      if (cancellation === 'abort') handle.abort();
+      await flush();
+      t.mock.timers.tick(30);
+      await flush();
+      assert.equal(requests, 0, 'no CONNECT request, socket or listeners can survive when none are created');
+      assert.equal(agents, 0, 'exclude before creating the uncancellable proxy agent');
+      assert.equal(finishes, cancellation === 'abort' ? 0 : 1, 'fallback clears the deadline timer');
     });
-    socket.on('close', () => upstream.destroy());
-    socket.on('error', () => upstream.destroy());
-    upstream.on('error', () => socket.destroy());
+  }
+}
+
+test('a configured proxy retains ordinary readiness polling after watch exclusion', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { KubeConfig } = require('@kubernetes/client-node');
+  const kc = new KubeConfig();
+  kc.loadFromOptions({
+    clusters: [{ name: 'fixture', server: 'https://unused.invalid', proxyUrl: 'http://proxy.invalid:8080' }],
+    users: [{ name: 'fixture' }], contexts: [{ name: 'fixture', cluster: 'fixture', user: 'fixture' }], currentContext: 'fixture',
+  });
+  let reads = 0;
+  kubernetes._setClientsForTest({ kc, apps: { async readNamespacedDeployment() { return snapshot(++reads > 1); } } });
+  const pending = wait('apps', 'demo', { timeoutMs: 2000 });
+  await flush();
+  assert.equal(reads, 1);
+  t.mock.timers.tick(1000);
+  assert.equal((await pending).status.availableReplicas, 1);
+  assert.equal(reads, 2);
+});
+
+test('pinned real KubeConfig authenticates a direct watch with its bearer credential', async t => {
+  const { KubeConfig } = require('@kubernetes/client-node');
+  let auth;
+  const fixture = await serverFixture(t, (req, res) => {
+    auth = req.headers.authorization;
+    res.writeHead(200);
+    res.write('{"type":"MODIFIED","object":{}}\n');
   });
   const kc = new KubeConfig();
   kc.loadFromOptions({
-    clusters: [{ name: 'fixture', server: 'http://apiserver.invalid/prefix', skipTLSVerify: true,
-      proxyUrl: `http://127.0.0.1:${fixture.server.address().port}` }],
+    clusters: [{ name: 'fixture', server: fixture.kc.getCurrentCluster().server, skipTLSVerify: true }],
     users: [{ name: 'fixture', token: 'test-only-token' }],
     contexts: [{ name: 'fixture', cluster: 'fixture', user: 'fixture' }], currentContext: 'fixture',
   });
   let handle;
   await new Promise((resolve, reject) => {
-    handle = watchDeployment(kc, { namespace: 'apps', name: 'demo', resourceVersion: 'opaque/start', timeoutMs: 2000 },
-      () => resolve(), reject);
+    handle = watchDeployment(kc, { namespace: 'apps', name: 'demo', resourceVersion: 'opaque', timeoutMs: 2000 }, resolve, reject);
   });
   handle.abort();
-  assert.match(asked.url, /^\/prefix\/apis\/apps\/v1\/namespaces\/apps\/deployments\?/);
-  assert.equal(asked.auth, 'Bearer test-only-token');
+  assert.equal(auth, 'Bearer test-only-token');
 });
 
 test('pinned KubeConfig TLS options reach the native HTTPS request', async t => {

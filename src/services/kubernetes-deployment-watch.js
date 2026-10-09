@@ -29,6 +29,10 @@ function watchDeployment(kc, { namespace, name, resourceVersion, timeoutMs }, on
   (async () => {
     const cluster = kc.getCurrentCluster();
     if (!cluster) throw new Error('No currently active cluster');
+    // KubeConfig's proxy agents (including hpagent CONNECT) do not expose
+    // cancellation of pending connection setup. Exclude proxy watches before
+    // constructing an agent or request; the existing poller remains in charge.
+    if (cluster.proxyUrl) throw new Error('Deployment watch unavailable through a configured proxy');
     const url = new URL(`${cluster.server}/apis/apps/v1/namespaces/${encodeURIComponent(namespace)}/deployments`);
     url.searchParams.set('watch', 'true');
     url.searchParams.set('fieldSelector', `metadata.name=${name}`);
