@@ -85,6 +85,12 @@ const MERGE_GREEN_DELAY_MS = 2000;
 const CAMPAIGN_LEASE_SECONDS = 120;
 const CAMPAIGN_RENEW_MS = 30 * 1000;
 
+// The fence every write of a driver carries: the campaign's lease is still
+// this driver's ($runner) and has not run out. A driver whose lease went to
+// another writes nothing, whatever it believes. `mc` is the campaign row of
+// the app row (or the campaign) being written.
+// (Spelled out in each statement below so check-sql validates it.)
+
 function parseRepo(url) {
   const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
@@ -623,7 +629,9 @@ async function runCampaign(config, pool, campaignId) {
     await pool.query(
       `UPDATE maintenance_campaign_apps
           SET state = 'pending', error = NULL, updated_at = NOW()
-        WHERE campaign_id = $1 AND state = 'running' AND runner_id IS DISTINCT FROM $2`,
+        WHERE campaign_id = $1 AND state = 'running' AND runner_id IS DISTINCT FROM $2
+          AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
+                       WHERE mc.id = $1 AND mc.runner_id = $2 AND mc.lease_until > NOW())`,
       [campaignId, runner]
     );
 
@@ -637,8 +645,8 @@ async function runCampaign(config, pool, campaignId) {
         log.info('fleet-maintenance', 'Campaign paused: this process is shutting down; the next leader resumes it', { campaignId });
         return { ran: true, paused: 'shutting_down' };
       }
-      if (!(await keep())) {
-        log.warn('fleet-maintenance', 'Campaign lease lost; another driver goes on', { campaignId });
+      if (!(await keep({ sure: true }))) {
+        log.warn('fleet-maintenance', 'Campaign lease lost or uncertain; another driver goes on', { campaignId });
         return { ran: true, paused: 'lease_lost' };
       }
       // The next pending app, claimed by this driver.
@@ -651,29 +659,37 @@ async function runCampaign(config, pool, campaignId) {
                          ORDER BY mca.id
                          LIMIT 1 FOR UPDATE SKIP LOCKED)
             AND a.id = c.app_id
+            AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
+                         WHERE mc.id = $1 AND mc.runner_id = $2 AND mc.lease_until > NOW())
         RETURNING c.id AS row_id, a.id AS app_id, a.slug, a.name, a.repo_url, a.self_hosted`,
         [campaignId, runner]
       );
       if (!rows.length) {
-        // Done, unless a retry made an app pending again since the claim
-        // above found none: then it is run too.
+        // Done: with the lease, and no app left pending or still running
+        // (another driver's row that a retry made pending, or a row a
+        // replaced driver held, is not done).
         const { rowCount } = await pool.query(
           `UPDATE maintenance_campaigns
               SET status = 'done', completed_at = NOW()
-            WHERE id = $1 AND status = 'running' AND runner_id = $2
+            WHERE id = $1 AND status = 'running' AND runner_id = $2 AND lease_until > NOW()
               AND NOT EXISTS (SELECT 1 FROM maintenance_campaign_apps
-                               WHERE campaign_id = $1 AND state = 'pending')`,
+                               WHERE campaign_id = $1 AND state IN ('pending', 'running'))`,
           [campaignId, runner]
         );
-        if (rowCount === 0 && (await pool.query(
-          `SELECT 1 FROM maintenance_campaign_apps WHERE campaign_id = $1 AND state = 'pending' LIMIT 1`, [campaignId]
-        )).rows.length) continue;
+        if (rowCount === 0) {
+          // A pending row again (a retry): run it. Otherwise this driver
+          // stops, and the resume picks the campaign up once nobody holds it.
+          if ((await pool.query(
+            `SELECT 1 FROM maintenance_campaign_apps WHERE campaign_id = $1 AND state = 'pending' LIMIT 1`, [campaignId]
+          )).rows.length) continue;
+          return { ran: true, paused: 'not_done' };
+        }
         break;
       }
       const row = rows[0];
       const app = { id: row.app_id, slug: row.slug, name: row.name, repo_url: row.repo_url };
       // The row's result is written only by the driver that claimed it
-      // (runner_id = $3, still 'running').
+      // (runner_id = $3, still 'running'), while the lease is its own.
 
       try {
         const out = await runAppChange({
@@ -692,7 +708,10 @@ async function runCampaign(config, pool, campaignId) {
           await pool.query(
             `UPDATE maintenance_campaign_apps
                 SET state = 'skipped', error = $2, updated_at = NOW()
-              WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
+              WHERE id = $1 AND runner_id = $3 AND state = 'running'
+              AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
+                           WHERE mc.id = maintenance_campaign_apps.campaign_id
+                             AND mc.runner_id = $3 AND mc.lease_until > NOW())`,
             [row.row_id, String(out.reason || '').slice(0, 2000), runner]
           );
           log.info('fleet-maintenance', 'Campaign app skipped', {
@@ -720,7 +739,10 @@ async function runCampaign(config, pool, campaignId) {
         await pool.query(
           `UPDATE maintenance_campaign_apps
               SET state = 'pr_open', session_id = $2, error = NULL, updated_at = NOW()
-            WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
+            WHERE id = $1 AND runner_id = $3 AND state = 'running'
+              AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
+                           WHERE mc.id = maintenance_campaign_apps.campaign_id
+                             AND mc.runner_id = $3 AND mc.lease_until > NOW())`,
           [row.row_id, opened.sessionId, runner]
         );
       } catch (err) {
@@ -735,7 +757,10 @@ async function runCampaign(config, pool, campaignId) {
         await pool.query(
           `UPDATE maintenance_campaign_apps
               SET state = 'failed', error = $2, updated_at = NOW()
-            WHERE id = $1 AND runner_id = $3 AND state = 'running'`,
+            WHERE id = $1 AND runner_id = $3 AND state = 'running'
+              AND EXISTS (SELECT 1 FROM maintenance_campaigns mc
+                           WHERE mc.id = maintenance_campaign_apps.campaign_id
+                             AND mc.runner_id = $3 AND mc.lease_until > NOW())`,
           [row.row_id, String(err.message || err).slice(0, 2000), runner]
         ).catch(() => {});
       }

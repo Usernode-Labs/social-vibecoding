@@ -111,6 +111,40 @@ test('maintenance campaigns: one driver at a time, whichever process calls', { t
     assert.deepEqual((await rowsOf(id)).map((r) => r.runner_id), after.map((r) => r.runner_id), 'nothing it wrote landed');
   });
 
+  await t.test('a driver whose lease went to another writes nothing more and claims nothing more', async () => {
+    const id = await campaign();
+    model.calls = 0;
+    model.gate = gate();
+    const stale = fleet.runCampaign({}, pool, id);
+    await until(() => model.calls > 0, 'the driver to be working on its first app');
+    const [held] = (await rowsOf(id)).filter((r) => r.state === 'running');
+    // Another driver holds the lease now (it took it while this one was stalled).
+    await pool.query(`UPDATE maintenance_campaigns SET runner_id = 'another', lease_until = NOW() + INTERVAL '2 minutes' WHERE id = $1`, [id]);
+    const answered = model.gate;
+    model.gate = null;
+    answered.open();
+    assert.deepEqual(await stale, { ran: true, paused: 'lease_lost' });
+    const after = await rowsOf(id);
+    assert.deepEqual(after.find((r) => r.slug === held.slug), held, 'its answer for the app it held did not land');
+    assert.ok(after.filter((r) => r.slug !== held.slug).every((r) => r.state === 'pending'), 'and it claimed no other app');
+    assert.equal((await leaseOf(id)).runner_id, 'another');
+    assert.equal(model.calls, 1, 'no model call after it lost the lease');
+  });
+
+  await t.test('a campaign is done only when no app is pending or still running', async () => {
+    const id = await campaign();
+    const { rows: [one] } = await pool.query(`SELECT id FROM apps WHERE slug = 'one'`);
+    // A row a replaced driver still holds: this driver resets it when it takes the lease.
+    await pool.query(
+      `INSERT INTO maintenance_campaign_apps (campaign_id, app_id, state, runner_id, updated_at)
+       VALUES ($1, $2, 'running', 'gone', NOW() - INTERVAL '2 hours')`, [id, one.id]);
+    await pool.query(`UPDATE maintenance_campaigns SET runner_id = 'gone', lease_until = NOW() - INTERVAL '1 minute' WHERE id = $1`, [id]);
+    model.calls = 0;
+    assert.deepEqual(await fleet.runCampaign({}, pool, id), { ran: true });
+    assert.deepEqual((await rowsOf(id)).map((r) => r.state), ['skipped', 'skipped'], 'the held row was run again, then done');
+    assert.equal((await leaseOf(id)).status, 'done');
+  });
+
   await t.test('a campaign a driver from before the lease is still moving is left to it', async () => {
     const id = await campaign();
     const { rows: [one] } = await pool.query(`SELECT id FROM apps WHERE slug = 'one'`);
