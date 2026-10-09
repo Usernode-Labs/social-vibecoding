@@ -9557,7 +9557,7 @@ const AppView = {
     const tagTone = (cls) => (cls === AppView.STATUS_TAG_CLS.running ? 'run'
       : cls === AppView.STATUS_TAG_CLS.soft ? 'warn' : 'bad');
     const checkTags = (p) => {
-      for (const s of AppView.statusTagSpecs(p)) tags.push({ label: s.label, tone: tagTone(s.cls) });
+      for (const s of AppView.statusTagSpecs(p)) tags.push({ label: s.label, tone: tagTone(s.cls), ...(s.fill ? { fill: s.fill } : {}) });
       if (p.check_state === 'passing') tags.push({ label: 'Checks passed', tone: 'ok' });
     };
     const preview = !!(card && ((card.rail && card.rail.preview && card.rail.preview.state === 'live')
@@ -20737,17 +20737,28 @@ const AppView = {
       });
     } else if (p.check_state === 'pending'
         || (!p.check_state && p.status === 'promoted' && !p.console_check_state)) {
-      // Checks in flight. The live counts ride the label exactly as they did
-      // in the bar: a board of cards should say how far each run is, not just
-      // that it is running.
+      // Checks in flight. The run's progress is drawn as a fill inside the
+      // chip (the vote pill's own bar pattern) rather than spelled out: a
+      // board of cards should show how far each run is at a glance, not read
+      // an x/y on every one. The numbers stay for screen readers and in the
+      // title; without a denominator there is nothing to fill against, so
+      // the bare ran count keeps its place in the label as it always did.
       const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
-      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+      const ran = live ? live.bar.ran : 0;
+      const expected = live ? live.bar.expected : null;
+      const fill = live && expected
+        ? { pct: Math.min(100, Math.round((ran / expected) * 100)), ran, expected }
+        : null;
+      const count = fill ? '' : (live && ran ? ` ${ran}` : '');
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
         label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
         spinner: true, meta: true,
+        ...(fill ? { fill } : {}),
         data: { 'data-status-tag': 'checks-running' },
-        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
+        title: fill
+          ? `Automated tests are still running on the staging build. Merge is blocked until they pass. ${ran} of ${expected} have run.`
+          : 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
       });
     }
     return out;

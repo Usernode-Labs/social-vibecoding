@@ -171,13 +171,20 @@ export interface ActionSpec {
   uncounted?: boolean;
 }
 
+/**
+ * How far a running check run has got, drawn as a fill inside the chip the
+ * way the vote pill fills: `pct` is the width, `ran` of `expected` the counts
+ * the chip keeps for screen readers and its title.
+ */
+export interface ChipFill { pct: number; ran: number; expected: number; }
+
 /** Everything that can appear in the status band, as a tagged union. */
 export type BadgeSpec =
   /** A plain tinted chip: work state, imported, paused, checks, console errors.
    *  `meta` rides the META LINE with the priority/assignee/category tags
    *  instead of the facts row — see metaLineNodes. The status tags set it, so
    *  the status row is left to the vote and its button alone. */
-  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; data?: Record<string, string> }
+  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; data?: Record<string, string>; fill?: ChipFill }
   /** The same chip with a click — the work-state chip that opens its target. */
   | { t: 'chipBtn'; key: string; cls: string; hover: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string>; act: ActionRef }
   /** 💬 N. Always rendered, hidden at 0, so a live bump has a target. */
@@ -356,6 +363,8 @@ export interface RowTag {
   label: string;
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
   glyph?: 'eye';
+  /** The running checks tag's fill, when the run's expected count is known. */
+  fill?: ChipFill;
 }
 
 /**

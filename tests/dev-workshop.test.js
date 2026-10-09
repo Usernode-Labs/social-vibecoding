@@ -2105,6 +2105,19 @@ test('#4457: a change up for a vote keeps its votes on the row: one part per yes
   assert.equal(topicRef({ attrs: {} }), null);
 });
 
+test('#4499: the running tag draws its fill and keeps the numbers for a screen reader', () => {
+  const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
+  const AppView = makeAppView();
+  seed(AppView);
+  const v = AppView._workshopView();
+  const row = [...v.votes.rows, ...(v.since ? v.since.rows : [])].find((r) => r.t === 'card' && r.card.attrs['data-proposal-row']);
+  assert.ok(row, 'a proposal row');
+  const brief = { kind: 'change', noun: 'Change', n: 34, by: 'bob', mine: false, category: '', replies: 0, linked: [], closed: [], stage: 'worked', at: 0,
+    tags: [{ label: 'Checks running…', tone: 'run', fill: { pct: 85, ran: 619, expected: 732 } }], vote: null };
+  const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
+  assert.match(html, /<span class="dev-ws-tag" data-tone="run"><span class="dev-chip-fill" style="width:85%" aria-hidden="true"><\/span><span class="dc-status-spinner-arc" aria-hidden="true"><\/span>Checks running…<span class="sr-only">619 of 732<\/span><\/span>/);
+});
+
 test('#4457: a row opens its page beside the list on a wide window, and that page is the topic page itself', () => {
   const PANEL = read('frontend/src/features/dev-board/workshop/side-panel.tsx');
   // The panel hosts the SAME page: the host the full page's frame renders,

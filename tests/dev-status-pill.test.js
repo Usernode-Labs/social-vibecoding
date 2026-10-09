@@ -324,6 +324,20 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   assert.ok(starting);
   assert.equal(starting.label, 'Checks starting…');
   assert.ok(starting.spinner);
+
+  // The run's progress draws as a fill inside the chip, the vote pill's own
+  // bar pattern: the words and the spinner stay, the x/y leaves the visible
+  // label for the title and the sr-only text. Without a denominator the
+  // bare count keeps its place in the label and there is no fill.
+  const live = AppView.statusTagSpecs(PR({ check_state: 'pending', checks_progress: { ran: 619, passed: 600, failed: 0, expected: 732 } }), {})
+    .find((t) => t.key === 'tag-checks-running');
+  assert.ok(live);
+  assert.equal(live.label, 'Checks running…', 'the words stay, the count goes');
+  assert.ok(!/\d/.test(live.label), 'no digits in the visible label');
+  assert.ok(live.spinner, 'in flight, so it still spins');
+  assert.equal(live.data['data-status-tag'], 'checks-running', 'the declared checks keep their selector');
+  assert.deepEqual({ ...live.fill }, { pct: 85, ran: 619, expected: 732 });
+  assert.match(live.title, /619 of 732 have run\./);
 });
 
 test('a deferred run is not "running": the tag says deferred and does not spin (#2247)', () => {

@@ -328,8 +328,10 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
     case 'chip':
       return (
         <span className={b.cls} title={b.title} {...(b.data || {})}>
+          {b.fill ? <span className="dev-chip-fill" style={{ width: `${b.fill.pct}%` }} aria-hidden="true" /> : null}
           {b.spinner ? <Spinner /> : null}
           {b.label}
+          {b.fill ? <span className="sr-only">{`${b.fill.ran} of ${b.fill.expected}`}</span> : null}
         </span>
       );
     case 'chipBtn':

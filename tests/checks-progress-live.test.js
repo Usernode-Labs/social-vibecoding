@@ -979,7 +979,30 @@ test('the board card and the running badge carry the live count', () => {
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
   assert.match(quiet, /Checks running…</, 'no count before the first frame');
   const src = APP_VIEW_SRC;
-  assert.match(src, /label: p\.check_state === 'pending' \? `Checks running…\$\{count\}` : 'Checks starting…',/);
+  // The chip's count became a fill: the visible label keeps no digits when a
+  // denominator is known, and the fill is derived from the same live counts.
+  assert.match(src, /const count = fill \? '' : \(live && ran \? ` \$\{ran\}` : ''\);/);
+  assert.match(src, /pct: Math\.min\(100, Math\.round\(\(ran \/ expected\) \* 100\)\)/);
+
+  // The card's chip carries the fill and the words, the numbers move to the
+  // title and the sr-only text.
+  const row = { id: 7, status: 'promoted', check_state: 'pending', checks_progress: { ran: 12, passed: 12, failed: 0, expected: 523 } };
+  const chip = AppView.statusTagSpecs(row, {}).find((t) => t.key === 'tag-checks-running');
+  assert.ok(chip, 'the running chip is there');
+  assert.ok(!/\d/.test(chip.label), 'no digits in the visible label');
+  assert.equal(chip.label, 'Checks running…');
+  assert.deepEqual({ ...chip.fill }, { pct: 2, ran: 12, expected: 523 });
+  assert.match(chip.title, /12 of 523 have run\./);
+  assert.ok(chip.spinner, 'still in flight, so it spins');
+  assert.equal(chip.data['data-status-tag'], 'checks-running');
+
+  // No denominator, nothing to fill against: the bare count stays in the
+  // label and there is no fill.
+  const bare = AppView.statusTagSpecs({ id: 7, status: 'promoted', check_state: 'pending', checks_progress: { ran: 12 } }, {})
+    .find((t) => t.key === 'tag-checks-running');
+  assert.ok(bare);
+  assert.equal(bare.label, 'Checks running… 12');
+  assert.equal(bare.fill, undefined);
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {

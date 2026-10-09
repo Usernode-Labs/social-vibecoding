@@ -94,10 +94,12 @@ const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
 function Tag({ t }: { t: RowTag }): ReactNode {
   return (
     <span className="dev-ws-tag" data-tone={t.tone}>
+      {t.fill ? <span className="dev-chip-fill" style={{ width: `${t.fill.pct}%` }} aria-hidden="true" /> : null}
       {t.tone === 'run' ? <span className="dc-status-spinner-arc" aria-hidden="true" /> : null}
       {t.tone === 'ok' ? <CheckIcon aria-hidden="true" /> : null}
       {t.glyph === 'eye' ? <EyeIcon aria-hidden="true" /> : null}
       {t.label}
+      {t.fill ? <span className="sr-only">{`${t.fill.ran} of ${t.fill.expected}`}</span> : null}
     </span>
   );
 }

@@ -12778,6 +12778,26 @@ a.drawer-ver--fork:hover {
 }
 button.dev-badge { cursor: pointer; }
 .dev-badge:disabled { cursor: default; }
+/* A running run's fill inside a chip — the checks-running badge and the
+   Workshop's tag, the vote pill's own pattern: a span that fills the chip's
+   full height from the left, under the label, proportional to how much of
+   the run has finished. The lit ink is the app's moving-bar colour, kept
+   translucent so the muted zinc label (card chip) and the lit label
+   (workshop tag) read over it; the child rule lifts the spinner above the
+   fill the way `.gc-vote-count-label` is lifted. The sr-only span keeps
+   Tailwind's own `sr-only` positioning: it hides by `clip`, which works
+   only from an absolute position, so the lift must not touch it. */
+.dev-chip-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: color-mix(in srgb, var(--lit-ink) 22%, transparent);
+  pointer-events: none;
+  transition: width 240ms ease-out;
+}
+:is(.dev-badge, .dev-ws-tag):has(> .dev-chip-fill) { position: relative; overflow: hidden; }
+:is(.dev-badge, .dev-ws-tag):has(> .dev-chip-fill) > :not(.dev-chip-fill):not(.sr-only) { position: relative; z-index: 1; }
 /* A long username must not take the whole badge row on its own — a kanban
    column gives the row about 165px, and "@some-long-username" alone can
    exceed that, pushing every sibling chip onto its own line. */
