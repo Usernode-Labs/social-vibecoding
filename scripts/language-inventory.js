@@ -76,17 +76,21 @@ const PLURAL = /_(zero|one|two|few|many|other)$/;
  * written whole, with its namespace and at least one dot in the key, so it
  * can be found here and never collides with an event name such as
  * `home:refresh`.
+ *
+ * The shape alone decides what is a candidate, NOT the list of namespaces that
+ * exist: an id in a namespace nobody defined (`typo:probe.label`) is exactly
+ * the mistake this is for. Nothing else in the client sources has this shape
+ * today; if something ever does, name it here rather than narrowing the shape.
  */
+const ID_SHAPE = /(['"`])([a-z][A-Za-z]*:[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+)\1/g;
+const NOT_IDS = new Set();
+
 function usedIds(root = ROOT, files = sourceFiles(root)) {
-  const namespaces = Object.keys(readEnglish(root));
-  if (!namespaces.length) return [];
-  const pattern = new RegExp(
-    `(['"\`])((?:${namespaces.join('|')}):[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9_-]+)+)\\1`, 'g',
-  );
   const used = [];
   for (const file of files) {
     const text = fs.readFileSync(path.join(root, file), 'utf8');
-    for (const match of text.matchAll(pattern)) {
+    for (const match of text.matchAll(ID_SHAPE)) {
+      if (NOT_IDS.has(match[2])) continue;
       used.push({ id: match[2], file, line: text.slice(0, match.index).split('\n').length });
     }
   }

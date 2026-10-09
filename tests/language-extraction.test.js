@@ -141,3 +141,35 @@ test('a person with no known username gets a sentence of their own, never a pron
   const profile = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/profile/profile.js'), 'utf8');
   assert.doesNotMatch(profile, /friendErrorMessage\(err, [^)]*'them'\)/);
 });
+
+test('the id check finds an id in a namespace nobody defined, and an unknown key in one that exists', (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'language-ids-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const put = (file, body) => {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), body);
+  };
+  put('frontend/locales/en/core.json', JSON.stringify({
+    'probe.label': { text: 'Probe', description: 'Fixture.' },
+    'probe.count_one': { text: '{{count}} probe', description: 'Fixture.' },
+    'probe.count_other': { text: '{{count}} probes', description: 'Fixture.' },
+    'probe.unused': { text: 'Unused', description: 'Fixture.' },
+  }));
+  put('frontend/src/a.ts', [
+    "t('core:probe.label');",
+    "t('core:probe.count', { count: 2 });",
+    "t('typo:probe.label');",
+    "t('core:probe.missing');",
+    "const TABLE = { a: 'core:probe.label', b: `core:probe.alsoMissing` };",
+    "window.addEventListener('home:refresh', () => {});",
+    "fetch('https://example.com/a.b');",
+  ].join('\n'));
+  const { used, unknown, unused } = checkIds(root);
+  assert.equal(used, 6, 'every id-shaped literal is a candidate, whatever its namespace; an event name is not');
+  assert.deepEqual(unknown.map(({ id, line }) => `${line} ${id}`),
+    ['3 typo:probe.label', '4 core:probe.missing', '5 core:probe.alsoMissing']);
+  assert.deepEqual(unused, ['core:probe.unused']);
+});
