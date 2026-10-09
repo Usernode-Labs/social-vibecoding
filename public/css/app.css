@@ -17187,6 +17187,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   width: 18px; height: 18px; flex: none; padding: 3px; box-sizing: border-box;
   border-radius: 9999px; background: var(--state-ok); color: #fff;
 }
+/* A no vote (#4568): the confirmation, and its tick, in the blocked red
+   instead of the ok green. Yes keeps the rules above. */
+.dev-ws-item-done[data-ws-voted="no"] { color: var(--state-blocked); }
+.dev-ws-item-done[data-ws-voted="no"] .dev-ws-item-tick { background: var(--state-blocked); }
 .dev-ws-item-title {
   margin: 18px 74px 0 0;
   font-size: 26px; line-height: 1.18; font-weight: 700; letter-spacing: -.016em;
@@ -17927,6 +17931,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-rail-take .dev-ws-rail-lab { color: var(--accent); }
 .dev-ws-rail-vote.is-on .dev-ws-rail-ic { background-color: var(--state-ok); border-color: var(--state-ok); box-shadow: 0 2px 8px rgba(21, 128, 61, .28); }
 .dev-ws-rail-vote.is-on .dev-ws-rail-lab { color: var(--state-ok); }
+/* The same no vote (#4568): the rail button red, with the red glow. */
+.dev-ws-rail-vote.is-on[data-ws-voted="no"] .dev-ws-rail-ic { background-color: var(--state-blocked); border-color: var(--state-blocked); box-shadow: 0 2px 8px rgba(220, 38, 38, .28); }
+.dev-ws-rail-vote.is-on[data-ws-voted="no"] .dev-ws-rail-lab { color: var(--state-blocked); }
 .dev-ws-rail-btn[aria-expanded="true"] .dev-ws-rail-ic { box-shadow: 0 0 0 3px var(--accent-wash); }
 .dev-ws-move { display: none; }
 .dev-ws-keys { display: none; }
