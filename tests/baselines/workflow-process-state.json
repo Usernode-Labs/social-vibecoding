@@ -102,6 +102,7 @@
       "ownership | chat_sessions.status ← src/services/session-lifecycle.js#unarchiveSession",
       "ownership | chat_sessions.status ← src/services/session-lifecycle.js#unpromoteSession",
       "services | uses src/routes/issues.js:resolveSupersededCloseProposals",
+      "services | uses src/services/active-workers.js:isSessionBusy",
       "services | uses src/services/github.js (whole module)",
       "services | uses src/services/github.js:closePR",
       "services | uses src/services/github.js:compareCommitAncestry",

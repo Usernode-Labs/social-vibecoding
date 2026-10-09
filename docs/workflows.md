@@ -632,7 +632,11 @@ What a merged pull request still has to do once GitHub has merged it
   still heard from (its `shot_runs` row, heartbeated; `facts.ts liveShotsRun`), asking
   again two minutes later (`notBefore`). A change is carried only if, under its own lock,
   its head is still the one the carrier listed and no turn, shots run or checks run is
-  working on it.
+  working on it. An operation that keeps no durable record while it runs (a sync with main
+  or a dispatch starting its worker, a hand-off's commit upload, a local agent run) is
+  seen only in the process running it (`isSessionBusy`, as before the machine): during a
+  rollout's overlap, the other Pod's are not. Who is working on a session becomes durable
+  with previews and checks.
 - **Every web process's issue lists.** GitHub's open-issues list is cached per process,
   with the requests just closed hidden from it. A merge and its close work publish an
   `issues_closed` push, which every web process applies to its own copy (`ws.js`); no

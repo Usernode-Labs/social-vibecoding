@@ -318,6 +318,29 @@ test('workflow machines in a process of their own, and through its crash', { tim
     assert.deepEqual({ ...row }, { status: 'promoted', included_in_session_id: null }, 'left to merge on its own');
   });
 
+  await t.test('a change busy in the web process with an operation that keeps no record is not carried', {
+    todo: 'active-workers.js#activeSessionOperations lives in the process running the operation (list: services | uses src/services/active-workers.js:isSessionBusy); who is working on a session becomes durable with previews and checks (step 3)',
+  }, async () => {
+    const a = await app({ selfHosted: true });
+    const carrier = await proposal(a);
+    const { rows: [busy] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, reviewed_head_sha)
+       VALUES ($1, $2, 'promoted', $3, 'Busy', $4) RETURNING *`, [a.id, author.id, ++seq, SHA('8')]);
+    await pool.query(`INSERT INTO wf_test_effects (kind, data) VALUES ('github.prCommits', $1)`,
+      [JSON.stringify({ number: carrier.pr_number, shas: [SHA('8')] })]);
+    // A sync with main starting its worker here: no active_turn yet, head unchanged.
+    const done = require('../src/services/active-workers').beginSessionOperation(busy.id);
+    try {
+      await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('9'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+      await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
+      const read = async () => (await pool.query('SELECT status, included_in_session_id FROM chat_sessions WHERE id = $1', [busy.id])).rows[0];
+      await procs.until(async () => (await read()).included_in_session_id, 'a mark that should not come', 2000).catch(() => {});
+      assert.deepEqual({ ...await read() }, { status: 'promoted', included_in_session_id: null }, 'left as it is while busy');
+    } finally {
+      done();
+    }
+  });
+
   // ── What the workflow process's boot gives it (src/workflow/setup.ts) ─
 
   await t.test('a merge decided in the workflow process syncs the phone badge of everyone with a bell row about it', async () => {

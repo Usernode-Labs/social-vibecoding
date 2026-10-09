@@ -327,10 +327,10 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
 // merge on its own, or be included by a later merge.
 //
 // What is working on it is read from the durable record of each: the turn's
-// journal (active_turn), a live shots run, checks running, and the head
-// itself. A sync with main, a hand-off upload or a Mayor dispatch keeps no
-// record of its own while it runs, but whatever it changes moves the head,
-// and a moved head is refused: the change merges on its own instead.
+// journal (active_turn), a live shots run, checks running, and the head the
+// carrier matched (a change revised since it was listed merges on its own).
+// The operations that keep no durable record while they run are left out by
+// the search before this (services.ts included.find, isSessionBusy).
 function notIncludable(f: Facts, carrierAppId: number | null, head: string | null): string | null {
   const s = f.session;
   if (!s) return 'no_session';

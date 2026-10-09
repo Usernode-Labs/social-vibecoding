@@ -106,6 +106,14 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
     // Each is named with the head that matched: the machine marks it only
     // if that is still its head, and nothing is working on it, read under
     // its own lock (machine.ts notIncludable).
+    //
+    // A change busy with an operation that keeps no durable record while it
+    // runs (a sync with main or a dispatch starting its worker, a hand-off's
+    // commit upload, a local agent run, a push not yet reconciled into its
+    // head) is left out too, as [main] did: isSessionBusy, which knows only
+    // this process's operations. With one replica that is every operation
+    // but those of the other Pod during a rollout's overlap. Who is working
+    // on a session becomes durable state with previews and checks (step 3).
     [WORK.find]: {
       maxAttempts: 6,
       backoffMs: backoff,
@@ -113,7 +121,9 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         const gh = github();
         if (!gh.isEnabled()) return { ids: [], found: [] };
         const changes = legacy('services/included-changes');
-        const { rows } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
+        const { rows: candidates } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
+        const busy = legacy('services/active-workers').isSessionBusy;
+        const rows = candidates.filter((c: { id: number }) => !busy(Number(c.id)));
         if (!rows.length) return { ids: [], found: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
         const head = (c: any) => String((c.source === 'imported' ? c.imported_pr_head_sha : c.reviewed_head_sha) || '').toLowerCase();

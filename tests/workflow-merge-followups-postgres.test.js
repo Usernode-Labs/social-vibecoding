@@ -546,7 +546,7 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     assert.deepEqual(ended.data, { numbers: [5], open: [9] }, 'what the work closed, and what it found still open, in every process');
   });
 
-  await t.test('the merge's secret apply without the data key throws (failing its transition) instead of discarding held values', async () => {
+  await t.test('the merge\'s secret apply without the data key throws (failing its transition) instead of discarding held values', async () => {
     const { applyInTransaction } = require('../src/workflow/rules/pending-secret-apply.ts');
     const a = await app();
     const s = await proposal(a);

@@ -101,17 +101,19 @@ test('worker.retire waits for a shots run read from its own row, then deletes th
   assert.deepEqual(retired, [12]);
 });
 
-test('included.find names each carried change with the head that matched, and reads no process memory', async () => {
+test('included.find names each carried change with the head that matched, and leaves out a change busy here', async () => {
   const candidates = [
     { id: 3, source: 'native', reviewed_head_sha: 'c'.repeat(40), imported_pr_head_sha: null },
     { id: 4, source: 'imported', reviewed_head_sha: null, imported_pr_head_sha: 'D'.repeat(40) },
     { id: 5, source: 'native', reviewed_head_sha: 'e'.repeat(40), imported_pr_head_sha: null },
   ];
   gh.listPullRequestCommitShas = async () => ({ shas: ['c'.repeat(40), 'd'.repeat(40)] });
-  stub('../src/services/active-workers', { isSessionBusy() { throw new Error('process memory is not read'); } });
+  // Change 4's head is listed too, but an operation that keeps no durable
+  // record is running on it in this process (as [main] checked).
+  stub('../src/services/active-workers', { isSessionBusy: (id) => id === 4 });
   const { handlers: h } = withRows(() => candidates);
   const out = await call(h, WORK.find, { sessionId: 1, appId: 2, prNumber: 8, owner: 'acme', repo: 'shop' });
-  assert.deepEqual(out, { ids: [3, 4], found: [{ id: 3, head: 'c'.repeat(40) }, { id: 4, head: 'd'.repeat(40) }] });
+  assert.deepEqual(out, { ids: [3], found: [{ id: 3, head: 'c'.repeat(40) }] });
 });
 
 test('the bot, the DM, the journey and the main check run strict, so a failure is retried', async () => {
