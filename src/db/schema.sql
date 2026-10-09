@@ -12812,6 +12812,17 @@ COMMENT ON TABLE first_version_screens IS 'staging:private';
 -- the App tab's build line note while a first version is built.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption TEXT;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_caption_at TIMESTAMPTZ;
+-- What started a run's read: its queue row's reason ('new', 'changed',
+-- 'retry_failed', 'restart', 'read_again', 'checks_failing', 'cap_freed',
+-- 'app_again', 'admin', …), and for 'changed' what moved past the last
+-- read, 'changed:github' (the issue's updated_at: a comment, an edit, a
+-- label) or 'changed:discussion' (a person's message in its Homeroom
+-- thread or its proposal's). One request was read six times in a week and
+-- the ledger could not say why. `changed_by` carries that from the
+-- refresh that queued it (homeroom-bot.js classifyIssue). Null on a run
+-- from before, or one no queue row started.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS read_reason TEXT;
+ALTER TABLE homeroom_bot_queue ADD COLUMN IF NOT EXISTS changed_by TEXT;
 
 -- #4449: LIVE, the new app itself taking shape while a first version is
 -- built (services/first-version-live.js). A watcher in the build's worker
