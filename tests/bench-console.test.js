@@ -161,7 +161,7 @@ test('the estimate is a range, says what each stage rests on, and is never a con
   const note = estimateNote({ byStage });
   assert.match(note, /Triage: from what each model's own trials have cost so far\./);
   assert.match(note, /First version: none has run yet, so this range comes from Build trials\./);
-  assert.match(note, /Spec: nothing like it has run yet, so this is a guess from each model's price\./);
+  assert.match(note, /Plan: nothing like it has run yet, so this is a guess from each model's price\./);
   assert.match(note, /Capture \(before\): runs no model, so it costs nothing\./);
   assert.equal(estimateGuessed({ byStage }), true);
   assert.equal(estimateGuessed({ byStage: { triage: byStage.triage, first_version: byStage.first_version } }), false,

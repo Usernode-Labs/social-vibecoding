@@ -928,7 +928,7 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
   const snippet = useMemo(() => (item.preview ? markdown(item.preview, false) : null), [item.preview]);
   const snippetInner = useInnerHtml(snippet || '');
   const open = () => { if (item.changeId) void openSpec(item.changeId, item.version); };
-  const title = `Spec${item.version ? ` v${item.version}` : ''}${item.lines ? ` · ${item.lines} lines` : ''}`;
+  const title = `Plan${item.version ? ` v${item.version}` : ''}${item.lines ? ` · ${item.lines} lines` : ''}`;
   return (
     <div
       className="dc-spec-preview-card"
@@ -946,7 +946,7 @@ export function SpecCard({ item }: { item: Extract<TranscriptItem, { kind: 'spec
     >
       <div className="dc-spec-preview-header">
         <span className="dc-spec-preview-title">{title}</span>
-        <span className="dc-spec-preview-cta">View full spec →</span>
+        <span className="dc-spec-preview-cta">View full plan →</span>
       </div>
       {snippet
         ? <div className="dc-spec-preview-snippet" dangerouslySetInnerHTML={snippetInner} />
@@ -1010,7 +1010,7 @@ export function SpecBody({ text, tab, split, onTab }: {
   return (
     <>
       {split.preamble ? <div className="dc-spec-viewer-preamble"><SpecMarkdown text={split.preamble} /></div> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Plan sections">
         <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
         <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
       </div>
@@ -1041,7 +1041,7 @@ export function SpecHtmlBody({ doc, tab, onTab }: {
   return (
     <>
       {doc.preambleHtml ? <div className="dc-spec-viewer-preamble"><SpecHtmlPart html={doc.preambleHtml} /></div> : null}
-      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
+      <div className="dc-spec-viewer-tabs" role="tablist" aria-label="Plan sections">
         <SpecTabButton tab="user" active={tab} label="User-facing" onTab={onTab} />
         <SpecTabButton tab="tech" active={tab} label="Technical" onTab={onTab} />
       </div>
@@ -1065,14 +1065,14 @@ function SpecContent({ sheet }: { sheet: SpecSheetState }) {
     <>
       <header className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Spec</h2>
+          <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">Plan</h2>
           {change ? <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.title || changeRef(change)}{change.appName ? ` · ${change.appName}` : ''}</p> : null}
         </div>
         {sheet.versions.length > 1 ? (
           <span className="dc-venue-detail-inline">
             <select
               className="dc-model-select rounded text-[13px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500 dark:text-zinc-100"
-              aria-label="Spec version"
+              aria-label="Plan version"
               value={sheet.version ?? ''}
               onChange={(event) => void openSpec(sheet.changeId, Number(event.currentTarget.value))}
             >
@@ -1090,7 +1090,7 @@ function SpecContent({ sheet }: { sheet: SpecSheetState }) {
           <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
         ) : null}
         {sheet.phase === 'error' ? <p role="alert" className="text-sm text-red-700 dark:text-red-300">{sheet.error}</p> : null}
-        {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no spec yet.</p> : null}
+        {sheet.phase === 'ready' && !sheet.text ? <p className="text-sm text-zinc-500 dark:text-zinc-400">This change has no plan yet.</p> : null}
         {sheet.phase === 'ready' && sheet.text && htmlDoc ? <SpecHtmlBody doc={htmlDoc} tab={sheet.tab} onTab={setSpecTab} /> : null}
         {sheet.phase === 'ready' && sheet.text && !htmlDoc ? <SpecBody text={sheet.text} tab={sheet.tab} split={split} onTab={setSpecTab} /> : null}
       </div>
@@ -1115,7 +1115,7 @@ function SpecSheet({ sheet }: { sheet: SpecSheetState }) {
     >
       <section
         role="dialog"
-        aria-label="Spec"
+        aria-label="Plan"
         className={cover
           ? 'platform-safe-bar flex h-full w-full flex-col bg-white dark:bg-zinc-900'
           : 'platform-safe-bar mt-auto flex max-h-[92%] w-full flex-col rounded-t-3xl bg-white shadow-xl dark:bg-zinc-900 sm:mt-0 sm:h-full sm:max-h-none sm:rounded-none'}
@@ -1144,7 +1144,7 @@ function PaneTabs({ tab }: { tab: PaneTab }) {
   );
   return (
     <div role="tablist" aria-label="Side pane" className="flex shrink-0 gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
-      {button('spec', 'Spec')}
+      {button('spec', 'Plan')}
       {button('preview', 'Preview')}
     </div>
   );
@@ -1237,7 +1237,7 @@ function SidePane({ sheet, preview, tab, containerRef }: {
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label={showing === 'preview' ? 'Resize the preview' : 'Resize the spec'}
+        aria-label={showing === 'preview' ? 'Resize the preview' : 'Resize the plan'}
         aria-valuenow={width}
         aria-valuemin={floor}
         tabIndex={0}
@@ -1248,7 +1248,7 @@ function SidePane({ sheet, preview, tab, containerRef }: {
       />
       <aside
         ref={paneRef}
-        aria-label={showing === 'preview' ? 'Preview' : 'Spec'}
+        aria-label={showing === 'preview' ? 'Preview' : 'Plan'}
         className={`flex min-h-0 ${preview ? 'min-w-[320px]' : 'min-w-[280px]'} max-w-[calc(100%-324px)] shrink-0 flex-col bg-white dark:bg-zinc-900`}
         style={{ width }}
         data-agent-session-side-pane={showing}
@@ -2161,7 +2161,7 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
                 className="rounded-full bg-zinc-200 px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100"
                 onClick={() => void openSpec(active.id)}
               >
-                Spec
+                Plan
               </button>
               {active.appSlug ? (
                 <a

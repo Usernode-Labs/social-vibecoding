@@ -540,7 +540,7 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
             }
           }}
         >
-          {loading ? 'Loading…' : 'View full spec'}
+          {loading ? 'Loading…' : 'View full plan'}
         </button>
       </div>
       <Reactions msg={msg} />
@@ -994,7 +994,7 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
     text = <><b>{spec.sharedBy}</b>{` posted spec v${spec.version}`}</>;
   } else if (gh) {
     glyph = '📋';
-    text = <><b>{displayName(msg.username)}</b>{' posted a spec'}</>;
+    text = <><b>{displayName(msg.username)}</b>{' posted a plan'}</>;
   } else if (claim) {
     glyph = '✋';
     text = <><b>{claim[1]}</b>{' started working on this'}</>;

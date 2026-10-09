@@ -109,11 +109,20 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   const body = live.specCommentText('# Fix the banner\n\n## User-facing changes\n\nIt blends in.\n\n## Design\n\nOne card.');
   const got = botSpecOf({ author: 'usernode-bot', body });
   assert.equal(got.title, 'Fix the banner');
-  assert.match(got.lead, /^Homeroom bot wrote a spec for this request and is building it now\./);
+  assert.match(got.lead, /^Homeroom bot wrote a plan for this request and is building it now\./);
   assert.doesNotMatch(got.lead, /details|summary/, 'the markers are gone, not shown as text');
   assert.equal(got.body, '## User-facing changes\n\nIt blends in.\n\n## Design\n\nOne card.');
   assert.equal(botSpecOf({ author: 'ada', body }), null, 'a person\'s comment stays as they wrote it');
   assert.equal(botSpecOf({ author: 'usernode-bot', body: 'Thanks for the report.' }), null);
+
+  // #4450: comments posted before the rename fold the plan under "The spec"
+  // and are never edited, so that fold still reads as a plan.
+  const old = botSpecOf({
+    author: 'usernode-bot',
+    body: 'Homeroom bot wrote a spec for this request.\n\n<details><summary>The spec</summary>\n\n# Fix the banner\n\nIt blends in.\n\n</details>',
+  });
+  assert.equal(old.title, 'Fix the banner');
+  assert.equal(old.body, 'It blends in.');
 
   // Both renderers use it: a request's page draws the spec as the spec
   // reader would (paragraph semantics), and the Workshop row's preview
@@ -123,7 +132,7 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   assert.match(rows, /githubSpec: spec \? \{ title: spec\.title, markdown: spec\.body, html: renderSpec\(spec\.body\) \} : null,/);
   const feed = code.match(/_feedCommentsHtml\(comments\) \{([\s\S]*?)\n {2}\},/)[1];
   assert.match(feed, /const spec = AppView\._botSpecOf\(c\);/);
-  assert.match(feed, /escapeHtml\(spec\.title \? `The spec: \$\{spec\.title\}` : 'The spec'\)/);
+  assert.match(feed, /escapeHtml\(spec\.title \? `The plan: \$\{spec\.title\}` : 'The plan'\)/);
 });
 
 test('#3693: a spec the comments route clipped is still a spec, not raw markers', () => {
@@ -157,7 +166,7 @@ test('#3693: a spec the comments route clipped is still a spec, not raw markers'
   const got = botSpecOf(clipped);
   assert.ok(got, 'the clipped comment is still recognised as the spec');
   assert.equal(got.title, 'Add a light and dark mode toggle');
-  assert.match(got.lead, /^Homeroom bot wrote a spec for this request and is building it now\./);
+  assert.match(got.lead, /^Homeroom bot wrote a plan for this request and is building it now\./);
   for (const part of [got.lead, got.body]) {
     assert.doesNotMatch(part, /<\/?(details|summary)>/, 'no marker is left to show as text');
   }

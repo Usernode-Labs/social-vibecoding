@@ -71,7 +71,7 @@ const RECOVERY_PILLS = Object.freeze({
   // whole plan gets built, and the wording has to say so. Same string the
   // model is told to use, so the row reads identically whichever rung
   // filled it.
-  spec_done: Object.freeze(['Build the spec', 'Revise the spec', 'What will this change?']),
+  spec_done: Object.freeze(['Build the plan', 'Revise the plan', 'What will this change?']),
   push_failed: Object.freeze(['Try that again', 'What went wrong?']),
   unrecoverable: Object.freeze(['Try that again', "What's the current state?"]),
   unanswered: Object.freeze(["What's the current state?"]),
@@ -117,13 +117,14 @@ const RECOVERY_PILLS = Object.freeze({
 // cycle.
 const QUICK_REPLY_RULES_TEXT = `Each pill must be a complete first-person message the user could send verbatim, under 80 characters. 2-3 of them, most likely first.
 
-COMPOSITION RULE — at most ONE pill may be a generic platform action ("Propose it to the group", "Build the spec", "Preview the change"). EVERY other pill must name the concrete subject of THIS turn: the feature, screen, component, issue number, or the specific thing just built, planned or discussed. A set where every pill would fit any conversation is a failed set.
+COMPOSITION RULE — at most ONE pill may be a generic platform action ("Propose it to the group", "Build the plan", "Preview the change"). EVERY other pill must name the concrete subject of THIS turn: the feature, screen, component, issue number, or the specific thing just built, planned or discussed. A set where every pill would fit any conversation is a failed set.
 Good, because they name the subject: after a build that made a leaderboard default to Season 1 — "Preview the Season 1 default" / "Propose it to the group" / "Also fix the sub-event tabs". Note only the middle one is generic.
 These are shapes, not strings — never send these words verbatim.
 
-POST-SPEC BUILD PILL — the ONE exception to that, and the one place a literal string is required. When this turn just drafted or revised a spec and nothing has been built from it yet, the FIRST pill must refer to the WHOLE spec: write it as Build the spec (or exactly that meaning in the conversation's language). Do NOT name a single component, screen, file or feature as the build target — a pill like "Build the sidebar" or "Build the avatar flow as specced" reads as "build only that part", when the tap builds everything the spec describes. This pill IS the set's one generic slot, so the remaining 1-2 pills must still name something specific about THIS spec. A pill may additionally offer a NARROWER build, but only if it says so out loud ("Build only the read-only slice first", "Build slice 1 only — the retry path"); it is an extra option, never a replacement for the whole-spec pill.
+POST-SPEC BUILD PILL — the ONE exception to that, and the one place a literal string is required. When this turn just drafted or revised a spec and nothing has been built from it yet, the FIRST pill must refer to the WHOLE spec: write it as Build the plan (or exactly that meaning in the conversation's language). Do NOT name a single component, screen, file or feature as the build target — a pill like "Build the sidebar" or "Build the avatar flow as specced" reads as "build only that part", when the tap builds everything the spec describes. This pill IS the set's one generic slot, so the remaining 1-2 pills must still name something specific about THIS spec. A pill may additionally offer a NARROWER build, but only if it says so out loud ("Build only the read-only slice first", "Build slice 1 only — the retry path"); it is an extra option, never a replacement for the whole-spec pill.
 
-NEVER emit any of these exact sets, or a set made only of these phrases: "Preview the change" / "Propose it to the group" / "Make another tweak"; "Build the spec" / "Revise the spec" / "What will this change?"; "Build it" / "Revise the spec" / "What will this change?"; "Propose it to the group" / "Make a tweak" / "What did it change?"; "Make a change" / "What issues are open right now?" / "What's the current state?"; "Try that again" / "What went wrong?". That ban is on the whole SET, not on the required build pill — "Build the spec" is meant to be sent verbatim; what is forbidden is a set in which NOTHING is specific to this conversation.
+NEVER emit any of these exact sets, or a set made only of these phrases: "Preview the change" / "Propose it to the group" / "Make another tweak"; "Build the plan" / "Revise the plan" / "What will this change?"; "Build it" / "Revise the plan" / "What will this change?"; "Propose it to the group" / "Make a tweak" / "What did it change?"; "Make a change" / "What issues are open right now?" / "What's the current state?"; "Try that again" / "What went wrong?". That ban is on the whole SET, not on the required build pill — "Build the plan" is meant to be sent verbatim; what is forbidden is a set in which NOTHING is specific to this conversation.
+Call the spec a plan in every pill, as the app does; never write "spec" in a pill.
 If you cannot make a pill specific, emit TWO pills instead of three — a short specific set beats a padded generic one.
 Write the pills in the SAME LANGUAGE the conversation is in, not always English.`;
 
@@ -350,7 +351,9 @@ function normalizePill(text) {
 const BANNED_GENERIC_PILLS = Object.freeze(new Set([
   // RECOVERY_PILLS, every kind.
   'propose it to the group', 'make a tweak', 'what did it change',
-  'build the spec', 'revise the spec', 'what will this change',
+  'build the plan', 'revise the plan', 'what will this change',
+  // The pre-#4450 wording, still in people's own words and in history.
+  'build the spec', 'revise the spec',
   'try that again', 'what went wrong',
   "what's the current state", 'make a change',
   "how's it going", 'stop this build',
@@ -370,6 +373,7 @@ const BANNED_GENERIC_PILLS = Object.freeze(new Set([
   // inventory. The near-variants keep three rephrasings of the required
   // build pill from passing as a "specific" set.
   'build it', 'build the whole spec', 'build the spec as written',
+  'build the whole plan', 'build the plan as written',
 ].map(normalizePill)));
 
 // True when a pill set is entirely boilerplate — i.e. NOT ONE entry names

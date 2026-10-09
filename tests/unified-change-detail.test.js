@@ -181,7 +181,7 @@ test('before review the author reads the spec under About this change (#2371)', 
   const own = av._topicViewFor('session', draft);
   assert.ok(own.body.proposalBody, 'the spec stands in for the technical details');
   assert.match(own.body.proposalBody.html, /Authenticate previews/);
-  assert.match(own.body.summaryHtml, /spec this change is built from is under Details/);
+  assert.match(own.body.summaryHtml, /plan this change is built from is under Details/);
 
   // A real PR body wins, and a summary is never replaced.
   const withBody = av._topicViewFor('session', { ...draft, pr_body: 'The PR body', pr_summary_md: 'Previews wait for sign-in.' });

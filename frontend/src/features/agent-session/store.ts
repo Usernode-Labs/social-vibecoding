@@ -1912,7 +1912,7 @@ export async function openSpec(changeId: number, version: number | null = null) 
     if (ticket !== specRequest) return;
     publish((current) => ({
       specSheet: current.specSheet
-        ? { ...current.specSheet, phase: 'error', error: errorText(error, 'Could not load the spec.') }
+        ? { ...current.specSheet, phase: 'error', error: errorText(error, 'Could not load the plan.') }
         : null,
     }));
   }

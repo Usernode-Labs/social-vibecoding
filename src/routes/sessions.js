@@ -892,7 +892,7 @@ function stagingMockTranscript(sessionId) {
     },
     {
       id: 5, role: 'system', model: null, created_at: t(84),
-      content: 'Spec drafted',
+      content: 'Plan drafted',
       metadata: { specPreview: '# [Mock] Readable cards on narrow screens\n\n- Two-row card layout\n- Actions wrap instead of crushing the title\n', specVersion: 1, specLines: 4 },
     },
     {
@@ -1389,8 +1389,8 @@ async function persistScoutPublication({
   if (!ccText) throw new Error('persistScoutPublication: spec content required');
   const lineCount = ccText.split('\n').length;
   const baseScoutText = hadSpec
-    ? `Scout revised the spec (now ${lineCount} lines).`
-    : `Scout drafted a ${lineCount}-line spec from the codebase.`;
+    ? `Scout revised the plan (now ${lineCount} lines).`
+    : `Scout drafted a ${lineCount}-line plan from the codebase.`;
   const scoutText = localAgentLabel
     ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Homeroom credits were used.`
     : baseScoutText;
@@ -5523,7 +5523,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
           return res.json({ spec: stagingMockSpecVersion(version) });
         }
-        return res.status(404).json({ error: 'Spec version not found' });
+        return res.status(404).json({ error: 'Plan version not found' });
       }
       res.json({ spec: rows[0] });
     } catch (err) {
@@ -5571,7 +5571,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          WHERE session_id = $1 AND version = $2`,
         [sessionId, version]
       );
-      if (!specRows.length) return res.status(404).json({ error: 'Spec version not found' });
+      if (!specRows.length) return res.status(404).json({ error: 'Plan version not found' });
       const spec = specRows[0];
 
       // Title + snippet for the card. The title is the first H1
@@ -5599,8 +5599,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         },
       };
       const summaryLine = title
-        ? `📋 ${req.user.username || 'Someone'} shared "${title}" (spec v${spec.version}).`
-        : `📋 ${req.user.username || 'Someone'} shared spec v${spec.version} from a dev session.`;
+        ? `📋 ${req.user.username || 'Someone'} shared "${title}" (plan v${spec.version}).`
+        : `📋 ${req.user.username || 'Someone'} shared plan v${spec.version} from a dev session.`;
 
       const { rows: msgRows } = await pool.query(
         `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
@@ -5671,13 +5671,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          WHERE session_id = $1 AND version = $2`,
         [sessionId, version]
       );
-      if (!specRows.length) return res.status(404).json({ error: 'Spec version not found' });
+      if (!specRows.length) return res.status(404).json({ error: 'Plan version not found' });
 
       const users = await notifications.resolveUsers(pool, [username.toLowerCase()]);
       if (!users.length) return res.status(404).json({ error: 'User not found' });
       const recipient = users[0];
       if (recipient.id === req.user.id) {
-        return res.status(400).json({ error: 'You already have this spec' });
+        return res.status(400).json({ error: 'You already have this plan' });
       }
 
       // Collab-private apps: a share must not grant a non-member a spec
@@ -6613,13 +6613,13 @@ function buildHeadlessFollowUpQuickReplies(src) {
     case 'spec':
       // #1046: mirrors RECOVERY_PILLS.spec_done — the build pill names the
       // whole spec, not one component of it.
-      replies = ['Build the spec', 'Revise the spec', 'What will this change?'];
+      replies = ['Build the plan', 'Revise the plan', 'What will this change?'];
       break;
     case 'code':
       replies = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
       break;
     case 'spec_code':
-      replies = ['Propose it to the group', 'Revise the spec', 'Make a tweak'];
+      replies = ['Propose it to the group', 'Revise the plan', 'Make a tweak'];
       break;
     default:
       return null;
@@ -7599,7 +7599,7 @@ async function runHeadlessSession({
             const buildBilling = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
             let buildResult;
             if (buildBilling.error) {
-              await sendStatus('Spec drafted; implementation skipped, because the daily budget was reached.');
+              await sendStatus('Plan drafted; implementation skipped, because the daily budget was reached.');
               buildResult = {
                 toolResultText: 'Implementation skipped — the daily LLM budget is exhausted. The spec remains the deliverable; a human will review and build it later.',
                 isError: true,
@@ -7609,7 +7609,7 @@ async function runHeadlessSession({
               // and its debits) must bill the re-resolved payer — the
               // turn-start resolution may differ now that the scout spent.
               userApiKey = buildBilling.apiKey;
-              await sendStatus('Auto session: spec looks straightforward, so implementing it now...');
+              await sendStatus('Auto session: plan looks straightforward, so implementing it now...');
               const buildPromptArg = typeof buildCall.input?.prompt === 'string' && buildCall.input.prompt.trim()
                 ? buildCall.input.prompt.trim()
                 : seed;
@@ -8123,7 +8123,7 @@ async function runRecoveredWrapUp({
         + 'interruptions, delays, or this note itself. Call suggest_replies with 2-3 next steps '
         + 'that NAME what changed here, not generic platform actions — with the one exception in '
         + 'POST-SPEC BUILD PILL: if this turn left a spec and nothing built, the first pill still '
-        + 'says "Build the spec" rather than naming one component of it.',
+        + 'says "Build the plan" rather than naming one component of it.',
     });
 
     const currentSpec = await loadSessionSpec(pool, sessionId);

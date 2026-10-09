@@ -137,7 +137,7 @@ test('every kind names itself the same way for every row of that kind', async ()
     [{ kind: 'kudos', prTitle: 'Fix the bell badge' }, 'Kudos', 'Fix the bell badge'],
     [{ kind: 'auto_solve_done', sourceUsername: null, headlessIssueNumber: 91, detail: 'question' },
       'Change has a question', 'request #91'],
-    [{ kind: 'spec_shared', sessionTitle: 'Notifications overhaul' }, 'Spec shared', 'Notifications overhaul'],
+    [{ kind: 'spec_shared', sessionTitle: 'Notifications overhaul' }, 'Plan shared', 'Notifications overhaul'],
     [{ kind: 'mention', messageContent: 'can you take a look at the board?' },
       'Mentioned you', 'can you take a look at the board?'],
     // #2161: the app_deleted row has no app row left, so the name it names

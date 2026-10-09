@@ -1212,7 +1212,7 @@ async function handleMessage(pool, client, msg) {
               let author;
               if (r.msg_type === 'spec_share') {
                 const sm = (r.metadata || {}).specShare || {};
-                snippet = sm.title || `Spec v${sm.version || ''}`.trim();
+                snippet = sm.title || `Plan v${sm.version || ''}`.trim();
                 author = sm.sharedBy?.username || r.username || null;
               } else if (r.msg_type === 'system' || r.msg_type === 'vote' || r.msg_type === 'conflict') {
                 snippet = r.content;

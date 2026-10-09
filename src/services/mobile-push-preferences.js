@@ -34,7 +34,7 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'shared_work',
     label: 'Shared work',
-    description: 'Specs that someone privately shares with you.',
+    description: 'Plans that someone privately shares with you.',
     defaultEnabled: true,
     kinds: Object.freeze(['spec_shared']),
   }),
