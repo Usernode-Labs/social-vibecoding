@@ -170,6 +170,17 @@ export const SHORT_PHASES: Record<HomeroomBotPhase, string> = {
   merging: 'messages:bot.tray.workingOnPhase.merging',
 };
 
+/** The same lines for a project nobody can name (see LAST_WORDS_UNNAMED). */
+export const SHORT_PHASES_UNNAMED: Record<HomeroomBotPhase, string> = {
+  looking: 'messages:bot.tray.workingOnPhase.lookingUnnamed',
+  building: 'messages:bot.tray.workingOnPhase.buildingUnnamed',
+  following_up: 'messages:bot.tray.workingOnPhase.followingUpUnnamed',
+  setting_up: 'messages:bot.tray.workingOnPhase.settingUpUnnamed',
+  queued: 'messages:bot.tray.workingOnPhase.queuedUnnamed',
+  follow_up_queued: 'messages:bot.tray.workingOnPhase.followUpQueuedUnnamed',
+  merging: 'messages:bot.tray.workingOnPhase.mergingUnnamed',
+};
+
 /**
  * The last thing the bot did, as the status line says it when nothing else
  * is going on: the same ending its activity card names
@@ -195,6 +206,30 @@ export const LAST_WORDS: Record<HomeroomBotActivityOutcome, string> = {
   going_live: 'messages:bot.last.goingLive',
 };
 
+/**
+ * The same endings for a project nobody can name: the job's name is then only
+ * the stand-in, and each sentence has a wording of its own instead of taking
+ * that word as a name.
+ */
+export const LAST_WORDS_UNNAMED: Record<HomeroomBotActivityOutcome, string> = {
+  question: 'messages:bot.last.questionUnnamed',
+  proposed: 'messages:bot.last.proposedUnnamed',
+  live: 'messages:bot.last.liveUnnamed',
+  closed: 'messages:bot.last.closedUnnamed',
+  blocked: 'messages:bot.last.blockedUnnamed',
+  build_failed: 'messages:bot.last.buildFailedUnnamed',
+  person: 'messages:bot.last.personUnnamed',
+  empty: 'messages:bot.last.emptyUnnamed',
+  failed: 'messages:bot.last.failedUnnamed',
+  held: 'messages:bot.last.heldUnnamed',
+  stopped: 'messages:bot.last.stoppedUnnamed',
+  answer: 'messages:bot.last.answerUnnamed',
+  revise: 'messages:bot.last.reviseUnnamed',
+  checking: 'messages:bot.last.checkingUnnamed',
+  needs_look: 'messages:bot.last.needsLookUnnamed',
+  going_live: 'messages:bot.last.goingLiveUnnamed',
+};
+
 function capitalized(text: string): string {
   return text ? text[0].toUpperCase() + text.slice(1) : text;
 }
@@ -202,6 +237,11 @@ function capitalized(text: string): string {
 /** "#12", or the project's name for a first version: what the phone's status line names. */
 function shortName(job: Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'firstVersion'>): string {
   return !job.firstVersion && job.issueNumber ? `#${job.issueNumber}` : job.appName;
+}
+
+/** The full name (bot-shared `jobName`) is the bare stand-in: an unnamed project's work that is neither a first version nor a numbered request. */
+function nameIsStandIn(job: Pick<HomeroomBotJob, 'appUnnamed' | 'issueNumber' | 'firstVersion'>): boolean {
+  return !!job.appUnnamed && !job.firstVersion && !job.issueNumber;
 }
 
 /** The short name is the stand-in for a project nobody can name: the line has its own wording. */
@@ -245,7 +285,9 @@ export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date())
     return {
       kind: 'working',
       // The job and its stage are one message; an unknown stage says the job alone.
-      long: dotText([translate(SHORT_PHASES[job.phase] || 'messages:bot.tray.workingOn', { job: jobName(job) }), needs]),
+      long: dotText([nameIsStandIn(job)
+        ? translate(SHORT_PHASES_UNNAMED[job.phase] || 'messages:bot.tray.workingOnUnnamed')
+        : translate(SHORT_PHASES[job.phase] || 'messages:bot.tray.workingOn', { job: jobName(job) }), needs]),
       short,
     };
   }
@@ -260,7 +302,7 @@ export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date())
     const job = work.needsYou[0];
     return {
       kind: 'you',
-      long: translate('messages:bot.tray.jobNeedsYou', { job: jobName(job) }),
+      long: nameIsStandIn(job) ? translate('messages:bot.tray.jobNeedsYouUnnamed') : translate('messages:bot.tray.jobNeedsYou', { job: jobName(job) }),
       short: shortUnnamed(job) ? translate('messages:bot.tray.jobNeedsYouShortUnnamed') : translate('messages:bot.tray.jobNeedsYouShort', { job: shortName(job) }),
     };
   }
@@ -276,8 +318,8 @@ export function trayStatus(work: HomeroomBotWork | null, now: Date = new Date())
   const ago = agoStamp(last.at, { now }).text;
   return {
     kind: 'last',
-    long: dotText([translate(LAST_WORDS[last.outcome], { job: jobName(last) }), ago]),
-    short: dotText([translate(LAST_WORDS[last.outcome], { job: shortName(last) }), ago]),
+    long: dotText([nameIsStandIn(last) ? translate(LAST_WORDS_UNNAMED[last.outcome]) : translate(LAST_WORDS[last.outcome], { job: jobName(last) }), ago]),
+    short: dotText([shortUnnamed(last) ? translate(LAST_WORDS_UNNAMED[last.outcome]) : translate(LAST_WORDS[last.outcome], { job: shortName(last) }), ago]),
   };
 }
 

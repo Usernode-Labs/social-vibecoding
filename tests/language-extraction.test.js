@@ -642,3 +642,56 @@ test('the flag survives every copy between the normalizer and the sentence', asy
   assert.match(read('frontend/src/features/messages/composer.tsx'), /waitingUnknown \? t\('messages:composer\.requestSent\.waitingUnknown'\)/);
   assert.match(read('frontend/src/features/messages/bot-work.tsx'), /shortUnnamed\(job\) \? translate\('messages:bot\.tray\.workingOnShortUnnamed'\)/);
 });
+
+test('the bot\'s status line never takes the unnamed project\'s stand-in as a job\'s name', async (t) => {
+  const es = {
+    'messages:bot.job.unnamedProject': 'Un proyecto',
+    'messages:bot.job.requestUnnamed': 'Un proyecto, n.º {{number}}',
+    'messages:bot.last.live': 'Último: {{job}} ya está activo',
+    'messages:bot.last.liveUnnamed': 'Último: un proyecto ya está activo',
+    'messages:bot.tray.workingOnPhase.building': 'Trabajando en {{job}} · construyendo',
+    'messages:bot.tray.workingOnPhase.buildingUnnamed': 'Trabajando en un proyecto · construyendo',
+    'messages:bot.tray.workingOnShort': 'Trabajando en {{job}}',
+    'messages:bot.tray.workingOnShortUnnamed': 'Trabajando en un proyecto',
+  };
+  const { module: api } = await loadInSpanish(t, 'frontend/src/features/messages/api.ts', es);
+  const { module: tray } = await loadInSpanish(t, 'frontend/src/features/messages/bot-work.tsx', es);
+  const now = new Date('2026-10-09T12:00:00Z');
+  const status = (payload) => tray.trayStatus(api.normalizeBotWork(payload), now);
+  const history = (row) => status({ history: [{ at: '2026-10-09T11:00:00Z', ...row }] });
+
+  // Every ending the history can have, for a project with neither a name nor a slug.
+  const outcomes = Object.keys(tray.LAST_WORDS);
+  assert.equal(outcomes.length, 16);
+  assert.deepEqual(Object.keys(tray.LAST_WORDS_UNNAMED), outcomes);
+  for (const outcome of outcomes) {
+    const named = tray.LAST_WORDS[outcome];
+    const unnamed = tray.LAST_WORDS_UNNAMED[outcome];
+    assert.equal(unnamed, `${named}Unnamed`);
+    assert.equal(message(unnamed), message(named, { job: 'A project' }), `${unnamed} reads as it did in English`);
+    const said = history({ outcome });
+    for (const line of [said.long, said.short]) {
+      assert.doesNotMatch(line, /Un proyecto/, `${outcome}: the stand-in is not placed as a name`);
+    }
+  }
+  assert.match(history({ outcome: 'live' }).short, /^Último: un proyecto ya está activo/);
+  assert.match(history({ outcome: 'live' }).long, /^Último: un proyecto ya está activo/);
+  // A numbered request names itself: "#12" on the short line, the unnamed request's own name on the long one.
+  assert.match(history({ outcome: 'live', issueNumber: 12 }).short, /^Último: #12 ya está activo/);
+  assert.match(history({ outcome: 'live', issueNumber: 12 }).long, /^Último: Un proyecto, n\.º 12 ya está activo/);
+  // A project really called "A project", and one known by its slug, stay on the named path.
+  assert.match(history({ outcome: 'live', appName: 'A project' }).short, /^Último: A project ya está activo/);
+  assert.match(history({ outcome: 'live', appSlug: 'recetas' }).long, /^Último: recetas ya está activo/);
+
+  // The same for work under way.
+  const working = status({ now: [{ phase: 'building' }] });
+  assert.match(working.long, /^Trabajando en un proyecto · construyendo/);
+  assert.equal(working.short, 'Trabajando en un proyecto');
+  const workingNamed = status({ now: [{ phase: 'building', appName: 'A project' }] });
+  assert.match(workingNamed.long, /^Trabajando en A project · construyendo/);
+  for (const phase of Object.keys(tray.SHORT_PHASES)) {
+    assert.equal(message(tray.SHORT_PHASES_UNNAMED[phase]), message(tray.SHORT_PHASES[phase], { job: 'A project' }), phase);
+  }
+  assert.equal(message('messages:bot.tray.workingOnUnnamed'), message('messages:bot.tray.workingOn', { job: 'A project' }));
+  assert.equal(message('messages:bot.tray.jobNeedsYouUnnamed'), message('messages:bot.tray.jobNeedsYou', { job: 'A project' }));
+});
