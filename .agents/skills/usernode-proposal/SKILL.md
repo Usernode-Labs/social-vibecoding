@@ -10,7 +10,20 @@ Inside a Homeroom hosted dev-chat worker, use the supplied `declare_visible_chan
 commit on the assigned branch, and finish the turn. The platform harness owns
 push, PR creation, staging, checks, and the before/after shots there.
 
-This workflow's `proposal_*` tools come from the local `social_vibecoding` MCP server. If the hosted Homeroom connector is connected and the local `social_vibecoding` MCP server is not, do not set up the CLI to get them: implement in the checkout and hand the change in through the connector's `prepare_work` → `submit_work` path instead, as its work order describes. That path needs a linked GitHub account; if `prepare_work` answers `github_not_linked`, tell the user rather than falling back to the CLI.
+This workflow's `proposal_*` tools come from the native `social_vibecoding`
+MCP server. In a local Codex CLI, IDE or desktop coding session, use these tools
+or the native CLI setup/fallback described in `../usernode-api/SKILL.md`, even
+when a hosted Homeroom connector is listed. A CLI in a VM or cloud container
+remains a CLI surface. Connector presence does not select the workflow.
+
+Only on an OpenAI cloud/web surface, use the hosted connector's
+`prepare_work` → `submit_work` path as its work order describes; do not set up
+the native CLI to obtain `proposal_*` there. That external contribution path
+needs a linked GitHub account; if `prepare_work` answers `github_not_linked`,
+tell the user rather than falling back to the CLI. If the connector or a needed
+capability is unavailable there, report the limitation. Determine the surface
+from trusted runtime/client instructions or explicit user context, following
+`usernode-api`; do not infer it from available connector tools or checkout paths.
 
 Use `production` unless the user explicitly requests `local`. Read `../usernode-api/SKILL.md` before performing setup, authentication, or generic Homeroom API calls.
 

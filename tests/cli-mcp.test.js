@@ -119,6 +119,11 @@ test('MCP uses the new production origin without reusing an old-host login', asy
   const client = new Client({ name: 'cli-mcp-test', version: '1.0.0' });
   try {
     await client.connect(transport);
+    const instructions = client.getInstructions();
+    assert.match(instructions, /native Homeroom tool route for local coding clients/);
+    assert.match(instructions, /even when a hosted Homeroom connector is listed/);
+    assert.match(instructions, /Only an OpenAI cloud\/web surface uses the hosted connector route/);
+    assert.match(instructions, /trusted runtime\/client instructions or explicit user context/);
     const listed = await client.listTools();
     const byName = new Map(listed.tools.map((tool) => [tool.name, tool]));
     assert.deepEqual([...byName.keys()].sort(), [
