@@ -271,10 +271,6 @@
     "text": "Done",
     "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: finishes and closes a dialog or an editing mode when there is nothing left to confirm."
   },
-  "common.continue": {
-    "text": "Continue",
-    "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: moves to the next step."
-  },
   "common.ok": {
     "text": "OK",
     "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: acknowledges a message and closes it."
