@@ -838,7 +838,9 @@ function pickInProgressTarget(sessions, viewerId) {
 // and live claims (already expiry-filtered). Returns null when neither
 // exists — the FE treats null as "no chip" (headless runs contribute via
 // the separate issue.headless enrichment, ORed client-side).
-function composeInProgress(sessions, claims, viewerId) {
+// `busyElsewhere`: the sessions another process runs a turn or an
+// operation on (session-activity.js), read once for the whole list.
+function composeInProgress(sessions, claims, viewerId, busyElsewhere = new Set()) {
   const sess = sessions || [];
   const live = claims || [];
   if (!sess.length && !live.length) return null;
@@ -873,9 +875,9 @@ function composeInProgress(sessions, claims, viewerId) {
       username: s.username || null,
       mine: s.user_id === viewerId,
       status: s.status || null,
-      // In-process only: a multi-process platform would under-report this,
-      // in which case switch to `active_turn IS NOT NULL` on the query.
-      busy: isSessionBusy(s.id),
+      // This process's memory, and with the session-activity machine on,
+      // every process's.
+      busy: isSessionBusy(s.id) || busyElsewhere.has(Number(s.id)),
       lastActivityAt: s.last_activity_at || null,
     }));
   return {
@@ -2132,6 +2134,7 @@ function issueRoutes(config) {
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,
         [app.id, IN_PROGRESS_PAUSED_WINDOW_DAYS]
       );
+      const busyElsewhere = await require('../services/session-activity').busyIds(inProgressRows.map((r) => r.id));
       const inProgressByNumber = new Map();
       for (const r of inProgressRows) {
         const list = inProgressByNumber.get(r.n) || [];
@@ -2205,7 +2208,8 @@ function issueRoutes(config) {
           in_progress: composeInProgress(
             inProgressByNumber.get(issue.number),
             claimsByNumber.get(issue.number),
-            req.user.id
+            req.user.id,
+            busyElsewhere,
           ),
           // The Homeroom bot reading or building this request right now
           // ({ what, since }), or null. Its own field, like `headless`: the

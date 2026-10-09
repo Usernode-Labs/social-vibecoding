@@ -2454,7 +2454,8 @@ async function restoreMissingQuickReplies(config) {
       // A live consumer owns this session right now (a detached-turn
       // resume started above, or a turn came in while we were sweeping) —
       // its own wrap-up/breadcrumb will supply the pills.
-      if (activeWorkersSvc.isSessionBusy(session.id)) { skipped++; continue; }
+      if (activeWorkersSvc.isSessionBusy(session.id)
+          || await require('./src/services/session-activity').isBusy(session.id)) { skipped++; continue; }
 
       // System rows are transparent to the client's pill resolution, so
       // the deciding row is the newest user/assistant one.
@@ -5705,7 +5706,8 @@ function startSessionAutoPauseSweeper(config) {
       for (const session of rows) {
         // A session mid-turn is about to move its own head; measuring it now
         // records an answer that is wrong before it is written.
-        if (worker.isInFlight(session.id)) continue;
+        if (worker.isInFlight(session.id)
+            || await require('./src/services/session-activity').isBusy(session.id)) continue;
         const written = await integrationSvc.measure({ pool, session }, { force: true });
         if (written && !written.skipped) measured++;
       }

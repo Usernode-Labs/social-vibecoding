@@ -58,7 +58,8 @@ test('every promoted proposal is measured — no per-tick cap, no per-row cooldo
 test('a session mid-turn is skipped', () => {
   // Its head is about to move; an answer written now describes a commit that
   // will not exist by the time anybody reads it.
-  assert.match(pass9(), /worker\.isInFlight\(session\.id\)\)\s*continue/);
+  // Here, or with the session-activity machine on, in another process.
+  assert.match(pass9(), /worker\.isInFlight\(session\.id\)\s*\|\| await require\('\.\/src\/services\/session-activity'\)\.isBusy\(session\.id\)\)\s*continue/);
 });
 
 test('candidates are grouped by app so one fetch serves them all', () => {

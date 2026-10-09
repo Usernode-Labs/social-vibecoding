@@ -643,16 +643,28 @@ async function claimOperation(sessionId, label) {
   };
 }
 
-function checkRuntime(session) {
+// `elsewhere`: a turn or operation another process runs on the session
+// (session-activity.js), read by runtimeOf for the routes.
+function checkRuntime(session, { elsewhere = false } = {}) {
   const sessionId = Number(session.id);
   const runtime = {
-    session: isSessionBusy(sessionId),
+    session: isSessionBusy(sessionId) || elsewhere,
     pipeline: hasInFlightHandoffPipeline(session.id),
     build: staging.hasInFlightBuild(sessionId),
     capture: visuals.hasInFlightCapture(session.id),
   };
   runtime.inFlight = Object.values(runtime).some(Boolean);
   return runtime;
+}
+
+// What the routes report: this process's memory and every process's
+// activities, so the CLI reads the same state whichever process answers.
+async function runtimeOf(session) {
+  return checkRuntime(session, { elsewhere: await sessionActivity.isBusy(session.id) });
+}
+
+async function statusOf(session, options = {}) {
+  return publicSessionStatus(session, { ...options, runtime: await runtimeOf(session) });
 }
 
 function isoDateOrNull(value) {
@@ -1163,7 +1175,7 @@ function proposalHandoffRoutes(config) {
         // Creation commits the session/spec/history atomically below. A retry
         // therefore reads only; importantly it cannot append the original
         // spec again after a later local/web revision changed the live row.
-        return res.json(publicSessionStatus(existing));
+        return res.json(await statusOf(existing));
       }
 
       // A request ID is the exact-call idempotency key. The linked issue is
@@ -1207,7 +1219,7 @@ function proposalHandoffRoutes(config) {
           return res.status(409).json({
             error: 'replacement_target_mismatch',
             message: 'The named proposal does not implement the same linked work item.',
-            existingSession: publicSessionStatus(replacementSession),
+            existingSession: await statusOf(replacementSession),
           });
         }
         const another = overlapping.find((session) =>
@@ -1216,21 +1228,21 @@ function proposalHandoffRoutes(config) {
           return res.status(409).json({
             error: 'proposal_already_started',
             message: 'Another pre-vote proposal already implements this linked work. Continue that session or explicitly replace it.',
-            existingSession: publicSessionStatus(another),
+            existingSession: await statusOf(another),
           });
         }
-        if (checkRuntime(replacementSession).inFlight || await sessionActivity.isBusy(replacementSession.id)) {
+        if ((await runtimeOf(replacementSession)).inFlight) {
           return res.status(409).json({
             error: 'replacement_target_busy',
             message: 'The proposal being replaced still has live work. Wait for it to stop before replacing it.',
-            existingSession: publicSessionStatus(replacementSession),
+            existingSession: await statusOf(replacementSession),
           });
         }
       } else if (overlapping.length) {
         return res.status(409).json({
           error: 'proposal_already_started',
           message: 'A pre-vote proposal already implements this linked work. Continue the returned session; do not create another request ID to recover it.',
-          existingSession: publicSessionStatus(overlapping[0]),
+          existingSession: await statusOf(overlapping[0]),
         });
       }
 
@@ -1374,7 +1386,7 @@ function proposalHandoffRoutes(config) {
         }
       }
       res.status(insertedSession ? 201 : 200)
-        .json(publicSessionStatus({ ...created, app_slug: app.slug }));
+        .json(await statusOf({ ...created, app_slug: app.slug }));
     } catch (err) {
       if (err instanceof ReplacementConflictError) {
         return res.status(409).json({ error: err.code, message: err.message });
@@ -1647,7 +1659,7 @@ function proposalHandoffRoutes(config) {
         if (revisionKind === 'proposal'
             && session.handoff_head_sha === input.headSha
             && session.reviewed_head_sha === input.headSha) {
-          const status = publicSessionStatus(session);
+          const status = await statusOf(session);
           return res.status(status.revisionState === 'ready' ? 200 : 202).json({
             ...status,
             ...shotsResponse(shotsApplied, session),
@@ -1659,7 +1671,7 @@ function proposalHandoffRoutes(config) {
         if (localPipelineBusy && currentCheckedHead(session) === input.headSha) {
           return res.status(202).json({
             ok: true,
-            status: publicSessionStatus(session).state,
+            status: (await statusOf(session)).state,
             sessionId: Number(session.id),
             headSha: input.headSha,
             webPath: changeHashPath(session.app_slug, session.id),
@@ -1668,13 +1680,13 @@ function proposalHandoffRoutes(config) {
         if (!isSessionBusy(Number(session.id))
             && !localPipelineBusy && !stagingBusy && !captureBusy
             && currentCheckedHead(session) === input.headSha
-            && publicSessionStatus(session).revisionState === 'ready') {
+            && (await statusOf(session)).revisionState === 'ready') {
           // The head SHA is the build's idempotency key. A retry after the
           // original 202 response was lost must not tear down a healthy
           // preview and run the entire staging/check pipeline again. Failed
           // and interrupted states deliberately fall through so the same
           // commit can be retried without manufacturing a no-op commit.
-          return res.status(200).json(publicSessionStatus(session));
+          return res.status(200).json(await statusOf(session));
         }
         if (isSessionBusy(Number(session.id)) || localPipelineBusy || stagingBusy || captureBusy) {
           return res.status(409).json({
@@ -1950,7 +1962,7 @@ function proposalHandoffRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'view'))) {
         return res.status(404).json({ error: 'Handoff session not found' });
       }
-      res.json(publicSessionStatus(session));
+      res.json(await statusOf(session));
     } catch (err) {
       log.error('proposal-handoff', 'Failed to read status', { err: err.message });
       res.status(500).json({ error: 'Internal server error' });

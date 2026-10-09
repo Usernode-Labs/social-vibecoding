@@ -516,6 +516,15 @@ function readAutomatic() {
  * `isInFlight` is threaded through from the caller (server.js has the worker
  * module) rather than required here, per selectStale's note.
  */
+// The caller's guard, or work another process runs on the session, as the
+// session-activity machine records it (with it on), read once for the list.
+async function withElsewhere(items, isInFlight) {
+  const ids = items.map((i) => Number(i.sessionId)).filter((n) => Number.isInteger(n) && n > 0);
+  const elsewhere = await require('./session-activity').busyIds(ids);
+  if (!elsewhere.size) return isInFlight;
+  return (id) => (isInFlight ? isInFlight(id) : false) || elsewhere.has(Number(id));
+}
+
 async function sweepStale(config, { limit = null, isInFlight = null } = {}) {
   const cap = limit || staleSweepLimit();
   const summary = { examined: 0, stale: 0, abandoned: 0, tornDown: 0, failed: 0, skipped: 0 };
@@ -551,7 +560,7 @@ async function sweepStale(config, { limit = null, isInFlight = null } = {}) {
 
     const items = await classify(getPool(config), containers);
     const { stale, abandoned, selected } = selectReapable(
-      items, stagingEnv.expectedStagingFingerprint(config), { isInFlight }
+      items, stagingEnv.expectedStagingFingerprint(config), { isInFlight: await withElsewhere(items, isInFlight) }
     );
     summary.stale = stale.length;
     summary.abandoned = abandoned.length;
@@ -775,8 +784,9 @@ async function run(config, job, { isInFlight = null } = {}) {
   const startedMs = Date.now();
 
   const containers = await listPreviews(config);
+  const classified = await classify(pool, containers);
   const { stale, selected: items } = selectReapable(
-    await classify(pool, containers), stagingEnv.expectedStagingFingerprint(config), { isInFlight }
+    classified, stagingEnv.expectedStagingFingerprint(config), { isInFlight: await withElsewhere(classified, isInFlight) }
   );
   // The classification says what the session is doing; for a live session's
   // preview the reason it was taken is its env, so the row says that too.
