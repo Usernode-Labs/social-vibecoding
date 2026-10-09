@@ -8,8 +8,6 @@
     "governance-proposal": [
       "notifiers | notifier boardChange",
       "notifiers | notifier scoreVote",
-      "notifiers | notifier startCampaign",
-      "notifiers | uses src/services/fleet-maintenance.js:runCampaign",
       "notifiers | uses src/services/topochain/challenge-scorer.js:scoreOnVote",
       "notifiers | uses src/services/ws.js:noteBoardChange",
       "ownership | issues.payload ← src/routes/issues.js#issueRoutes",
@@ -30,6 +28,7 @@
       "ownership | issues.status ← src/services/homeroom-bot-move.js#closeNow",
       "ownership | issues.status ← src/services/issue-close-watcher.js#closeTwinRows",
       "ownership | issues.status ← src/services/rename-pr.js#migrateOpenRenameIssues",
+      "services | uses src/services/fleet-maintenance.js:runCampaign",
       "services | uses src/services/github.js:getIssue",
       "services | uses src/services/github.js:isEnabled",
       "services | uses src/services/staging.js:rebuildProduction",

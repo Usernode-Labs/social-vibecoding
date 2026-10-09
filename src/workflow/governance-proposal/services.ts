@@ -50,6 +50,23 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
       },
     },
 
+    // A passed maintenance campaign fans out over the fleet: the engine's
+    // loop, for as long as it runs (the kernel renews this item's lease).
+    // The campaign holds its own lease too, so whoever else drives it (the
+    // leader's resume, an admin's retry) and this never run it together;
+    // finding it driven elsewhere is done.
+    'campaign.run': {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const { rows: [c] } = await pool.query(
+          'SELECT id FROM maintenance_campaigns WHERE issue_id = $1 ORDER BY id DESC LIMIT 1', [input.issueId]);
+        if (!c) return { skipped: 'no_campaign' };
+        const out = await legacy('services/fleet-maintenance').runCampaign(config, pool, c.id);
+        return { campaignId: c.id, ...(out || {}) } as Json;
+      },
+    },
+
     // Whether a close proposal's target is still open on GitHub. A target
     // closed by hand there is announced by nothing else.
     'governance.checkTarget': {
@@ -70,16 +87,14 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
   };
 }
 
+// Post-commit kicks that only speed something up: losing one costs a wait.
 export function governanceNotifiers({ config, pool }: Deps): Record<string, (n: any) => Promise<void> | void> {
   return {
+    // A request board changed: the Workshop re-places its cards (an hourly
+    // sweep re-themes what it misses).
     boardChange: (n) => legacy('services/ws').noteBoardChange({ appId: n.appId, appSlug: n.appSlug }),
+    // "Vote on a change", graded now rather than on the scorer's next pass,
+    // which grades the same vote if this is lost.
     scoreVote: () => legacy('services/topochain/challenge-scorer').scoreOnVote(pool, config),
-    // The campaign row is committed as `running`; the engine resumes running
-    // campaigns at boot, so this kick may be lost to a crash and nothing else.
-    async startCampaign(n) {
-      const { rows: [c] } = await pool.query(
-        'SELECT id FROM maintenance_campaigns WHERE issue_id = $1 ORDER BY id DESC LIMIT 1', [n.issueId]);
-      if (c) await legacy('services/fleet-maintenance').runCampaign(config, pool, c.id);
-    },
   };
 }

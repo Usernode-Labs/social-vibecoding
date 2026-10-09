@@ -87,7 +87,7 @@ export interface MachineDeps {
   notifiers: Record<string, (n: any) => void | Promise<void>>;
 }
 
-export const NOTIFIERS = ['boardChange', 'scoreVote', 'startCampaign'] as const;
+export const NOTIFIERS = ['boardChange', 'scoreVote'] as const;
 
 // ── Copy ────────────────────────────────────────────────────────────────
 
@@ -214,7 +214,10 @@ function apply(
     push.push(appUpdate({ action: 'illustration_changed', appId: issue.appId, slug: issue.app.slug,
       illustration: p.proposed || null }));
   } else if (issue.kind === 'maintenance_campaign') {
-    notify.push({ type: 'startCampaign', issueId: issue.id });
+    // Driven as durable work: a crash or a release mid-campaign leaves the
+    // item to be run again, and the campaign's own lease keeps it to one
+    // driver whoever else resumes it (fleet-maintenance.runCampaign).
+    work.push({ kind: 'campaign.run', key: 'campaign', input: { issueId: issue.id } });
   }
   const audit = { appliedAt: at, appliedBy: by ? `admin:${by.admin}` : 'group-vote', ...tally };
   return close('applied', issue, event, ctx, audit, { writes, work, push, notify });

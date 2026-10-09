@@ -2142,6 +2142,14 @@ CREATE TABLE IF NOT EXISTS maintenance_campaign_apps (
   updated_at  TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(campaign_id, app_id)
 );
+-- One driver per campaign, in any process (fleet-maintenance.runCampaign):
+-- the driver's lease on the campaign row, renewed while it runs and let go
+-- when it stops, and the driver that claimed each app row ('running'),
+-- the only one that writes that row's result. They replace an in-process
+-- set, which a second process or a restarted one never saw.
+ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS runner_id TEXT;
+ALTER TABLE maintenance_campaigns ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+ALTER TABLE maintenance_campaign_apps ADD COLUMN IF NOT EXISTS runner_id TEXT;
 
 -- PR votes
 CREATE TABLE IF NOT EXISTS pr_votes (

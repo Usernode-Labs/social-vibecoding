@@ -703,7 +703,9 @@ test('runCampaign: fans out sequentially — one PR opened, one skipped, campaig
   ];
   let pick = 0;
   const pool = makePool([
-    [/SELECT \* FROM maintenance_campaigns WHERE id = \$1/, [CAMPAIGN]],
+    // The lease on the campaign row: taken, then renewed between apps.
+    [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
+    [/SET lease_until = NOW\(\) \+ make_interval/, [{ id: 5 }]],
     [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
     [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
     [/INSERT INTO chat_sessions/, [{ id: 501 }]],
@@ -746,12 +748,14 @@ test('runCampaign: fans out sequentially — one PR opened, one skipped, campaig
     assert.match(sess.sql, /'maintenance'/, 'session row marked source=maintenance');
     assert.equal(sess.params[1], 99, 'attributed to the platform user');
 
+    // Written by the driver that claimed the row, and only by it.
     const prOpen = pool.issued(/SET state = 'pr_open'/);
-    assert.deepEqual(prOpen.params, [101, 501]);
+    assert.deepEqual(prOpen.params.slice(0, 2), [101, 501]);
+    assert.match(prOpen.sql, /AND runner_id = \$3 AND state = 'running'/);
 
     // App 2 skipped with the model's reason.
     const skipped = pool.issued(/SET state = 'skipped'/);
-    assert.deepEqual(skipped.params, [102, 'No JWT here.']);
+    assert.deepEqual(skipped.params.slice(0, 2), [102, 'No JWT here.']);
 
     // Campaign closed out + completion note in the platform chat.
     assert.ok(pool.issued(/SET status = 'done'/), 'campaign marked done');
@@ -773,7 +777,9 @@ test('runCampaign: an app failure is recorded and the loop continues', async () 
   ];
   let pick = 0;
   const pool = makePool([
-    [/SELECT \* FROM maintenance_campaigns WHERE id = \$1/, [CAMPAIGN]],
+    // The lease on the campaign row: taken, then renewed between apps.
+    [/SET runner_id = \$2, lease_until/, [CAMPAIGN]],
+    [/SET lease_until = NOW\(\) \+ make_interval/, [{ id: 5 }]],
     [/SELECT id FROM users WHERE username = \$1/, [{ id: 99 }]],
     [/state = 'pending'\s+ORDER BY mca\.id\s+LIMIT 1/, () => pendingPicks[pick++] || []],
     [/SELECT state, COUNT\(\*\)::int AS n/, [{ state: 'failed', n: 1 }, { state: 'skipped', n: 1 }]],

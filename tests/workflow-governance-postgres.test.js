@@ -97,7 +97,7 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
   const rt = createRuntime({
     pool, machines: [machine], pollMs: 50, publish: async (q, list) => { pushed.push(...list); },
     services: { 'github.closeIssue': fake('github.closeIssue'), 'app.rebuildProduction': fake('app.rebuildProduction'),
-      'governance.checkTarget': fake('governance.checkTarget') },
+      'governance.checkTarget': fake('governance.checkTarget'), 'campaign.run': fake('campaign.run') },
   });
   runtimes.push(rt);
 
@@ -194,7 +194,11 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     const camp = (await pool.query('SELECT * FROM maintenance_campaigns WHERE issue_id = $1', [c.id])).rows[0];
     assert.equal(camp.status, 'running');
     assert.equal((await row(c)).payload.campaignId, camp.id);
-    assert.ok(notified.some((n) => n.type === 'startCampaign' && n.issueId === c.id));
+    // Driven as durable work, not a post-commit kick a crash could lose.
+    const { rows: [run] } = await pool.query(
+      `SELECT work_key, input FROM wf_work WHERE machine = $1 AND key = $2 AND kind = 'campaign.run'`, [MACHINE, issueKey(c.id)]);
+    assert.deepEqual([run.work_key, run.input], ['campaign', { issueId: c.id }]);
+    assert.ok(!notified.some((n) => n.type === 'startCampaign'));
     // secret_change: the secret, the rebuild as work, and no ciphertext left behind.
     const valueEnc = secrets.encrypt('hunter2-value', DATA_KEY);
     const sec = await issue(a, author, 'secret_change', { key: 'API_KEY', action: 'set', valueEnc, valueLast4: 'alue' });
