@@ -240,3 +240,26 @@ test('a list of approvers words the reader and the unnamed rest for the place th
     'Lo aprobaste. Se publica cuando @ada, @cy y otras 2 personas lo aprueben también.');
   assert.equal(words.afterYesWords({ missing: 2, names: ['ada'], more: 1 }).values.people, '@ada y otra persona (1)');
 });
+
+test('an app or an owner with no name gets an unnamed sentence that reads as the named one did with its stand-in', () => {
+  // English is unchanged: each unnamed message is the named one with the
+  // stand-in the code used to pass as a name written into it.
+  for (const [named, unnamed, values] of [
+    ['changes:dialog.permission.title', 'changes:dialog.permission.titleUnnamed', { action: 'use your camera' }],
+    ['changes:dialog.permission.titleCapability', 'changes:dialog.permission.titleCapabilityUnnamed', { capability: 'geolocation' }],
+    ['changes:dialog.permission.note', 'changes:dialog.permission.noteUnnamed', {}],
+    ['changes:dialog.permission.noteReopen', 'changes:dialog.permission.noteReopenUnnamed', {}],
+    ['changes:dialog.llm.introOwnKey', 'changes:dialog.llm.introOwnKeyUnnamed', {}],
+    ['changes:dialog.llm.introBudget', 'changes:dialog.llm.introBudgetUnnamed', {}],
+  ]) {
+    assert.equal(message(unnamed, values), message(named, { ...values, app: 'This app' }), unnamed);
+  }
+  assert.equal(message('changes:session.shared.workingSomeone'), message('changes:session.shared.working', { owner: 'someone' }));
+  assert.equal(message('changes:session.shared.importedBySomeone', { author: 'ada' }),
+    message('changes:session.shared.imported', { author: 'ada', owner: 'someone' }));
+  // eslint-disable-next-line global-require
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/js/app-view.js'), 'utf8');
+  assert.doesNotMatch(src, /app: appName \}/, 'the AI dialog\'s sentences take a real name or their unnamed wording');
+  assert.doesNotMatch(src, /username \|\| \(App\.user \? App\.user\.username : ''\) \|\| PlatformI18n/, 'no stand-in word becomes an owner\'s name');
+  assert.match(src, /PlatformI18n\.t\('changes:dialog\.permission\.titleUnnamed', \{ action: view\.blurb \}\)/);
+});

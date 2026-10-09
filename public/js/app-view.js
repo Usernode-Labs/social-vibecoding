@@ -5083,7 +5083,9 @@ const AppView = {
       // Native and imported changes use the same details before review.
       // Shared rows carry username; the viewer's own rows (from
       // /api/me/active-sessions) don't — the owner is the viewer then.
-      const ownerName = item.username || (App.user ? App.user.username : '') || PlatformI18n.t('changes:card.owner.someone');
+      // No name stays no name: the card has its own sentences for an owner
+      // nobody can name, and a stand-in word is never passed off as one.
+      const ownerName = item.username || (App.user ? App.user.username : '') || '';
       card = AppView._sharedSessionCardModel({ ...item, username: ownerName }, { noNav: true });
       body = {
         actions: AppView._detailActionsView('session', item),
@@ -26786,7 +26788,9 @@ const AppView = {
     const entry = (info.catalogue || []).find((c) => c.name === capability) || null;
     const declaration = (info.declared || []).find((d) => d.capability === capability) || null;
     const decision = await AppView.showPermissionConsentModal({
-      appName: info.app?.name || info.app?.slug || PlatformI18n.t('changes:dialog.permission.fallbackApp'),
+      // The app's own name, or none: the dialog's sentences have a wording
+      // of their own for an app that cannot be named.
+      appName: info.app?.name || info.app?.slug || '',
       capability,
       label: entry?.label || capability,
       // What the app may then do, in the catalogue's words; without them the
@@ -27095,7 +27099,10 @@ const AppView = {
       document.body.appendChild(root);
       AppView._llmModalEl = root;
 
-      const appName = info.app?.name || info.app?.slug || PlatformI18n.t('changes:dialog.llm.fallbackApp');
+      // The name shown on its own falls back to a label; the sentences below
+      // have an unnamed wording instead of taking that label as a name.
+      const realAppName = info.app?.name || info.app?.slug || '';
+      const appName = realAppName || PlatformI18n.t('changes:dialog.llm.fallbackApp');
       const suggested = info.llm?.suggestedCapCents ?? null;
       const prefillCents = suggested ?? info.defaultCapCents ?? 100;
       // Zero is intentional for an unverified account with no BYOK key;
@@ -27112,8 +27119,12 @@ const AppView = {
         appName,
         purpose: info.llm?.purpose ? String(info.llm.purpose) : null,
         intro: byokOnly
-          ? PlatformI18n.t('changes:dialog.llm.introOwnKey', { app: appName })
-          : PlatformI18n.t('changes:dialog.llm.introBudget', { app: appName }),
+          ? (realAppName
+            ? PlatformI18n.t('changes:dialog.llm.introOwnKey', { app: realAppName })
+            : PlatformI18n.t('changes:dialog.llm.introOwnKeyUnnamed'))
+          : (realAppName
+            ? PlatformI18n.t('changes:dialog.llm.introBudget', { app: realAppName })
+            : PlatformI18n.t('changes:dialog.llm.introBudgetUnnamed')),
         capacity: noCapacity
           ? { t: 'blocked', eligibilityUnavailable }
           : {
@@ -27221,14 +27232,22 @@ const AppView = {
         capability: view.capability,
         label: view.label,
         title: view.blurb
-          ? PlatformI18n.t('changes:dialog.permission.title', { app: view.appName, action: view.blurb })
-          : PlatformI18n.t('changes:dialog.permission.titleCapability', { app: view.appName, capability: view.capability }),
+          ? (view.appName
+            ? PlatformI18n.t('changes:dialog.permission.title', { app: view.appName, action: view.blurb })
+            : PlatformI18n.t('changes:dialog.permission.titleUnnamed', { action: view.blurb }))
+          : (view.appName
+            ? PlatformI18n.t('changes:dialog.permission.titleCapability', { app: view.appName, capability: view.capability })
+            : PlatformI18n.t('changes:dialog.permission.titleCapabilityUnnamed', { capability: view.capability })),
         reason: view.reason,
         note: view.surfaced
           ? PlatformI18n.t('changes:dialog.permission.notePreview')
           : (view.needsReload
-            ? PlatformI18n.t('changes:dialog.permission.noteReopen', { app: view.appName })
-            : PlatformI18n.t('changes:dialog.permission.note', { app: view.appName })),
+            ? (view.appName
+              ? PlatformI18n.t('changes:dialog.permission.noteReopen', { app: view.appName })
+              : PlatformI18n.t('changes:dialog.permission.noteReopenUnnamed'))
+            : (view.appName
+              ? PlatformI18n.t('changes:dialog.permission.note', { app: view.appName })
+              : PlatformI18n.t('changes:dialog.permission.noteUnnamed'))),
         confirmLabel: view.needsReload ? PlatformI18n.t('changes:dialog.permission.allowReopen') : PlatformI18n.t('changes:dialog.permission.allow'),
       });
 

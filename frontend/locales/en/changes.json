@@ -323,10 +323,6 @@
     "text": "General discussion",
     "description": "Title of the card at the top of a project's board that leads to its discussion, when the project's name is not known."
   },
-  "card.owner.someone": {
-    "text": "someone",
-    "description": "Stands in for a person's username on the card of a change in progress when its owner is not known. Lower case, as it sits in a line of small text."
-  },
   "card.meta.visibleToGroup": {
     "text": "Visible to the group",
     "description": "Status at the end of the small line on the card of a change that is still being built, when its owner has shared it with the project's members."
@@ -7651,17 +7647,21 @@
     "text": "Directory lookup failed ({{status}}).",
     "description": "Error handed back to an embedded app, which may show it to its user, when looking up a member in Homeroom's directory failed and the server gave no reason. {{status}} is the HTTP status code, a number."
   },
-  "dialog.permission.fallbackApp": {
-    "text": "This app",
-    "description": "Stands in for an app's name in the permission dialog (\"Allow {{app}} to …?\") when the name is unknown."
-  },
   "dialog.permission.title": {
     "text": "Allow {{app}} to {{action}}?",
     "description": "Title of the dialog Homeroom shows when an app asks for a device permission. {{app}} is the app's name and {{action}} what it wants to do, in the platform's own words, for example \"use your camera\"."
   },
+  "dialog.permission.titleUnnamed": {
+    "text": "Allow This app to {{action}}?",
+    "description": "Title of the dialog Homeroom shows when an app asks for a device permission. {{action}} is what the app wants to do, in the platform's own words, for example \"use your camera\". Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
+  },
   "dialog.permission.titleCapability": {
     "text": "Allow {{app}} to use {{capability}}?",
     "description": "Title of the dialog Homeroom shows when an app asks for a device permission that has no description. {{app}} is the app's name and {{capability}} the permission's technical name, for example \"geolocation\"."
+  },
+  "dialog.permission.titleCapabilityUnnamed": {
+    "text": "Allow This app to use {{capability}}?",
+    "description": "Title of the dialog Homeroom shows when an app asks for a device permission that has no description. {{capability}} is the permission's technical name, for example \"geolocation\". Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
   },
   "dialog.permission.notePreview": {
     "text": "This preview cannot turn the permission on, but your answer is saved for the app itself.",
@@ -7671,9 +7671,17 @@
     "text": "Only {{app}} gets this, and you can take it back anytime in Settings.",
     "description": "Note in the permission dialog. {{app}} is the app's name; \"this\" is the permission being asked for."
   },
+  "dialog.permission.noteUnnamed": {
+    "text": "Only This app gets this, and you can take it back anytime in Settings.",
+    "description": "Note in the permission dialog. \"this\" is the permission being asked for. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
+  },
   "dialog.permission.noteReopen": {
     "text": "Only {{app}} gets this, and you can take it back anytime in Settings. The app will reopen so the change takes effect.",
     "description": "Note in the permission dialog when the app has to be loaded again for the permission to work. {{app}} is the app's name; \"this\" is the permission being asked for."
+  },
+  "dialog.permission.noteReopenUnnamed": {
+    "text": "Only This app gets this, and you can take it back anytime in Settings. The app will reopen so the change takes effect.",
+    "description": "Note in the permission dialog when the app has to be loaded again for the permission to work. \"this\" is the permission being asked for. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
   },
   "dialog.permission.allow": {
     "text": "Allow",
@@ -7685,15 +7693,23 @@
   },
   "dialog.llm.fallbackApp": {
     "text": "This app",
-    "description": "Stands in for an app's name in the dialog that asks whether the app may use AI on the person's budget, when the name is unknown."
+    "description": "Stands where the app's name is shown on its own in the dialog that asks whether an app may use AI on the person's account, when the name is not known. Shown alone, as a label; the dialog's sentences have unnamed wordings of their own."
   },
   "dialog.llm.introOwnKey": {
     "text": "This lets {{app}} use your own Anthropic API key, without exposing the key to the app.",
     "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own Anthropic API key. {{app}} is the app's name; Anthropic is a company's name."
   },
+  "dialog.llm.introOwnKeyUnnamed": {
+    "text": "This lets This app use your own Anthropic API key, without exposing the key to the app.",
+    "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own Anthropic API key. Anthropic is a company's name. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
+  },
   "dialog.llm.introBudget": {
     "text": "This lets {{app}} spend from your daily AI budget (the same one your agent sessions use) up to the daily cap below.",
     "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. {{app}} is the app's name; the cap is the spending limit set in the field below."
+  },
+  "dialog.llm.introBudgetUnnamed": {
+    "text": "This lets This app spend from your daily AI budget (the same one your agent sessions use) up to the daily cap below.",
+    "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. The cap is the spending limit set in the field below. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
   },
   "dialog.llm.capSuggested": {
     "text": "Suggested by this app. You can change it.",
