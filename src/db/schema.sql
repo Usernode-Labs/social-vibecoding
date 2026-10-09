@@ -10779,9 +10779,9 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
   error           TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   decided_at      TIMESTAMPTZ,
-  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request')),
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'app_confirm')),
   CONSTRAINT homeroom_bot_dm_actions_status_check
-    CHECK (status IN ('open', 'done', 'declined', 'failed'))
+    CHECK (status IN ('open', 'done', 'declined', 'failed', 'closed'))
 );
 COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 -- #11 (WP3): the proposal a withdrawal is about, and the wider kind check
@@ -10796,11 +10796,23 @@ COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
 ALTER TABLE homeroom_bot_dm_actions
   ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
 ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS source_issue_number INTEGER;
+-- #4501: `app_confirm`, the question the bot asks before it acts on a project
+-- name that is not exactly the one the person wrote (services/homeroom-bot-
+-- mayor.js projectForTurn). `title` is the name they typed, `details` their
+-- original message (what the Yes turn reads back), `app_id` the project the
+-- question is about, and `alternatives` the closest projects the No answer
+-- lists.
+ALTER TABLE homeroom_bot_dm_actions ADD COLUMN IF NOT EXISTS alternatives JSONB;
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_kind_check;
   ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_kind_check
-    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request'));
+    CHECK (kind IN ('file_request', 'withdraw_proposal', 'build_plan', 'move_request', 'app_confirm'));
+  -- #4501: `closed`, a question an older one overtook: answered by neither
+  -- Yes nor No, so its card reads "No longer needed." everywhere.
+  ALTER TABLE homeroom_bot_dm_actions DROP CONSTRAINT IF EXISTS homeroom_bot_dm_actions_status_check;
+  ALTER TABLE homeroom_bot_dm_actions ADD CONSTRAINT homeroom_bot_dm_actions_status_check
+    CHECK (status IN ('open', 'done', 'declined', 'failed', 'closed'));
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is

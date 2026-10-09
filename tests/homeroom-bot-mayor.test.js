@@ -421,6 +421,9 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   assert.deepEqual(mayor.OFFER_ANSWERS, {
     file_request: ['File it', 'Not now'], withdraw_proposal: ['Withdraw it', 'Keep it'],
     move_request: ['Move it to Homeroom', 'Keep it here'],
+    // #4501: the project question the bot asks before it acts on a name that
+    // is not exactly the one they wrote.
+    app_confirm: ['Yes', 'No, another app'],
   });
   assert.equal(mayor.REPORT_SOURCE, 'homeroom_bot');
 });
@@ -631,4 +634,76 @@ test('#4239: moving a request about Homeroom itself, as the model and the person
   for (const text of [move.moveOfferText({ name: 'Ear Trainer', issueNumber: 6, title: 'Header', why: 'It is the frame' }), tool.description]) {
     assert.doesNotMatch(text, /\u2014/, 'no em dash');
   }
+});
+
+// \u2500\u2500 #4501: a project name is settled before the bot acts on it \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+test('#4501: their own words name the project; a different spelling never does', () => {
+  const app = { id: 7, slug: 'gym-tracker-9de81f', name: 'Gym Tracker' };
+  // Their words: the name, the short name, with a #, any case, extra spaces,
+  // punctuation around it.
+  for (const text of [
+    'Add a workout log to Gym Tracker', 'can you look at gym tracker?', 'check GYM TRACKER for me',
+    'on #gym-tracker-9de81f, add rest days', 'Gym   Tracker please', 'open gym-tracker-9de81f.',
+  ]) {
+    assert.equal(mayor.theyNamed({ userText: text }, app), true, text);
+  }
+  // A spelling the model corrected on their behalf is not their words.
+  for (const text of ['add it to the gym app', 'GymTrackr', 'the tracker one', '']) {
+    assert.equal(mayor.theyNamed({ userText: text }, app), false, text);
+  }
+  // "file it there" under a bot message that names the project counts too:
+  // by the quoted words, and by the project the bot's own message was about.
+  assert.equal(mayor.theyNamed({ userText: 'file it there', quoted: { text: '**Gym Tracker**, new request: Rest days', appSlug: app.slug } }, app), true);
+  assert.equal(mayor.theyNamed({ userText: 'file it there', quoted: { text: 'whatever', appSlug: app.slug } }, app), true);
+  assert.equal(mayor.theyNamed({ userText: 'file it there', quoted: { text: '**Ear Trainer**, new request', appSlug: 'ear-trainer' } }, app), false);
+  assert.equal(mayor.theyNamed({ userText: 'file it there' }, app), false, 'no quoted message, no name');
+});
+
+test('#4501: the closest projects are ordered by the words they wrote', () => {
+  const rows = [
+    { id: 3, slug: 'plant-pal', name: 'Plant Pal' },
+    { id: 1, slug: 'gym-tracker-9de81f', name: 'Gym Tracker' },
+    { id: 2, slug: 'gym-buddy', name: 'Gym Buddy' },
+    { id: 4, slug: 'diary', name: 'Diary' },
+  ];
+  const [first] = mayor.closestFirst('Gym Trackr', rows);
+  assert.equal(first.slug, 'gym-tracker-9de81f', '"Gym Trackr" is nearest "Gym Tracker"');
+  const order = mayor.closestFirst('gym tra', rows).map((r) => r.slug);
+  assert.deepEqual(order.slice(0, 2), ['gym-tracker-9de81f', 'gym-buddy']);
+  assert.ok(mayor.MAX_CLOSEST === 3, 'at most three are offered');
+  assert.doesNotMatch(mayor.foldWords('Gym-Tracker!'), /[^a-z0-9 ]/);
+});
+
+test('#4501: a question not answered holds the turn, and the card carries Yes, No, another app and an Open link', async () => {
+  const notExact = mayor.projectForTurn ? null : null; // projectForTurn needs a pool; its shape is pinned here
+  const tools = Object.fromEntries(mayor.TOOLS.map((t) => [t.function.name, t.function]));
+  // Every tool that takes a project is told to pass it exactly as they wrote it.
+  for (const name of ['request_detail', 'list_source', 'read_source', 'answer_question', 'comment_on_request',
+    'start_request', 'offer_request', 'offer_move_request', 'revise_proposal', 'report_problem']) {
+    assert.match(tools[name].parameters.properties.project.description,
+      /Exactly as they wrote it, never a corrected or guessed name\./, name);
+  }
+  // The prompt tells the model what notExact means and that it waits.
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /Pass a project to a tool exactly as they wrote it, never a corrected or guessed name\./);
+  assert.match(prompt, /When a result says\n\s+notExact, your reply asks which project they mean, with Yes and No, another app under it, and you wait for\n\s+their answer\./);
+  assert.doesNotMatch(prompt.slice(0, prompt.indexOf('PLATFORM RULES')), /\u2014/);
+
+  // The card the question sends: the same buttons an offer has, plus the link.
+  assert.deepEqual(mayor.offerActions('app_confirm').map((a) => [a.id, a.label, a.type]),
+    [['yes', 'Yes', 'server'], ['no', 'No, another app', 'server']]);
+  // The link that opens the project, so the answer can be checked: read off
+  // its own source, which needs no database (and no key, which this
+  // environment may not hold).
+  const dmSrc = read('src/services/homeroom-bot-dm.js');
+  assert.match(dmSrc, /function openAppAction\(\{ slug, appName \}\) \{\n\s+if \(typeof slug !== 'string' \|\| !slug\) return null;/,
+    'an Open link only when there is a project to open');
+
+  // The words this module writes carry no em dash.
+  const src = read('src/services/homeroom-bot-mayor.js');
+  const block = src.slice(src.indexOf('A project name is settled before anything acts on it'));
+  assert.doesNotMatch(block, /\u2014/, 'the new copy has no em dash');
+  assert.match(mayor.NO_OFFER_NOTE, /no draft is waiting/);
+  void notExact;
 });

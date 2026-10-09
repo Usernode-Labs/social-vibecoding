@@ -141,11 +141,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   const bot = await user('homeroom_bot', { synthetic: true });
   const ada = await user('ada');
   const sam = await user('sam');
-  async function project(slug, owner) {
+  async function project(slug, owner, name = null) {
     const { rows: [inserted] } = await pool.query(
       `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility)
        VALUES ($1, $2, 'running', $3, $4, 'public', 'public') RETURNING id`,
-      [slug.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()), slug, owner.id, `https://github.com/usernode-bot/${slug}`],
+      [name || slug.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()), slug, owner.id, `https://github.com/usernode-bot/${slug}`],
     );
     // The community is made by a trigger after the insert.
     const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [inserted.id]);
@@ -1884,7 +1884,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query(`UPDATE apps SET view_visibility = 'private', collab_visibility = 'private' WHERE id = $1`, [diary.id]);
     // A private project is seen by its collaborators: she is its one.
     await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [diary.id, ada.id]);
-    const hidden = await report('the diary build is stuck, please tell the team', {
+    const hidden = await report('my secret diary build is stuck, please tell the team', {
       summary: 'A build that never finishes', details: 'My request has been building for hours.', project: 'secret-diary', number: 2,
     });
     assert.equal(hidden.result.ok, true);
@@ -1892,12 +1892,12 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const privateBody = posted.at(-1).body.body;
     assert.match(privateBody, new RegExp(`\\*\\*App:\\*\\* a private project \\(app id ${diary.id}\\)\\n\\*\\*Request:\\*\\* #2\\n`));
     assert.match(privateBody, /My request has been building for hours\./);
-    assert.doesNotMatch(privateBody, /Secret diary|secret-diary|the diary build is stuck/, 'neither its name nor her chat');
+    assert.doesNotMatch(privateBody, /Secret diary|secret-diary|my secret diary build is stuck/, 'neither its name nor her chat');
     const { rows: [receipt] } = await pool.query(
       `SELECT description FROM feedback_reports WHERE user_id = $1 AND source = 'homeroom_bot' ORDER BY id DESC LIMIT 1`, [ada.id],
     );
     assert.match(receipt.description, /^\*\*App:\*\* Secret diary \(secret-diary\)\n/, 'the team\'s private copy names it');
-    assert.match(receipt.description, /> \*\*ada_\d+:\*\* the diary build is stuck, please tell the team$/);
+    assert.match(receipt.description, /> \*\*ada_\d+:\*\* my secret diary build is stuck, please tell the team$/);
     await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
   });
 
@@ -1972,5 +1972,193 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const quiet = await turn('ok thanks', scripted([[['reply', { text: 'Any time.' }]]]));
     assert.equal((await read(quiet)).metadata.homeroomBot.actions, undefined, 'none offered, none drawn');
     assert.equal((await read(sent)).metadata.homeroomBot.status, 'closed', 'the earlier ones went when it answered again');
+  });
+
+  // ── #4501: a project name is settled before the bot acts on it ──────────
+  //
+  // The report: "add it to Gym Trackr" got "done", drafted on Gym Tracker,
+  // which the model's own guess had exact-matched. Now a name that is not
+  // exactly the one they wrote is asked about first, and nothing is looked
+  // at, drafted or filed on any project until it is answered.
+
+  const gym = await project('gym-tracker-9de81f', ada, 'Gym Tracker');
+  const lite = await project('gym-trackr-lite', ada, 'Gym Trackr Lite');
+  const confirmRow = async (messageId) => (await pool.query(
+    'SELECT kind, title, status, app_id, alternatives FROM homeroom_bot_dm_actions WHERE message_id = $1',
+    [messageId],
+  )).rows[0];
+  const lastError = async () => (await pool.query('SELECT error FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1')).rows[0].error;
+
+  await t.test('#4501: a misspelled name gets the question, and nothing is drafted on any project', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const before = created.length;
+    const seen = [];
+    const sent = await turn('add rest days to gym trackr', scripted([
+      [['offer_request', { project: 'Gym Trackr', title: 'Rest days', details: 'Add rest days to the week.' }]],
+      [['reply', { text: 'Did you mean Gym Tracker? Say yes and I\'ll draft it there.' }]],
+    ], seen));
+    const tool = lastToolResult(seen[0], 'offer_request');
+    assert.equal(tool.notExact, true, 'the tool refused, and the model is told to ask');
+    assert.equal(tool.closest[0].project, gym.slug, 'with the closest project first');
+    assert.equal(tool.closest.length <= mayor.MAX_CLOSEST, true);
+    assert.equal(created.length, before, 'nothing was filed');
+    const msg = await read(sent);
+    const meta = msg.metadata.homeroomBot;
+    assert.equal(msg.content, 'Did you mean Gym Tracker? Say yes and I\'ll draft it there.');
+    assert.deepEqual(
+      { kind: meta.kind, question: meta.question, answers: meta.answers, status: meta.status },
+      { kind: 'confirm', question: 'Did you mean Gym Tracker?', answers: ['Yes', 'No, another app'], status: 'open' },
+    );
+    assert.deepEqual(meta.actions.map((a) => [a.id, a.type]),
+      [['yes', 'server'], ['no', 'server'], ['open_app', 'open']], 'Yes, No, another app, and the Open link');
+    assert.deepEqual(meta.actions.find((a) => a.id === 'open_app').target, `#app/${gym.slug}/app`,
+      'the answer can be checked against the project itself');
+    const row = await confirmRow(sent.messageId);
+    assert.deepEqual(
+      { kind: row.kind, title: row.title, status: row.status, app_id: row.app_id },
+      { kind: 'app_confirm', title: 'Gym Trackr', status: 'open', app_id: gym.id },
+      'the words as they were passed, and the closest project named');
+    assert.ok(row.alternatives.some((a) => Number(a.appId) === Number(gym.id)));
+    assert.equal(await lastError(), null);
+  });
+
+  await t.test('#4501: an exact name in her own words goes on with no question', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const before = created.length;
+    const seen = [];
+    const sent = await turn('add protein logging to Gym Tracker', scripted([
+      [['offer_request', { project: 'Gym Tracker', title: 'Protein log', details: 'Log protein per day.' }]],
+      [['reply', { text: 'Want me to file this on Gym Tracker?' }]],
+    ], seen));
+    const tool = lastToolResult(seen[0], 'offer_request');
+    assert.equal(tool.ok, true, tool.error);
+    const meta = (await read(sent)).metadata.homeroomBot;
+    assert.deepEqual(meta.answers, ['File it', 'Not now'], 'the ordinary offer, on the project she named, no question');
+    assert.equal(created.length, before, 'and nothing filed until she taps File it');
+  });
+
+  await t.test('#4501: the model\'s own exact spelling, which she never wrote, is asked about too', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const before = created.length;
+    const seen = [];
+    const sent = await turn('add water tracking to my gym app', scripted([
+      [['offer_request', { project: 'Gym Tracker', title: 'Water log', details: 'Log water.' }]],
+      [['reply', { text: 'Did you mean Gym Tracker?' }]],
+    ], seen));
+    const tool = lastToolResult(seen[0], 'offer_request');
+    assert.equal(tool.notExact, true);
+    assert.deepEqual(tool.matched, { project: gym.slug, projectName: 'Gym Tracker' },
+      'the tool names what it exact-matched, as a question, never an answer');
+    assert.ok(!tool.closest.some((c) => c.project === gym.slug), 'the guessed project is not offered back');
+    assert.equal(created.length, before);
+    assert.equal((await read(sent)).metadata.homeroomBot.question, 'Did you mean Gym Tracker?');
+  });
+
+  // The question from the misspelling test above is still open; the newest
+  // one is the only one hers to answer.
+  await t.test('#4501: sending a new question closes the older one', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const older = (await pool.query(
+      `SELECT a.id FROM homeroom_bot_dm_actions a
+         JOIN conversation_messages m ON m.id = a.message_id
+        WHERE a.user_id = $1 AND a.kind = 'app_confirm' AND a.status = 'open' ORDER BY a.id`,
+      [ada.id],
+    )).rows;
+    assert.ok(older.length >= 1);
+    await turn('and stretch logging on gym traker', scripted([
+      [['offer_request', { project: 'gym traker', title: 'Stretch log', details: 'Log stretches.' }]],
+      [['reply', { text: 'Did you mean Gym Tracker?' }]],
+    ]));
+    for (const row of older) {
+      const closed = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [row.id]);
+      assert.equal(closed.rows[0].status, 'closed', `action ${row.id} is overtaken`);
+    }
+    const { rows: open } = await pool.query(
+      `SELECT status FROM homeroom_bot_dm_actions
+        WHERE user_id = $1 AND kind = 'app_confirm' AND status = 'open'`, [ada.id],
+    );
+    assert.equal(open.length, 1, 'only the newest waits');
+  });
+
+  // Yes carries on with what was first asked, on the project she confirmed.
+  const gymQuestion = (await pool.query(
+    `SELECT id, message_id, details FROM homeroom_bot_dm_actions
+      WHERE user_id = $1 AND kind = 'app_confirm' AND status = 'open' ORDER BY id DESC LIMIT 1`,
+    [ada.id],
+  )).rows[0];
+
+  await t.test('#4501: Yes on the question carries the turn on, on the confirmed project', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const turnsBefore = (await pool.query('SELECT COALESCE(MAX(id), 0) AS n FROM homeroom_bot_dm_turns')).rows[0].n;
+    const seen = [];
+    const tapped = await mayor.decideOfferTap(pool, CONFIG, {
+      user: ada, actionId: gymQuestion.id, choice: 'yes',
+      deps: { bot, chat: scripted([
+        [['offer_request', { project: 'Gym Trackr', title: 'Rest days', details: 'Add rest days to the week.' }]],
+        [['reply', { text: 'Here is the request I\'d file on Gym Tracker.' }]],
+      ], seen), apiKey: 'sk-test', openMcp, sleep: async () => {} },
+    });
+    assert.deepEqual(tapped, { ok: true, choice: 'yes', label: 'Yes' });
+    // The turn runs off the tap, on the words she first wrote.
+    let confirmed = null;
+    for (let i = 0; i < 100 && !confirmed; i += 1) {
+      await new Promise((r) => setTimeout(r, 50));
+      confirmed = (await pool.query(
+        'SELECT id FROM homeroom_bot_dm_turns WHERE id > $1', [turnsBefore],
+      )).rows[0] || null;
+    }
+    assert.ok(confirmed, 'the pinned turn ran');
+    const tool = lastToolResult(seen[0], 'offer_request');
+    assert.equal(tool.ok, true, tool.error, 'her words are enough now: the project is settled');
+    const { rows: offers } = await pool.query(
+      `SELECT id FROM homeroom_bot_dm_actions WHERE user_id = $1 AND kind = 'file_request'
+        AND app_id = $2 AND status = 'open'`, [ada.id, gym.id],
+    );
+    assert.ok(offers.length >= 1, 'the draft is on Gym Tracker, the one she confirmed');
+    assert.ok(seen[0].messages.some((m) => m.role === 'system' && /the project for this turn is settled/i.test(m.content)));
+    const decided = await pool.query('SELECT status FROM homeroom_bot_dm_actions WHERE id = $1', [gymQuestion.id]);
+    assert.equal(decided.rows[0].status, 'done');
+    // Clean the open draft so no later test trips over it.
+    await pool.query('DELETE FROM homeroom_bot_dm_actions WHERE kind = \'file_request\' AND app_id = $1 AND status = \'open\'', [gym.id]);
+  });
+
+  await t.test('#4501: No lists the closest projects she can see, and files nothing', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    const before = created.length;
+    const sent = await turn('and a weekly summary on gym traacker', scripted([
+      [['offer_request', { project: 'gym traacker', title: 'Weekly summary', details: 'Summarise the week.' }]],
+      [['reply', { text: 'Did you mean Gym Tracker?' }]],
+    ]));
+    const { rows: [action] } = await pool.query(
+      'SELECT id FROM homeroom_bot_dm_actions WHERE message_id = $1 AND kind = \'app_confirm\'', [sent.messageId],
+    );
+    const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'no', deps: { bot } });
+    assert.deepEqual(tapped, { ok: true, choice: 'no', label: 'No, another app' });
+    const { rows: [ackId] } = await pool.query(
+      `SELECT id FROM conversation_messages
+        WHERE conversation_id = $1 AND sender_id = $2 AND id > $3 ORDER BY id DESC LIMIT 1`,
+      [opened.conversationId, bot.id, sent.messageId],
+    );
+    const ack = await conversations.getMessage(pool, ada, opened.conversationId, ackId.id);
+    assert.match(ack.content, /The closest projects to "gym traacker" you can see/);
+    const { rows: cards } = await pool.query(
+      'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1 ORDER BY position', [ack.id],
+    );
+    assert.ok(cards.some((c) => c.object_type === 'app' && Number(c.object_ref) === Number(gym.id)), 'the closest projects, as cards');
+    assert.equal(created.length, before, 'and nothing filed anywhere');
+  });
+
+  await t.test('#4501: a reply that quotes a message naming the project counts as named', async () => {
+    await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
+    // The bot's own question named Gym Tracker; "yes, that one" alone does not.
+    const seen = [];
+    const sent = await turn('yes, that one', scripted([
+      [['offer_request', { project: 'Gym Tracker', title: 'Rest days', details: 'Add rest days to the week.' }]],
+      [['reply', { text: 'Want me to file this on Gym Tracker?' }]],
+    ], seen), { input: { reply_to_id: gymQuestion.message_id } });
+    const tool = lastToolResult(seen[0], 'offer_request');
+    assert.equal(tool.ok, true, tool.error, 'the quoted message names the project, so no question');
+    const meta = (await read(sent)).metadata.homeroomBot;
+    assert.deepEqual(meta.answers, ['File it', 'Not now']);
   });
 });

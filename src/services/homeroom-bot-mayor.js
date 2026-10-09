@@ -189,6 +189,9 @@ const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
   move_request: Object.freeze([MOVE_IT, KEEP_HERE]),
+  // The answers under the question the bot asks before it acts on a project
+  // name that is not exactly the one they wrote (projectForTurn below).
+  app_confirm: Object.freeze(['Yes', 'No, another app']),
 });
 
 /**
@@ -385,6 +388,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     'Rules:',
     '- Only say what the tools show. If you do not know, say so. Never claim something is built, merged or live',
     '  unless the tools say it is.',
+    '- Pass a project to a tool exactly as they wrote it, never a corrected or guessed name. When a result says',
+    '  notExact, your reply asks which project they mean, with Yes and No, another app under it, and you wait for',
+    '  their answer.',
     '- When they ask how long something will take, lead with how long its step usually takes (typicalMinutes in',
     '  progress, a range of minutes). A step\'s time limit is only the most it can take before it is stopped:',
     '  mention it as that, never as the wait. Never guess a time of your own, and never say it is nearly done.',
@@ -441,7 +447,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          project: { type: 'string', description: 'The project\'s name or its short name (slug) from my_work.' },
+          project: { type: 'string', description: 'The project\'s name or its short name (slug) from my_work. Exactly as they wrote it, never a corrected or guessed name.' },
           number: { type: 'integer', description: 'The request number.' },
         },
         required: ['project', 'number'],
@@ -467,7 +473,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          project: { type: 'string', description: 'The project\'s name or short name.' },
+          project: { type: 'string', description: 'The project\'s name or short name. Exactly as they wrote it, never a corrected or guessed name.' },
           dir: { type: 'string', description: 'Only files under this folder.' },
           match: { type: 'string', description: 'Only paths containing all of these words (case does not matter).' },
         },
@@ -485,7 +491,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          project: { type: 'string', description: 'The project\'s name or short name.' },
+          project: { type: 'string', description: 'The project\'s name or short name. Exactly as they wrote it, never a corrected or guessed name.' },
           path: { type: 'string', description: 'The file\'s path, from list_source.' },
           fromLine: { type: 'integer', description: 'The first line to read (1 by default).' },
         },
@@ -502,7 +508,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          project: { type: 'string' },
+          project: { type: 'string', description: 'With number, the request\'s project. Exactly as they wrote it, never a corrected or guessed name.' },
           number: { type: 'integer' },
         },
         additionalProperties: false,
@@ -519,7 +525,7 @@ const TOOLS = [
         properties: {
           change: { type: 'string', description: 'What they want changed, plainly. When their message only says yes to a change you offered, the change you offered.' },
           proposal: { type: 'integer', description: 'The proposal\'s id, from progress, my_work or request_detail.' },
-          project: { type: 'string', description: 'Instead of proposal: the project of the request it was built for.' },
+          project: { type: 'string', description: 'Instead of proposal: the project of the request it was built for. Exactly as they wrote it, never a corrected or guessed name.' },
           number: { type: 'integer', description: 'With project: the number of the request it was built for.' },
         },
         required: ['change'],
@@ -535,7 +541,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          project: { type: 'string', description: 'The project\'s name or short name.' },
+          project: { type: 'string', description: 'The project\'s name or short name. Exactly as they wrote it, never a corrected or guessed name.' },
           number: { type: 'integer', description: 'The request number.' },
           comment: { type: 'string', description: 'What they want added, plainly, as you understood it. When they only said yes to adding something you suggested, what you suggested.' },
         },
@@ -552,7 +558,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          project: { type: 'string', description: 'The project\'s name or short name.' },
+          project: { type: 'string', description: 'The project\'s name or short name. Exactly as they wrote it, never a corrected or guessed name.' },
           number: { type: 'integer', description: 'The request number.' },
         },
         required: ['project', 'number'],
@@ -568,7 +574,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          project: { type: 'string', description: 'The project\'s name or short name, from my_projects.' },
+          project: { type: 'string', description: 'The project\'s name or short name, from my_projects. Exactly as they wrote it, never a corrected or guessed name.' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
           details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
         },
@@ -585,7 +591,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          project: { type: 'string', description: 'The project it is on: its name or short name.' },
+          project: { type: 'string', description: 'The project it is on: its name or short name. Exactly as they wrote it, never a corrected or guessed name.' },
           number: { type: 'integer', description: 'The request number.' },
           reason: { type: 'string', description: 'Why it is about Homeroom rather than the project, in a few plain words. They see it with the offer.' },
         },
@@ -620,7 +626,7 @@ const TOOLS = [
         properties: {
           summary: { type: 'string', description: 'The problem in one short sentence: the report\'s public title.' },
           details: { type: 'string', description: 'What happened and what they expected, plainly, in their words where you can. Public.' },
-          project: { type: 'string', description: 'The project it is about, if one: its name or short name.' },
+          project: { type: 'string', description: 'The project it is about, if one: its name or short name. Exactly as they wrote it, never a corrected or guessed name.' },
           number: { type: 'integer', description: 'With project: the request it is about, if one.' },
         },
         required: ['summary', 'details'],
@@ -908,6 +914,222 @@ async function canView(pool, app, user) {
   } catch { return false; }
 }
 
+// ── A project name is settled before anything acts on it ─────────────────
+//
+// The closest match the model saw ("the closest match is Gym Tracker") was
+// its own guess: it corrected the spelling and called the tool with the real
+// project, which exact-matched, so a request could be drafted on another
+// app's board without anybody saying so. Now a tool that takes a project
+// goes through projectForTurn: an exact name in their own words goes on as
+// today, anything else gets a question (Yes / No, another app / Open ...) and
+// nothing is looked up, filed or started until they answer it.
+
+const MAX_CLOSEST = 3;
+// How many candidate rows the closest-projects query reads before the pure
+// ranker orders them: nothing depends on a Postgres fuzzy extension.
+const CLOSEST_SCAN = 50;
+
+/** Pure: words as they are compared, letters and digits only. */
+function foldWords(text) {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Pure: whether the words carry a project's name or its short name, a leading # before a slug too. */
+function saidIt(text, app) {
+  const hay = ` ${foldWords(text)} `;
+  if (hay === '  ') return false;
+  const name = foldWords(app.name || '');
+  const slug = foldWords(app.slug || '');
+  return (name.length > 0 && hay.includes(` ${name} `)) || (slug.length > 0 && hay.includes(` ${slug} `));
+}
+
+/**
+ * Pure: whether the person's own words name `app`. Their message first; when
+ * the message is a reply, the message it quotes (ctx.quoted, read once by
+ * projectForTurn), so "file it there" under a bot message about Gym Tracker
+ * never asks again.
+ */
+function theyNamed(ctx, app) {
+  if (saidIt(ctx.userText, app)) return true;
+  const quoted = ctx.quoted;
+  if (!quoted) return false;
+  if (quoted.appSlug && String(quoted.appSlug) === String(app.slug)) return true;
+  return saidIt(quoted.text, app);
+}
+
+/** Pure: Levenshtein distance, small enough for a handful of candidate names. */
+function editDistance(a, b) {
+  if (a === b) return 0;
+  const m = a.length;
+  const n = b.length;
+  if (!m || !n) return Math.max(m, n);
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= n; j += 1) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+/**
+ * Pure: the closest projects first, by edit distance against the words they
+ * wrote, then by a shared prefix, then by name.
+ */
+function closestFirst(asked, rows) {
+  const q = foldWords(asked);
+  const scored = rows.map((row) => {
+    const name = foldWords(row.name || '');
+    const slug = foldWords(row.slug || '');
+    const dist = Math.min(q ? editDistance(q, name) : 0, q ? editDistance(q, slug) : 0);
+    const prefix = q && (name.startsWith(q) || slug.startsWith(q)) ? 0 : 1;
+    return { row, dist, prefix };
+  });
+  scored.sort((a, b) => a.dist - b.dist || a.prefix - b.prefix
+    || foldWords(a.row.name || '').localeCompare(foldWords(b.row.name || ''))
+    || (Number(a.row.id) || 0) - (Number(b.row.id) || 0));
+  return scored.map((s) => s.row);
+}
+
+/**
+ * The closest projects they can actually see, at most MAX_CLOSEST: public, a
+ * collaborator row, or a community they are a member of (the same three the
+ * existing reads use), never a suspended app. Preordered by whether the name
+ * or short name contains the words they wrote, then ordered by closestFirst.
+ */
+async function closestApps(pool, user, asked) {
+  const words = [...new Set(foldWords(asked).split(' '))].filter((w) => w.length > 1).slice(0, 6);
+  const like = words.map((w) => `%${w}%`);
+  const order = like.length
+    ? like.map((_, i) => `((a.name ILIKE $${i + 2}) OR (a.slug ILIKE $${i + 2}))::int`).join(' + ')
+    : '0';
+  const { rows } = await pool.query(
+    `SELECT ${require('./app-access').nonSecretAppColumnList('a')} FROM apps a
+      WHERE a.moderation_suspended_at IS NULL
+        AND (a.view_visibility = 'public'
+          OR EXISTS (SELECT 1 FROM app_collaborators c WHERE c.app_id = a.id AND c.user_id = $1 AND c.status = 'member')
+          OR EXISTS (SELECT 1 FROM community_members m WHERE m.community_id = a.community_id AND m.user_id = $1))
+      ORDER BY (${order}) DESC, LOWER(a.name), a.id
+      LIMIT ${CLOSEST_SCAN}`,
+    [user?.id ?? null, ...like],
+  );
+  const viewable = [];
+  for (const row of rows) {
+    if (await canView(pool, row, user)) viewable.push(row);
+  }
+  return closestFirst(asked, viewable).slice(0, MAX_CLOSEST);
+}
+
+/**
+ * Whether their own words name some project they can see, loosely: a word of
+ * theirs (two letters or more) appears in a name or short name. The exact
+ * match the model passed counts as a guess only then: "add it to Gym Trackr"
+ * names something, so correcting it to Gym Tracker is the model's guess and
+ * is asked about. When they named no project at all ("add trade history",
+ * with one project in play), its choice from context is how the DM has
+ * always read.
+ */
+async function theyNamedAnyApp(pool, user, text) {
+  const words = [...new Set(foldWords(text).split(' '))].filter((w) => w.length > 1).slice(0, 6);
+  if (!words.length) return false;
+  const like = words.map((w) => `%${w}%`);
+  const hits = like.map((_, i) => `((a.name ILIKE $${i + 2}) OR (a.slug ILIKE $${i + 2}))::int`).join(' + ');
+  const { rows } = await pool.query(
+    `SELECT (${hits}) AS hits FROM apps a
+      WHERE a.moderation_suspended_at IS NULL
+        AND (a.view_visibility = 'public'
+          OR EXISTS (SELECT 1 FROM app_collaborators c WHERE c.app_id = a.id AND c.user_id = $1 AND c.status = 'member')
+          OR EXISTS (SELECT 1 FROM community_members m WHERE m.community_id = a.community_id AND m.user_id = $1))
+      ORDER BY 1 DESC LIMIT 1`,
+    [user?.id ?? null, ...like],
+  );
+  return Number(rows[0]?.hits || 0) > 0;
+}
+
+/** The notExact answer a tool returns while a question waits, or the one that asks. */
+function notExactResult(confirm, pending = false) {
+  const candidate = confirm.matched || confirm.closest[0] || null;
+  const name = candidate ? (candidate.name || candidate.slug) : null;
+  const asked = clip(confirm.asked, 120);
+  return {
+    ok: false,
+    notExact: true,
+    asked,
+    // `matched` only when what the model passed exact-matched a real project.
+    ...(confirm.matched ? { matched: { project: candidate.slug, projectName: name } } : {}),
+    closest: confirm.closest.slice(0, MAX_CLOSEST).map((a) => ({ project: a.slug, projectName: a.name || a.slug })),
+    note: pending || !name
+      ? 'You already asked which project they mean this turn, so nothing more was done. Call reply now and wait for their answer.'
+      : `No project came back for "${asked}" as they wrote it, so nothing was done. Ask them in your reply whether ${name} `
+        + `is the one they meant. Your reply carries Yes and No, another app under it, and a link to open ${name}. `
+        + 'Wait for their answer.',
+  };
+}
+
+/**
+ * Read the message this one quotes, once: its words and the project the
+ * bot's own message was about (metadata.homeroomBot.appSlug), for
+ * theyNamed. Null when there is nothing there to read.
+ */
+async function quotedNamed(pool, ctx) {
+  if (ctx.quoted !== undefined) return ctx.quoted;
+  if (!ctx.replyId) {
+    ctx.quoted = null;
+    return null;
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT content, metadata FROM conversation_messages WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+      [ctx.replyId],
+    );
+    ctx.quoted = rows[0]
+      ? { text: String(rows[0].content || ''), appSlug: rows[0].metadata?.homeroomBot?.appSlug || null }
+      : null;
+  } catch {
+    ctx.quoted = null;
+  }
+  return ctx.quoted;
+}
+
+/**
+ * The project for one tool call that takes one, settled before the tool
+ * acts. Resolves { app } when it may go on, { notExact } when the question
+ * is what the tool returns instead (and ctx.confirmApp holds what the turn
+ * sends), or { app: null } when there is nothing to ask about and the tool
+ * keeps its own "No such project" answer.
+ */
+async function projectForTurn(pool, ctx, name) {
+  const confirmed = ctx.deps?.confirmedApp;
+  if (confirmed) {
+    // The turn after Yes: the project is settled, so the words check is skipped
+    // and a name that slipped falls back to the project they confirmed.
+    const app = await findApp(pool, name) || await findApp(pool, confirmed.slug);
+    return { app };
+  }
+  if (ctx.confirmApp) return { notExact: notExactResult(ctx.confirmApp, true) };
+  const app = await findApp(pool, name);
+  if (app && !theyNamed(ctx, app)) {
+    await quotedNamed(pool, ctx); // a reply that quotes the project's name counts as named
+    if (theyNamed(ctx, app)) return { app };
+    // It exact-matched, but their words never named it. When their words name
+    // some project, theirs or the model's guess gets the question; when they
+    // named no project at all, the model's choice from context goes on.
+    if (!(await theyNamedAnyApp(pool, ctx.user, ctx.userText))) return { app };
+    const closest = (await closestApps(pool, ctx.user, name)).filter((row) => Number(row.id) !== Number(app.id));
+    ctx.confirmApp = { asked: name, matched: app, closest };
+    return { notExact: notExactResult(ctx.confirmApp) };
+  }
+  if (!app) {
+    const closest = await closestApps(pool, ctx.user, name);
+    if (!closest.length) return { app: null };
+    ctx.confirmApp = { asked: name, matched: null, closest };
+    return { notExact: notExactResult(ctx.confirmApp) };
+  }
+  return { app };
+}
+
 // ── A project's code (#4145) ──────────────────────────────────────────────
 
 /** Pure: a path as the model wrote it, made relative and safe, or null. */
@@ -923,8 +1145,8 @@ function sourcePath(value) {
  * may still be seen only by its members, and its code is no more public than
  * the project is.
  */
-async function sourceRepo(pool, { user, project, deps = {} }) {
-  const app = await findApp(pool, project);
+async function sourceRepo(pool, { user, project, deps = {}, app: given = null }) {
+  const app = given || await findApp(pool, project);
   let allowed = false;
   if (app && user?.id) {
     const access = require('./app-access');
@@ -939,8 +1161,8 @@ async function sourceRepo(pool, { user, project, deps = {} }) {
   return { app, repo };
 }
 
-async function listSource(pool, { user, project, dir, match, deps = {} }) {
-  const found = await sourceRepo(pool, { user, project, deps });
+async function listSource(pool, { user, project, dir, match, deps = {}, app = null }) {
+  const found = await sourceRepo(pool, { user, project, deps, app });
   if (found.error) return found;
   const github = deps.github || require('./github');
   const tree = await github.listRepoFiles(found.repo.owner, found.repo.repo, SOURCE_REF);
@@ -960,8 +1182,8 @@ async function listSource(pool, { user, project, dir, match, deps = {} }) {
   };
 }
 
-async function readSource(pool, { user, project, path: rawPath, fromLine, deps = {} }) {
-  const found = await sourceRepo(pool, { user, project, deps });
+async function readSource(pool, { user, project, path: rawPath, fromLine, deps = {}, app = null }) {
+  const found = await sourceRepo(pool, { user, project, deps, app });
   if (found.error) return found;
   const filePath = sourcePath(rawPath);
   if (!filePath) return { error: 'That is not a file path in the project.' };
@@ -1013,8 +1235,8 @@ function buildWords(r) {
   return 'building now';
 }
 
-async function requestDetail(pool, { user, project, number, settings = null, deps = {} }) {
-  const app = await findApp(pool, project);
+async function requestDetail(pool, { user, project, number, settings = null, deps = {}, app: given = null }) {
+  const app = given || await findApp(pool, project);
   const n = Number(number);
   if (!app || !Number.isInteger(n) || n <= 0 || !(await canView(pool, app, user))) {
     return { error: 'No such request on a project they can see.' };
@@ -1286,6 +1508,11 @@ function stripClaims(text, problems) {
 const NO_OFFER_NOTE = '[Homeroom: their newest message reads like a decision on a draft request, but no draft is '
   + 'waiting for them, so nothing has been filed. If they want something filed, call offer_request so they can tap '
   + 'File it under it, and never say it was filed.]';
+
+// The turn after they tap Yes under a project question: the project they
+// confirmed is the one to act on, so no name is guessed or asked about again.
+const CONFIRMED_APP_NOTE = (confirmed) => `[Homeroom: not from them. The project for this turn is settled: ${confirmed.name || confirmed.slug}, `
+  + `short name ${confirmed.slug}. Pass that name in every project argument exactly, and do not ask again which project they mean.]`;
 
 // ── One turn ──────────────────────────────────────────────────────────────
 
@@ -1665,7 +1892,9 @@ async function runTool(pool, ctx, name, args) {
         return work;
       }
       case 'request_detail': {
-        const detail = await requestDetail(pool, { user, project: args.project, number: args.number, settings, deps });
+        const found = await projectForTurn(pool, ctx, args.project);
+        if (found.notExact) return found.notExact;
+        const detail = await requestDetail(pool, { user, project: args.project, number: args.number, settings, deps, app: found.app });
         if (detail?.appId) ctx.appIds.add(detail.appId);
         // A revision it made lately is something it may say it did.
         const recent = Date.now() - 3 * 24 * 60 * 60 * 1000;
@@ -1678,15 +1907,24 @@ async function runTool(pool, ctx, name, args) {
       case 'comment_on_request': return await commentOnRequest(pool, ctx, args);
       case 'start_request': return await startRequest(pool, ctx, args);
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
-      case 'list_source': return await listSource(pool, { user, project: args.project, dir: args.dir, match: args.match, deps });
-      case 'read_source': return await readSource(pool, { user, project: args.project, path: args.path, fromLine: args.fromLine, deps });
+      case 'list_source': {
+        const found = await projectForTurn(pool, ctx, args.project);
+        if (found.notExact) return found.notExact;
+        return await listSource(pool, { user, project: args.project, dir: args.dir, match: args.match, deps, app: found.app });
+      }
+      case 'read_source': {
+        const found = await projectForTurn(pool, ctx, args.project);
+        if (found.notExact) return found.notExact;
+        return await readSource(pool, { user, project: args.project, path: args.path, fromLine: args.fromLine, deps, app: found.app });
+      }
       case 'answer_question': {
         const dm = dmModule(deps);
         let filter = {};
         if (args.project) {
-          const app = await findApp(pool, args.project);
-          if (!app) return { ok: false, error: 'No such project.' };
-          filter = { appId: app.id, issueNumber: Number.isInteger(Number(args.number)) ? Number(args.number) : null };
+          const found = await projectForTurn(pool, ctx, args.project);
+          if (found.notExact) return found.notExact;
+          if (!found.app) return { ok: false, error: 'No such project.' };
+          filter = { appId: found.app.id, issueNumber: Number.isInteger(Number(args.number)) ? Number(args.number) : null };
         }
         const target = await dm.newestOpenQuestion(pool, user.id, filter);
         if (!target) {
@@ -1714,7 +1952,9 @@ async function runTool(pool, ctx, name, args) {
       case 'report_problem': return await reportProblem(pool, ctx, args);
       case 'offer_request': {
         if (ctx.offer) return { ok: false, error: 'One offer per turn.' };
-        const app = await findApp(pool, args.project);
+        const found = await projectForTurn(pool, ctx, args.project);
+        if (found.notExact) return found.notExact;
+        const app = found.app;
         if (!app) return { ok: false, error: 'No such project. Check my_projects.' };
         ctx.appIds.add(Number(app.id));
         if (!(await canFile(pool, app, user))) {
@@ -1727,7 +1967,7 @@ async function runTool(pool, ctx, name, args) {
         ctx.offer = { app, title, details };
         return { ok: true, shown: 'They see it under your reply with File it and Not now. Nothing is filed until they tap File it.' };
       }
-      case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
+      case 'offer_move_request': return await offerMoveRequest(pool, ctx, args); // its project goes through projectForTurn inside
       case 'reply': {
         ctx.reply = { text: clip(args.text, MAX_REPLY_CHARS), cards: args.cards, suggestions: args.suggestions };
         return { ok: true };
@@ -2134,6 +2374,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // Used-up building time holds their requests (runTriage), never the chat.
   const ctx = {
     bot, user, settings, config, deps, messageId: message.id, userText: String(message.content || '').trim(),
+    // #4501: the message this one quotes, read once if a tool needs it, and
+    // the project question this turn asked (a tool met a name that was not
+    // exactly the one they wrote), which the turn sends instead of an offer.
+    replyId: message.reply?.id || null, quoted: undefined, confirmApp: null,
     cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false, posted: null,
     // #3772: what this turn did, for the check on what its reply says
     // (claimProblems): a comment posted, a request started, work under way
@@ -2235,6 +2479,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       if (ctx.decisionWithoutOffer) {
         messages.push({ role: 'system', content: NO_OFFER_NOTE });
       }
+      // The turn after Yes under a project question: the project is settled.
+      if (deps.confirmedApp) {
+        messages.push({ role: 'system', content: CONFIRMED_APP_NOTE(deps.confirmedApp) });
+      }
       const ids = new Set();
       let limit = MAX_ROUNDS;
       const runRounds = async () => {
@@ -2315,7 +2563,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   let cards = [];
   let fallback = null;
   let defer = false;
-  if (!text && !ctx.offer) {
+  if (!text && !ctx.offer && !ctx.confirmApp) {
     // The model gave no answer. Why is recorded; what can still be said is.
     if (!error) error = rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
     ({ text, cards, fallback, defer } = await fallbackAnswer(pool, t, { error, errorStatus, history }));
@@ -2346,6 +2594,12 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   }
   if (fallback === 'key' || fallback === 'broken' || fallback === 'deferred') return say(text);
   if (fallback) return say(text, { objects: cards, metadata: { kind: 'chat' } });
+  if (ctx.confirmApp) {
+    return confirmApp(pool, {
+      bot, user, conversationId, message, text, deps, say,
+      confirm: { ...ctx.confirmApp, details: String(message.content || '').trim() },
+    });
+  }
   if (ctx.offer) return offer(pool, { bot, user, conversationId, message, text, offer: ctx.offer, deps });
   // A card that cannot be read never costs the answer. #4097: the model's
   // cards first, then the requests its words name that it did not list.
@@ -2422,6 +2676,54 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
       // `answers` for a client that predates `actions`.
       answers: [...OFFER_ANSWERS[kind]], actions: offerActions(kind), status: 'open', mirrors: false,
+    },
+  });
+  if (sent?.messageId) {
+    await pool.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
+  }
+  return sent;
+}
+
+/**
+ * #4501: the question before the bot acts on a project name that is not
+ * exactly the one they wrote. The same card an offer is (Yes / No, another
+ * app, and a link that opens the project so the answer can be checked);
+ * Nothing is done on any project until the person answers (settleOffer).
+ */
+async function confirmApp(pool, { bot, user, conversationId, message, text, confirm, deps, say }) {
+  const dm = dmModule(deps);
+  const asked = clip(confirm.asked, 120);
+  const app = confirm.matched || confirm.closest[0] || null;
+  const name = app ? (app.name || app.slug) : null;
+  // Only the newest question is theirs to answer; an older one is overtaken.
+  const { rows: older } = await pool.query(
+    `SELECT id, message_id FROM homeroom_bot_dm_actions
+      WHERE user_id = $1 AND conversation_id = $2 AND kind = 'app_confirm' AND status = 'open'`,
+    [user.id, conversationId],
+  );
+  if (older.length) {
+    await pool.query(`UPDATE homeroom_bot_dm_actions SET status = 'closed' WHERE id IN (${older.map((_, i) => `$${i + 1}`).join(', ')})`,
+      older.map((r) => r.id));
+    for (const row of older) {
+      if (row.message_id) {
+        await dm.setQuestionState(pool, Number(row.message_id), { status: 'closed' },
+          { ws: deps.ws, conversationId, userId: user.id }).catch(() => {});
+      }
+    }
+  }
+  const { rows: [action] } = await pool.query(
+    `INSERT INTO homeroom_bot_dm_actions (user_id, conversation_id, app_id, kind, title, details, alternatives)
+     VALUES ($1, $2, $3, 'app_confirm', $4, $5, $6) RETURNING id`,
+    [user.id, conversationId, Number(app.id), asked,
+      clip(confirm.details, 2000) || null, JSON.stringify(confirm.closest.slice(0, MAX_CLOSEST).map((a) => ({ appId: Number(a.id) })))],
+  );
+  const question = name ? `Did you mean ${name}?` : 'Which project is it?';
+  const sent = await say(text || `I couldn't find a project called "${asked}". ${question}`, {
+    metadata: {
+      kind: 'confirm', ...(app ? { appSlug: app.slug, appName: name } : {}), actionId: action.id,
+      question, answers: [...OFFER_ANSWERS.app_confirm],
+      actions: [...offerActions('app_confirm'), dm.openAppAction({ slug: app.slug, appName: name })].filter(Boolean),
+      status: 'open', mirrors: false,
     },
   });
   if (sent?.messageId) {
@@ -2629,6 +2931,13 @@ async function settleOffer(pool, config, {
       status: 'answered', answer: yes ? yesWord : noWord, chosen: yes ? 'yes' : 'no',
     }, { conversationId: action.conversation_id, userId: user.id }).catch(() => {});
   }
+  // #4501: the project question. Yes carries on with what was first asked, on
+  // the project they confirmed; No lists the closest projects they can see.
+  // Before the tapped-no short cut below: a question's No is not silent, its
+  // answer is the message that lists them.
+  if (action.kind === 'app_confirm') {
+    return decideAppConfirm(pool, config, { bot, user, settings, action, yes, ack, deps });
+  }
   if (no && tapped) return { declined: true };
   if (action.kind === 'withdraw_proposal') return decideWithdraw(pool, { bot, user, action, yes, ack, deps });
   if (action.kind === 'move_request') {
@@ -2704,6 +3013,55 @@ function askedFor(action) {
   const details = String(action?.details || '').trim();
   const title = String(action?.title || '').trim();
   return details || title || null;
+}
+
+/**
+ * #4501: what the Yes / No, another app answers of a project question do.
+ * Yes: nothing here but scheduling, off the HTTP response and under the
+ * person's own chain, a fresh turn whose message is their original words and
+ * whose project is settled (deps.confirmedApp), so the usual draft follows on
+ * the right project. A failure to schedule is logged and left as a settled
+ * card, never an error to the tap. No: one message with the closest projects
+ * they can see, each re-checked now, and nothing filed or started.
+ */
+async function decideAppConfirm(pool, config, { bot, user, settings, action, yes, ack, deps }) {
+  if (yes) return scheduleConfirmedTurn(pool, config, { bot, user, settings, action, deps });
+  const asked = String(action.title || '').trim();
+  const { rows: [row] } = await pool.query(
+    'SELECT alternatives FROM homeroom_bot_dm_actions WHERE id = $1', [action.id],
+  );
+  const alternatives = Array.isArray(row?.alternatives) ? row.alternatives : [];
+  const objects = [];
+  for (const alt of alternatives.slice(0, MAX_CLOSEST)) {
+    const appId = Number(alt?.appId);
+    if (!Number.isInteger(appId) || appId <= 0) continue;
+    const { rows: apps } = await pool.query(
+      `SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`, [appId],
+    );
+    if (apps[0] && await canView(pool, apps[0], user)) objects.push({ type: 'app', appId });
+  }
+  const body = objects.length
+    ? `OK. The closest projects to "${clip(asked, 120)}" you can see. Which one is it?`
+    : `OK. I couldn't find a project like "${clip(asked, 120)}" to show you. Tell me its name and I'll ask before anything happens.`;
+  return ack(body, objects.length ? { objects, metadata: { kind: 'chat' } } : {});
+}
+
+async function scheduleConfirmedTurn(pool, config, { bot, user, settings, action, deps }) {
+  if (!action.message_id) return { confirmed: true };
+  const { rows: [app] } = await pool.query('SELECT slug, name FROM apps WHERE id = $1', [action.app_id]);
+  if (!app) return { confirmed: true };
+  const dm = dmModule(deps);
+  const message = { id: Number(action.message_id), content: String(action.details || '') };
+  const run = () => runDmTurn(pool, config, {
+    bot, user, settings, conversationId: Number(action.conversation_id), message,
+    deps: { ...deps, confirmedApp: { slug: app.slug, name: app.name || app.slug } },
+  });
+  void Promise.resolve().then(() => (typeof dm.whileTyping === 'function'
+    ? dm.whileTyping(pool, { botId: bot.id, conversationId: Number(action.conversation_id), ws: deps.ws }, run)
+    : run())).catch((err) => {
+    log.warn('homeroom-bot-mayor', 'Could not carry on after a project was confirmed', { actionId: action.id, err: err.message });
+  });
+  return { confirmed: true };
 }
 
 /**
@@ -2879,7 +3237,9 @@ async function commentOnRequest(pool, ctx, args) {
   if (comment.split(/\s+/).filter(Boolean).length < 2) {
     return { ok: false, error: 'Say what they want added. If they have not said, ask them; nothing was posted.' };
   }
-  const app = await findApp(pool, args.project);
+  const found = await projectForTurn(pool, ctx, args.project);
+  if (found.notExact) return found.notExact;
+  const app = found.app;
   const n = Number(args.number);
   if (!app || !Number.isInteger(n) || n <= 0 || !(await canView(pool, app, user))) {
     return { ok: false, error: 'No such request on a project they can see. Check my_work or list_requests. Nothing was posted.' };
@@ -2926,7 +3286,9 @@ async function commentOnRequest(pool, ctx, args) {
 async function startRequest(pool, ctx, args) {
   const { user, settings, deps } = ctx;
   if (ctx.started) return { ok: false, error: 'One start per turn.' };
-  const app = await findApp(pool, args.project);
+  const found = await projectForTurn(pool, ctx, args.project);
+  if (found.notExact) return found.notExact;
+  const app = found.app;
   const n = Number(args.number);
   if (!app || !Number.isInteger(n) || n <= 0 || !(await canView(pool, app, user))) {
     return { ok: false, error: 'No such request on a project they can see. Check my_work. Nothing was started.' };
@@ -3392,7 +3754,9 @@ async function withdrawProposal(pool, ctx, args) {
 async function offerMoveRequest(pool, ctx, args) {
   const { user, deps } = ctx;
   if (ctx.offer) return { ok: false, error: 'You already put one thing under this reply for them to decide; one per turn. Nothing was moved.' };
-  const app = await findApp(pool, args.project);
+  const found = await projectForTurn(pool, ctx, args.project);
+  if (found.notExact) return found.notExact;
+  const app = found.app;
   if (!app || !(await canView(pool, app, user))) return { ok: false, error: 'No such project. Check my_projects.' };
   ctx.appIds.add(Number(app.id));
   const moveSvc = require('./homeroom-bot-move');
@@ -3447,7 +3811,9 @@ async function reportSubject(pool, ctx, args) {
   let app = null;
   let issueNumber = null;
   if (args.project) {
-    const named = await findApp(pool, args.project);
+    const found = await projectForTurn(pool, ctx, args.project);
+    if (found.notExact) return { app: null, issueNumber: null, runs: [], proposals: [], notExact: found.notExact };
+    const named = found.app;
     if (named && await canView(pool, named, ctx.user)) {
       app = named;
       issueNumber = Number.isInteger(Number(args.number)) && Number(args.number) > 0 ? Number(args.number) : null;
@@ -3570,6 +3936,7 @@ async function reportProblem(pool, ctx, args) {
     };
   }
   const about = await reportSubject(pool, ctx, args);
+  if (about.notExact) return about.notExact;
   if (about.app) ctx.appIds.add(Number(about.app.id));
   const filed = await feedback.filePlatformReport(pool, ctx.config, {
     user,
@@ -3649,11 +4016,18 @@ module.exports = {
   resolveCards,
   runTool,
   runDmTurn,
+  // #4501: the project question before the bot acts on a name they wrote
+  MAX_CLOSEST,
+  foldWords,
+  theyNamed,
+  closestFirst,
+  projectForTurn,
   decideOffer,
   decideOfferTap,
   offerActions,
   decideTyped,
   typedDecision,
+  confirmApp,
   fileRequest,
   findApp,
   canFile,
