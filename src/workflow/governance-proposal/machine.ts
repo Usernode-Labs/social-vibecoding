@@ -12,7 +12,7 @@ import type {
 import { applyProposal } from '../rules/illustrations.ts';
 import { decrypt, encrypt } from '../rules/secrets.ts';
 import { deleteValue, setValue } from '../rules/platform-vars.ts';
-import { appUpdate, chatLine, issueUpdate as issuePush } from '../pushes.ts';
+import { appUpdate, chatLine, issuesClosed, issueUpdate as issuePush } from '../pushes.ts';
 import { GOVERNANCE_KINDS, readFacts } from './facts.ts';
 import type { Facts, Issue } from './facts.ts';
 import { evaluate, nextCheck, withVote } from './gate.ts';
@@ -281,8 +281,8 @@ function supersede(issue: Issue, event: Event<any>, ctx: TransitionContext, caus
 }
 
 // A follow-up result on a closed proposal updates its record.
-// A target closed on GitHub: the open-issues lists re-read (the handler has
-// kept the eventually consistent list from showing it again).
+// A target closed on GitHub: every web process stops listing it (GitHub's
+// list lags; pushes.ts issuesClosed), then the open-issues lists re-read.
 function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResultPayload>, status: Followup['status']): Outcome<GovState> {
   const prev = s.data.followups[e.payload.workKey]!;
   const followups = { ...s.data.followups, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message } : {}) } };
@@ -291,7 +291,10 @@ function followupResult(s: { name: Closed; data: ClosedData }, e: Event<WorkResu
     && !(e.payload.result as { gone?: boolean } | null)?.gone;
   return {
     next: { name: s.name, data: { ...s.data, followups } },
-    push: closed ? [issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' })] : undefined,
+    push: closed ? [
+      issuesClosed({ owner: String(input.owner), repo: String(input.repo), numbers: [Number(input.number)] }),
+      issuePush({ action: 'github_synced', appSlug: input.appSlug ?? null, appId: input.appId ?? null, source: 'close_issue_vote' }),
+    ] : undefined,
     notify: closed ? [boardChange(input.appId as number ?? null, input.appSlug as string ?? null)] : undefined,
   };
 }

@@ -205,45 +205,51 @@ test('workflow machines in a process of their own, and through its crash', { tim
 
   // ── Known dependencies on the web process's memory ──────────────────
 
-  await t.test('a shots run holding a worker in the web process keeps a merge from retiring it', {
-    todo: 'worker.js#_workerHolds lives in the process running the shots run (list: services | uses src/services/worker.js:retireWorker); step 1 makes it durable',
-  }, async () => {
+  await t.test('a shots run still working in a worker keeps a merge from retiring it, whichever process runs it', async () => {
     const a = await app({ selfHosted: true });
     const s = await proposal(a);
-    const hold = require('../src/services/worker').holdWorker(s.id);
-    try {
-      await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('c'), force: false, tally: { yes: 1, required: 1, active: 1 } });
-      await procs.until(() => settled('merge-followups', mergeKey(s), 'worker.retire'), 'the retire work to finish');
-      const removed = (await procs.effects(pool, 'docker.removeVolume')).filter((e) => e.data.name.endsWith(`-${s.id}`));
-      assert.deepEqual(removed, [], 'the worker is kept while the shots run holds it');
-    } finally {
-      await hold.release();
-    }
+    // The run's own row, heartbeated (shots-orchestrator.js renews updated_at
+    // every 30 s). It can be in the web process, a follower, or one that died.
+    const runId = crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, trace_summary)
+       VALUES ($1, $2, $3, $4, '{}', 'exploring', '{"progress": {}}')`, [runId, s.id, SHA('0'), SHA('1')]);
+    await platform.mergeConfirmed({ sessionId: s.id, appId: a.id, mergeSha: SHA('c'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    const retires = async () => (await pool.query(
+      `SELECT work_key, status FROM wf_work WHERE machine = 'merge-followups' AND key = $1 AND kind = 'worker.retire' ORDER BY created_at`,
+      [mergeKey(s)])).rows;
+    await procs.until(async () => (await retires()).length === 2, 'the retire to name the run and ask again later');
+    const removed = async () => (await procs.effects(pool, 'docker.removeVolume')).filter((e) => e.data.name.endsWith(`-${s.id}`));
+    assert.deepEqual(await removed(), [], 'the worker is kept while the run is heard from');
+    // The run ends; the retire asked again (made due now) removes the worker.
+    await pool.query(`UPDATE shot_runs SET state = 'failed', completed_at = NOW() WHERE id = $1`, [runId]);
+    await pool.query(`UPDATE wf_work SET due_at = NOW() WHERE machine = 'merge-followups' AND key = $1 AND kind = 'worker.retire' AND status = 'queued'`,
+      [mergeKey(s)]);
+    await procs.until(async () => (await removed()).length === 1, 'the worker to go once the run ended');
   });
 
-  await t.test('a change busy in the web process is not marked as carried by a merge', {
-    todo: 'active-workers.js#activeSessionOperations lives in the process running the operation (list: services | uses src/services/active-workers.js:isSessionBusy); step 1 makes it durable',
-  }, async () => {
+  await t.test('a change whose head moved since the carrier listed its commits is not marked as carried', async () => {
     const a = await app({ selfHosted: true });
     const carrier = await proposal(a);
-    const { rows: [busy] } = await pool.query(
+    const { rows: [moved] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, pr_title, reviewed_head_sha)
-       VALUES ($1, $2, 'promoted', $3, 'Busy', $4) RETURNING *`, [a.id, author.id, ++seq, SHA('e')]);
-    // Its head is one of the carrier's commits, and a sync with main is running on it here.
+       VALUES ($1, $2, 'promoted', $3, 'Moved', $4) RETURNING *`, [a.id, author.id, ++seq, SHA('e')]);
+    // Its old head is one of the carrier's commits; a sync with main (which
+    // keeps no record while it runs) then moves it.
     await pool.query(`INSERT INTO wf_test_effects (kind, data) VALUES ('github.prCommits', $1)`,
       [JSON.stringify({ number: carrier.pr_number, shas: [SHA('e')] })]);
-    const done = require('../src/services/active-workers').beginSessionOperation(busy.id);
-    try {
-      await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('f'), force: false, tally: { yes: 1, required: 1, active: 1 } });
-      await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
-      const read = async () => (await pool.query('SELECT status, included_in_session_id FROM chat_sessions WHERE id = $1', [busy.id])).rows[0];
-      // Marking it would follow the search as a message; give that time to land.
-      await procs.until(async () => (await read()).included_in_session_id, 'a mark that should not come', 2000).catch(() => {});
-      const row = await read();
-      assert.deepEqual(row, { status: 'promoted', included_in_session_id: null }, 'left as it is while busy');
-    } finally {
-      done();
-    }
+    await procs.arm(pool, 'github.prCommits');
+    await platform.mergeConfirmed({ sessionId: carrier.id, appId: a.id, mergeSha: SHA('f'), force: false, tally: { yes: 1, required: 1, active: 1 } });
+    await procs.reached(pool, 'github.prCommits');
+    await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [moved.id, SHA('7')]);
+    await procs.release(pool, 'github.prCommits');
+    await procs.until(() => settled('merge-followups', mergeKey(carrier), 'included.find'), 'the search for carried changes');
+    const refusal = async () => (await pool.query(
+      `SELECT result, reason FROM wf_events WHERE machine = 'merge-followups' AND key = $1 AND type = 'Included'`, [mergeKey(moved)])).rows[0];
+    await procs.until(refusal, 'the carried message to be decided');
+    assert.deepEqual({ ...await refusal() }, { result: 'rejected', reason: 'head_moved' });
+    const { rows: [row] } = await pool.query('SELECT status, included_in_session_id FROM chat_sessions WHERE id = $1', [moved.id]);
+    assert.deepEqual({ ...row }, { status: 'promoted', included_in_session_id: null }, 'left to merge on its own');
   });
 
   // ── What the workflow process's boot gives it (src/workflow/setup.ts) ─

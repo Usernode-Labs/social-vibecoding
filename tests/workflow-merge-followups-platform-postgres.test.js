@@ -65,7 +65,7 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     },
     async teardownStaging(row) { calls.push(['teardown', row.id, row.status]); return { removed: true }; },
   });
-  stub('../src/services/worker', { ...require('../src/services/worker'), retireWorker: async (id) => { calls.push(['retire', id]); return {}; } });
+  stub('../src/services/worker', { ...require('../src/services/worker'), destroyCcVolume: async (id) => { calls.push(['retire', id]); } });
   stub('../src/services/main-watch', { ...require('../src/services/main-watch'), afterMerge: async (c, p, o) => { calls.push(['main-check', o.mergeSha]); return null; } });
   stub('../src/services/issue-close-watcher', {
     ...require('../src/services/issue-close-watcher'),
@@ -143,7 +143,11 @@ test('merge follow-ups through the platform runtime', { timeout: 120000 }, async
     assert.ok(calls.some((c) => c[0] === 'rebuild' && c[2].reuseRunningRevision === SHA('a')), 'the merge commit, not main\'s tip');
     await until(async () => calls.some((c) => c[0] === 'dm' && c[1] === s.id), 'the DM');
     assert.deepEqual(calls.find((c) => c[0] === 'dm' && c[1] === s.id).slice(2), [true, SHA('a')]);
+    // The preview goes once the delivery has its result (demo mode deploys its build).
+    await until(async () => calls.some((c) => c[0] === 'teardown' && c[1] === s.id), 'the teardown');
     assert.ok(calls.some((c) => c[0] === 'teardown' && c[1] === s.id && c[2] === 'merged'));
+    assert.ok(calls.findIndex((c) => c[0] === 'rebuild') < calls.findIndex((c) => c[0] === 'teardown' && c[1] === s.id),
+      'after the delivery');
     assert.ok(calls.some((c) => c[0] === 'main-check' && c[1] === SHA('a')));
     const { rows: [m] } = await pool.query('SELECT main_sha FROM apps WHERE id = $1', [app.id]);
     assert.equal(m.main_sha, SHA('a'));

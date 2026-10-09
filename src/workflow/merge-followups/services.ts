@@ -5,7 +5,8 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
+import { backoff, closeAndComment, gone, missingSecrets, permanent } from '../github-work.ts';
+import { liveShotsRun } from './facts.ts';
 import { WORK } from './machine.ts';
 
 interface Deps { config: any; pool: Pool }
@@ -44,8 +45,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
             ...(reuseImage ? { reuseImage } : {}),
           });
         } catch (err) {
-          // A required secret without a value fails the same way every time.
-          if (err instanceof staging.MissingSecretsError) throw permanent((err as Error).message);
+          if (missingSecrets(err)) throw permanent((err as Error).message);
           throw err;
         }
         await pool.query(
@@ -86,37 +86,44 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       },
     },
 
-    // Its worker and Claude Code volume go (a shots run holding the worker
-    // keeps it until the run ends).
+    // Its worker and Claude Code volume go, unless a shots run is still
+    // working in them: then it says which, and the machine asks again later
+    // (worker.js's in-memory hold is not read: it lives in whichever process
+    // runs the shots run, and a restart forgets it).
     [WORK.retire]: {
       maxAttempts: 5,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
-        const result = await legacy('services/worker').retireWorker(input.sessionId);
-        return { deferred: !!result?.deferred };
+        const live = await liveShotsRun(pool, input.sessionId);
+        if (live) return { waiting: live };
+        await legacy('services/worker').destroyCcVolume(input.sessionId);
+        return { retired: true };
       },
     },
 
     // The app's other changes up for a vote whose head is one of this pull
     // request's commits went live with it (services/included-changes.js).
+    // Each is named with the head that matched: the machine marks it only
+    // if that is still its head, and nothing is working on it, read under
+    // its own lock (machine.ts notIncludable).
     [WORK.find]: {
       maxAttempts: 6,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
         const gh = github();
-        if (!gh.isEnabled()) return { ids: [] };
+        if (!gh.isEnabled()) return { ids: [], found: [] };
         const changes = legacy('services/included-changes');
         const { rows } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
-        const busy = legacy('services/active-workers').isSessionBusy;
-        const idle = rows.filter((c: { id: number }) => !busy(Number(c.id)));
-        if (!idle.length) return { ids: [] };
+        if (!rows.length) return { ids: [], found: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
-        return { ids: changes.containedIn(idle, listed?.shas).map((c: { id: number }) => Number(c.id)) };
+        const head = (c: any) => String((c.source === 'imported' ? c.imported_pr_head_sha : c.reviewed_head_sha) || '').toLowerCase();
+        const found = changes.containedIn(rows, listed?.shas).map((c: any) => ({ id: Number(c.id), head: head(c) }));
+        return { ids: found.map((f: { id: number }) => f.id), found };
       },
     },
 
     // The requests it closes read closed everywhere. For a merge: what
-    // [main]'s merge did at once, then the watcher (GitHub closes `Closes #N`
+    // [main]'s merge did at once (the superseded close proposals), then the watcher (GitHub closes `Closes #N`
     // late, or not at all). For an included change: its requests closed by
     // hand, since its own pull request never merged.
     [WORK.issues]: {
@@ -142,14 +149,14 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
           }
           return { closed };
         }
+        // Every web process stopped listing them when the merge was
+        // recorded, and re-reads when this ends (machine.ts, issuesClosed).
         if (numbers.length) {
-          gh.noteIssuesClosed(input.owner, input.repo, numbers);
           await legacy('routes/issues').resolveSupersededCloseProposals(pool, {
             appId: input.appId, appSlug: input.appSlug, numbers, cause: { kind: 'pr-merge', prNumber: input.prNumber },
             strict: true,
           });
         }
-        gh.invalidateIssuesCache(input.owner, input.repo);
         const out = await legacy('services/issue-close-watcher').watchIssuesClosedAfterMerge({
           owner: input.owner, repo: input.repo, prNumber: input.prNumber, linkedIssues: numbers,
           appSlug: input.appSlug, appId: input.appId, pool, strict: true,
@@ -181,7 +188,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         const row = await app(input.appId);
         if (!row) return { skipped: 'no_app' };
         const verdict = await legacy('services/main-watch').afterMerge(config, pool, {
-          app: row, session: { id: input.sessionId, pr_number: input.prNumber }, mergeSha: input.mergeSha,
+          app: row, session: { id: input.sessionId, pr_number: input.prNumber }, mergeSha: input.mergeSha, strict: true,
         });
         return { state: verdict?.state ?? null };
       },
@@ -193,7 +200,8 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       maxAttempts: 5,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
-        const out = await legacy('services/homeroom-bot').noteRequestMerged(pool, { id: input.sessionId }, { before: input.before });
+        const out = await legacy('services/homeroom-bot').noteRequestMerged(pool, { id: input.sessionId },
+          { before: input.before, strict: true });
         return (out || null) as Json;
       },
     },
@@ -204,7 +212,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
         const sent = await legacy('services/homeroom-bot-dm').noteProposalMerged(pool, { id: input.sessionId },
-          { config, sha: input.sha, live: true });
+          { config, sha: input.sha, live: true, deps: { strict: true } });
         return { sent: !!sent };
       },
     },
@@ -217,7 +225,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         const row = await session(input.sessionId);
         if (!row) return { gone: true };
         await legacy('services/journey-events').recordChangeLive(pool, {
-          config, session: row, sha: input.sha, at: new Date(input.at), deps: { live: () => true },
+          config, session: row, sha: input.sha, at: new Date(input.at), deps: { live: () => true }, strict: true,
         });
         return { recorded: true };
       },

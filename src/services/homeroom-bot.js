@@ -6696,6 +6696,7 @@ async function retireWaitingPlans(pool, { appId, issueNumber = null, issues = nu
     ));
     if (rows.length) await (deps.dm || require('./homeroom-bot-dm')).closePlanCards(pool, rows.map((r) => Number(r.id)));
   } catch (err) {
+    if (deps.strict) throw err;
     log.warn('homeroom-bot', 'Could not end a waiting plan', { appId, issueNumber, err: err.message });
   }
   return rows.map((r) => Number(r.id));
@@ -7554,6 +7555,11 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
  * queue rows that started after it: the merge-followups workflow machine
  * can run this well after the merge, and work begun since is not what the
  * merge made unneeded.
+ *
+ * `deps.strict` (the machine's durable work, which retries) throws what it
+ * could not do instead of resolving null. Run again, it stops the builds
+ * an earlier run marked but may not have reached, so a crash between the
+ * two leaves nothing running.
  */
 async function noteRequestMerged(pool, session, deps = {}) {
   if (!session?.id) return null;
@@ -7586,12 +7592,28 @@ async function noteRequestMerged(pool, session, deps = {}) {
         RETURNING r.id, r.build_session_id`,
       [appId, issues, why, Number(merged.id), before],
     );
+    // Builds an earlier run of this marked with the same skip, whose turn
+    // may not have been stopped (a crash in between): stopped again.
+    const { rows: marked } = await pool.query(
+      `SELECT r.id, r.build_session_id FROM homeroom_bot_runs r
+        WHERE r.app_id = $1 AND r.issue_number = ANY($2::int[])
+          AND r.mode = 'live' AND r.build_ok = FALSE AND r.build_error = $3
+          AND r.build_session_id IS NOT NULL AND r.build_session_id IS DISTINCT FROM $4
+          AND ($5::timestamptz IS NULL OR r.created_at <= $5::timestamptz)
+          AND EXISTS (SELECT 1 FROM chat_sessions bs
+                       WHERE bs.id = r.build_session_id AND bs.status IN ('active', 'paused'))`,
+      [appId, issues, why, Number(merged.id), before],
+    );
+    for (const run of marked) {
+      if (!settled.some((s) => Number(s.id) === Number(run.id))) settled.push({ ...run, again: true });
+    }
     // B6: and a first version's plan still waiting for Build it.
     out.skipped += (await retireWaitingPlans(pool, { appId, issues, why: why.replace(/^skipped:\s*/, ''), before, deps })).length;
     const worker = deps.worker || require('./worker');
     for (const run of settled) {
       if (!run.build_session_id) { out.skipped += 1; continue; }
-      out.stopped += 1;
+      // A stop asked again is not news: the counts say what this run did.
+      if (!run.again) out.stopped += 1;
       await Promise.resolve(worker.stopTurn(run.build_session_id)).catch((err) => {
         log.warn('homeroom-bot', 'Could not stop a build its request\'s merge made unneeded', {
           runId: run.id, sessionId: run.build_session_id, err: err.message,
@@ -7614,6 +7636,7 @@ async function noteRequestMerged(pool, session, deps = {}) {
         const done = await sessionLifecycle.archiveSession({ pool, sessionId: Number(other.id), reason: 'superseded' });
         if (done?.archived) out.withdrawn += 1;
       } catch (err) {
+        if (deps.strict) throw err;
         log.warn('homeroom-bot', 'Could not withdraw a duplicate proposal', { sessionId: other.id, err: err.message });
       }
     }
@@ -7647,6 +7670,7 @@ async function noteRequestMerged(pool, session, deps = {}) {
     }
     return out;
   } catch (err) {
+    if (deps.strict) throw err;
     log.warn('homeroom-bot', 'Could not settle a merged request\'s other work', { sessionId: session.id, err: err.message });
     return null;
   }

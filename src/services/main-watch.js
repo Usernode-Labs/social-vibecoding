@@ -289,7 +289,9 @@ async function writeState(pool, app, mergeSha, state, detail) {
  * (resumeInterrupted below): the first red's detail, already recorded, so
  * this run starts at the re-run instead of asking the suite twice more.
  */
-async function afterMerge(config, pool, { app, session = null, mergeSha, confirmationOf = null, resume = false } = {}) {
+// `strict` (the merge-followups machine's durable work) throws when the claim
+// itself could not be written, so the work is retried rather than read as done.
+async function afterMerge(config, pool, { app, session = null, mergeSha, confirmationOf = null, resume = false, strict = false } = {}) {
   if (!isEnabled() || !pool || !app || !mergeSha) return null;
   const parsed = parseRepo(app.repo_url);
   if (!parsed) return null;
@@ -320,6 +322,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
     );
     previous = rows[0] || null;
   } catch (err) {
+    if (strict) throw err;
     log.warn('main-watch', 'claim failed; not running', { appId: app.id, err: err.message });
     return null;
   }

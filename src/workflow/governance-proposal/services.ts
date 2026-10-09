@@ -4,28 +4,22 @@
 
 import type { Json, Pool, WorkHandler } from '../kernel/index.ts';
 import { legacy } from '../legacy.ts';
-import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
+import { backoff, closeAndComment, gone, missingSecrets, permanent } from '../github-work.ts';
 
 interface Deps { config: any; pool: Pool }
 
 export function governanceServices({ config, pool }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   return {
-    // Close a GitHub issue, then comment on it (github-work.ts), then keep
-    // the open-issues list from showing it again (the transition that
-    // applies the result tells browsers to re-read it).
+    // Close a GitHub issue, then comment on it (github-work.ts). The
+    // transition that applies the result tells every web process to stop
+    // listing it, and browsers to re-read.
     'github.closeIssue': {
       maxAttempts: 6,
       backoffMs: backoff,
       async run(ctx): Promise<Json> {
-        const { input } = ctx;
         const done = await closeAndComment(ctx, (gh, owner, repo, number) => gh.closeIssue(owner, repo, number));
         if ((done as { gone?: boolean }).gone) return done;
-        const gh = github();
-        if (input.bustCache) {
-          gh.noteIssuesClosed(input.owner, input.repo, [input.number]);
-          gh.invalidateIssuesCache(input.owner, input.repo);
-        }
         return { closed: true };
       },
     },
@@ -39,7 +33,13 @@ export function governanceServices({ config, pool }: Deps): Record<string, WorkH
         const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [input.appId]);
         if (!app) return { skipped: 'no_app' };
         if (app.self_hosted) return { skipped: 'self_hosted' };
-        const result = await legacy('services/staging').rebuildProduction(config, app);
+        let result;
+        try {
+          result = await legacy('services/staging').rebuildProduction(config, app);
+        } catch (err) {
+          if (missingSecrets(err)) throw permanent((err as Error).message);
+          throw err;
+        }
         if (result) {
           await pool.query(
             `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running', last_deploy_at = NOW()

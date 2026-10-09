@@ -258,6 +258,9 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal(s.data.followups.target.status, 'retried');
     assert.equal(retried[1].status, 'done');
     assert.equal(synced().length, 1, 'the close on GitHub tells browsers to re-read the issue list, once');
+    // And every web process to stop listing it (each keeps its own copy).
+    const forgotten = pushed.filter((p) => p.kind === 'issues_closed' && p.routing.repo === a.slug);
+    assert.deepEqual(forgotten.map((p) => p.data.numbers), [[9]]);
     // The retry resumed from the failed attempts' checkpoint: no second comment.
     const last = work.calls.filter((c) => c.kind === 'github.closeIssue').at(-1);
     assert.equal(last.key, retried[0]);
@@ -452,6 +455,24 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.equal((await row(c)).payload.appliedBy, `admin:${adminUser.username}`);
     assert.equal((await event(notRename)).reason, 'not_admin_appliable');
     assert.equal((await event(notAdmin)).reason, 'admin_only', 'authority is checked before state');
+    // A platform variable an admin forced is recorded as theirs, as [main] recorded it.
+    const platformApp = await app({ approvals: 9, selfHosted: true });
+    const v = await issue(platformApp, author, 'secret_change', { key: 'SOME_TUNABLE', action: 'set', valueEnc: secrets.encrypt('on', DATA_KEY) });
+    await file(v);
+    const forcedValue = await force(v);
+    await settle();
+    assert.equal((await event(forcedValue)).result, 'accepted');
+    const { rows: [changed] } = await pool.query(
+      `SELECT user_id, metadata FROM events WHERE app_id = $1 AND event_type = 'platform_env_changed' ORDER BY id DESC LIMIT 1`, [platformApp.id]);
+    assert.deepEqual([changed.user_id, changed.metadata.appliedBy], [adminUser.id, 'admin-force-apply']);
+  });
+
+  await t.test('a process without the data key fails the evaluation instead of refusing the secret change', async () => {
+    const { readFacts } = require('../src/workflow/governance-proposal/facts.ts');
+    const a = await app();
+    const i = await issue(a, await user(), 'secret_change', { key: 'K9', action: 'set', valueEnc: secrets.encrypt('w', DATA_KEY) });
+    await assert.rejects(readFacts(pool, i.id, { type: 'Evaluate', payload: {} }, true, ''), /data encryption key is not configured/);
+    assert.equal((await readFacts(pool, i.id, { type: 'Evaluate', payload: {} }, true, DATA_KEY)).refusal, null);
   });
 
   await t.test('G13 an enrolled row is owned: legacy writes are refused, unenrolled rows are not', async () => {

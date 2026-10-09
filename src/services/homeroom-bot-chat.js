@@ -323,6 +323,8 @@ async function noteRequestStatus(pool, { appId, issueNumber, status, sessionId =
     await followCards(pool, { rows, deps });
     return rows.length;
   } catch (err) {
+    // The merge-followups machine's durable work asks for the error, to retry.
+    if (deps.strict) throw err;
     log.warn('homeroom-bot-chat', 'Could not move a chat request\'s status', { appId, issueNumber, status, err: err.message });
     return 0;
   }

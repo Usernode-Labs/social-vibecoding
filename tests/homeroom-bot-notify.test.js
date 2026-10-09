@@ -295,6 +295,6 @@ test('WP-F: a merged change is "live" only once the app answers on it, and a sto
   // The chat chip moves to Live after the app answers, not on the merge.
   const src = fs.readFileSync(require.resolve('../src/services/homeroom-bot-dm.js'), 'utf8');
   const merged = src.slice(src.indexOf('async function noteProposalMerged('), src.indexOf('// ── A person writing to the bot'));
-  assert.ok(merged.indexOf('const live = await liveAfterMerge(') < merged.indexOf('noteChatLive(pool, run)'));
-  assert.match(merged, /if \(live \|\| platform\) await noteChatLive\(pool, run\);\n {2}else laterChatLive\(pool, run, \{ config, sha, deps \}\);/);
+  assert.ok(merged.indexOf('const live = await liveAfterMerge(') < merged.indexOf('noteChatLive(pool, run, deps)'));
+  assert.match(merged, /if \(live \|\| platform\) await noteChatLive\(pool, run, deps\);\n {2}else laterChatLive\(pool, run, \{ config, sha, deps \}\);/);
 });
