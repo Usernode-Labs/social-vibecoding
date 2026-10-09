@@ -326,7 +326,12 @@ that session off and tries again, and those databases are dropped
 (`_evsrc_`) and the shared staging template (`_stgtmpl`, `_stgtmpl_next`)
 qualify: `db-manager.isDisposableDb` refuses every other name, an app's own
 database included. A failure that outlasts the retries fails the run with
-its own message, as before.
+its own message, as before. A psql step's message keeps Postgres's own
+error after the command; one cut off at its time limit (30 seconds, 90 for
+the frozen copy source) says "No answer from Postgres within N seconds…"
+and that the statement may still be running, where it used to end at the
+command with nothing said (`db-manager.psqlFailure`). A password in the
+statement is masked.
 
 A run that a platform restart interrupted is retried automatically, up to
 twice per commit: a sweep every 30 seconds starts the same commit again once
