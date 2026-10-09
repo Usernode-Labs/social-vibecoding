@@ -38,6 +38,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -255,4 +256,87 @@ test('the general chat pane is mounted, not assigned', () => {
   // Discussion tab says what it is.
   assert.doesNotMatch(fn[1], /usernode_seen_gc_intro|introAppName/);
   assert.doesNotMatch(read('frontend/src/features/group-chat/general-chat.tsx'), /talks and votes on proposed changes|introAppName/);
+});
+
+// ── #4513: typing keeps a discussion pinned to its bottom ─────────────
+//
+// The thread composer grows on every `input` event, up to
+// `_COMPOSER_MAX_PX`. In a fill layout the scroller is the flexible sibling
+// below it, so each new line shrinks `#gc-thread-scroll`'s clientHeight by
+// the same amount while scrollTop stays put: a reader at the bottom slid up
+// to 100px off it with every line. A live reply follows within 80px
+// (`_handleThreadIncoming`); typing now does the same, measured BEFORE the
+// grow so the pre-grow bottom decides whether to re-pin.
+//
+// Run with: node --test tests/group-chat-composer.test.js
+
+function setupScroller({ scrollTop, scrollHeight = 2000, clientHeight = 600 }) {
+  const scroller = { scrollHeight, clientHeight, scrollTop };
+  const gc = {
+    window: {}, URLSearchParams, location: { search: '' },
+    App: { user: { id: 7, username: 'evan' } },
+    document: { getElementById: (id) => (id === 'gc-thread-scroll' ? scroller : null) },
+  };
+  vm.createContext(gc);
+  vm.runInContext(read('public/js/group-chat.js'), gc);
+  const mod = gc.window.GroupChat;
+  // What a taller composer does to the scroller: the same amount off its
+  // client height, one line at a time. Record that the grow ran.
+  let grew = 0;
+  mod._autoGrowTextarea = (el) => {
+    grew += 1;
+    scroller.clientHeight -= 40;
+    return el;
+  };
+  return { mod, scroller, grew: () => grew };
+}
+
+test('#4513: at the bottom, growing the composer re-pins the thread to the bottom', () => {
+  // Gap 0: 2000 - 1400 - 600. The grow takes 40 off the scroller; the reader
+  // must land back on the (new) bottom, not stay where the grow left them.
+  const h = setupScroller({ scrollTop: 1400 });
+  h.mod._growThreadComposer({ value: 'x' });
+  assert.equal(h.grew(), 1, 'the grow ran');
+  assert.equal(h.scroller.scrollTop, h.scroller.scrollHeight);
+});
+
+test('#4513: a reader within the 80px follow slack is re-pinned too', () => {
+  // Gap 60: the same slack a live reply follows within.
+  const h = setupScroller({ scrollTop: 1340 });
+  h.mod._growThreadComposer({ value: 'x' });
+  assert.equal(h.scroller.scrollTop, h.scroller.scrollHeight);
+});
+
+test('#4513: typing never yanks a reader who has scrolled up', () => {
+  // Gap 900: reading older replies, nowhere near the bottom.
+  const h = setupScroller({ scrollTop: 500 });
+  h.mod._growThreadComposer({ value: 'x' });
+  assert.equal(h.scroller.scrollTop, 500, 'stayed where they were reading');
+});
+
+test('#4513: no scroller is safe, and the grow still runs', () => {
+  const sandbox = {
+    window: {}, URLSearchParams, location: { search: '' },
+    App: { user: { id: 7, username: 'evan' } },
+    document: { getElementById: () => null },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(read('public/js/group-chat.js'), sandbox);
+  const mod = sandbox.window.GroupChat;
+  let grew = 0;
+  mod._autoGrowTextarea = () => { grew += 1; };
+  mod._growThreadComposer({ value: 'x' });
+  assert.equal(grew, 1);
+});
+
+test('#4513: the thread input listener grows the composer through the re-pinning guard', () => {
+  const fn = stripped(gcJs).match(/input\.addEventListener\('input', \(\) => \{([\s\S]*?)\n {6}\}\);/);
+  assert.ok(fn, 'mountThread input listener found');
+  assert.match(fn[1], /GroupChat\.setDraft\(slug, input\.value, threadKey\)/);
+  assert.match(fn[1], /GroupChat\._growThreadComposer\(input\)/);
+  assert.match(fn[1], /GroupChat\.sendTyping\(\{ type, ref \}\)/);
+  // The general composer keeps its bare grow: its ResizeObserver already
+  // re-pins the pane while _lockedToBottom is set.
+  const general = stripped(gcJs).match(/ta\.addEventListener\('input', \(\) => GroupChat\._autoGrowTextarea\(ta\)\)/);
+  assert.ok(general, 'the general composer still grows directly');
 });
