@@ -1070,5 +1070,6 @@ test('B6: the transcript leaves out a card Build it moved under its plan, and th
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /const message = snap\.messages\[index\];\s*\/\/[^\n]*\n\s*if \(isMovedActivity\(message\)\) continue;\s*\/\/[^\n]*\n\s*if \(plans\.hidden\.has\(message\.id\)\) continue;\s*const day = dayKey\(message\);/,
     'skipped before its day and its name are counted, so the row after it is drawn as it would be');
-  assert.match(screen, /import \{ BotActivitySync, isMovedActivity \} from '\.\/bot-activity';/);
+  // #4564 joined isActivityMessage to the import, for the change blocks' read of what a row shows.
+  assert.match(screen, /import \{ BotActivitySync, isActivityMessage, isMovedActivity \} from '\.\/bot-activity';/);
 });
