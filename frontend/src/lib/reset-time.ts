@@ -23,6 +23,8 @@
  * render.
  */
 
+import { t } from './i18n/runtime';
+
 export type ResetCadence = 'weekly' | 'daily';
 
 export interface ResetOptions {
@@ -62,9 +64,9 @@ function resolve(cadence: ResetCadence, opts: ResetOptions = {}): Date {
 export function resetWhen(cadence: ResetCadence, opts: ResetOptions = {}): string {
   const at = resolve(cadence, opts);
   const time = new Intl.DateTimeFormat(opts.locale, { hour: 'numeric', minute: '2-digit' }).format(at);
-  if (cadence !== 'weekly') return `at ${time}`;
+  if (cadence !== 'weekly') return t('core:time.reset.daily', { time });
   const day = new Intl.DateTimeFormat(opts.locale, { weekday: 'long' }).format(at);
-  return `${day} at ${time}`;
+  return t('core:time.reset.weekly', { day, time });
 }
 
 /** The same instant in UTC, for `title`: "Mon, Oct 5, 00:00 UTC". */

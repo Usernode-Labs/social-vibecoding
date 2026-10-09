@@ -290,5 +290,141 @@
   "common.loading": {
     "text": "Loading…",
     "description": "Generic placeholder shown while content is being fetched, where nothing more specific is said about what is loading."
+  },
+  "ui.passwordInput.show": {
+    "text": "Show password",
+    "description": "Accessible name and tooltip of the eye button inside a password field while the password is hidden as dots: pressing it shows the typed characters."
+  },
+  "ui.passwordInput.hide": {
+    "text": "Hide password",
+    "description": "Accessible name and tooltip of the eye button inside a password field while the typed characters are visible: pressing it hides them as dots again."
+  },
+  "ui.chat.newMessages": {
+    "text": "New messages",
+    "description": "Accessible name of the line drawn across a chat transcript above the first message the reader has not seen yet. Read by screen readers only."
+  },
+  "ui.chat.newLine": {
+    "text": "New",
+    "description": "The one word shown at the end of the line that separates messages already read from unread ones in a chat transcript. An adjective: the messages below the line are new."
+  },
+  "join.prompt.title": {
+    "text": "Join {{community}}?",
+    "description": "Title of the confirmation dialog shown when a person who is not a member tries to take part (vote, post, start a change) in a community's project. {{community}} is the project or community's name. Join is a verb: become a member."
+  },
+  "join.prompt.message": {
+    "text": "Members start changes, file requests, vote and chat here. Join to take part.",
+    "description": "Body of the join confirmation dialog, under its title: says what members of the community can do and that joining is needed to do it. Requests are requests for a change to the project; Join is a verb."
+  },
+  "join.prompt.join": {
+    "text": "Join",
+    "description": "Confirm button of the join confirmation dialog: makes the person a member of the community named in the title, then repeats what they were trying to do. Verb."
+  },
+  "join.prompt.notNow": {
+    "text": "Not now",
+    "description": "Cancel button of the join confirmation dialog: closes it without joining the community."
+  },
+  "time.ago.justNow": {
+    "text": "just now",
+    "description": "Age of an item (a message, card or notification) that is less than a minute old, shown as a small stamp on its row. Lower case because it sits in the middle of a line."
+  },
+  "time.ago.minutes_one": {
+    "text": "{{count}}m ago",
+    "description": "Compact age stamp on a card, list or notification row for something {{count}} minute old. 'm' abbreviates minute; keep it as short as the language allows."
+  },
+  "time.ago.minutes_other": {
+    "text": "{{count}}m ago",
+    "description": "Compact age stamp on a card, list or notification row for something {{count}} minutes old (under an hour). 'm' abbreviates minutes; keep it as short as the language allows."
+  },
+  "time.ago.hours_one": {
+    "text": "{{count}}h ago",
+    "description": "Compact age stamp on a card, list or notification row for something {{count}} hour old. 'h' abbreviates hour; keep it as short as the language allows."
+  },
+  "time.ago.hours_other": {
+    "text": "{{count}}h ago",
+    "description": "Compact age stamp on a card, list or notification row for something {{count}} hours old (under a day). 'h' abbreviates hours; keep it as short as the language allows."
+  },
+  "time.ago.days_one": {
+    "text": "{{count}}d ago",
+    "description": "Compact age stamp on a card, list or notification row for something {{count}} day old. 'd' abbreviates day; keep it as short as the language allows."
+  },
+  "time.ago.days_other": {
+    "text": "{{count}}d ago",
+    "description": "Compact age stamp on a card, list or notification row for something {{count}} days old (under a week). 'd' abbreviates days; keep it as short as the language allows."
+  },
+  "time.reset.weekly": {
+    "text": "{{day}} at {{time}}",
+    "description": "When a weekly allowance (AI credits, kudos) comes back, in the reader's own time zone. It is placed after words such as 'Resets' or 'Free credits reset', so it must read as the end of that sentence. {{day}} is the weekday's full name, already in the reader's language (Sunday); {{time}} is the time of day (8:00 PM)."
+  },
+  "time.reset.daily": {
+    "text": "at {{time}}",
+    "description": "When a daily allowance comes back, in the reader's own time zone. It is placed after words such as 'Resets' or 'They reset', so it must read as the end of that sentence. {{time}} is the time of day (9:00 AM)."
+  },
+  "spec.screens.afterLabel": {
+    "text": "After (planned): {{changes}}",
+    "description": "Accessible name of the 'after' picture in a proposal's before/after screens: the screen as it is planned to look. {{changes}} is the author's own description of what changes on that screen."
+  },
+  "spec.screens.beforeLabel": {
+    "text": "Before: {{changes}}",
+    "description": "Accessible name of the 'before' picture in a proposal's before/after screens: the screen as it looks today. {{changes}} is the author's own description of what changes on that screen."
+  },
+  "spec.screens.afterChip": {
+    "text": "After · planned",
+    "description": "Small chip over the 'after' picture in a proposal's before/after screens: this side shows the planned look, not something built yet. Keep the middle dot."
+  },
+  "spec.screens.beforeChip": {
+    "text": "Before · today",
+    "description": "Small chip over the 'before' picture in a proposal's before/after screens: this side shows how the screen looks today. Keep the middle dot."
+  },
+  "spec.screens.metaPhone": {
+    "text": "Phone, {{width}} × {{height}} · seen as a {{persona}}",
+    "description": "Caption under a proposal's before/after screen drawn at phone size. {{width}} and {{height}} are the screen's size in pixels; {{persona}} is the kind of viewer the screen is shown for, in the author's own word (member, admin). Keep the multiplication sign and the middle dot."
+  },
+  "spec.screens.metaDesktop": {
+    "text": "Desktop, {{width}} × {{height}} · seen as a {{persona}}",
+    "description": "Caption under a proposal's before/after screen drawn at desktop size. {{width}} and {{height}} are the screen's size in pixels; {{persona}} is the kind of viewer the screen is shown for, in the author's own word (member, admin). Keep the multiplication sign and the middle dot."
+  },
+  "spec.screens.metaPhoneZoom": {
+    "text": "Phone, {{width}} × {{height}}<0> · close-up</0><1> · whole screen</1> · seen as a {{persona}}",
+    "description": "Caption under a proposal's before/after screen drawn at phone size, when the picture can switch between a close-up of the changed part and the whole screen. Only one of the two tagged parts is visible at a time: <0> while the close-up is shown, <1> while the whole screen is shown, so the line must read correctly with either one alone. {{width}} and {{height}} are the size in pixels; {{persona}} is the kind of viewer, in the author's own word (member, admin)."
+  },
+  "spec.screens.metaDesktopZoom": {
+    "text": "Desktop, {{width}} × {{height}}<0> · close-up</0><1> · whole screen</1> · seen as a {{persona}}",
+    "description": "Caption under a proposal's before/after screen drawn at desktop size, when the picture can switch between a close-up of the changed part and the whole screen. Only one of the two tagged parts is visible at a time: <0> while the close-up is shown, <1> while the whole screen is shown, so the line must read correctly with either one alone. {{width}} and {{height}} are the size in pixels; {{persona}} is the kind of viewer, in the author's own word (member, admin)."
+  },
+  "ui.chat.replies_one": {
+    "text": "{{count}} reply",
+    "description": "Label of the control under a chat message that opens its thread of replies, when the thread has {{count}} reply. Reply is a noun here: a message written in answer."
+  },
+  "ui.chat.replies_other": {
+    "text": "{{count}} replies",
+    "description": "Label of the control under a chat message that opens its thread of replies. {{count}} is how many replies the thread has. Replies is a noun here: messages written in answer."
+  },
+  "ui.cardRun.more_one": {
+    "text": "… {{count}} more",
+    "description": "Row in a chat transcript that stands for cards folded away after the first of a run of cards in a row (proposals, shared items); pressing it shows them. {{count}} is how many are hidden, here one. Keep the leading ellipsis."
+  },
+  "ui.cardRun.more_other": {
+    "text": "… {{count}} more",
+    "description": "Row in a chat transcript that stands for cards folded away after the first of a run of cards in a row (proposals, shared items); pressing it shows them. {{count}} is how many are hidden. Keep the leading ellipsis."
+  },
+  "illustration.error.type": {
+    "text": "Choose a PNG, JPEG or WebP under 20 MB.",
+    "description": "Error under the picture chooser of an illustration editor (an app's featured illustration, a challenge's artwork) when the chosen file is not one of these image formats or is larger than 20 megabytes. PNG, JPEG and WebP are file format names."
+  },
+  "illustration.error.unreadable": {
+    "text": "That image could not be read. Choose another image.",
+    "description": "Error under the picture chooser of an illustration editor when the browser could not open the chosen image file, for example because it is damaged."
+  },
+  "illustration.error.noSize": {
+    "text": "Choose an image with a valid size.",
+    "description": "Error under the picture chooser of an illustration editor when the chosen image reports no width or height, so it cannot be drawn."
+  },
+  "illustration.error.noCanvas": {
+    "text": "Image editing is unavailable in this browser.",
+    "description": "Error under the picture chooser of an illustration editor when the browser cannot resize images, so the chosen picture cannot be prepared for upload."
+  },
+  "illustration.error.tooLarge": {
+    "text": "Choose a smaller image.",
+    "description": "Error under the picture chooser of an illustration editor when the chosen picture is still over the upload limit after it was shrunk. Smaller means fewer pixels or a smaller file."
   }
 }

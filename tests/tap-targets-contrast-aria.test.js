@@ -229,8 +229,12 @@ test('Q20: form controls the audit found unnamed have names', () => {
   assert.match(topicHead, /id="dev-issue-body-input"\n\s*aria-labelledby="dev-issue-body-heading"/,
     'the issue body editor is named after its heading');
   const wallet = read('frontend/src/features/header/wallet-sheet-body.tsx');
-  assert.match(wallet, /placeholder="Recipient address \(ut1…\)" aria-label="Recipient address"/);
-  assert.match(wallet, /placeholder="Amount" aria-label="Amount"/);
+  assert.match(wallet, /placeholder=\{t\('wallet:send\.recipientPlaceholder'\)\} aria-label=\{t\('wallet:send\.recipientLabel'\)\}/);
+  assert.match(wallet, /placeholder=\{t\('wallet:send\.amountPlaceholder'\)\} aria-label=\{t\('wallet:send\.amountLabel'\)\}/);
+  assert.equal(message('wallet:send.recipientPlaceholder'), 'Recipient address (ut1…)');
+  assert.equal(message('wallet:send.recipientLabel'), 'Recipient address');
+  assert.equal(message('wallet:send.amountPlaceholder'), 'Amount');
+  assert.equal(message('wallet:send.amountLabel'), 'Amount');
 });
 
 test('Q20: the setup guide\'s scrolling code blocks are focusable, named regions', () => {

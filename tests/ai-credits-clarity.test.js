@@ -21,7 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { englishPlatformI18n } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const { renderComponent } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
@@ -366,7 +366,10 @@ test('the drawer row renders the remainder and shares the reset wording', () => 
     fs.readFileSync(path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8'),
     /'data-credits-remaining': '1'/,
   );
-  assert.match(AI_CREDIT_SRC, /money\(remaining\) \+ ' left'/, 'rendered, not tooltip-only');
+  assert.match(AI_CREDIT_SRC, /runs\('wallet:credit\.meter\.left', amounts, \['dim', leftTone\]\)/,
+    'rendered, not tooltip-only');
+  assert.match(AI_CREDIT_SRC, /remaining: money\(remaining\)/);
+  assert.equal(message('wallet:credit.meter.left', { remaining: '$19.00' }), '<0>· </0><1>$19.00 left</1>');
   assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state\)/,
     'one wording for the boundary, shared with the dev chat');
   assert.ok(!/Resets at midnight UTC/.test(AI_CREDIT_SRC),

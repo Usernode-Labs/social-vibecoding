@@ -3,6 +3,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
+import { useMessages } from '../../../src/lib/i18n/react';
 
 /**
  * The conversation widgets: the day separator, the bubble, the named message
@@ -165,17 +166,18 @@ export function groupsWithPrevious(
 export function NewMessagesDivider({
   className, ref, ...props
 }: React.HTMLAttributes<HTMLDivElement> & { ref?: React.Ref<HTMLDivElement> }) {
+  const t = useMessages('core');
   return (
     <div
       ref={ref}
       role="separator"
-      aria-label="New messages"
+      aria-label={t('core:ui.chat.newMessages')}
       data-unread-line=""
       className={cn('flex items-center gap-2 px-4 py-1.5', className)}
       {...props}
     >
       <span aria-hidden="true" className="h-px min-w-0 flex-1 bg-violet-500/60 dark:bg-violet-400/60" />
-      <span aria-hidden="true" className="text-[0.8125rem] font-semibold leading-none text-violet-700 dark:text-violet-400">New</span>
+      <span aria-hidden="true" className="text-[0.8125rem] font-semibold leading-none text-violet-700 dark:text-violet-400">{t('core:ui.chat.newLine')}</span>
     </div>
   );
 }
@@ -278,6 +280,7 @@ export function ThreadReplySummary({
   count: number;
   timestamp?: React.ReactNode;
 } & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'type'>) {
+  const t = useMessages('core');
   return (
     <button
       type="button"
@@ -286,7 +289,7 @@ export function ThreadReplySummary({
     >
       {avatars ? <span className="flex -space-x-1" aria-hidden="true">{avatars}</span> : null}
       <span className="text-[0.9375rem] font-bold text-violet-700 dark:text-violet-400">
-        {count} {count === 1 ? 'reply' : 'replies'}
+        {t('core:ui.chat.replies', { count })}
       </span>
       {timestamp ? (
         <span className="text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>

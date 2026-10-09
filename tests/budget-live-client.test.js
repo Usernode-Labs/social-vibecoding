@@ -148,6 +148,7 @@ const CREDIT_OPTIONS_SRC = fs.readFileSync(path.join(root, 'public/js/credit-opt
 async function loadCredit() {
   const g = globalThis;
   if (!g.window) g.window = g;
+  if (!g.PlatformI18n) g.PlatformI18n = englishPlatformI18n();
   if (!g.CreditOptions) {
     const sandbox = { module: { exports: {} }, window: {}, console };
     sandbox.globalThis = sandbox;

@@ -24,6 +24,7 @@
 // hidden. A temporary bridge/provisioning problem must not rewrite navigation.
 import { nodePillStore, NODE_PILL_EMPTY } from './node-pill-store';
 import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
+import { t } from '../../lib/i18n/runtime';
 
 (function () {
   'use strict';
@@ -244,32 +245,32 @@ import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
       const nodeNowMs = Number(nowMs) -
         (Number.isFinite(driftMs) ? driftMs : 0);
       const seconds = Math.max(0, Math.floor((nodeNowMs - timestampMs) / 1000));
-      if (seconds < 5) return 'just now';
-      if (seconds < 60) return `${seconds} seconds ago`;
+      if (seconds < 5) return t('wallet:node.tipAge.justNow');
+      if (seconds < 60) return t('wallet:node.tipAge.seconds', { count: seconds });
       const minutes = Math.floor(seconds / 60);
       if (minutes < 60) {
-        return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+        return t('wallet:node.tipAge.minutes', { count: minutes });
       }
       const hours = Math.floor(minutes / 60);
-      if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+      if (hours < 24) return t('wallet:node.tipAge.hours', { count: hours });
       const days = Math.floor(hours / 24);
-      return `${days} day${days === 1 ? '' : 's'} ago`;
+      return t('wallet:node.tipAge.days', { count: days });
     },
 
     _warningMessagesFor(s) {
       const warnings = [];
       if (NodePill._readyPeersFor(s) === 0) {
-        warnings.push('No connected peers.');
+        warnings.push(t('wallet:node.warning.noPeers'));
       }
       if (s.syncStalled === true) {
-        warnings.push('Sync appears stalled.');
+        warnings.push(t('wallet:node.warning.syncStalled'));
       }
       const driftMs = Number(s.clockDriftMs);
       if (Number.isFinite(driftMs) && Math.abs(driftMs) > 5000) {
-        warnings.push('Node clock is out of sync.');
+        warnings.push(t('wallet:node.warning.clockDrift'));
       }
       if (s.walletDataHydrating === true) {
-        warnings.push('Wallet-data hydration is still running.');
+        warnings.push(t('wallet:node.warning.hydrating'));
       }
       return warnings;
     },
@@ -290,7 +291,7 @@ import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
       panel.className = 'px-4 pb-4';
       const title = document.createElement('div');
       title.className = 'text-lg font-bold py-3';
-      title.textContent = 'Node';
+      title.textContent = t('wallet:node.sheet.title');
       panel.appendChild(title);
       const bodyEl = document.createElement('div');
       bodyEl.id = 'node-pill-sheet-body';
@@ -327,4 +328,9 @@ import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
   // (frontend/scripts/build-shell.mjs), which imports this island's module
   // graph. Same guard as features/notifications/notifications.js.
   if (typeof window !== 'undefined') window.NodePill = NodePill;
+  // The tip's age and the health notices are worded in the view model, so it
+  // is published again from the same status when the language changes.
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('homeroom:language-changed', () => NodePill._render());
+  }
 })();

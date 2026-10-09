@@ -40,10 +40,15 @@ const mod = () => (api || (api = loadTsx('tests/fixtures/ai-budget-api.ts')));
  * from the bundle.
  */
 const importOnce = require('./lib/import-once');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 async function loadCredit() {
   const g = globalThis;
   if (!g.window) g.window = g;
+  // ai-credit.js reads its words through the runtime's global, as a classic
+  // script does: Node imports it directly, with no bundler to resolve the
+  // runtime module for it.
+  if (!g.PlatformI18n) g.PlatformI18n = englishPlatformI18n();
   if (!g.CreditOptions) {
     const sandbox = { module: { exports: {} }, window: {}, console };
     sandbox.globalThis = sandbox;
@@ -251,8 +256,26 @@ test('the daily row is untouched: still "daily", still local-time-aware', async 
 // The window words live in ONE place each, for the same reason the reset
 // sentence does: a second copy is a second thing to forget.
 test('the window wording is derived from capWindow, never retyped per state', () => {
-  assert.match(CREDIT_SRC, /var windowAdj = weeklyWindow \? 'weekly' : 'daily';/);
-  assert.match(CREDIT_SRC, /var windowWhen = weeklyWindow \? 'this week’s' : 'today’s';/);
+  // Each window has its own whole sentence in the catalog (a word swapped
+  // into a shared sentence cannot be translated), chosen once per state from
+  // the one `weeklyWindow` read.
+  assert.match(CREDIT_SRC, /var weeklyWindow = \(state \? state\.capWindow : s\.capWindow\) === 'weekly';/);
+  for (const [weekly, daily] of [
+    ['keyBilledWeekly', 'keyBilledDaily'], ['usedAllWeekly', 'usedAllDaily'], ['usedWeekly', 'usedDaily'],
+  ]) {
+    assert.ok(CREDIT_SRC.includes(
+      `weeklyWindow ? PlatformI18n.t('wallet:credit.tip.${weekly}', amounts)`), weekly);
+    assert.ok(CREDIT_SRC.includes(`: PlatformI18n.t('wallet:credit.tip.${daily}', amounts)`), daily);
+  }
+  const amounts = { limit: '$20.00', spent: '$1.00', remaining: '$19.00' };
+  assert.equal(message('wallet:credit.tip.keyBilledWeekly', amounts),
+    'Your $20.00 weekly allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.');
+  assert.equal(message('wallet:credit.tip.keyBilledDaily', amounts),
+    'Your $20.00 daily allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.');
+  assert.equal(message('wallet:credit.tip.usedAllWeekly', amounts), 'You have used all $20.00 of this week’s AI allowance.');
+  assert.equal(message('wallet:credit.tip.usedAllDaily', amounts), 'You have used all $20.00 of today’s AI allowance.');
+  assert.equal(message('wallet:credit.tip.usedWeekly', amounts), '$1.00 of your $20.00 weekly AI allowance used ($19.00 left).');
+  assert.equal(message('wallet:credit.tip.usedDaily', amounts), '$1.00 of your $20.00 daily AI allowance used ($19.00 left).');
   assert.ok(!/weekly allowance is used up|of this week’s AI allowance/.test(
     CREDIT_OPTIONS_SRC), 'the tooltip copy has one home, and it is ai-credit.js');
   // And the reset sentence drops the "at" for a weekday boundary: in the

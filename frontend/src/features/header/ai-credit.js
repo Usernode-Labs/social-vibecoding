@@ -40,6 +40,26 @@ import { aiBudgetStore } from './ai-budget-store.js';
     });
   }
 
+  // One part of the meter, read as a whole message. The catalog entry marks
+  // each coloured run with a numbered tag ("<0>limit </0><1>{{spent}}</1>…")
+  // and `tones` names the colour for each number, so a translator sees the
+  // part as one line and the runs come out exactly as they were. Text a
+  // translation leaves outside a tag is drawn dim.
+  function runs(id, values, tones) {
+    var text = PlatformI18n.t(id, values);
+    var out = [];
+    var pattern = /<(\d+)>([\s\S]*?)<\/\1>/g;
+    var at = 0;
+    var match;
+    while ((match = pattern.exec(text))) {
+      if (match.index > at) out.push({ tone: 'dim', text: text.slice(at, match.index) });
+      out.push({ tone: tones[Number(match[1])] || 'dim', text: match[2] });
+      at = match.index + match[0].length;
+    }
+    if (at < text.length) out.push({ tone: 'dim', text: text.slice(at) });
+    return out;
+  }
+
   // The figure is rendered EXACTLY as the dev chat renders its own meter
   // (see DevChat.renderBudget) — "limit $13.60/$20.00 · your key $129.11"
   // — so the two places a user reads their AI spend agree glyph for
@@ -142,8 +162,11 @@ import { aiBudgetStore } from './ai-budget-store.js';
         var RT = (typeof window !== 'undefined' && window.ResetTime) || null;
         var weeklyReset = s.capWindow === 'weekly';
         var resetText = state ? CO.resetSentence(state)
-          : 'Free credits reset ' + (RT ? RT.resetWhen(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt })
-            : (weeklyReset ? 'Monday 00:00 UTC' : 'at midnight UTC')) + '.';
+          : RT ? PlatformI18n.t('wallet:credit.tip.resets', {
+            when: RT.resetWhen(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt }),
+          })
+            : weeklyReset ? PlatformI18n.t('wallet:credit.tip.resetsWeeklyUtc')
+              : PlatformI18n.t('wallet:credit.tip.resetsDailyUtc');
         var resetUtc = state && CO.resetTitle ? CO.resetTitle(state) : null;
         if (resetUtc) resetText = resetText.replace(/\.$/, ' (' + resetUtc + ').');
         // The raw figures ride along for a reader that draws them itself
@@ -164,25 +187,25 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // produce a misleading $0/$0 meter and NaN percentages).
         if (state && state.level === 'locked') {
           var lockedParts = [
-            { bare: true, runs: [{ tone: 'warn', text: 'verify account · unlock $10/day' }] },
+            { bare: true, runs: [{ tone: 'warn', text: PlatformI18n.t('wallet:credit.meter.locked') }] },
           ];
           if (s.hasByokKey) {
             lockedParts.push({
-              runs: [{ tone: 'dim', text: '· ' }, { tone: 'byok', text: 'your key available' }],
+              runs: runs('wallet:credit.meter.lockedKeyAvailable', {}, ['dim', 'byok']),
             });
           }
           show({
-            title: 'Connect GitHub or X in Settings to unlock $10/day. '
-              + (s.hasByokKey ? 'Your own Anthropic key remains available.' : ''),
+            title: s.hasByokKey ? PlatformI18n.t('wallet:credit.tip.lockedWithKey')
+              : PlatformI18n.t('wallet:credit.tip.locked'),
             parts: lockedParts,
           });
           return;
         }
         if (state && state.level === 'unavailable') {
           show({
-            title: 'Credit eligibility could not be verified. Try again shortly.',
+            title: PlatformI18n.t('wallet:credit.tip.unavailable'),
             tone: 'warn',
-            parts: [{ bare: true, runs: [{ tone: 'none', text: 'credits temporarily unavailable' }] }],
+            parts: [{ bare: true, runs: [{ tone: 'none', text: PlatformI18n.t('wallet:credit.meter.unavailable') }] }],
           });
           return;
         }
@@ -195,50 +218,46 @@ import { aiBudgetStore } from './ai-budget-store.js';
         // daily or weekly — so the words around them follow the server's
         // window rather than assuming "daily"/"today".
         var weeklyWindow = (state ? state.capWindow : s.capWindow) === 'weekly';
-        var windowAdj = weeklyWindow ? 'weekly' : 'daily';
-        var windowWhen = weeklyWindow ? 'this week’s' : 'today’s';
 
-        var tip;
+        // Each sentence of the tooltip is a whole message: what the
+        // allowance stands at (worded for the week or for the day), when it
+        // comes back, and the own-key figure. `sentences` puts one after
+        // another the way the language does.
+        var amounts = { limit: money(limit), spent: money(spent), remaining: money(remaining) };
+        var allowance;
         if (exhausted && s.hasByokKey) {
-          tip = 'Your ' + money(limit) + ' ' + windowAdj + ' allowance is used up. AI turns are now '
-            + 'billed to the Anthropic key you saved in Settings. ' + resetText;
+          allowance = weeklyWindow ? PlatformI18n.t('wallet:credit.tip.keyBilledWeekly', amounts)
+            : PlatformI18n.t('wallet:credit.tip.keyBilledDaily', amounts);
         } else if (exhausted) {
-          tip = 'You have used all ' + money(limit) + ' of ' + windowWhen + ' AI allowance. ' + resetText;
+          allowance = weeklyWindow ? PlatformI18n.t('wallet:credit.tip.usedAllWeekly', amounts)
+            : PlatformI18n.t('wallet:credit.tip.usedAllDaily', amounts);
         } else {
-          tip = money(spent) + ' of your ' + money(limit) + ' ' + windowAdj + ' AI allowance used ('
-            + money(remaining) + ' left). ' + resetText;
+          allowance = weeklyWindow ? PlatformI18n.t('wallet:credit.tip.usedWeekly', amounts)
+            : PlatformI18n.t('wallet:credit.tip.usedDaily', amounts);
         }
+        var sentences = function (first, second) {
+          return PlatformI18n.t('wallet:credit.tip.sentences', { first: first, second: second });
+        };
+        var tip = sentences(allowance, resetText);
         if (byok > 0) {
           // Still today's figure: the BYOK tally is the day row's, not the
           // week's, whichever window the cap above is measuring.
-          tip += ' A further ' + money(byok)
-            + ' today was billed to your own Anthropic key and does not count against the allowance.';
+          tip = sentences(tip, PlatformI18n.t('wallet:credit.tip.ownKeyToday', { amount: money(byok) }));
         }
 
         var parts = [{
-          runs: [
-            { tone: 'dim', text: 'limit ' },
-            { tone: spentTone, text: money(spent) },
-            { tone: 'dim', text: '/' + money(limit) },
-          ],
+          runs: runs('wallet:credit.meter.spend', amounts, ['dim', spentTone]),
         }];
         // #593: what is LEFT, rendered rather than tooltip-only. The whole
         // point of the row is to answer "can I start another dev session?"
         // before opening one, and a tooltip answers that for nobody on a
         // phone — which is where the drawer is used most.
-        var leftLabel = exhausted
-          ? (s.hasByokKey ? '' : 'none left')
-          : money(remaining) + ' left';
-        if (leftLabel) {
+        if (!(exhausted && s.hasByokKey)) {
+          var leftTone = exhausted ? 'high' : (state && state.level === 'low') ? 'mid' : 'dim';
           parts.push({
             remaining: true,
-            runs: [
-              { tone: 'dim', text: '· ' },
-              {
-                tone: exhausted ? 'high' : (state && state.level === 'low') ? 'mid' : 'dim',
-                text: leftLabel,
-              },
-            ],
+            runs: exhausted ? runs('wallet:credit.meter.noneLeft', {}, ['dim', leftTone])
+              : runs('wallet:credit.meter.left', amounts, ['dim', leftTone]),
           });
         }
         if (byok > 0) {
@@ -247,10 +266,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
           // travels WITH the BYOK figure, so a wrapped value reads
           // "· your key $4.50" instead of leaving a dangling "·" above.
           parts.push({
-            runs: [
-              { tone: 'dim', text: '· ' },
-              { tone: 'byok', text: 'your key ' + money(byok) },
-            ],
+            runs: runs('wallet:credit.meter.ownKey', { amount: money(byok) }, ['dim', 'byok']),
           });
         }
 
@@ -270,4 +286,12 @@ import { aiBudgetStore } from './ai-budget-store.js';
   // (frontend/scripts/build-shell.mjs), which imports this island's module
   // graph. Same guard as features/notifications/notifications.js.
   if (typeof window !== 'undefined') window.AiCredit = AiCredit;
+  // The view model holds worded text, so it is built again from the same
+  // figures when the language changes. Nothing to do before the first answer:
+  // the row is still empty then.
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('homeroom:language-changed', function () {
+      if (AiCredit.Budget.state) AiCredit.Budget._render();
+    });
+  }
 })();
