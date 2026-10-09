@@ -51,7 +51,7 @@ test('B7: Try it always, Approve when their Yes counts, Change something; one fi
 });
 
 test('B7: the card, drawn in every state', () => {
-  const { ReadyCardView, readyTitle, waitingLine, isReadyMessage, changeLine } = loadTsx('frontend/src/features/messages/bot-ready.tsx');
+  const { ReadyCardView, readyTitle, waitingLine, isReadyMessage, changeLine, changeLink } = loadTsx('frontend/src/features/messages/bot-ready.tsx');
   const actions = dm.readyActions({ sessionId: 9, epoch: 2, approve: true });
   const meta = {
     kind: 'proposal', appName: 'Plant Pal', appSlug: 'plant-pal', askedText: 'Add a weekly reminder',
@@ -68,12 +68,28 @@ test('B7: the card, drawn in every state', () => {
   assert.ok(!/Waiting for approval/.test(open), 'a project of one waits on nobody else');
   // #3870: what the change is, under the title: its own title, else its request's.
   assert.ok(!/data-bot-ready-change/.test(open), 'nothing to say beyond what they asked');
+  // #4537: the line names the request and links to the change's page, so
+  // Try it is not the only way in.
   const titled = draw({ meta: { ...meta, changeTitle: 'Weekly watering reminder', issueTitle: 'Reminders' } });
-  assert.match(titled, /data-bot-ready-change="">Weekly watering reminder</);
+  assert.match(titled,
+    /data-bot-ready-change=""><a href="#app\/plant-pal\/dev\/proposals\/9" [^>]*data-bot-ready-change-link="">Weekly watering reminder<\/a></,
+    'the change line is a link to the change page, on the session the card was sent for');
   assert.ok(titled.indexOf('Weekly watering reminder') < titled.indexOf('You asked:'), 'what it is, then what they asked');
   assert.equal(changeLine({ ...meta, askedText: undefined, issueTitle: 'Reminders' }), 'Reminders');
   assert.equal(changeLine({ ...meta, changeTitle: 'add a weekly reminder.' }), null, 'a title that only repeats what they asked is said once');
   assert.equal(changeLine({ ...meta, askedText: undefined }), null);
+  assert.equal(changeLink({ ...meta, sessionId: undefined }, actions), '#app/plant-pal/dev/proposals/9', 'no sent session id: the Try it action\'s');
+  assert.equal(changeLink({ ...meta, appSlug: undefined }), null, 'no app slug: the line stays plain text');
+  assert.equal(changeLink({ ...meta, sessionId: undefined, actions: [] }), null, 'nothing to open: the Try it action carries it');
+  // The card names the request its change answers (#4537).
+  const numbered = { ...meta, issueNumber: 2, changeTitle: 'Weekly watering reminder' };
+  assert.equal(changeLine(numbered), 'Request #2: Weekly watering reminder');
+  assert.equal(changeLine({ ...numbered, changeTitle: 'add a weekly reminder.' }), 'Request #2',
+    'a title that only repeats what they asked: the request number still says which change');
+  assert.equal(changeLine({ ...numbered, changeTitle: undefined, issueTitle: undefined }), 'Request #2', 'no title of its own, still named');
+  const numberedCard = draw({ meta: { ...numbered, askedText: undefined, changeTitle: undefined } });
+  assert.match(numberedCard, /data-bot-ready-change-link="">Request #2</);
+  assert.equal(changeLine({ ...meta, issueNumber: 2, askedText: undefined, issueTitle: 'Reminders', changeTitle: undefined }), 'Request #2: Reminders');
   // Approved: what happens next, never just "You approved it." (4 October).
   assert.match(draw({ state: 'approved', actions: [] }), />You approved it\. It goes live in a minute or two\.</);
   const stale = draw({ state: 'stale', actions: actions.slice(0, 1) });

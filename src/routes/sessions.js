@@ -5898,6 +5898,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     const durableStop = turnLifecycle.stopRequestOf(durableTurn);
     const stopping = stopHandleNow ? !!stopHandleNow.stopped : !!durableStop;
 
+    // #4533: what the running turn is and since when, off its record, for
+    // get_change: a busy change said nothing of what held it (PR #4533's
+    // checks fix waited an hour behind one). Its mode ('build', 'scout',
+    // 'sync', 'shots'), or the Homeroom bot's follow-up its mark names
+    // ('homeroom_bot_checks_fix', 'homeroom_bot_reply').
+    let turn = null;
+    if (durableTurn) {
+      const mark = require('../services/homeroom-bot-followup').turnMarkOf(durableTurn);
+      turn = {
+        startedAt: durableTurn.startedAt || null,
+        kind: mark ? `homeroom_bot_${mark.followUp}` : (durableTurn.mode || null),
+      };
+    }
+
     // #937: WHEN the stop was requested, so a reloading client (or a second
     // tab joining mid-stop) rebuilds its escalation ladder at the right
     // rung instead of restarting a calm "Stopping…" that never escalates.
@@ -5986,14 +6000,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // fallback read this the same way the resolving banner reads
     // `resolving`.
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
-    // estimate
+    // estimate, turn ({ startedAt, kind } | null, #4533)
     // (+ resolving, sync, status, and `delivery` when asked for, #3177).
     // `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
     // clearEstimate. `stopRequestedAt` is epoch ms | null (#937) and drives
     // the client's stop-escalation ladder across reloads.
     res.json({
-      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate,
+      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
       spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
@@ -11267,6 +11281,10 @@ function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   tool with concrete reviewer-facing claims and real user flows (or impact
   "none" with a specific reason for a non-visual change). If the tool fails,
   report the failure; never claim that intent was recorded when it was not.
+- When the change is a rename, a changed flow, a data or settings change, or
+  a measured improvement, also call declare_diagram once with that kind; it
+  is drawn on the change's card when it has no before/after shots. Mermaid
+  is only for a change declared with impact "none".
 - Implement the change, run focused checks, commit it on the existing session
   branch, and finish the turn. The Homeroom harness handles push, pull request
   creation, staging, checks, and scheduling the paired shots run after

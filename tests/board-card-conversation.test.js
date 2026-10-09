@@ -212,7 +212,7 @@ test('the legacy comment filler is wired from the board and paints wherever the 
   // still one wiring pass: the filler collects its callers and runs once.
   assert.match(APP_VIEW_SRC, /if \(!AppView\._feedWireRoots\) \{\s*AppView\._feedWireRoots = new Set\(\);\s*Promise\.resolve\(\)\.then\(\(\) => AppView\._wireFeedCommentsNow\(\)\);\s*\}\s*AppView\._feedWireRoots\.add\(root\);/);
   assert.match(KANBAN, /callAppView\('_wireFeedComments', host\.closest\('#dev-kanban'\) \|\| host\);/);
-  assert.match(KANBAN, /\}, \[openKey, unfolded\]\);/, 'keyed on the fold, as the kudos filler is');
+  assert.match(KANBAN, /\}, \[unfolded\]\);/, 'keyed on ?cards=open, as the kudos filler is: nothing unfolds in place (#4486)');
 
   // And the paint is document-wide: the same issue can hold a slot in more
   // than one place at once, and none of them is guaranteed to be under

@@ -380,7 +380,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   return (
     <>
       {/*
-          The progress Home's block shares ("3/9 done in Season 2" over one
+          The progress Home's block shares ("3/9 done in this event" over one
           segment per challenge). The id rides its text line, where the
           declared dapp.json check anchors.
       */}

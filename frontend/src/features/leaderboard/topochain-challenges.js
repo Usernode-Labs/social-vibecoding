@@ -970,24 +970,26 @@ const TopochainChallenges = {
   },
 
   // The progress over the grid, as the board's quiet season summary draws it
-  // ("3/9 done in Season 2", one segment per challenge, in
+  // ("3/9 done in this event", one segment per challenge, in
   // ./season-progress.tsx, which Home's block shares). `scope` names a scope
-  // of its own ("First challenges"); otherwise it is the selected event, whose name
-  // can land after the grid does. The onChange redraw in open() fills it in
-  // then, and until it has, the caption is plain "done".
+  // of its own ("First challenges"); otherwise it is the selected event. The
+  // onChange redraw in open() fills the caption in once the event has
+  // arrived, and until it has, the caption is plain "done".
   //
   // THE EVENT SAYS IT IS AN EVENT (QA 2026-09-24 Q17). This tally is one
   // event's challenges, while Home's and the profile's are the whole
   // season's; production names its season event after the season ("Season
   // 1"), so "done in Season 1" here and "done in Season 1" on Home were two
   // different counts under one label. The event's tally reads "done in this
-  // event · <name>" now. A named scope ("First challenges") is unchanged.
+  // event" now, without the name (issue #4528): the event's own name can
+  // still be the season's, and the name added nothing the words did not say.
+  // A named scope ("First challenges") is unchanged.
   _progressView(done, total, scope) {
     if (scope) return { done, total, caption: `done in ${scope}` };
     const ctx = window.TopochainEventContext;
     const ev = ctx && typeof ctx.selectedEvent === 'function' ? ctx.selectedEvent() : null;
     const name = ev ? TopochainChallenges.str(ev.name).trim() : '';
-    return { done, total, caption: name ? `done in this event · ${name}` : 'done' };
+    return { done, total, caption: name ? 'done in this event' : 'done' };
   },
 
   // The card's rail: which of the three states a challenge is in, the one

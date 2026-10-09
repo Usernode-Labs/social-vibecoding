@@ -296,6 +296,53 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [answer.id]);
   });
 
+  // #4539: a request closed while its plan still waited for its person's
+  // Build it leaves Needs you and reads stopped in History. The plan is not
+  // retired, so the same read open says Needs you: it is the request's own
+  // closed state both queries (progress and past runs) now carry.
+  await t.test('#4539: a request closed while its plan waited for Build it stops, and does not wait any more', async () => {
+    const progressSvc = require('../src/services/homeroom-bot-progress');
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 6, $2, 'Sticky filters')`,
+      [notes.id, ada.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at, created_at)
+       VALUES ($1, 6, 'live', 'ready', NOW() - INTERVAL '49 minutes', NOW() - INTERVAL '50 minutes')`,
+      [notes.id],
+    );
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, 6, 'Sticky filters', $2)`,
+      [notes.id, ada.id],
+    );
+    const waiting = await tray.workFor(pool, { user: asAda });
+    assert.deepEqual(waiting.needsYou.map(key), ['note-board#6', 'seed-swap#4'],
+      'open, its plan waits on her, newest first');
+    assert.ok(!waiting.history.some((job) => key(job) === 'note-board#6'), 'and it is nowhere else');
+
+    await pool.query(`UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = 6`, [notes.id]);
+    const stopped = await tray.workFor(pool, { user: asAda });
+    assert.ok(!stopped.needsYou.some((job) => key(job) === 'note-board#6'), 'a closed request needs nobody');
+    const tile = stopped.history.find((job) => key(job) === 'note-board#6');
+    assert.equal(tile.outcome, 'stopped', 'and History says the work stopped');
+    assert.equal(tile.doing, null);
+    assert.equal(tile.href, '#app/note-board/dev/issues/6');
+
+    // The bot's own progress answer says the same: nothing in progress, and
+    // what came of it names the closure.
+    const settings = await homeroomBot.readSettings(pool);
+    const progress = await progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: null } });
+    assert.ok(!progress.rightNow.some((item) => item.project === 'note-board' && item.number === 6),
+      'not in progress any more');
+    assert.ok(progress.finishedLately.some((item) => item.number === 6 && item.outcome === 'not built: the request was closed'),
+      'and the outcome names the closure');
+
+    // Leaving it as the later tests find it.
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 6', [notes.id]);
+    await pool.query('DELETE FROM issues WHERE app_id = $1 AND github_issue_number = 6', [notes.id]);
+  });
+
   await t.test('never anybody else\'s, and never an app they cannot view', async () => {
     const ours = await tray.workFor(pool, { user: asAda });
     const all = [...ours.now, ...ours.needsYou, ...ours.history].map((job) => job.appSlug);

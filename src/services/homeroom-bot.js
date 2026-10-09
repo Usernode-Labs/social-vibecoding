@@ -76,6 +76,9 @@ function firstVersionLive() { return require('./first-version-live'); }
 function botReview() { return require('./bot-review'); }
 // #4210: interrupted builds, kept for admins.
 function incidents() { return require('./platform-incidents'); }
+// #4530: whether the new words on a request the bot already answered were
+// for the bot, so a repeat note is held back when they were not.
+function addressedMod() { return require('./homeroom-bot-addressed'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -206,6 +209,13 @@ const MAX_BUILD_CONCURRENCY = 4;
 // use (the worker namespace's quota), so the ceiling stays well under it.
 const MAX_LIVE_AT_ONCE = 24;
 const MAX_PER_PERSON = 6;
+// How many live builds one project may have under way at once. Each build
+// is a session and a branch of its own (live.buildAndPropose), so they do
+// not share a worker; one at a time made a busy project's ready requests
+// (Homeroom's own above all, where a build can take almost two hours) wait
+// in a line behind each other. Reads stay one per project: they share the
+// project's one session.
+const BUILDS_PER_PROJECT = 3;
 const MAX_PROPOSAL_CEILING = 1000;
 // The automatic ceiling: what twenty live apps
 // had under "5 per live app", and well past what 16 builds at once can fill
@@ -316,6 +326,10 @@ const CHECKS_REASON = 'checks_failing';
 // request while it ran (interruptRead). It was already told the bot is
 // looking, and it is never started over a second time.
 const READ_AGAIN_REASON = 'read_again';
+// The queue reason of a request somebody asked the bot to build from its
+// page, or just filed on a project it builds on (homeroom-bot-dm.js
+// askBotToBuild, noteRequestFiled).
+const ASKED_REASON = 'asked';
 // Rows the bot queued for itself rather than for anything on the issue: a
 // restart's (#3471), a failing check's, and a read started over. The issue
 // has not changed since the bot last looked, which is exactly what a
@@ -2699,7 +2713,7 @@ async function runTriage(pool, config, {
   // Whether this turn is a follow-up on the bot's own proposal (set again
   // below once its open proposal is found), for what a refusal backs off.
   let followUpTurn = !!item.followUp;
-  const recordRefusal = (error) => {
+  const recordRefusal = async (error) => {
     // A follow-up's session is its proposal's: only that follow-up waits.
     const { attempts, delayMs } = followUpTurn
       ? noteFollowUpRefusal(app.id, issueNumber, error)
@@ -2707,6 +2721,12 @@ async function runTriage(pool, config, {
     log.info('homeroom-bot', followUpTurn ? 'A follow-up was refused a turn; backing it off' : 'App refused a turn; backing off', {
       app: app.slug, issueNumber, error, attempts, delayMs,
     });
+    // #4533: and the row says so (queueWait). A refusal leaves it where it
+    // was, enqueued_at and all, so nothing showed it was waiting, or why.
+    await pool.query(
+      'UPDATE homeroom_bot_queue SET wait_reason = $2, wait_until = $3 WHERE id = $1',
+      [item.id, error, new Date(Date.now() + delayMs).toISOString()],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not note why a queue row waits', { app: app.slug, issueNumber, err: err.message }));
     return { ran: false, reason: 'refused', detail: error, app: app.slug, retryInMs: delayMs, followUp: followUpTurn };
   };
 
@@ -2718,7 +2738,12 @@ async function runTriage(pool, config, {
     if (read && readsInFlight.get(readKey(app.id, issueNumber)) === read) readsInFlight.delete(readKey(app.id, issueNumber));
   };
 
-  const recordFailure = async (error, extra = {}, { infra = false } = {}) => {
+  // `collateral`: a turn killed by a stop on its session. Its row is kept,
+  // as a platform fault's is, but it says 'collateral' rather than 'infra',
+  // so it does not back off the whole bot (outcomeOf): it is one session's
+  // fallout, not an outage, and pausing every project for it was how a
+  // read started over mid-thread stopped all of them.
+  const recordFailure = async (error, extra = {}, { infra = false, collateral = false } = {}) => {
     endRead();
     if (REFUSAL_ERRORS.has(error)) return recordRefusal(error);
     // A platform fault the current streak already recorded gets no second
@@ -2740,7 +2765,7 @@ async function runTriage(pool, config, {
     }
     log.warn('homeroom-bot', 'Triage failed', { app: app.slug, issueNumber, error, infra });
     return infra
-      ? { ran: false, reason: 'infra', detail: error, runId: id }
+      ? { ran: false, reason: collateral ? 'collateral' : 'infra', detail: error, runId: id }
       : { ran: true, verdict: 'failed', runId: id };
   };
 
@@ -3006,6 +3031,9 @@ async function runTriage(pool, config, {
       onProgress: () => {},
     });
   } catch (err) {
+    // #4533: a worker that cannot change its storage under a running turn
+    // is a busy session, never a platform fault that pauses the whole bot.
+    if (err?.code === 'session_busy') return recordFailure('session_busy', { sessionId: session.id });
     return recordFailure(`worker: ${err.message}`, { sessionId: session.id }, { infra: true });
   }
 
@@ -3030,6 +3058,21 @@ async function runTriage(pool, config, {
   );
   session.agent_thread_id = null;
   activeWorkers.add(session.id);
+  // A stop stays pending on the session after the turn it stopped has
+  // ended, and the worker skips every dispatch until a new turn clears it
+  // (#937). Nothing here cleared it, so the read started over after a
+  // person wrote mid-read was skipped at once, came back empty and was
+  // recorded as collateral, which paused the bot on every project
+  // (homeroom-maps #30, run 1250); a request read after a budget or
+  // verdict-block stop on the same session was skipped the same way. This
+  // turn is that new turn, as a build's is (#3396). Safe here: the session
+  // is the bot's own, this flow holds it (activeWorkers), and each flow
+  // that stops a turn on it awaits the stop before letting go of it, so a
+  // stop pending now was aimed at a turn that is over. Cleared before this
+  // turn's clock starts and its stop is wired up (read.stop), so a stop
+  // aimed at this turn is never the one erased; a turn somehow still in
+  // flight here keeps its stop.
+  if (!worker.isInFlight?.(session.id)) worker.clearPendingStop?.(session.id);
 
   // The budget (#2737). The wall clock ends the turn the same way a person's
   // Stop button does: the in-container kill plus the journal exit marker,
@@ -3236,6 +3279,12 @@ async function runTriage(pool, config, {
   // row stays this read's (`claimed`), and its reason says it was started
   // over, so it is not announced twice and not started over again.
   if (read.interrupted && !budgetHit) {
+    // The stop was this read's own, and its turn is over (the finally above
+    // awaited it), so it explains nothing about the read that starts over:
+    // that read's turn clears the stop it left pending (above), and its
+    // record is dropped here, so a reply that is genuinely empty is
+    // recorded as one rather than as collateral.
+    stoppedSessions.delete(Number(session.id));
     await pool.query('UPDATE homeroom_bot_queue SET reason = $2 WHERE id = $1', [item.id, READ_AGAIN_REASON]);
     return runTriage(pool, config, {
       bot, app, item: { ...item, reason: READ_AGAIN_REASON, claimed: true }, mode, settings, deps,
@@ -3309,11 +3358,12 @@ async function runTriage(pool, config, {
       // concurrently dies with it. Two of the first three budget stops took
       // a bystander issue down this way, each recorded as a permanent parse
       // failure a second after the stop. Put that issue back on the queue
-      // instead of burning its triage on somebody else's timeout.
+      // instead of burning its triage on somebody else's timeout, and
+      // without pausing the bot on every project for it.
       if (!budgetHit && wasStoppedRecently(session.id)) {
         return recordFailure('collateral: the session was stopped mid-dispatch', {
           sessionId: session.id, costUsd, ...usage,
-        }, { infra: true });
+        }, { infra: true, collateral: true });
       }
       // Otherwise say WHY it was empty. The worker's watch state already
       // knows — it was simply being thrown away, which left 21 of the first
@@ -3431,6 +3481,17 @@ async function runTriage(pool, config, {
       acted = await actOnVerdict({
         pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
         seed, seedReadAt, postedAt, turnBudgetMs, botLogin: botUsername,
+        // #4530: a look the request's own changes started repeats a note
+        // only for the bot; everything else speaks as it did. The comments
+        // the read fetched, so a mention on the GitHub issue counts too.
+        relook: item.reason === 'changed' || item.reason === READ_AGAIN_REASON,
+        // And a look somebody asked for (Ask Homeroom bot to build this, or
+        // a request just filed) does not say again the note the bot is still
+        // waiting on: the button is refused then (homeroom-bot-dm.js
+        // askBotToBuild), and this holds the repeat if it got through. A
+        // request's first look has no note before it, and speaks.
+        askedLook: item.reason === ASKED_REASON,
+        comments,
         model: stageModel(settings, config, 'build'), specModel: stageModel(settings, config, 'spec'),
         quietHold: item.reason === APP_AGAIN_REASON,
         proposalCeiling: botProposalCeiling(settings),
@@ -4036,6 +4097,13 @@ function wakeBuilds() {
 // a follow-up on a proposal the group is voting on. That session is
 // `promoted`, and a person's recovery (the PR and staging updated) is the
 // right end for it.
+//
+// #4533: but a follow-up is still the bot's turn, with the bot's clock and
+// the bot's ledger. Its record carries the bot's mark (homeroom-bot-followup
+// TURN_MARK), which isRecoveredBotFollowUp reads: recovery re-arms its clock
+// from the deadline on the mark (recoveryDeadline), and once the person's
+// tail has moved the proposal on, records what the turn did as the follow-up
+// itself would have (finishRecoveredFollowUp).
 
 /**
  * True when restart recovery should hand this session to the bot.
@@ -4052,6 +4120,20 @@ function isRecoveredBotSession(session) {
     && session.username === live.BOT_USERNAME
     && session.user_is_synthetic === true
     && (session.status === 'active' || (session.status === 'paused' && !!session.active_turn));
+}
+
+/**
+ * #4533: true when the turn restart recovery found is a follow-up of the
+ * bot's on its own proposal: the session is the bot's, and the turn's record
+ * carries the mark its follow-up left (homeroom-bot-followup turnMarkOf). A
+ * person's turn on the same session carries none, so it is never stopped on
+ * the bot's clock. Pure.
+ */
+function isRecoveredBotFollowUp(session, activeTurn = session?.active_turn) {
+  return !!session
+    && session.username === live.BOT_USERNAME
+    && session.user_is_synthetic === true
+    && !!followup.turnMarkOf(activeTurn);
 }
 
 /** The build run a session is the build of, while it is still under way. */
@@ -4106,6 +4188,9 @@ function restartAllowanceMs(activeTurn) {
  * third, and gave a spec turn twice its 10 minutes.
  */
 async function recoveryDeadline(pool, config, session, activeTurn) {
+  // #4533: a follow-up's own deadline, as its live clock had it.
+  const mark = followup.turnMarkOf(activeTurn);
+  if (mark) return toMs(mark.deadlineAt) + restartAllowanceMs(activeTurn);
   const startedAt = toMs(activeTurn?.startedAt);
   if (!startedAt) return null;
   const allowance = restartAllowanceMs(activeTurn);
@@ -4339,7 +4424,32 @@ async function finishRecoveredTurn({
  */
 async function finishConfiguredShadow(pool, runId, built) {
   const version = await runConfigVersion(pool, runId).catch(() => null);
-  if (version) await botConfigs().finishLive(pool, { botRunId: runId, version, built });
+  if (version) await botConfigs().finishLive(pool, { botRunId: runId, version, built, activeMs: await recoveredBuildMs(pool, built?.sessionId) });
+}
+
+/**
+ * How long a build a restart finished was under way: from its session's
+ * start, which live.buildAndPropose opens as its spec turn begins (where the
+ * live path's own buildMs starts too), to now, the restart included, since
+ * its worker went on building through it; or to `until` (a review a restart
+ * stopped with nothing running: its last step), when that is earlier. A side
+ * build's time is counted the same way (bench/lane.js releaseTrial adds each
+ * claim's to prior_ms). Without it, a configuration's result for a build
+ * finished after a restart held its triage's time alone (95 s beside a side
+ * build's 940 s). Null when the session is gone. Never throws.
+ */
+async function recoveredBuildMs(pool, sessionId, { until = null } = {}) {
+  if (!sessionId) return null;
+  try {
+    const { rows: [s] } = await pool.query(
+      `SELECT (EXTRACT(EPOCH FROM LEAST(NOW(), COALESCE($2::timestamptz, NOW())) - created_at) * 1000)::float8 AS ms
+         FROM chat_sessions WHERE id = $1`,
+      [Number(sessionId), until && Number.isFinite(Date.parse(until)) ? new Date(until).toISOString() : null],
+    );
+    return s && Number.isFinite(Number(s.ms)) ? Math.max(Math.round(Number(s.ms)), 0) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -4863,9 +4973,15 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     // (isRecoveredBotSession checks the name and the synthetic flag).
     const bot = { id: session.user_id, username: live.BOT_USERNAME };
     const liveD = liveDeps(deps);
+    // #4553: what it posts, so its own note is not read back as a change
+    // (advanceSeen below, as the live path does). Without it, a build that
+    // "couldn't finish (finished after a restart)" left that note newer than
+    // anything the run had seen, and the next refresh built the request
+    // again from scratch ('changed:github', run 1278 then 1291).
+    const postedAt = [];
     const say = liveSayer({
       pool, github, ws: liveD.ws, app, repo, issueNumber: plan.issueNumber, issue, runId: plan.runId, bot,
-      botLogin: await live.botUsernameOf(github), notifications: deps.notifications || null,
+      botLogin: await live.botUsernameOf(github), notifications: deps.notifications || null, postedAt,
     });
     const note = ' (finished after a restart)';
     // A failed turn is a failed build here as on the live path.
@@ -5000,6 +5116,9 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     if (version && !restartedOut) {
       await botConfigs().finishLive(pool, {
         botRunId: plan.runId, version,
+        // Its real time, as a side build's is counted; to the review's last
+        // step when the restart left the review with nothing running.
+        activeMs: await recoveredBuildMs(pool, sessionId, { until: plan.lost ? reviewing?.updatedAt : null }),
         built: reviewing ? { ...built, review: { ...reviewing, finalCapture: null } }
           : reviewedNow ? { ...built, review: reviewedNow } : built,
       });
@@ -5007,6 +5126,19 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     const acted = await announceBuilt({
       pool, ws: liveD.ws, app, bot, issueNumber: plan.issueNumber, runId: plan.runId, built, say, domain: liveD.domain,
     });
+    // #4553: the read that started this build is gone with the restart, so
+    // what the run last recorded as seen stands for it: a person who wrote
+    // after that still has the request read again.
+    const { rows: [seenRow] = [] } = await pool.query(
+      'SELECT COALESCE(thread_seen_at, created_at) AS since FROM homeroom_bot_runs WHERE id = $1', [plan.runId],
+    ).catch(() => ({ rows: [] }));
+    const since = seenRow?.since ? new Date(seenRow.since).toISOString() : null;
+    if (since) {
+      await live.advanceSeen({
+        pool, github, threadContext: deps.threadContext || require('./thread-context'), app, repo,
+        issueNumber: plan.issueNumber, runId: plan.runId, since, postedAt,
+      }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
+    }
     log.info('homeroom-bot', 'Finished a live build a restart interrupted', {
       app: app.slug, issueNumber: plan.issueNumber, sessionId, acted,
     });
@@ -5039,9 +5171,10 @@ async function holdSlotDuringRecovery(pool, sessionId, recovery) {
 }
 
 /**
- * A live build restart recovery is finishing holds its project's build slot
- * (`build:<appId>`, see dispatch), so the lane does not start the project's
- * next waiting build beside it. Resolves with the recovery's own outcome.
+ * A live build restart recovery is finishing holds a build slot of its own
+ * (`build:<runId>`, see dispatch), so it counts against its project's
+ * BUILDS_PER_PROJECT like any build under way. Resolves with the recovery's
+ * own outcome.
  */
 async function holdLiveBuildDuringRecovery(pool, sessionId, recovery) {
   let run = null;
@@ -5056,7 +5189,7 @@ async function holdLiveBuildDuringRecovery(pool, sessionId, recovery) {
     );
     run = rows[0] || null;
   } catch (_) { run = null; }
-  const slot = run ? `build:${Number(run.app_id)}` : null;
+  const slot = run ? buildSlot(run.id) : null;
   if (!run || inFlight.has(slot)) return recovery;
   inFlight.set(slot, {
     lane: 'live', build: true, recovered: true, appId: Number(run.app_id),
@@ -5221,20 +5354,29 @@ async function sayBuildLost(pool, settings, run, deps = {}) {
  * outcome is recorded in the same columns (#3509), never is.
  */
 /**
- * #3654: whether the bot's live builds (ready verdicts on an app it is live
- * on, which a person is waiting for) fill every build slot it has right now,
- * in this process. The benchmark's lane (services/bench/lane.js) starts
- * nothing while they do, so a benchmark never takes a worker a person is
- * waiting on. Shadow builds in the lane do not count: like a benchmark trial
- * they are an experiment nobody waits for, and counting them let a busy
- * shadow lane hold the benchmark back indefinitely. `counts.besides` adds
- * builds that share the live builds' slots: a later change's side builds
- * use only the slots live builds leave free (lane.js). `counts.live` is for
- * tests.
+ * #3654: whether the bot's live work (the requests on apps it is live on,
+ * which a person is waiting for: reads and builds) fills every live slot it
+ * has right now, in this process: `liveAtOnce`, which dispatch fills, each
+ * slot a worker from the pool people's own sessions use. The benchmark's
+ * lane (services/bench/lane.js) starts nothing while it does, so a benchmark
+ * never takes a worker a person is waiting on. Shadow builds in the lane do
+ * not count: like a benchmark trial they are an experiment nobody waits for,
+ * and counting them let a busy shadow lane hold the benchmark back
+ * indefinitely. `counts.besides` adds work that shares the live slots: a
+ * later change's side builds use only the slots live work leaves free
+ * (lane.js), so live work and side builds together stay inside
+ * `liveAtOnce`; live work never waits for them, since dispatch does not
+ * count them. `counts.live` is for tests.
+ *
+ * The limit was `buildConcurrency` (2), from when live builds had that many
+ * slots. They have had `liveAtOnce` (12) since, and any two of them held
+ * every side build and benchmark trial back: on 9 Oct 2026 none started for
+ * hours with twenty queued.
  */
 function isLiveLaneSaturated(settings = null, counts = null) {
-  const limit = clampInt(settings?.buildConcurrency, DEFAULTS.buildConcurrency, 1, MAX_BUILD_CONCURRENCY);
-  const live = counts && Number.isFinite(counts.live) ? counts.live : liveBuildsInFlight.size;
+  const limit = clampInt(settings?.liveAtOnce, DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
+  const live = counts && Number.isFinite(counts.live) ? counts.live
+    : Math.max([...inFlight.values()].filter((e) => e.lane === 'live').length, liveBuildsInFlight.size);
   return live + (Number(counts?.besides) || 0) >= limit;
 }
 
@@ -5290,10 +5432,15 @@ async function proposalSpec(pool, sessionId) {
  * writes to the proposal thread. So the turn runs only when a PERSON said
  * something since the bot last looked; otherwise that activity is recorded
  * as seen and nothing is posted or spent.
+ *
+ * #4533: `recovered` is a turn restart recovery followed to its end
+ * ({ turn, mark, mode }, finishRecoveredFollowUp): no turn is run, and what
+ * follows the turn runs as it does for a live one, from what its mark kept
+ * of where it began.
  */
 async function runFollowUp(pool, config, {
   bot, app, repo, item, issue, proposal, runMode, model, turnBudgetMs, startedMs,
-  recordFailure, deps,
+  recordFailure, deps, recovered = null,
 }) {
   const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
   const issueNumber = Number(item.issue_number);
@@ -5318,14 +5465,16 @@ async function runFollowUp(pool, config, {
   );
   const lastRun = lastRows[0] || null;
 
-  const seedReadAt = new Date().toISOString();
+  const seedReadAt = recovered?.mark.seedReadAt || new Date().toISOString();
   const [{ comments = [] } = {}, issueThread, proposalThread, botLogin] = await Promise.all([
     github.fetchIssueComments(repo.owner, repo.repo, issueNumber).catch(() => ({ comments: [] })),
     threadContext.loadIssueThread(pool, app.id, issueNumber),
     threadContext.loadProposalThread(pool, app.id, proposal.id),
     live.botUsernameOf(github),
   ]);
-  const replies = followup.newReplies({
+  // #4533: a recovered turn answered what it read before the restart; its
+  // mark says where that was, which is where the answer goes.
+  const replies = recovered ? [{ where: recovered.mark.onProposal ? 'proposal' : 'issue' }] : followup.newReplies({
     comments,
     issueThread: issueThread?.messages || [],
     proposalThread: proposalThread?.messages || [],
@@ -5367,13 +5516,18 @@ async function runFollowUp(pool, config, {
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
     return { ran: false, reason: 'has_proposal' };
   }
+  // #4533: whether a recovered turn moved the head is read against the head
+  // it started from: the person's recovery tail has made its push the
+  // reviewed head since.
+  if (recovered) session.reviewed_head_sha = recovered.mark.reviewedHeadSha || null;
 
   const { rows: revisionRows } = await pool.query(
     `SELECT COUNT(*)::int AS n FROM homeroom_bot_runs
       WHERE proposal_session_id = $1 AND verdict = 'revise'`,
     [session.id],
   );
-  const canRevise = (revisionRows[0]?.n || 0) < followup.MAX_REVISIONS;
+  // #4533: a recovered turn ran in the mode it was given then.
+  const canRevise = recovered ? recovered.mode === 'build' : (revisionRows[0]?.n || 0) < followup.MAX_REVISIONS;
   const mode = canRevise ? 'build' : 'scout';
 
   if (checks) {
@@ -5386,41 +5540,50 @@ async function runFollowUp(pool, config, {
   // land) is looked at on the next pass: this run consumes the queue row.
   const requeueChecks = () => noteProposalChecks(pool, { sessionId: session.id });
 
-  const seed = sessions.buildHeadlessSeed(
-    issueNumber, issue, comments, botLogin, issueThread?.messages || [],
-  );
-  const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
-    sessionId: session.id, prNumber: session.pr_number,
-    threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
-  });
-  // #3703: the spec whose card leads the proposal's discussion, which is
-  // what a reply there is usually about.
-  const spec = await proposalSpec(pool, session.id);
-  // #3767: a revision gets the design guidance and the browser check its
-  // build had (#3748), read for what the turn's model can see.
-  const design = canRevise
-    ? live.revisionDesignText({ readsImages: await live.buildSeesImages({ pool, config, userId: bot.id, model }) })
-    : '';
-  const prompt = followup.followUpPrompt({
-    seed, proposalBlock, spec, prNumber: session.pr_number, replies, canRevise, design,
-  });
-  snapshot = {
-    stage: 'followup', appId: app.id, issueNumber,
-    // The follow-up works on the proposal's branch, at its reviewed head.
-    baseSha: session.reviewed_head_sha || null,
-    texts: {
-      seed, prompt, proposal_block: proposalBlock, spec,
-      replies: JSON.stringify(replies),
-      thread: snapshots.frozenThread({
-        issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
-      }),
-    },
-    extra: { model, canRevise, prNumber: session.pr_number || null, mode },
-  };
+  // #4533: a recovered turn has run already; nothing is read for a prompt.
+  let turn = recovered ? recovered.turn : null;
+  if (!turn) {
+    const seed = sessions.buildHeadlessSeed(
+      issueNumber, issue, comments, botLogin, issueThread?.messages || [],
+    );
+    const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
+      sessionId: session.id, prNumber: session.pr_number,
+      threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
+    });
+    // #3703: the spec whose card leads the proposal's discussion, which is
+    // what a reply there is usually about.
+    const spec = await proposalSpec(pool, session.id);
+    // #3767: a revision gets the design guidance and the browser check its
+    // build had (#3748), read for what the turn's model can see.
+    const design = canRevise
+      ? live.revisionDesignText({ readsImages: await live.buildSeesImages({ pool, config, userId: bot.id, model }) })
+      : '';
+    const prompt = followup.followUpPrompt({
+      seed, proposalBlock, spec, prNumber: session.pr_number, replies, canRevise, design,
+    });
+    snapshot = {
+      stage: 'followup', appId: app.id, issueNumber,
+      // The follow-up works on the proposal's branch, at its reviewed head.
+      baseSha: session.reviewed_head_sha || null,
+      texts: {
+        seed, prompt, proposal_block: proposalBlock, spec,
+        replies: JSON.stringify(replies),
+        thread: snapshots.frozenThread({
+          issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
+        }),
+      },
+      extra: { model, canRevise, prNumber: session.pr_number || null, mode },
+    };
 
-  const turn = await followup.runFollowUpTurn({
-    pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
-  });
+    turn = await followup.runFollowUpTurn({
+      pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
+      turnMark: followUpMark({
+        kind: 'reply', app, item, runMode, model, startedMs, seedReadAt, session,
+        threadSeenAt: item.thread_seen_at || null,
+        extra: { onProposal: replies.some((r) => r.where === 'proposal') },
+      }),
+    });
+  }
   const result = turn.result || {};
   const relay = relaySpend(result.relayUsage, turn.pricing, agentTurn);
   const costUsd = turn.costUsd ?? relay?.costUsd ?? null;
@@ -5522,7 +5685,9 @@ async function runFollowUp(pool, config, {
 
   const action = moved ? 'revise' : parsed.action;
   const reply = parsed?.reply || 'It updated the change to follow the latest replies.';
-  if (moved) await reconcileRevision({ config, pool, session, app, issueNumber, deps });
+  // #4533: after a restart, the person's recovery tail has already done
+  // this for the new head (server.js finalizeRecoveredTurn).
+  if (moved && !recovered) await reconcileRevision({ config, pool, session, app, issueNumber, deps });
   // #3767: and its name, when the revision changed what it does. Ear Trainer's
   // size options were taken out and its proposal was still called "Lead size
   // options with the number of sounds" when it merged.
@@ -5716,10 +5881,15 @@ async function noteProposalChecks(pool, { sessionId } = {}) {
  * a turn, and every hand-off, records the head it looked at, so the same
  * failing head is never looked at twice; a platform fault records nothing
  * of the kind and keeps the queue row, as a triage's does.
+ *
+ * #4533: `recovered` is a fix turn restart recovery followed to its end
+ * ({ turn, mark, mode }, finishRecoveredFollowUp): no turn is run, and
+ * everything after it is what a live fix does, but the reconcile, which the
+ * person's recovery tail has done.
  */
 async function runChecksFix(pool, config, {
   bot, app, repo, item, issue, session, checks, canRevise, mode, runMode, model, turnBudgetMs, startedMs,
-  recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps,
+  recordFailure, lastRun, seedReadAt, comments, issueThread, proposalThread, botLogin, deps, recovered = null,
 }) {
   const { github, threadContext, sessions, limits, managedOpenRouter, agentTurn } = deps;
   const issueNumber = Number(item.issue_number);
@@ -5738,7 +5908,7 @@ async function runChecksFix(pool, config, {
     ? snapshots.recordSnapshot(pool, { runId: id, ...snapshot })
     : Promise.resolve(null));
 
-  if (followup.checksLookLikeInfra(checks)) {
+  if (!recovered && followup.checksLookLikeInfra(checks)) {
     await dropRow();
     log.info('homeroom-bot', 'Failing checks look like the platform\'s fault; not revising', {
       app: app.slug, issueNumber, sessionId: session.id, failing: failing.length, total,
@@ -5798,32 +5968,45 @@ async function runChecksFix(pool, config, {
     });
   }
 
-  const seed = sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, issueThread?.messages || []);
-  const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
-    sessionId: session.id, prNumber,
-    threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
-  });
-  const prompt = followup.checksFixPrompt({ seed, proposalBlock, prNumber, failing, total, broken });
-  snapshot = {
-    stage: 'checks_fix', appId: app.id, issueNumber,
-    baseSha: head,
-    texts: {
-      seed, prompt, proposal_block: proposalBlock,
-      failing: JSON.stringify(failing),
-      ...(broken.length ? { broken: JSON.stringify(broken) } : {}),
-      thread: snapshots.frozenThread({
-        issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
+  // #4533: a recovered turn has run already; nothing is read for a prompt.
+  let turn = recovered ? recovered.turn : null;
+  if (!turn) {
+    const seed = sessions.buildHeadlessSeed(issueNumber, issue, comments, botLogin, issueThread?.messages || []);
+    const proposalBlock = require('./thread-context').buildProposalDiscussionBlock({
+      sessionId: session.id, prNumber,
+      threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
+    });
+    const prompt = followup.checksFixPrompt({ seed, proposalBlock, prNumber, failing, total, broken });
+    snapshot = {
+      stage: 'checks_fix', appId: app.id, issueNumber,
+      baseSha: head,
+      texts: {
+        seed, prompt, proposal_block: proposalBlock,
+        failing: JSON.stringify(failing),
+        ...(broken.length ? { broken: JSON.stringify(broken) } : {}),
+        thread: snapshots.frozenThread({
+          issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
+        }),
+      },
+      extra: { model, prNumber: prNumber || null, total, mode },
+    };
+    turn = await followup.runFollowUpTurn({
+      // `mode` is runFollowUp's: a build turn, since revisions remain.
+      pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
+      commitMsg: failing.length
+        ? `Homeroom bot: fix the failing checks on #${issueNumber}`
+        : `Homeroom bot: fix what did not work on #${issueNumber}`,
+      turnMark: followUpMark({
+        kind: 'checks_fix', app, item, runMode, model, startedMs, seedReadAt, session, threadSeenAt,
+        extra: {
+          checks: {
+            head, total, failing: failing.length,
+            broken: broken.slice(0, 5).map((b) => ({ claim: clip(String(b?.claim || ''), 300) })),
+          },
+        },
       }),
-    },
-    extra: { model, prNumber: prNumber || null, total, mode },
-  };
-  const turn = await followup.runFollowUpTurn({
-    // `mode` is runFollowUp's: a build turn, since revisions remain.
-    pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
-    commitMsg: failing.length
-      ? `Homeroom bot: fix the failing checks on #${issueNumber}`
-      : `Homeroom bot: fix what did not work on #${issueNumber}`,
-  });
+    });
+  }
   const result = turn.result || {};
   const relay = relaySpend(result.relayUsage, turn.pricing, agentTurn);
   const costUsd = turn.costUsd ?? relay?.costUsd ?? null;
@@ -5854,7 +6037,9 @@ async function runChecksFix(pool, config, {
     mode, result, reviewedHeadSha: session.reviewed_head_sha, action: parsed?.action,
   });
   if (moved) {
-    await reconcileRevision({ config, pool, session, app, issueNumber, deps });
+    // #4533: after a restart, the person's recovery tail has already done
+    // this for the new head (server.js finalizeRecoveredTurn).
+    if (!recovered) await reconcileRevision({ config, pool, session, app, issueNumber, deps });
     const summary = parsed?.summary || parsed?.reply || 'It updated the change so its checks pass.';
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
@@ -5897,6 +6082,192 @@ async function runChecksFix(pool, config, {
     verdict: parsed?.action === 'person' ? 'person' : 'failed',
     extra: { ...spent, ...(turn.stopped ? { budgetStop: 'wall clock' } : {}) },
   });
+}
+
+// ── A follow-up after a restart (#4533) ──────────────────────────────────
+//
+// A follow-up runs on its PROMOTED proposal's session, so restart recovery
+// follows its turn through the person's tail (see "After a restart"), which
+// moves the proposal on: the push, the votes cleared, staging and checks on
+// the new head. What it never did was the bot's part. On PR #4533 (change
+// 7428) a checks fix a deploy caught pushed its fix, and the ledger had no
+// run for it, no `checks_revise` post and no cost, so MAX_REVISIONS and
+// "already looked at this head" (checksDue's `looked`) could not see it.
+// Its record now carries the bot's mark (followUpMark, kept by
+// runFollowUpTurn with the deadline), and recovery hands the turn's result
+// back to the same runChecksFix / runFollowUp that run after a live turn.
+
+// The turn_effects key that keeps recording one recovered follow-up to at
+// most once, whatever replays the recovery tail.
+const RECOVERED_FOLLOWUP_EFFECT = 'homeroom_bot_followup_outcome';
+
+/**
+ * #4533: what a follow-up's turn record keeps for restart recovery
+ * (homeroom-bot-followup TURN_MARK; runFollowUpTurn adds the deadline):
+ * where it was (app, issue, queue row), what its run is billed and recorded
+ * as, and the head it started from. Nothing anybody wrote. Pure.
+ */
+function followUpMark({
+  kind, app, item, runMode, model, startedMs, seedReadAt, session, threadSeenAt = null, extra = {},
+}) {
+  return {
+    followUp: kind,
+    appId: Number(app.id), issueNumber: Number(item.issue_number),
+    queueId: Number(item.id) || null, reason: item.reason || null,
+    payerUserId: Number(item.payer_user_id) || null, changedBy: item.changed_by || null,
+    runMode, model: model || null,
+    startedAt: new Date(startedMs || Date.now()).toISOString(),
+    seedReadAt: seedReadAt || null, threadSeenAt: threadSeenAt || null,
+    reviewedHeadSha: session?.reviewed_head_sha || null,
+    ...extra,
+  };
+}
+
+/** What one logical turn cost, from its attempts' own ledger rows (agent_turns). Never throws. */
+async function ledgerSpendOfTurn(pool, activeTurn) {
+  const none = { costUsd: null, inputTokens: null, outputTokens: null };
+  const id = activeTurn?.logicalTurnId || activeTurn?.turnId || null;
+  if (!id) return none;
+  try {
+    const { rows: [row] = [] } = await pool.query(
+      `SELECT SUM(estimated_cost_usd)::float8 AS cost, SUM(input_tokens)::float8 AS input_tokens,
+              SUM(output_tokens)::float8 AS output_tokens
+         FROM agent_turns WHERE logical_turn_id = $1::uuid`,
+      [String(id)],
+    );
+    const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+    return { costUsd: num(row?.cost), inputTokens: num(row?.input_tokens), outputTokens: num(row?.output_tokens) };
+  } catch {
+    return none;
+  }
+}
+
+/**
+ * #4533: a follow-up of the bot's (a checks fix, or its answer to replies)
+ * that restart recovery followed to its end, recorded as the follow-up
+ * records one: `result` is what the journal replay returned, `timedOut`
+ * that the bot's clock, re-armed from the deadline on its mark, ended it.
+ * The run goes in the ledger with its verdict, the failing head it looked
+ * at and what it cost; the bot says what it did where it would have; the
+ * follow-up's wait is cleared. Called by server.js once the person's tail
+ * has moved the proposal on, which therefore is not done again. At most
+ * once per turn (turn_effects). Resolves what it did; never throws.
+ */
+async function finishRecoveredFollowUp({
+  pool, config = {}, session, activeTurn, result = {}, timedOut = false, deps = {},
+}) {
+  const mark = followup.turnMarkOf(activeTurn);
+  const turnId = require('./turn-lifecycle').turnIdentity(activeTurn);
+  if (!mark || !session || !turnId) return null;
+  const turnEffects = deps.turnEffects || require('./turn-effects');
+  try {
+    const claim = await turnEffects.claimExternalEffect({
+      pool, turnId, effectKey: RECOVERED_FOLLOWUP_EFFECT, sessionId: session.id,
+    });
+    if (!claim.claimed) return 'already_recorded';
+    const { rows: [app] = [] } = await pool.query(
+      'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [Number(mark.appId)],
+    );
+    const repo = app ? parseRepo(app.repo_url) : null;
+    let out = null;
+    if (repo) {
+      const issueNumber = Number(mark.issueNumber);
+      const github = deps.github || require('./github');
+      const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, issueNumber).catch(() => null);
+      // What the turn cost is its own attempts' (the journal replay settled
+      // them before this runs), debited by the run as a live turn's is.
+      const spend = await ledgerSpendOfTurn(pool, activeTurn);
+      const turnResult = {
+        ...(result || {}),
+        inputTokens: Number.isFinite(result?.inputTokens) ? result.inputTokens : spend.inputTokens,
+        outputTokens: Number.isFinite(result?.outputTokens) ? result.outputTokens : spend.outputTokens,
+      };
+      // The clock re-armed past a deadline fires at once, even for a turn
+      // that had finished before the restart: one whose journal ended on its
+      // own exit 0, before the stop's 143, did its work in time.
+      const stopped = !!timedOut && Number(result?.exitCode) !== 0;
+      const recovered = {
+        mark, mode: activeTurn.mode === 'scout' ? 'scout' : 'build',
+        turn: { routed: { result: turnResult }, result: turnResult, stopped, costUsd: spend.costUsd, pricing: null },
+      };
+      const item = {
+        id: mark.queueId, app_id: app.id, issue_number: issueNumber, reason: mark.reason,
+        thread_seen_at: mark.threadSeenAt, payer_user_id: mark.payerUserId, changed_by: mark.changedBy,
+      };
+      const startedMs = toMs(mark.startedAt) || toMs(activeTurn.startedAt) || Date.now();
+      // A turn that failed is a failed run, and its queue row is spent, as
+      // runTriage's recordFailure records a model failure.
+      const recordFailure = async (error, extra = {}) => {
+        const runId = await insertRun(pool, {
+          ...billingOf(item, mark.runMode), readReason: readReasonOf(item),
+          appId: app.id, issueNumber, mode: mark.runMode, verdict: 'failed', error,
+          threadSeenAt: mark.threadSeenAt || null, model: mark.model, durationMs: Date.now() - startedMs, ...extra,
+        });
+        await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+        return { ran: true, verdict: 'failed', runId };
+      };
+      const runDeps = {
+        github,
+        threadContext: deps.threadContext || require('./thread-context'),
+        sessions: deps.sessions || null,
+        limits: deps.limits || require('./limits'),
+        managedOpenRouter: deps.managedOpenRouter || require('./openrouter-managed-keys'),
+        agentTurn: deps.agentTurn || require('./agent-turn'),
+        votes: deps.votes || null, dm: deps.dm || null, notifications: deps.notifications || null,
+        ...liveDeps(deps),
+      };
+      const common = {
+        bot: { id: session.user_id, username: BOT_USERNAME }, app, repo, item, issue: fetched?.issue || null,
+        runMode: mark.runMode, model: mark.model, turnBudgetMs: 0, startedMs, recordFailure, deps: runDeps, recovered,
+      };
+      if (mark.followUp === 'checks_fix') {
+        const { rows: [row] = [] } = await pool.query(
+          `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url, a.self_hosted AS app_self_hosted
+             FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
+          [session.id],
+        );
+        const c = mark.checks || {};
+        out = row ? await runChecksFix(pool, config, {
+          ...common,
+          // Whether it moved the head is read against the head it started
+          // from: the person's recovery tail has made its push the reviewed
+          // head since.
+          session: { ...row, reviewed_head_sha: mark.reviewedHeadSha || null },
+          checks: {
+            head: c.head || null, total: Number(c.total) || 0,
+            // How many failed is all that is said again; the turn read why.
+            failing: Array.from({ length: Math.max(0, Number(c.failing) || 0) }, () => ({})),
+            broken: Array.isArray(c.broken) ? c.broken : [],
+          },
+          canRevise: true, mode: recovered.mode, lastRun: null, seedReadAt: mark.seedReadAt || null,
+          comments: [], issueThread: null, proposalThread: null, botLogin: await live.botUsernameOf(github),
+        }) : { ran: false, reason: 'gone' };
+      } else {
+        out = await runFollowUp(pool, config, { ...common, proposal: { id: session.id } });
+      }
+    }
+    // What it waited on is over: a row still queued for it is read on the
+    // next pass, not after the rest of a backoff.
+    clearFollowUpRefusals(mark.appId, mark.issueNumber);
+    await pool.query(
+      'UPDATE homeroom_bot_queue SET wait_reason = NULL, wait_until = NULL WHERE app_id = $1 AND issue_number = $2',
+      [Number(mark.appId), Number(mark.issueNumber)],
+    ).catch(() => {});
+    const outcome = out?.acted || out?.verdict || out?.reason || 'gone';
+    await turnEffects.completeExternalEffect({
+      pool, turnId, effectKey: RECOVERED_FOLLOWUP_EFFECT, result: { outcome, runId: out?.runId || null },
+    }).catch(() => {});
+    log.info('homeroom-bot', 'Recorded a follow-up a restart interrupted', {
+      sessionId: session.id, appId: mark.appId, issueNumber: mark.issueNumber, kind: mark.followUp,
+      outcome, runId: out?.runId || null, timedOut: !!timedOut, exitCode: result?.exitCode ?? null,
+    });
+    return outcome;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not record a follow-up a restart interrupted', {
+      sessionId: session.id, kind: mark.followUp, err: err.message,
+    });
+    return 'error';
+  }
 }
 
 /**
@@ -5961,7 +6332,9 @@ async function keepNoChange(pool, runId, noChange) {
  * say why a proposal had no spec. build_at and build_queued_at stay NULL:
  * those are the lane's, and a live build never went through it. A spec
  * that failed is noted beside a build that went ahead, as a shadow
- * build's is (#3396). Never throws.
+ * build's is (#3396). A run whose proposal is another build's keeps that
+ * build's record: a second build of run 1267 that stopped after the first
+ * was up for a vote wrote "failed" and its own branch over it. Never throws.
  */
 async function recordLiveBuild(pool, runId, built, model = null) {
   if (!runId || !built) return;
@@ -5978,7 +6351,7 @@ async function recordLiveBuild(pool, runId, built, model = null) {
             build_commits = COALESCE($6, build_commits), build_cost_usd = COALESCE($7, build_cost_usd),
             build_session_id = COALESCE(build_session_id, $8), build_spec_md = COALESCE($9, build_spec_md),
             build_model = COALESCE($10, build_model), build_no_change = COALESCE($11::jsonb, build_no_change)
-      WHERE id = $1`,
+      WHERE id = $1 AND (proposal_session_id IS NULL OR proposal_session_id = $8)`,
     [runId, !!built.ok, error, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
       Number.isFinite(built.costUsd) ? built.costUsd : null,
@@ -5998,8 +6371,9 @@ async function recordLiveBuild(pool, runId, built, model = null) {
 async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain }) {
   await recordLiveBuild(pool, runId, built, built.model || null);
   if (built.ok) {
+    // The run's first proposal stays its proposal (recordLiveBuild).
     await pool.query(
-      'UPDATE homeroom_bot_runs SET proposal_session_id = $2 WHERE id = $1',
+      'UPDATE homeroom_bot_runs SET proposal_session_id = $2 WHERE id = $1 AND proposal_session_id IS NULL',
       [runId, built.sessionId],
     ).catch(() => {});
     // The vote-card metadata the promote route's own activity rows carry,
@@ -6035,7 +6409,7 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, specModel = null, botLogin = null, quietHold = false,
-  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, deps,
+  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, relook = false, askedLook = false, comments = [], deps,
 }) {
   const { github, ws } = deps;
   const say = liveSayer({
@@ -6043,7 +6417,28 @@ async function actOnVerdict({
     notifications: deps.notifications || null, postedAt,
   });
   let acted = capSuppressed ? 'held' : parsed.verdict;
-  if (capSuppressed) {
+  // #4530: a look the request's own changes started (a 'changed' or
+  // 'read_again' reason) repeats one of the note verdicts only when somebody
+  // has addressed the bot since its last note: mentioned it, replied to one
+  // of its messages, or answered a question it asked. People working
+  // something out among themselves are not for it. Fails open, and never
+  // holds a ready verdict or a note a cap is already quiet about. A look
+  // somebody asked for (`askedLook`) is held exactly when the button that
+  // asks is refused (waitingOnly, homeroom-bot-addressed.js waitingOn): only
+  // while the bot's last word there is itself one of those notes (after a
+  // failed build or a held verdict, asking is what brings it back), and an
+  // edit of the request since counts as news.
+  const gate = (relook || askedLook) && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict)
+    ? await addressedMod().shouldSpeak(pool, {
+      appId: app.id, issueNumber, botId: bot.id, comments, botLogin, waitingOnly: !relook, updatedAt: issue?.updatedAt || null,
+    })
+    : { speak: true };
+  if (!gate.speak) {
+    log.info('homeroom-bot', 'Live note not repeated: nobody addressed the bot', {
+      app: app.slug, issueNumber, verdict: parsed.verdict,
+    });
+    acted = 'unaddressed';
+  } else if (capSuppressed) {
     const kind = live.heldKind(capSuppressed);
     const already = await live.lastPostKind(pool, app.id, issueNumber) === kind;
     log.info('homeroom-bot', 'Live verdict held by a cap', {
@@ -6115,8 +6510,8 @@ async function actOnVerdict({
 }
 
 /**
- * A live 'ready' verdict's build, waiting its turn: one build per project at
- * a time, started by the lane (dispatch) as soon as its project has none
+ * A live 'ready' verdict's build, waiting its turn: started by the lane
+ * (dispatch) as soon as its project has fewer than BUILDS_PER_PROJECT
  * running. Never throws.
  */
 // Once: a run already waiting keeps its place, and one already building or
@@ -6522,11 +6917,14 @@ async function planBeforeBuilding({
     bullets: complicatedPlanBullets(plan), questions, complicated: true,
     ...(drafted.specVersion ? { spec: { sessionId: Number(drafted.sessionId), version: Number(drafted.specVersion) } } : {}),
   };
+  // Once: a plan another drafting of this run already put to its requester
+  // stays the one they are asked about (turnly #6 was asked about two).
   const { rowCount } = await pool.query(
     `UPDATE homeroom_bot_runs
         SET live_build_waiting_at = NULL, awaiting_go_at = NOW(), plan = $2::jsonb, plan_send_attempts = 0, plan_unsent_at = NULL,
             build_spec_md = $3, build_cost_usd = $4, build_model = COALESCE($5, build_model)
-      WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL AND proposal_session_id IS NULL`,
+      WHERE id = $1 AND build_ok IS NULL AND build_session_id IS NULL AND proposal_session_id IS NULL
+        AND awaiting_go_at IS NULL`,
     [runId, JSON.stringify(shown), drafted.specMd, Number.isFinite(drafted.costUsd) ? drafted.costUsd : null, specModel || model || null],
   ).catch((err) => {
     log.warn('homeroom-bot', 'Could not record a complicated change\'s plan', { app: app.slug, issueNumber, runId, err: err.message });
@@ -6875,9 +7273,18 @@ async function buildLive({
       // Linked before any turn runs, so a restart mid-build can find the run
       // (#3471): the build's worker outlives the restart; this process does
       // not. From here restart recovery owns it, so it is no longer waiting.
-      onSession: (session) => pool.query(
-        'UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL WHERE id = $1', [runId, session.id],
-      ),
+      // And only once: the link is the build's claim on its run, and a run
+      // another build already linked (or whose outcome is in) refuses it, so
+      // a second build of one run stops before its plan (LOST_CLAIM).
+      onSession: async (session) => {
+        const { rows } = await pool.query(
+          `UPDATE homeroom_bot_runs SET build_session_id = $2, live_build_waiting_at = NULL WHERE id = $1
+              AND build_session_id IS NULL AND build_ok IS NULL AND proposal_session_id IS NULL
+            RETURNING id`,
+          [runId, session.id],
+        );
+        return rows.length ? null : LOST_CLAIM;
+      },
       origin: { lane: 'live', runId },
       onNoChange: (noChange) => keepNoChange(pool, runId, noChange),
       // #4387: what the people waiting on a first version watch on its App
@@ -6912,6 +7319,16 @@ async function buildLive({
     buildMs = Date.now() - buildStartedMs;
   } finally {
     liveBuildsInFlight.delete(runId);
+  }
+  // Its run refused the link (onSession): another build of it has it, and
+  // records the run, settles its side builds and says what came of it, or
+  // its outcome came in meanwhile (noteRequestMerged). This one stopped
+  // before its plan with nothing spent, and touches none of it.
+  if (built?.lostClaim) {
+    log.warn('homeroom-bot', 'Live build stopped before its plan: its run is another build\'s, or already settled', {
+      app: app.slug, issueNumber, runId, sessionId: built.sessionId || null,
+    });
+    return 'lost_claim';
   }
   if (built) built.model = model;
   // #4387: and, once it is reviewed, up to three of its real screens, from
@@ -7253,15 +7670,21 @@ async function liveCandidates(pool, {
   return rows;
 }
 
-// ── Live builds, one per project (buildLive) ────────────────────────────
+// ── Live builds, up to BUILDS_PER_PROJECT per project (buildLive) ───────
 //
 // A live 'ready' verdict is built after the turn that read it, in a slot of
-// its own: `build:<appId>`. The project's read slot is free again the moment
+// its own: `build:<runId>`. The project's read slot is free again the moment
 // the verdict is recorded, so its next request is read (and asked about, or
-// left for a person, or queued to build) while the build runs. Builds on one
-// project still run one after another: two at once would race on the same
-// files, and a request often builds on the one before it. Each waits on its
-// run (live_build_waiting_at), so a restart loses none of them.
+// left for a person, or queued to build) while the build runs. Each build is
+// a session and a branch of its own, so up to BUILDS_PER_PROJECT of one
+// project's run side by side; two that touch the same files meet as any two
+// proposals do, at merge. Each waits on its run (live_build_waiting_at), so a
+// restart loses none of them.
+
+/** The inFlight slot of one live build, keyed by its run. */
+function buildSlot(runId) {
+  return `build:${Number(runId)}`;
+}
 
 /**
  * The live builds waiting their turn, oldest first, with who each is for,
@@ -7306,23 +7729,26 @@ async function liveBuildCandidates(pool, { scope: given = null, liveSlugs = [], 
 }
 
 /**
- * Pure: which waiting builds to start now. One per project, none on a
- * project already building (`buildingAppIds`), at most `perPerson` live
- * pieces of work for any one person counting what runs (`active`), and at
- * most `slots` in all.
+ * Pure: which waiting builds to start now. At most `perProject` under way on
+ * one project, counting those already building (`buildingAppIds`, one entry
+ * per build), at most `perPerson` live pieces of work for any one person
+ * counting what runs (`active`), and at most `slots` in all.
  */
-function pickLiveBuilds(candidates, { buildingAppIds = [], active = [], slots = 0, perPerson = 1 } = {}) {
-  const building = new Set(buildingAppIds.map(Number));
+function pickLiveBuilds(candidates, {
+  buildingAppIds = [], active = [], slots = 0, perPerson = 1, perProject = BUILDS_PER_PROJECT,
+} = {}) {
+  const building = new Map();
+  for (const id of buildingAppIds) building.set(Number(id), (building.get(Number(id)) || 0) + 1);
   const count = new Map();
   for (const a of active) count.set(a.person, (count.get(a.person) || 0) + 1);
   const picks = [];
   for (const row of candidates || []) {
     if (picks.length >= slots) break;
     const appId = Number(row.app_id);
-    if (building.has(appId)) continue;
+    if ((building.get(appId) || 0) >= perProject) continue;
     const person = personKeyOf(row);
     if ((count.get(person) || 0) >= perPerson) continue;
-    building.add(appId);
+    building.set(appId, (building.get(appId) || 0) + 1);
     count.set(person, (count.get(person) || 0) + 1);
     picks.push({ ...row, person });
   }
@@ -7351,6 +7777,41 @@ function hasProposalSkip(sessionId) {
   return `skipped: the request already has a proposal (${Number(sessionId)})`;
 }
 
+/**
+ * Another live build of the same request under way: the build session of
+ * another of its runs, still open (`active` while a turn runs, `paused`
+ * between its turns), started within BUILD_UNDER_WAY_HOURS, and its run's
+ * outcome not in. Given `before` (the asking build's own session), only one
+ * that started before it, so of two builds of one request the first goes on
+ * and the second stops, never both. `{ id }` (that session), or null. Throws
+ * when it cannot be read. Asked beside requestProposal (buildOne,
+ * whyNotBuild): a build still under way is no proposal, and two of them
+ * were two proposals of one request. A run's own second build is stopped
+ * earlier, by its claim (buildLive's onSession).
+ */
+async function requestBuilding(pool, { appId, issueNumber, runId, before = null }) {
+  const { rows } = await pool.query(
+    `SELECT bs.id FROM homeroom_bot_runs b
+       JOIN chat_sessions bs ON bs.id = b.build_session_id
+      WHERE b.app_id = $1 AND b.issue_number = $2 AND b.id <> $3 AND b.mode = 'live'
+        AND b.build_ok IS NULL AND b.proposal_session_id IS NULL
+        AND bs.status IN ('active', 'paused') AND bs.created_at > NOW() - make_interval(hours => $4)
+        AND ($5::int IS NULL OR bs.id < $5::int)
+      ORDER BY bs.id LIMIT 1`,
+    [appId, issueNumber, runId, BUILD_UNDER_WAY_HOURS, Number(before) || null],
+  );
+  return rows[0] || null;
+}
+
+/** What a build another build of its request made unneeded records: a skip, read as stopped. */
+function beingBuiltSkip(sessionId) {
+  return `skipped: the request is already being built (${Number(sessionId)})`;
+}
+
+// What a build whose run another build claimed first resolves (buildLive's
+// onSession). Never recorded: the run is that other build's.
+const LOST_CLAIM = 'skipped: another build of its run started first';
+
 // What a build whose request was closed while it was built records.
 const CLOSED_WHILE_BUILDING = 'skipped: the request was closed before it was proposed';
 
@@ -7361,18 +7822,23 @@ const CLOSED_WHILE_BUILDING = 'skipped: the request was closed before it was pro
  * `skipCheck`), and before restart recovery proposes one. A reason is a
  * skip: the run already stopped (noteRequestMerged), a proposal of the
  * bot's for the request (up for a vote, merging, or merged since this
- * verdict), or the request's issue closed. Both of Plant Pal's duplicate
- * proposals went up after their issue had closed. What cannot be read never
- * stops a build: this is the backstop, not the guard.
+ * verdict), another build of the request that started before this one
+ * (requestBuilding), or the request's issue closed. Both of Plant Pal's
+ * duplicate proposals went up after their issue had closed. What cannot be
+ * read never stops a build: this is the backstop, not the guard.
  */
 async function whyNotBuild(pool, { runId, botId, appId, issueNumber, github = null, repo = null }) {
   try {
     const { rows: [run] = [] } = await pool.query(
-      'SELECT created_at, build_ok, build_error FROM homeroom_bot_runs WHERE id = $1', [runId],
+      'SELECT created_at, build_ok, build_error, build_session_id FROM homeroom_bot_runs WHERE id = $1', [runId],
     );
     if (run?.build_ok === false && /^skipped:/.test(String(run.build_error || ''))) return String(run.build_error);
     const proposed = await requestProposal(pool, { appId, botId, issueNumber, since: run?.created_at || null });
     if (proposed) return hasProposalSkip(proposed.id);
+    // Its own session is the run's (its claim); a plan, which links none,
+    // gives way to any build of the request under way.
+    const building = await requestBuilding(pool, { appId, issueNumber, runId, before: run?.build_session_id || null });
+    if (building) return beingBuiltSkip(building.id);
   } catch (err) {
     log.warn('homeroom-bot', 'Could not look for the request\'s proposal during its build', { runId, issueNumber, err: err.message });
   }
@@ -7427,24 +7893,29 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
   // one request each waited for a build and both were built (Plant Pal #1
   // and #3, 2026-10-03); the second started seconds after the first was put
   // up for a vote. When this cannot be read, it is not built either: it
-  // keeps waiting, and the next pass looks again.
+  // keeps waiting, and the next pass looks again. Nor is one built while
+  // another build of the request is under way (requestBuilding).
   let proposed;
+  let building = null;
   try {
     proposed = await requestProposal(pool, { appId: app.id, botId: bot.id, issueNumber, since: run.created_at || null });
+    if (!proposed) building = await requestBuilding(pool, { appId: app.id, issueNumber, runId: run.id });
   } catch (err) {
     log.warn('homeroom-bot', 'Could not look for the request\'s proposal before its build', { app: app.slug, issueNumber, err: err.message });
     return { ran: false, reason: 'infra', detail: 'proposal_unreadable' };
   }
-  if (proposed) {
+  if (proposed || building) {
     await pool.query(
       `UPDATE homeroom_bot_runs SET live_build_waiting_at = NULL, build_ok = FALSE, build_error = $2
         WHERE id = $1 AND build_ok IS NULL`,
-      [run.id, hasProposalSkip(proposed.id)],
+      [run.id, proposed ? hasProposalSkip(proposed.id) : beingBuiltSkip(building.id)],
     ).catch(() => {});
-    log.info('homeroom-bot', 'Live build skipped: its request already has a proposal', {
-      app: app.slug, issueNumber, runId: run.id, sessionId: Number(proposed.id),
+    log.info('homeroom-bot', proposed
+      ? 'Live build skipped: its request already has a proposal'
+      : 'Live build skipped: its request is already being built', {
+      app: app.slug, issueNumber, runId: run.id, sessionId: Number((proposed || building).id),
     });
-    return { ran: false, reason: 'has_proposal' };
+    return { ran: false, reason: proposed ? 'has_proposal' : 'being_built' };
   }
   const dm = deps.dm || require('./homeroom-bot-dm');
   const requester = await dm.requesterOf(pool, app.id, issueNumber).catch(() => null);
@@ -7633,8 +8104,9 @@ function currentRefusals(now = Date.now()) {
 /**
  * What one finished piece of work means for the loop: counted, a refusal
  * noted, or the dispatch paused (the weekly cap, a platform fault, the mode
- * switched off). Returns { processed, refusals, budgets, paused, detail,
- * retryInMs, stop }.
+ * switched off). A 'collateral' failure is none of these: its row is back on
+ * the queue and the next pass takes it. Returns { processed, refusals,
+ * budgets, paused, detail, retryInMs, stop }.
  */
 function outcomeOf(r, { app, item }) {
   const o = { processed: 0, refusals: [], budgets: [], paused: null, stop: false };
@@ -7750,13 +8222,21 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
   const perPerson = settings.perPerson || DEFAULTS.perPerson;
 
   // Live builds waiting their turn first: they are further along than
-  // anything still to be read. One per project, in a slot of its own, so
-  // the project's read slot stays free (buildLive).
+  // anything still to be read. Up to BUILDS_PER_PROJECT per project, each in
+  // a slot of its own, so the project's read slot stays free (buildLive).
   const buildSlots = Math.max(0, liveAtOnce - [...inFlight.values()].filter((e) => e.lane === 'live').length);
   if (buildSlots && !live.scopeIsEmpty(scope)) {
     const running = [...inFlight.values()];
+    // Never a run whose build already has its slot (track sets it before
+    // any await). Its run reads as waiting until buildLive links its
+    // session, several awaits later, and `seen` lasts one pass, so the pass
+    // the next wake started picked it again once #4544 let a project build
+    // three at once: homestead #31 and #32 and kasirku #7 were each built two
+    // or three times from one run, and turnly #6's requester was asked about
+    // two plans. A slot frees when its work ends, whatever it came to.
     const waiting = (await liveBuildCandidates(pool, { scope, pausedApps: settings.pausedApps || [] }))
-      .filter((row) => !seen.has(`build:${Number(row.id)}`) && !liveBuildsInFlight.has(Number(row.id)));
+      .filter((row) => !seen.has(`build:${Number(row.id)}`) && !inFlight.has(buildSlot(row.id))
+        && !liveBuildsInFlight.has(Number(row.id)));
     const picks = pickLiveBuilds(waiting, {
       buildingAppIds: running.filter((e) => e.build).map((e) => Number(e.appId)),
       active: running.filter((e) => e.lane === 'live'), slots: buildSlots, perPerson,
@@ -7802,7 +8282,7 @@ async function dispatch(pool, config, { settings, bot, backedOff = [], deps = {}
         }
         tray().noteWorkChanged(pick.person_id, deps);
         const item = { issue_number: pick.issue_number };
-        started.push(track(pool, `build:${Number(app.id)}`, {
+        started.push(track(pool, buildSlot(pick.id), {
           lane: 'live', build: true, appId: Number(app.id), person: pick.person, issueNumber: Number(pick.issue_number),
           runId: Number(pick.id), itemId: null, startedAt: new Date().toISOString(),
         }, async () => {
@@ -7927,9 +8407,10 @@ function isStagingLoop() {
 }
 
 /**
- * What the bot is working on now, for the dashboard and for a person asking
- * in a DM: every claimed queue row, with its app and who it is for. Read
- * from the database, so any Pod can answer, not only the one running it.
+ * What the bot is reading now, for the dashboard and for a person asking in
+ * a DM: every claimed queue row, with its app and who it is for. Read from
+ * the database, so any Pod can answer, not only the one running it. Its
+ * builds are buildsNow's: they run from their runs, not from the queue.
  */
 async function workingNow(pool, settings, { userId = null } = {}) {
   const scope = live.liveScope(settings);
@@ -7957,8 +8438,71 @@ async function workingNow(pool, settings, { userId = null } = {}) {
     issueNumber: Number(row.issue_number),
     since: row.started_at,
     lane: live.inScope(scope, row.slug) ? 'live' : 'background',
+    kind: 'read',
     person: row.person || null,
   }));
+}
+
+// A live build is under way from the moment its session is linked (onSession)
+// until its outcome is recorded; one older than this is the abandoned-build
+// sweep's, not work under way (a platform build's plan and build turn, the
+// longest, take under two hours).
+const BUILD_UNDER_WAY_HOURS = 4;
+
+// The live builds under way (a session linked, no outcome yet, the session
+// still open) and how many wait their turn (the newest verdict on their
+// issue, no session yet), for the dashboard. A plan waiting for its Build it
+// is neither.
+const BUILDS_UNDER_WAY_SQL = `
+  SELECT r.app_id, r.issue_number, bs.created_at AS since, a.slug, a.name, u.username AS person
+    FROM homeroom_bot_runs r
+    JOIN chat_sessions bs ON bs.id = r.build_session_id
+    JOIN apps a ON a.id = r.app_id
+    LEFT JOIN homeroom_bot_requesters q ON q.app_id = r.app_id AND q.issue_number = r.issue_number
+    LEFT JOIN users u ON u.id = q.user_id
+   WHERE r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
+     AND r.awaiting_go_at IS NULL AND bs.status = 'active'
+     AND bs.created_at > NOW() - make_interval(hours => $1)
+   ORDER BY bs.created_at
+   LIMIT 50`;
+const BUILDS_WAITING_SQL = `
+  SELECT COUNT(*)::int AS waiting
+    FROM homeroom_bot_runs r
+   WHERE r.mode = 'live' AND r.verdict = 'ready' AND r.live_build_waiting_at IS NOT NULL
+     AND r.build_ok IS NULL AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM homeroom_bot_runs n
+        WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id
+     )`;
+
+/**
+ * The bot's live builds for the dashboard: `building`, the ones under way,
+ * in workingNow's shape with `kind: 'build'`, and `waiting`, how many wait
+ * their turn. Read from the database, so any Pod can answer. Never throws:
+ * nothing to show is empty.
+ */
+async function buildsNow(pool) {
+  try {
+    const [{ rows: building }, { rows: [waiting] }] = await Promise.all([
+      pool.query(BUILDS_UNDER_WAY_SQL, [BUILD_UNDER_WAY_HOURS]),
+      pool.query(BUILDS_WAITING_SQL),
+    ]);
+    return {
+      building: building.map((row) => ({
+        appSlug: row.slug,
+        appName: row.name,
+        issueNumber: Number(row.issue_number),
+        since: row.since,
+        lane: 'live',
+        kind: 'build',
+        person: row.person || null,
+      })),
+      waiting: Number(waiting?.waiting) || 0,
+    };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Builds under way read failed', { err: err.message });
+    return { building: [], waiting: 0 };
+  }
 }
 
 // ── The work loop ───────────────────────────────────────────────────────
@@ -8435,6 +8979,26 @@ async function* iterateRunsForExport(pool, {
   }
 }
 
+/**
+ * #4533: why a queue row that is not running waits, and until when, or null
+ * when it is simply next in line: { reason, until }. Its own refusal first
+ * (`session_busy`: a turn is running on its session, recorded by runTriage's
+ * recordRefusal with its backoff), then its payer's week (`allowance`,
+ * held_until), then the whole bot's pause on a platform fault
+ * (`platform_fault`, faultBackoff, known on the Pod running the loop). A
+ * wait whose time has passed is no wait. Pure.
+ */
+function queueWait(row, { fault = null, now = Date.now() } = {}) {
+  if (!row || row.started_at) return null;
+  const at = (ms) => new Date(ms).toISOString();
+  const own = toMs(row.wait_until);
+  if (row.wait_reason && own > now) return { reason: String(row.wait_reason), until: at(own) };
+  const held = toMs(row.held_until);
+  if (held > now) return { reason: 'allowance', until: at(held) };
+  if (fault && Number(fault.until) > now) return { reason: 'platform_fault', until: at(Number(fault.until)) };
+  return null;
+}
+
 async function adminPayload(pool, config, {
   app = null, verdict = null, before = null, limit = RUNS_PAGE, budgetOnly = false,
 } = {}) {
@@ -8510,16 +9074,23 @@ async function adminPayload(pool, config, {
     costUsd: Number(t.cost_usd) || 0,
   };
 
-  const { rows: queueRows } = await pool.query(
+  const { rows: queued } = await pool.query(
     `SELECT q.id, q.issue_number, q.priority, q.reason, q.enqueued_at, q.started_at,
+            q.held_until, q.wait_reason, q.wait_until,
             a.slug AS app_slug, a.name AS app_name
        FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
       ORDER BY q.started_at DESC NULLS LAST, q.priority, q.enqueued_at
       LIMIT 12`,
   );
+  // #4533: and why each one that is not running waits, and until when.
+  const fault = faultBackoff();
+  const queueRows = queued.map((q) => ({ ...q, waiting: queueWait(q, { fault }) }));
   const { rows: depthRows } = await pool.query(
     'SELECT COUNT(*)::int AS depth FROM homeroom_bot_queue WHERE started_at IS NULL',
   );
+  // Running now and Waiting count builds too: they run from their runs, not
+  // from the queue, and were left out of both while the bot was busy.
+  const builds = await buildsNow(pool);
 
   const pageSize = Math.min(Math.max(Number(limit) || RUNS_PAGE, 1), 200);
   const { rows: runRows } = await pool.query(
@@ -8553,7 +9124,7 @@ async function adminPayload(pool, config, {
         .map((r) => (r.appId && backoffFor(r.appId) ? { ...r, retryInMs: Math.max(0, appBackoff.get(r.appId).until - Date.now()) } : r)),
     } : lastPass,
     totals,
-    queue: { depth: depthRows[0]?.depth || 0, items: queueRows },
+    queue: { depth: depthRows[0]?.depth || 0, items: queueRows, buildsWaiting: builds.waiting },
     runs: runRows.map((r) => ({
       ...r, issueUrl: issueUrlFor(r), buildUrl: buildUrlFor(r), replayStages: replayable[r.id] || [],
     })),
@@ -8566,13 +9137,16 @@ async function adminPayload(pool, config, {
     builds: await buildLaneSummary(pool),
     mentionOptOuts: await mentionOptOutList(pool),
     // #3624 stage 2: what runs now, and what the DM's answers cost.
-    workingNow: await workingNow(pool, settings),
+    workingNow: [...await workingNow(pool, settings), ...builds.building],
     dmChat: await dmChatSummary(pool),
     // Whether it is working, over the last week (homeroom-bot-health.js).
     health: await require('./homeroom-bot-health').rolloutHealth(pool, { botUsername: BOT_USERNAME }),
     // #4210: errors that should not happen (a build a restart cut short),
     // the last week's, newest first (platform-incidents.js).
     incidents: await incidents().recent(pool),
+    // The configurations' pairs waiting for a pick, per scope: picked only
+    // through the connector, so the Overview says they wait.
+    pairsWaiting: await botConfigs().pairsWaitingByScope(pool),
   };
 }
 
@@ -8906,8 +9480,11 @@ module.exports = {
   buildOne,
   // WP1 (#2): a build re-checked before it is proposed, and a merge's net.
   requestProposal,
+  requestBuilding,
   whyNotBuild,
   hasProposalSkip,
+  beingBuiltSkip,
+  LOST_CLAIM,
   CLOSED_WHILE_BUILDING,
   noteRequestMerged,
   queueLiveBuild,
@@ -8993,6 +9570,12 @@ module.exports = {
   noteProposalChecks,
   checksToFix,
   runChecksFix,
+  // #4533: a follow-up a restart caught.
+  isRecoveredBotFollowUp,
+  followUpMark,
+  finishRecoveredFollowUp,
+  RECOVERED_FOLLOWUP_EFFECT,
+  queueWait,
   settleAbandonedLiveBuilds,
   finishInterruptedReviews,
   recordReviewState,
@@ -9050,6 +9633,8 @@ module.exports = {
   readReasonOf,
   skippedAtTriage,
   liveCandidates,
+  buildsNow,
+  BUILDS_PER_PROJECT,
   // A project's first version goes first.
   FIRST_VERSION_PENDING_SQL,
   FIRST_VERSION_HOLD,

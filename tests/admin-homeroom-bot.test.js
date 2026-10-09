@@ -144,6 +144,7 @@ test('GET /api/admin/homeroom-bot: a view-only admin reads the whole dashboard; 
   assert.equal(data.runs.length, 1);
   assert.equal(data.runs[0].issueUrl, 'https://github.com/usernode-bot/todo/issues/12');
   assert.deepEqual(data.caps, { proposalsPerApp: 5, proposalsTotal: 100, questionsPerAppPerDay: 10 });
+  assert.deepEqual(data.pairsWaiting, { first_version: 0, later: 0 }, 'the configurations\' pairs waiting, per scope');
 
   // adminMiddleware sends a non-admin back to the shell (a redirect, since
   // the mounted router sees a path without the /api prefix).
@@ -567,11 +568,28 @@ test('how much the bot works on at once is set here, and what runs now is listed
   assert.equal(savedForm({ settings: { mode: 'shadow' }, bot: null }).liveAtOnce, '12', 'the server\'s defaults when unset');
   assert.equal(savedForm({ settings: { mode: 'shadow' }, bot: null }).perPerson, '3');
   const html = renderToHtml(createElement(WorkingNow, { items: [
-    { appSlug: 'todo', appName: 'Todo', issueNumber: 12, since: '2026-10-02T10:00:00Z', lane: 'live', person: 'ada' },
-    { appSlug: 'notes', appName: 'Notes', issueNumber: 3, since: '2026-10-02T10:05:00Z', lane: 'background', person: null },
+    { appSlug: 'todo', appName: 'Todo', issueNumber: 12, since: '2026-10-02T10:00:00Z', lane: 'live', kind: 'read', person: 'ada' },
+    { appSlug: 'notes', appName: 'Notes', issueNumber: 3, since: '2026-10-02T10:05:00Z', lane: 'background', kind: 'read', person: null },
+    { appSlug: 'todo', appName: 'Todo', issueNumber: 9, since: '2026-10-02T09:40:00Z', lane: 'live', kind: 'build', person: 'ada' },
   ] }));
-  assert.match(html, /data-working="todo#12"[^>]*><span class="badge-success">live<\/span><span>Todo #12<\/span><span class="muted">for @ada<\/span>/);
+  assert.match(html, /data-working="todo#12"[^>]*><span class="badge-success">reading<\/span><span>Todo #12<\/span><span class="muted">for @ada<\/span>/);
   assert.match(html, /data-working="notes#3"[^>]*><span class="badge-default">background<\/span><span>Notes #3<\/span><span class="muted">since /);
+  assert.match(html, /data-working="todo#9"[^>]*><span class="badge-success">building<\/span><span>Todo #9<\/span><span class="muted">for @ada<\/span>/);
+
+  // Running now and Waiting in the queue count builds too, and say which is
+  // which: builds run from their runs, not the queue, and were counted in
+  // neither (0 running while six builds ran).
+  const { workingFor, waitingFor } = loadBotSection();
+  const item = (kind) => ({ appSlug: 'a', appName: 'A', issueNumber: 1, since: '', lane: 'live', kind, person: null });
+  assert.equal(workingFor([item('read'), item('build'), item('build'), item('build')]), '1 reading, 3 building');
+  assert.equal(workingFor([item('build'), item('build')]), '2 building', 'a zero says nothing');
+  assert.equal(workingFor([{ ...item(), kind: undefined }]), '1 reading', 'a row without a kind is a read');
+  assert.equal(waitingFor(4, 2), '4 to read, 2 to build');
+  assert.equal(waitingFor(0, 0), '');
+  assert.match(tsx, /tile\('Waiting in the queue',\s*payload \? String\(payload\.queue\.depth \+ \(payload\.queue\.buildsWaiting \|\| 0\)\) : '–', 'admin-homeroom-bot-tile-queue',/);
+  const botSrc = read('src/services/homeroom-bot.js');
+  assert.match(botSrc, /queue: \{ depth: depthRows\[0\]\?\.depth \|\| 0, items: queueRows, buildsWaiting: builds\.waiting \}/);
+  assert.match(botSrc, /workingNow: \[\.\.\.await workingNow\(pool, settings\), \.\.\.builds\.building\]/);
   assert.match(renderToHtml(createElement(WorkingNow, { items: [] })), /id="admin-homeroom-bot-working-none"[^>]*>Nothing is running right now\./);
 
   who = FULL_ADMIN;
@@ -675,6 +693,28 @@ test('a model picked in the Benchmark fills the form in and waits for Save', () 
   assert.match(fn, /setModel\(stage, id\);/);
   assert.match(fn, /showTab\('settings'\);/);
   assert.doesNotMatch(fn, /write\(|fetch\(/, 'nothing is saved until a person presses Save changes');
+});
+
+// The configurations' blind pairs are picked only through the connector,
+// and nothing told an admin one was waiting: the Overview says so, per
+// scope, beside the spend and the verdicts, and a zero says nothing.
+test('the Overview says how many configuration pairs wait for a pick, and where they are picked', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  const { pairsWaitingLine } = loadBotSection();
+  assert.equal(pairsWaitingLine(null), '');
+  assert.equal(pairsWaitingLine(undefined), '');
+  assert.equal(pairsWaitingLine({ first_version: 0, later: 0 }), '', 'zero says nothing');
+  const how = 'Pairs are picked through the Homeroom connector: list_bot_configs, then get_bot_config_pair.';
+  assert.equal(pairsWaitingLine({ first_version: 0, later: 1 }), `Bot configurations: 1 later-change pair waits for a pick. ${how}`);
+  assert.equal(pairsWaitingLine({ first_version: 2, later: 0 }), `Bot configurations: 2 first-version pairs wait for a pick. ${how}`);
+  assert.equal(pairsWaitingLine({ first_version: 1, later: 5 }),
+    `Bot configurations: 1 first-version pair and 5 later-change pairs wait for a pick. ${how}`);
+  // Under the totals line, on the Overview, hidden when there is nothing to say.
+  const overview = tsx.slice(tsx.indexOf('id="admin-homeroom-bot-panel-overview"'), tsx.indexOf('id="admin-homeroom-bot-panel-settings"'));
+  assert.match(overview, /id="admin-homeroom-bot-totals"[\s\S]*<p className=\{pairsLine \? `\$\{AdminUI\.muted\} mt-1` : 'hidden'\} id="admin-homeroom-bot-pairs-waiting">\{pairsLine\}<\/p>/);
+  assert.match(tsx, /const pairsLine = pairsWaitingLine\(payload\?\.pairsWaiting\);/);
+  const botSrc = read('src/services/homeroom-bot.js');
+  assert.match(botSrc, /pairsWaiting: await botConfigs\(\)\.pairsWaitingByScope\(pool\),/, 'from the payload the Overview already loads');
 });
 
 test('the tabs have addresses of their own, and Settings and the Overview stay rendered', () => {

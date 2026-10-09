@@ -1267,15 +1267,52 @@ async function execInTarget(dbName, sql, opts = {}) {
   }
   args.push('-c', sql);
 
-  const { stdout, stderr } = await execFileAsync('psql', args, {
-    timeout: Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000)),
-    env: postgresEnv(dbName),
-  });
+  const timeoutMs = Math.max(30_000, Math.min(120_000, Number(opts.timeoutMs) || 30_000));
+  let ran;
+  try {
+    ran = await execFileAsync('psql', args, { timeout: timeoutMs, env: postgresEnv(dbName) });
+  } catch (err) {
+    throw psqlFailure(err, { sql, timeoutMs });
+  }
+  const { stdout, stderr } = ran;
 
   if (stderr && !stderr.includes('NOTICE')) {
     throw new Error(stderr);
   }
   return stdout;
+}
+
+const PASSWORD_LITERAL = /\bPASSWORD\s+'(?:[^']|'')*'/gi;
+const maskPasswords = (text) => (typeof text === 'string'
+  ? text.replace(PASSWORD_LITERAL, 'PASSWORD \'[redacted]\'') : text);
+
+// What a failed psql run says. Node's message is "Command failed: psql
+// <args>" and then psql's stderr, which carries Postgres's own error
+// ("ERROR: source database … is being accessed by other users"), so that one
+// is kept as it is. A run cut off at its time limit has no stderr: its
+// message ended at the command, and the before & after shots gallery showed
+// exactly that for two copies on 2026-10-09 (a CREATE DATABASE … TEMPLATE
+// past its 90 seconds, a DROP DATABASE … WITH (FORCE) past its 30), with
+// nothing saying time ran out. Killing psql does not cancel the statement,
+// which may still be running on the server. A password in the statement
+// (CREATE ROLE … PASSWORD) is masked everywhere the error carries it, its
+// stack included: the message reaches logs and the shots failure people read. The error's own
+// fields (code, signal, stderr) stay, for db-retry's reading of them.
+function psqlFailure(err, { sql, timeoutMs }) {
+  if (!err || typeof err !== 'object') return err;
+  const timedOut = err.killed === true && err.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+  if (timedOut) {
+    const said = typeof err.stderr === 'string' && err.stderr.trim() ? `\n${err.stderr.trim()}` : '';
+    err.message = `No answer from Postgres within ${Math.round(timeoutMs / 1000)} seconds, psql's time limit, so `
+      + `psql was stopped and the statement may still be running on the server: ${sql}${said}`;
+  } else if (!err.code && err.signal) {
+    err.message = `psql was stopped by ${err.signal} before Postgres answered: ${sql}`;
+  }
+  err.message = maskPasswords(err.message);
+  for (const field of ['cmd', 'stderr', 'stack']) {
+    if (typeof err[field] === 'string') err[field] = maskPasswords(err[field]);
+  }
+  return err;
 }
 
 // Which tables' DATA can be skipped by the clone's pg_dump — i.e. exactly
@@ -1828,6 +1865,7 @@ module.exports = {
   STAGING_TEMPLATE_MAX_AGE_MS,
   STAGING_TEMPLATE_HARD_MAX_AGE_MS,
   _templateIdleForTest: templateIdle,
+  _psqlFailureForTest: psqlFailure,
   // Per-app database storage cap (#2253).
   parseDatabaseSizes,
   listAppDatabaseSizes,
