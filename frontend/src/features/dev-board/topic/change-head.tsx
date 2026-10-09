@@ -25,10 +25,11 @@
  * `AppView._changeThreadView`; this only draws.
  */
 
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
+import { Diagram, readDiagram } from '../../../lib/diagram/diagram';
 import { Avatar } from '@/components/ui/feed';
 import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
@@ -182,6 +183,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           <h1 className="dev-request-title" data-change-title={id ?? ''}>
             <TitleContent t={card.title} />
           </h1>
+          <ChangeDiagram value={body.diagram} />
           <RequestWords html={body.summaryHtml || ''} />
           {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
           {body.summaryStale && body.summaryHtml
@@ -214,4 +216,28 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
       </article>
     </>
   );
+}
+
+/**
+ * #4490: the change's diagram, leading its page above the description. A
+ * Mermaid diagram that cannot be drawn says so in a muted line, with the
+ * author's source one tap down, rather than leaving a hole.
+ */
+function ChangeDiagram({ value }: { value: unknown }): ReactNode {
+  const d = useMemo(() => readDiagram(value), [value]);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [d]);
+  if (!d) return null;
+  if (failed && d.kind === 'mermaid') {
+    return (
+      <div className="dev-change-diagram-failed" data-change-diagram-failed="">
+        <p>The author’s diagram could not be drawn.</p>
+        <details>
+          <summary>Show its text</summary>
+          <pre>{d.source}</pre>
+        </details>
+      </div>
+    );
+  }
+  return <Diagram d={d} source="author" onFail={() => setFailed(true)} className="dev-change-diagram" />;
 }
