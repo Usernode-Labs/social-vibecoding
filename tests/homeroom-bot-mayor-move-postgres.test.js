@@ -151,8 +151,6 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
   const homeroom = await project('usernode-2d5619', sam, { members: [ada], title: 'Homeroom' });
   const ears = await project('ear-trainer', ada, { members: [sam] });
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify([ada.username, sam.username]));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['ear-trainer']));
   const settings = await homeroomBot.readSettings(pool);
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
   const workflow = { governsKind: () => false, async fileProposal() {} };

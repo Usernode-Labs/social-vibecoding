@@ -219,7 +219,7 @@ platform admin's connector (and nobody else's) gets four tools for that, over
 
 | Tool | What it actually does |
 |---|---|
-| `create_test_account` | Makes a new account flagged as a test account and returns its username and a one-time password, with the sign-in steps. Inputs, all optional: `username` (omitted: a placeholder and the real "choose your username" step), `platformAccess` (default `true`; `false` leaves it in the waiting room), `homeroomBotDm`, `welcomeDm` (both default `false`), `note` (≤ 200 characters) |
+| `create_test_account` | Makes a new account flagged as a test account and returns its username and a one-time password, with the sign-in steps. Inputs, all optional: `username` (omitted: a placeholder and the real "choose your username" step), `platformAccess` (default `true`; `false` leaves it in the waiting room), `welcomeDm` (default `false`), `note` (≤ 200 characters) |
 | `create_test_phone_sign_in` | A one-time phone sign-in for the flows that ask for a phone (an invite's Join sheet): a fictional test number (`+1 415 555 01xx` unless `phoneNumber` names another `+1 … 555 0100–0199` number) and a random six-digit code that works once, within 30 minutes and five tries, in any environment. No text is sent. The account it makes is a test account; naming a live test account's number signs in to it again |
 | `list_test_accounts` | The live ones: id, username, who made it and when, last active, note, and the apps it made with their status. Read-only |
 | `retire_test_account` | With `confirm: "RETIRE"`: takes down every app the account made (the same teardown as deleting the app), then deletes the account. Refuses an account that is not a test account, and stops without deleting it if an app cannot be taken down |

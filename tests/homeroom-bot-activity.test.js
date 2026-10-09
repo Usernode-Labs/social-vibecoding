@@ -206,12 +206,11 @@ test('a card that joined work under way starts when that work began, not when th
 
 // ── Starting one ──
 
-function startDeps({ dmUsers = ['ada'], sendResult, sendThrows = false } = {}) {
+function startDeps({ sendResult, sendThrows = false } = {}) {
   const sent = [];
   const queries = [];
   const pool = { async query(sql, params) { queries.push([String(sql), params]); return { rows: [] }; } };
   const dm = {
-    isDmUser: dmSvc.isDmUser,
     hasBot: dmSvc.hasBot,
     requestLine: dmSvc.requestLine,
     async requestStart() { return 77; },
@@ -221,12 +220,13 @@ function startDeps({ dmUsers = ['ada'], sendResult, sendThrows = false } = {}) {
       return sendResult === undefined ? { conversationId: 5, messageId: 900, duplicate: false } : sendResult;
     },
   };
-  return { pool, dm, sent, queries, settings: { dmUsers } };
+  return { pool, dm, sent, queries, settings: { mode: 'shadow' } };
 }
 
 const app = { id: 11, slug: 'ear-trainer', name: 'Ear Trainer' };
 const bot = { id: 1, username: 'homeroom_bot' };
-const ada = { userId: 7, username: 'ada', issueTitle: 'Sort by date', firstVersion: false };
+// The bot works for anybody Homeroom has let in (homeroom-bot-dm.js hasBot).
+const ada = { userId: 7, username: 'ada', hasPlatformAccess: true, issueTitle: 'Sort by date', firstVersion: false };
 
 test('starting work sends the requester ONE card, keyed by the queue row it was claimed from, and records it', async () => {
   const { pool, dm, sent, queries, settings } = startDeps();
@@ -256,8 +256,10 @@ test('a first version\'s card says so', async () => {
 });
 
 test('no card for somebody the bot does not talk to in a DM, nor without a requester or a job', async () => {
-  const off = startDeps({ dmUsers: ['sam'] });
-  assert.equal(await activity.startCard(off.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 1, settings: off.settings, deps: { dm: off.dm } }), null);
+  const off = startDeps();
+  for (const requester of [{ ...ada, hasPlatformAccess: false }, { ...ada, isSynthetic: true }]) {
+    assert.equal(await activity.startCard(off.pool, { app, issueNumber: 12, requester, bot, jobKey: 1, settings: off.settings, deps: { dm: off.dm } }), null);
+  }
   assert.equal(off.sent.length, 0);
   const on = startDeps();
   assert.equal(await activity.startCard(on.pool, { app, issueNumber: 12, requester: null, bot, jobKey: 1, settings: on.settings, deps: { dm: on.dm } }), null);
@@ -372,12 +374,12 @@ test('catching up gives nobody else\'s work a card, and does nothing for somebod
     async connect() { throw new Error('no lock is taken when there is nothing to do'); },
   };
   const deps = (over = {}) => ({
-    dm: { isDmUser: dmSvc.isDmUser, hasBot: dmSvc.hasBot },
+    dm: { hasBot: dmSvc.hasBot },
     liveSvc: { isStaging: () => false, isLiveFor: () => true, ...over.liveSvc },
     botSvc: { APP_AGAIN_REASON: 'app_again', async readSettings() { throw new Error('settings were passed'); } },
   });
-  const ada = { id: 7, username: 'ada' };
-  const on = { mode: 'shadow', dmUsers: ['ada'] };
+  const ada = { id: 7, username: 'ada', hasPlatformAccess: true };
+  const on = { mode: 'shadow' };
   assert.deepEqual(await activity.catchUpCards(pool, { user: { id: 8, username: 'sam' }, settings: on, deps: deps() }), { added: 0 });
   assert.deepEqual(await activity.catchUpCards(pool, { user: ada, settings: { ...on, mode: 'off' }, deps: deps() }), { added: 0 });
   assert.deepEqual(await activity.catchUpCards(pool, { user: ada, settings: on, deps: deps({ liveSvc: { isStaging: () => true } }) }), { added: 0 });
@@ -900,7 +902,7 @@ test('#3767: a request filed in the DM gets its card at once, and the card says 
 // plan, the same card read from the plan's run, and the one above is no
 // longer drawn.
 
-function underPlanDeps({ existing = null, runAt = new Date('2026-10-04T10:02:00.123Z'), dmUsers = ['ada'], sendResult } = {}) {
+function underPlanDeps({ existing = null, runAt = new Date('2026-10-04T10:02:00.123Z'), sendResult } = {}) {
   const sent = [];
   const queries = [];
   const moved = [];
@@ -916,7 +918,6 @@ function underPlanDeps({ existing = null, runAt = new Date('2026-10-04T10:02:00.
     },
   };
   const dm = {
-    isDmUser: dmSvc.isDmUser,
     hasBot: dmSvc.hasBot,
     requestLine: dmSvc.requestLine,
     askedLine: dmSvc.askedLine,
@@ -927,10 +928,10 @@ function underPlanDeps({ existing = null, runAt = new Date('2026-10-04T10:02:00.
     },
     async setQuestionState(_pool, messageId, patch, opts) { moved.push([messageId, patch, opts.userId]); },
   };
-  return { pool, dm, sent, queries, moved, settings: { dmUsers } };
+  return { pool, dm, sent, queries, moved, settings: { mode: 'shadow' } };
 }
 
-const maker = { userId: 7, username: 'ada', issueTitle: 'First version of Flat 4B Chores', firstVersion: true, askedText: 'A chores rota for our flat' };
+const maker = { userId: 7, username: 'ada', hasPlatformAccess: true, issueTitle: 'First version of Flat 4B Chores', firstVersion: true, askedText: 'A chores rota for our flat' };
 const flat = { id: 21, slug: 'flat-4b-chores', name: 'Flat 4B Chores' };
 
 test('B6: Build it moves the request\'s card under the plan, read from the plan\'s run, and the card above stops being drawn', async () => {
@@ -979,9 +980,9 @@ test('B6: a card already under the plan carries on; with none, Build it gives th
   assert.ok(!none.queries.some(([sql]) => /DELETE FROM homeroom_bot_dm_messages/.test(sql)), 'nothing to move');
   assert.equal(none.moved.length, 0);
 
-  const off = underPlanDeps({ existing: { messageId: 800 }, dmUsers: ['sam'] });
+  const off = underPlanDeps({ existing: { messageId: 800 } });
   assert.equal(await activity.cardUnderPlan(off.pool, {
-    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: maker, bot, settings: off.settings, deps: { dm: off.dm },
+    app: flat, issueNumber: 1, runId: 61, planMessageId: 900, requester: { ...maker, hasPlatformAccess: false }, bot, settings: off.settings, deps: { dm: off.dm },
   }), null);
   assert.equal(off.sent.length + off.moved.length, 0);
 

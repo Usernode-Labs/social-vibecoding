@@ -1,4 +1,5 @@
-// #3146: the Homeroom bot, live on the apps in `homeroom_bot_live_apps`.
+// #3146: the Homeroom bot, live: on every app but a paused one (it started on
+// a list of apps, `homeroom_bot_live_apps`, retired since).
 //
 // What matters most here is the loop the bot must never start: a post is
 // issue activity, and issue activity re-queues the issue. Those tests come
@@ -121,51 +122,59 @@ test('its Homeroom posts are system messages, which the queue never counts as ac
 
 // ── Where it is live ─────────────────────────────────────────────────────
 
-test('it is live only on a listed app, with the mode on, and never on a staging copy', (t) => {
-  const on = { mode: 'shadow', liveApps: [APP.slug] };
-  assert.equal(live.isLiveFor(on, APP), true);
-  assert.equal(live.isLiveFor({ ...on, mode: 'off' }, APP), false, 'off means off');
-  assert.equal(live.isLiveFor({ mode: 'shadow', liveApps: ['other'] }, APP), false, 'only the listed apps');
-  assert.equal(live.isLiveFor(null, APP), false);
+test('it is live on every app with the mode on, and never on a staging copy', (t) => {
   const prior = process.env.USERNODE_ENV;
   t.after(() => { if (prior === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prior; });
+  delete process.env.USERNODE_ENV;
+  const on = { mode: 'shadow' };
+  assert.equal(live.isLiveFor(on, APP), true, 'no list needed');
+  assert.equal(live.isLiveFor({ ...on, mode: 'off' }, APP), false, 'off means off');
+  assert.equal(live.isLiveFor(null, APP), false);
+  assert.equal(live.isLiveFor(on, null), false);
   process.env.USERNODE_ENV = 'staging';
   assert.equal(live.isLiveFor(on, APP), false,
     'a staging copy starts from production\'s settings and must never post on real issues');
 });
 
-test('with the everyone audience it is live on every app but a paused one and the platform\'s own', (t) => {
-  const everyone = { mode: 'shadow', audience: 'everyone', liveApps: [], pausedApps: ['quiet'], platformSlugs: ['usernode-2d5619'] };
-  assert.equal(live.isLiveFor(everyone, APP), true, 'no list needed');
-  assert.equal(live.isLiveFor(everyone, { slug: 'anything-else' }), true);
-  assert.equal(live.isLiveFor(everyone, { slug: 'quiet' }), false, 'paused stays paused');
-  assert.equal(live.isLiveFor(everyone, { slug: 'usernode-2d5619' }), false, 'the platform\'s own project has its own switch');
-  assert.equal(live.isLiveFor({ ...everyone, livePlatform: true }, { slug: 'usernode-2d5619' }), true);
-  assert.equal(live.isLiveFor({ ...everyone, mode: 'off' }, APP), false, 'off means off for everyone too');
-  assert.deepEqual(live.liveScope(everyone), { all: true, slugs: [], except: ['quiet', 'usernode-2d5619'] });
-  // The list audience reads as it always did, paused apps and all.
-  const list = { mode: 'shadow', liveApps: ['a', 'b'], firstVersionApps: ['b', 'c'], pausedApps: ['a'] };
-  assert.deepEqual(live.liveScope(list), { all: false, slugs: ['a', 'b', 'c'], except: [] });
-  assert.equal(live.scopeIsEmpty(live.liveScope({ mode: 'shadow', liveApps: [] })), true);
-  assert.equal(live.scopeIsEmpty(live.liveScope(everyone)), false);
-  // Whether the bot is on is said apart: appsScope reads the same apps while it is off.
-  assert.deepEqual(live.appsScope({ ...everyone, mode: 'off' }), live.liveScope(everyone));
+test('it is live on every app but a paused one, the platform\'s own included', (t) => {
   const prior = process.env.USERNODE_ENV;
   t.after(() => { if (prior === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prior; });
+  delete process.env.USERNODE_ENV;
+  const settings = { mode: 'shadow', pausedApps: ['quiet', 'quiet'] };
+  assert.equal(live.isLiveFor(settings, APP), true);
+  assert.equal(live.isLiveFor(settings, { slug: 'anything-else' }), true);
+  assert.equal(live.isLiveFor(settings, { slug: 'quiet' }), false, 'paused stays paused');
+  assert.equal(live.isLiveFor(settings, { slug: 'usernode-2d5619' }), true, 'Homeroom\'s own project too');
+  assert.equal(live.isLiveFor({ ...settings, mode: 'off' }, APP), false, 'off means off');
+  assert.deepEqual(live.liveScope(settings), { all: true, slugs: [], except: ['quiet'] });
+  // What the retired lists said no longer narrows it.
+  assert.deepEqual(live.liveScope({ mode: 'shadow', liveApps: ['a'], firstVersionApps: ['b'], platformSlugs: ['usernode-2d5619'] }),
+    { all: true, slugs: [], except: [] });
+  assert.equal(live.scopeIsEmpty(live.liveScope(settings)), false);
+  assert.equal(live.scopeIsEmpty(live.liveScope({ mode: 'off' })), true);
+  // A scope that names its own apps (liveCandidates) still reads as those apps.
+  assert.equal(live.inScope({ all: false, slugs: ['a'], except: [] }, 'a'), true);
+  assert.equal(live.inScope({ all: false, slugs: ['a'], except: [] }, 'b'), false);
+  assert.equal(live.scopeIsEmpty({ all: false, slugs: [], except: [] }), true);
+  // Whether the bot is on is said apart: appsScope reads the same apps while it is off.
+  assert.deepEqual(live.appsScope({ ...settings, mode: 'off' }), live.liveScope(settings));
   process.env.USERNODE_ENV = 'staging';
-  assert.equal(live.isLiveFor(everyone, APP), false, 'never on a staging copy');
-  assert.equal(live.scopeIsEmpty(live.liveScope(everyone)), true);
+  assert.equal(live.isLiveFor(settings, APP), false, 'never on a staging copy');
+  assert.equal(live.scopeIsEmpty(live.liveScope(settings)), true);
+  assert.deepEqual(live.appsScope(settings), { all: true, slugs: [], except: ['quiet'] }, 'appsScope reads past staging');
 });
 
-test('the live list is a validated setting that ships empty', () => {
-  assert.deepEqual(bot.parseSettings([]).liveApps, []);
-  assert.deepEqual(bot.parseSettings([{ key: bot.KEY_LIVE_APPS, value: '["rss-reader-4113da", 3]' }]).liveApps, ['rss-reader-4113da']);
-  assert.equal(bot.validateSettingsPatch({ liveApps: ['Not A Slug'] }).ok, false);
-  assert.equal(bot.validateSettingsPatch({ liveApps: 'rss-reader-4113da' }).ok, false);
-  const ok = bot.validateSettingsPatch({ liveApps: ['rss-reader-4113da', 'rss-reader-4113da'] });
-  assert.deepEqual(ok.updates, [[bot.KEY_LIVE_APPS, '["rss-reader-4113da"]']], 'deduplicated');
+test('the live list is gone: an app is left alone by pausing it', () => {
+  assert.equal(Object.hasOwn(bot.parseSettings([{ key: 'homeroom_bot_live_apps', value: '["rss-reader-4113da"]' }]), 'liveApps'), false);
+  assert.equal(bot.KEY_LIVE_APPS, undefined);
+  assert.deepEqual(bot.validateSettingsPatch({ liveApps: ['rss-reader-4113da'] }), { ok: false, error: 'Nothing to update' });
+  assert.deepEqual(bot.validateSettingsPatch({ pausedApps: ['rss-reader-4113da', 'rss-reader-4113da'] }).updates,
+    [[bot.KEY_PAUSED_APPS, '["rss-reader-4113da"]']], 'deduplicated');
+  assert.equal(bot.validateSettingsPatch({ pausedApps: ['Not A Slug'] }).ok, false);
   assert.equal(bot.validateSettingsPatch({ mode: 'live' }).ok, false, 'the global switch still refuses live');
-  assert.match(read('src/db/schema.sql'), /\('homeroom_bot_live_apps', '\[\]'\)/);
+  const schema = read('src/db/schema.sql');
+  assert.doesNotMatch(schema, /\('homeroom_bot_live_apps', '\[\]'\)/, 'never seeded again');
+  assert.match(schema, /DELETE FROM platform_settings\n WHERE key IN \('homeroom_bot_live_apps',/);
 });
 
 // ── Posting ──────────────────────────────────────────────────────────────
@@ -940,10 +949,17 @@ test('a ready verdict is held before it is built when the bot is at its ceiling 
       return { rows: [{ cnt: 0 }] };
     },
   };
-  const settings = { liveApps: ['a', 'b', 'c', 'd'] };
+  // Every app is live, so the automatic ceiling is a fixed one; an admin's
+  // number replaces it.
   assert.equal(bot.PROPOSALS_PER_APP_CAP, 5);
-  assert.equal(bot.botProposalCeiling(settings), 20, '5 per live app');
-  assert.equal(bot.botProposalCeiling(null), 5, 'never below one app\'s cap');
+  assert.equal(bot.botProposalCeiling({}), 100, 'the automatic ceiling');
+  assert.equal(bot.botProposalCeiling(null), 100);
+  total = 99;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), null);
+  total = 100;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', {}), 'proposals_total');
+  const settings = { proposalCeiling: 20 };
+  assert.equal(bot.botProposalCeiling(settings), 20, 'an admin\'s number');
   total = 19;
   assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), null);
   total = 20;
@@ -1011,7 +1027,7 @@ test('runTriage acts only through the live module, and only when the app is live
     'and it is queued only where the live branch does not run');
   assert.match(BOT_SRC, /if \(!skip\) \{\n(?:\s+\/\/.*\n)+\s+if \(await queueShadowBuild\(pool, runId\)\) acted = 'shadow_queued';/,
     'only when nothing rules it out; otherwise the run says why (build_error "skipped: …")');
-  assert.equal(bot.shadowBuildSkipReason({ mode: 'shadow', liveApps: ['todo'], shadowBuilds: true }, { slug: 'todo' }),
+  assert.equal(bot.shadowBuildSkipReason({ mode: 'shadow', shadowBuilds: true }, { slug: 'todo' }),
     'the app is live now', 'a live app is never also shadow built');
   assert.match(BOT_SRC, /const liveMode = live\.isLiveFor\(settings, app\);/);
   assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+const open = await live\.openBotProposal/);

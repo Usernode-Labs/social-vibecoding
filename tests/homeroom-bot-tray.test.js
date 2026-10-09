@@ -424,7 +424,6 @@ test('the live loop tells the person a piece of work is for when it starts and w
   bot._resetForTests();
   const settings = [
     { key: bot.KEY_MODE, value: 'shadow' },
-    { key: bot.KEY_LIVE_APPS, value: JSON.stringify(['a1', 'a2']) },
     { key: bot.KEY_PER_PERSON, value: '2' },
     { key: bot.KEY_LIVE_AT_ONCE, value: '6' },
   ];

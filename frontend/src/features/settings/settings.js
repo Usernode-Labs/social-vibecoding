@@ -166,7 +166,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, homeroomBotDm: false, homeroomBotForEveryone: false, locale: null },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -374,7 +374,7 @@
       cli: 'terminal token credentials revoke local agent opencode claude code',
       'agent-files': 'instructions skills agents md claude md prompt files',
       'global-chat': 'model cap chat',
-      experimental: 'beta labs progress estimate session bridge local agent homeroom bot dm messages keyboard shortcut suggest improvement',
+      experimental: 'beta labs progress estimate session bridge local agent keyboard shortcut suggest improvement',
       theme: 'dark light mode appearance sidebar',
       'dev-console': 'bug icon logs errors debug developer',
       language: 'locale translate',
@@ -601,14 +601,6 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // #3624: join (or leave) the Homeroom bot's DM. Same shape again; the
-      // server may refuse a join when the bot's list is full, and the
-      // checkbox goes back to what is stored.
-      const botDmToggle = document.getElementById('homeroom-bot-dm-enabled');
-      if (botDmToggle) {
-        botDmToggle.addEventListener('change', (e) => this._saveHomeroomBotDm(e.target.checked));
-      }
-
       // #4289: Press C to comment on the page. Kept on this device, not
       // the account (features/improve/suggest-shortcut.ts), so there is no
       // request to fail: the change is the save.
@@ -756,8 +748,6 @@
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
-        this.state.homeroomBotDm = !!j.user?.homeroomBotDm;
-        this.state.homeroomBotForEveryone = !!j.user?.homeroomBotForEveryone;
         this.state.locale = j.user?.locale || null;
         // Same payload the CLI-credentials gate needs, so prime its memo
         // rather than let it issue a second /api/auth/me. (It still
@@ -1557,14 +1547,6 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const botDm = document.getElementById('homeroom-bot-dm-enabled');
-      if (botDm) botDm.checked = !!this.state.homeroomBotDm;
-      // With the bot on for everyone there is no list to join or leave: its
-      // whole block (the switch, its note and its status line) goes.
-      const botDmBlock = botDm ? botDm.closest('.border-t') : null;
-      if (botDmBlock) botDmBlock.classList.toggle('hidden', !!this.state.homeroomBotForEveryone);
-      const botDmStatus = document.getElementById('homeroom-bot-dm-status');
-      if (botDmStatus) { botDmStatus.classList.add('hidden'); botDmStatus.textContent = ''; }
       const shortcut = document.getElementById('suggest-shortcut-enabled');
       const shortcutPref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
       if (shortcut) shortcut.checked = !!shortcutPref?.enabled();
@@ -2765,41 +2747,6 @@
         // object has to move with it or the next sheet opened in this same
         // page load would still be missing the row that was just enabled.
         if (typeof App !== 'undefined' && App.user) App.user.sessionBridgeEnabled = !!enabled;
-        if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      } catch (err) {
-        fail(`Network error: ${err.message}`);
-      }
-    },
-
-    // #3624: put this account on the Homeroom bot's DM list, or take it off.
-    // A refused save (the list is full: 409) reverts the checkbox and says
-    // why, the same as the toggles above. The create dialog asks for a
-    // project description from App.user.homeroomBotDm, so the live object
-    // moves with it, as the session bridge's does.
-    async _saveHomeroomBotDm(enabled) {
-      const toggle = document.getElementById('homeroom-bot-dm-enabled');
-      const status = document.getElementById('homeroom-bot-dm-status');
-      const fail = (msg) => {
-        if (toggle) toggle.checked = !!this.state.homeroomBotDm;
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
-      };
-      try {
-        const r = await fetch('/api/me/homeroom-bot-dm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ enabled: !!enabled }),
-        });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          return fail(j.error || 'Failed to save.');
-        }
-        this.state.homeroomBotDm = !!enabled;
-        if (typeof App !== 'undefined' && App.user) App.user.homeroomBotDm = !!enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
         fail(`Network error: ${err.message}`);

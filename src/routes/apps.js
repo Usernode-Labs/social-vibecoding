@@ -1478,8 +1478,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // or an older client sends none), and never a reason the create fails.
       // An import, a ready-made app (services/app-templates.js: usable as
       // soon as it runs) or a project with no description has nothing to
-      // build first; made by somebody on the bot's DM list, it is still one
-      // the bot acts on for real (noteProjectMade).
+      // build first; it is still one the bot acts on, and an import's
+      // backlog waits (noteProjectMade).
       let homeroomBot = null;
       const homeroomBotDm = require('../services/homeroom-bot-dm');
       if (!repoUrlNormalized && !readyMade && homeroomBotDm.normalizeBrief(req.body.brief)) {
@@ -1610,9 +1610,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         appId: appRow.id,
         metadata: { forkedFromAppId: sourceApp.id, forkedFromSlug: sourceApp.slug },
       });
-      // #3624: a fork made by somebody on the Homeroom bot's DM list is one
-      // it acts on for real, as a project they create is. Never a reason the
-      // fork fails.
+      // #3624: a fork is recorded for the Homeroom bot as a project made
+      // without a description is. Never a reason the fork fails.
       try {
         await require('../services/homeroom-bot-dm').noteProjectMade(pool, { app: appRow, user: req.user, origin: 'fork' });
       } catch (err) {

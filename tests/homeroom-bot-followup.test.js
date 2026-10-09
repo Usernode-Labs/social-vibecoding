@@ -21,7 +21,7 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const APP = { id: 9, slug: 'rss-reader-4113da', name: 'RSS reader', repo_url: 'https://github.com/usernode-bot/rss-reader-4113da', self_hosted: false };
 const BOT = { id: 77, username: 'homeroom_bot' };
-const SETTINGS = { mode: 'shadow', liveApps: ['rss-reader-4113da'], turnSeconds: 1200, turnInputTokens: 10_000_000 };
+const SETTINGS = { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000 };
 const SEEN = '2026-09-26T10:00:00Z';
 const ITEM = { id: 31, app_id: 9, issue_number: 24, priority: 2, reason: 'changed', thread_seen_at: '2026-09-26T12:00:00Z' };
 const OLD_HEAD = 'a'.repeat(40);
@@ -265,13 +265,13 @@ test('#3703: without a spec (or when it cannot be read) the follow-up still runs
 });
 
 test('#3703: a row started as a follow-up beside other work never falls through to triage', async (t) => {
-  // The bot's proposal merged (or the app left the live list) between the
+  // The bot's proposal merged (or the app was paused) between the
   // pick and the run: the app's own session may be busy with another
   // request, so the row touches nothing and goes back to the queue.
   const comments = [{ author: 'evan', body: 'x', createdAt: '2026-09-26T11:30:00Z' }];
   const realPost = live.post;
   t.after(() => { live.post = realPost; });
-  for (const settings of [SETTINGS, { ...SETTINGS, liveApps: [] }]) {
+  for (const settings of [SETTINGS, { ...SETTINGS, pausedApps: [APP.slug] }]) {
     const h = harness({ proposalStatus: null, comments });
     live.post = async (args) => { h.calls.posts.push(args); return {}; };
     const out = await bot.runTriage(h.pool, {}, {

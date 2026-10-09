@@ -414,9 +414,9 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
+  // The bot works for everyone with platform access, on every app but a
+  // paused one.
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['plant-pal']));
   await pool.query(
     `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds, status, issue_number)
      VALUES ($1, $2, 'A plant watering app', TRUE, 'filed', 1)`,
@@ -656,7 +656,8 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
   });
 
   await t.test('#4175: a first version for someone the bot no longer works for stops at once, and is never built', async () => {
-    await set('homeroom_bot_dm_users', '[]');
+    // Maya no longer has platform access, so the bot no longer works for her.
+    await pool.query('UPDATE users SET has_platform_access = FALSE WHERE id = $1', [maya.id]);
     const lone = await readyRun();
     assert.equal(await bot.awaitGo(pool, { runId: lone, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'stopped');
     const row = await runRow(lone);
@@ -664,7 +665,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
       [row.awaiting_go_at, row.plan_unsent_at, row.build_ok, row.build_error, await queued(lone)],
       [null, null, false, 'skipped: nobody to send the plan to: its creator no longer has Homeroom bot', null],
     );
-    await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
+    await pool.query('UPDATE users SET has_platform_access = TRUE WHERE id = $1', [maya.id]);
     // And one whose requester cannot be found.
     const orphan = await readyRun();
     await pool.query('UPDATE homeroom_bot_runs SET issue_number = 99 WHERE id = $1', [orphan]);

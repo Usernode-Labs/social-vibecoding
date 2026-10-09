@@ -416,8 +416,20 @@ test('live: no spec, no spec posts; a build that fails still records the spec it
 
 // ── Recorded and shown ──────────────────────────────────────────────────
 
+// A shadow build happens only where nothing is live: outside a staging copy
+// every app but a paused one is (live.liveScope). These tests stand on one.
+function onStagingCopy(t) {
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  t.after(() => {
+    if (prev === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = prev;
+  });
+}
+
 test('a shadow build records the spec on its run', async (t) => {
   bot._resetForTests();
+  onStagingCopy(t);
   const queries = [];
   const pool = {
     async query(sql, params) {
@@ -444,7 +456,7 @@ test('a shadow build records the spec on its run', async (t) => {
     sessions: { buildHeadlessSeed: () => 'seed' },
     worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
   };
-  const settings = { mode: 'shadow', liveApps: [], pausedApps: [], shadowBuilds: true, turnSeconds: 1200 };
+  const settings = { mode: 'shadow', pausedApps: [], shadowBuilds: true, turnSeconds: 1200 };
   assert.equal(await bot.runQueuedBuild(pool, {}, {
     bot: BOT, claim: { id: 900, app_id: 9, issue_number: 12, build_note: 'x' }, settings, deps,
   }), 'shadow_built');
@@ -455,6 +467,7 @@ test('a shadow build records the spec on its run', async (t) => {
 
 test('a shadow build records a failed spec on its run, and the platform gets longer clocks (#3396)', async (t) => {
   bot._resetForTests();
+  onStagingCopy(t);
   const queries = [];
   const apps = {
     9: APP,
@@ -488,7 +501,7 @@ test('a shadow build records a failed spec on its run, and the platform gets lon
     worker: {}, agentTurn: {}, activeWorkers: new Set(), sessionLifecycle: {},
   };
   const settings = {
-    mode: 'shadow', liveApps: [], pausedApps: [], shadowBuilds: true, shadowBuildPlatform: true, turnSeconds: 1200,
+    mode: 'shadow', pausedApps: [], shadowBuilds: true, shadowBuildPlatform: true, turnSeconds: 1200,
   };
   const note = 'no spec (the spec ran past its time limit; last activity: rg -n x); the build worked from the plan';
   const record = () => queries.filter((q) => /SET build_ok = \$2/.test(q.sql)).pop();

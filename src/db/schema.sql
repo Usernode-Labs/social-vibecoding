@@ -9968,8 +9968,8 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_issue
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_created
   ON homeroom_bot_runs(created_at DESC);
 
--- #3146: live mode, on the apps in `homeroom_bot_live_apps` only. The run a
--- ready verdict turned into a proposal points at that proposal's session.
+-- #3146: live mode. The run a ready verdict turned into a proposal points at
+-- that proposal's session.
 ALTER TABLE homeroom_bot_runs
   ADD COLUMN IF NOT EXISTS proposal_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 
@@ -10076,12 +10076,14 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_hellos (
 );
 COMMENT ON TABLE homeroom_bot_hellos IS 'staging:private';
 -- WP-F: somebody who joins by an invite link is greeted as a 'joiner'
--- (homeroom-bot-dm.js greetJoiner).
+-- (homeroom-bot-dm.js greetJoiner). Everybody who had platform access when
+-- the bot went on for everyone, and had not met it, was greeted once as a
+-- 'welcome' (homeroom-bot-welcome.js).
 DO $$
 BEGIN
   ALTER TABLE homeroom_bot_hellos DROP CONSTRAINT IF EXISTS homeroom_bot_hellos_kind_check;
   ALTER TABLE homeroom_bot_hellos ADD CONSTRAINT homeroom_bot_hellos_kind_check
-    CHECK (kind IN ('maker', 'member', 'joiner', 'known'));
+    CHECK (kind IN ('maker', 'member', 'joiner', 'welcome', 'known'));
 END $$;
 -- B5: the name people see the bot by. Its username stays homeroom_bot.
 UPDATE users SET display_name = 'Homeroom bot'
@@ -10162,13 +10164,11 @@ CREATE TABLE IF NOT EXISTS app_sketches (
 );
 COMMENT ON TABLE app_sketches IS 'staging:private';
 
--- A project somebody on the bot's DM list made with no description to
--- build from: imported from GitHub, forked, or created without one (a
--- connector or the API). The bot acts on it for real while its maker stays
--- on the list, as it does on a project it builds from a description
--- (homeroom_bot_first_versions). Nothing is filed for it. An import's
--- created_at is also where its backlog ends: the issues it arrived with
--- wait until something happens on them (homeroom-bot.js refreshApp).
+-- A project somebody the bot works for made with no description to build
+-- from: imported from GitHub, forked, or created without one (a connector
+-- or the API). Nothing is filed for it. An import's created_at is where its
+-- backlog ends: the issues it arrived with wait until something happens on
+-- them (homeroom-bot.js refreshApp).
 CREATE TABLE IF NOT EXISTS homeroom_bot_dm_projects (
   app_id      INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -10804,28 +10804,45 @@ BEGIN
 END $$;
 
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
--- `off` (the loop idles), `shadow` (triage and record only) or `live`
--- (still refused by the settings route). Acting for real is per app
--- instead (#3146): `homeroom_bot_live_apps` names the apps whose issues the
--- bot posts on and builds for, and it ships empty. Ships `off` so the change
--- that adds the bot is itself inert.
+-- `off` (the loop idles) or `shadow`, which the console calls On: it acts
+-- for real on every app but the paused ones, for everyone with platform
+-- access (`live` is still refused by the settings route). Ships `off` so the
+-- change that adds the bot is itself inert.
 INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_mode', 'off'),
   ('homeroom_bot_concurrency', '1'),
   ('homeroom_bot_batch_size', '10'),
   ('homeroom_bot_paused_apps', '[]'),
-  ('homeroom_bot_live_apps', '[]'),
   ('homeroom_bot_shadow_builds', 'off'),
   ('homeroom_bot_build_concurrency', '2'),
   ('homeroom_bot_shadow_build_platform', 'off'),
-  -- #3624: nobody gets the DM until an admin adds them or they join from
-  -- Settings -> Experimental; $50 a week each.
-  ('homeroom_bot_dm_users', '[]'),
+  -- #3624: $50 a week for each person's requests.
   ('homeroom_bot_user_weekly_cents', '5000'),
-  -- #3624 stage 2: live work 6 at once, 2 per person; a DM is read.
-  ('homeroom_bot_live_at_once', '6'),
-  ('homeroom_bot_per_person', '2'),
+  -- Live work 12 at once, 3 per person; a DM is read.
+  ('homeroom_bot_live_at_once', '12'),
+  ('homeroom_bot_per_person', '3'),
   ('homeroom_bot_dm_chat', 'on')
+ON CONFLICT (key) DO NOTHING;
+-- Live work went from 6 at once, 2 per person, to 12 and 3 when every
+-- project went live. A database still on the old seed (no admin ever saved
+-- these: updated_by is unset) moves up once; an admin's own number stays,
+-- and so does the next one an admin saves, 6 or not.
+UPDATE platform_settings SET value = '12', updated_at = NOW()
+ WHERE key = 'homeroom_bot_live_at_once' AND value = '6' AND updated_by IS NULL;
+UPDATE platform_settings SET value = '3', updated_at = NOW()
+ WHERE key = 'homeroom_bot_per_person' AND value = '2' AND updated_by IS NULL;
+-- The bot works for everyone and acts for real on every project but a
+-- paused one. It was given out one person at a time first (a DM list, a
+-- list of live apps, an admin's switch to everyone, and whether that took in
+-- the platform's own project); those rows are retired. The moment it went
+-- on for everyone is written once, on the first boot of the build that made
+-- it so (homeroom-bot.js KEY_EVERYONE_SINCE): an older request nobody has
+-- touched since is not picked up on its own. A moment the admin's switch
+-- already wrote stands.
+DELETE FROM platform_settings
+ WHERE key IN ('homeroom_bot_live_apps', 'homeroom_bot_dm_users', 'homeroom_bot_audience', 'homeroom_bot_live_platform');
+INSERT INTO platform_settings (key, value)
+VALUES ('homeroom_bot_audience_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
 ON CONFLICT (key) DO NOTHING;
 
 -- #2721. Private, durable moderation records; target IDs intentionally have
@@ -12353,70 +12370,10 @@ LANGUAGE sql STABLE AS $$
   SELECT counts_toward_outcome(voter_id, (SELECT i.app_id FROM issues i WHERE i.id = target_issue_id))
 $$;
 
--- The Homeroom bot's DM list (platform_settings 'homeroom_bot_dm_users',
--- services/homeroom-bot.js) is a JSON array of lower-cased USERNAMES, so a
--- rename used to drop the person off it without a word, and a deleted
--- account's name stayed on it holding one of the 50 places. This keeps the
--- list in step with every path that writes users.username — the first-run
--- choice (a test account made without a username renames itself there), the
--- self-service and admin renames, and account deletion, which renames the row
--- to its deleted-user placeholder in the same statement that stamps
--- anonymised_at and so takes the entry off instead of carrying it. A list
--- that does not parse is left alone: it is the bot's to repair, and a rename
--- must never fail over it.
-CREATE OR REPLACE FUNCTION carry_homeroom_bot_dm_member() RETURNS trigger
-LANGUAGE plpgsql AS $$
-DECLARE
-  stored TEXT;
-  members JSONB;
-  old_name TEXT := LOWER(OLD.username);
-  new_name TEXT := LOWER(NEW.username);
-  next_members JSONB;
-BEGIN
-  IF old_name = new_name THEN
-    RETURN NULL;
-  END IF;
-  SELECT value INTO stored FROM platform_settings
-   WHERE key = 'homeroom_bot_dm_users' FOR UPDATE;
-  IF stored IS NULL THEN
-    RETURN NULL;
-  END IF;
-  BEGIN
-    members := stored::jsonb;
-  EXCEPTION WHEN others THEN
-    RETURN NULL;
-  END;
-  IF jsonb_typeof(members) <> 'array' OR NOT (members ? old_name) THEN
-    RETURN NULL;
-  END IF;
-  IF NEW.anonymised_at IS NOT NULL OR members ? new_name THEN
-    next_members := members - old_name;
-  ELSE
-    SELECT COALESCE(jsonb_agg(CASE WHEN m.value = to_jsonb(old_name) THEN to_jsonb(new_name) ELSE m.value END
-                              ORDER BY m.ordinality), '[]'::jsonb)
-      INTO next_members
-      FROM jsonb_array_elements(members) WITH ORDINALITY AS m(value, ordinality);
-  END IF;
-  UPDATE platform_settings SET value = next_members::text, updated_at = NOW()
-   WHERE key = 'homeroom_bot_dm_users';
-  RETURN NULL;
-END;
-$$;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger
-     WHERE tgname = 'users_carry_homeroom_bot_dm_member'
-       AND tgrelid = 'users'::regclass
-       AND NOT tgisinternal
-  ) THEN
-    CREATE TRIGGER users_carry_homeroom_bot_dm_member
-      AFTER UPDATE OF username ON users
-      FOR EACH ROW WHEN (OLD.username IS DISTINCT FROM NEW.username)
-      EXECUTE FUNCTION carry_homeroom_bot_dm_member();
-  END IF;
-END $$;
+-- The Homeroom bot's DM list (platform_settings 'homeroom_bot_dm_users') was
+-- kept in step with renames by a trigger; the list is retired, and so is it.
+DROP TRIGGER IF EXISTS users_carry_homeroom_bot_dm_member ON users;
+DROP FUNCTION IF EXISTS carry_homeroom_bot_dm_member();
 
 -- ── Welcome messages ───────────────────────────────────────────────────
 --

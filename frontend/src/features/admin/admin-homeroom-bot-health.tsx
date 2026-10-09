@@ -2,8 +2,8 @@
 
 import { AdminUI } from './admin-console.js';
 
-// Rollout health (#admin/homeroom-bot, Overview): before the bot is on for
-// everyone, whether it is working, over the last week. The numbers and
+// Rollout health (#admin/homeroom-bot, Overview): whether the bot is
+// working, over the last week. The numbers and
 // which of them are past their line come from the dashboard's payload
 // (services/homeroom-bot-health.js); this file only says them. A figure
 // with too little behind it says so instead of passing a verdict, and only

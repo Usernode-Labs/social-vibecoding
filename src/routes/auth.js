@@ -828,18 +828,13 @@ function authRoutes(config) {
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
     const platformApp = await getPlatformApp(pool);
-    // #3624: whether this person builds through the Homeroom bot's DM (an
-    // admin's list, one person at a time, or everyone with platform access
-    // once the bot's audience says so). The create dialog asks for a longer
-    // description when it is true. `homeroomBotForEveryone` hides the
-    // Experimental opt-in, which has nothing to switch then. Unreadable
-    // means false.
+    // #3624: whether this person builds through the Homeroom bot's DM
+    // (everyone with platform access). The create dialog asks for a longer
+    // description when it is true. Unreadable means false.
     let homeroomBotDm = false;
-    let homeroomBotForEveryone = false;
     try {
       const settings = await require('../services/homeroom-bot').readSettings(pool);
       homeroomBotDm = !req.user.isSynthetic && require('../services/homeroom-bot-dm').hasBot(settings, req.user);
-      homeroomBotForEveryone = settings.audience === 'everyone';
     } catch {}
     res.json({
       user: {
@@ -858,7 +853,6 @@ function authRoutes(config) {
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
         homeroomBotDm,
-        homeroomBotForEveryone,
         // Derived per-user app-creation affordance. Kept for the home-screen
         // treatment; the numbers below explain that state in the create
         // dialog. A null used/remaining value means the count query was not
@@ -1190,47 +1184,6 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle session bridge', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // #3624: join the Homeroom bot's DM yourself (Settings -> Experimental),
-  // or leave it. It is the list an admin keeps on the bot's dashboard, so
-  // it is capped the same and each person's requests still count against
-  // the bot's weekly allowance per person (homeroom-bot.js setDmMember).
-  // /api/auth/me reports the result as `homeroomBotDm`. Guarded like the
-  // other writes that spend: joining is what lets the platform pay for
-  // this person's requests.
-  router.post('/api/me/homeroom-bot-dm', sameOriginBrowserOnly, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { enabled } = req.body || {};
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'enabled must be a boolean' });
-    }
-    try {
-      // With the `everyone` audience there is no list to be on: everybody
-      // has the bot, and the switch is hidden (homeroomBotForEveryone).
-      const settings = await require('../services/homeroom-bot').readSettings(pool);
-      if (settings.audience === 'everyone') {
-        return res.status(409).json({ error: 'Homeroom bot is on for everyone now, so there is nothing to switch.' });
-      }
-      const out = await require('../services/homeroom-bot')
-        .setDmMember(pool, req.user.username, enabled, req.user.id);
-      if (!out.ok) {
-        if (out.error === 'full') {
-          return res.status(409).json({
-            error: `The Homeroom bot is already talking to as many people as it can (${out.max}). Try again later.`,
-          });
-        }
-        if (out.error === 'busy') {
-          return res.status(503).json({ error: 'Could not save just now. Try again.' });
-        }
-        return res.status(400).json({ error: 'This username cannot be added to the Homeroom bot.' });
-      }
-      log.info('settings', 'Homeroom bot DM toggled', { userId: req.user.id, enabled, changed: out.changed });
-      res.json({ ok: true, enabled });
-    } catch (err) {
-      log.error('settings', 'Failed to toggle Homeroom bot DM', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -11,7 +11,7 @@
 //     on for real: reading it, building it (its queue row long gone), a
 //     follow-up on its proposal waiting its turn (#3734), a request waiting
 //     in the queue; and a project of theirs still being set up for its
-//     first version. Shadow triage is not work for anybody.
+//     first version. An app the bot is paused on is not work for anybody.
 //   - NEEDS YOU and HISTORY are the bot's live runs on their requests, one
 //     entry per request with its other runs folded in, newest news first,
 //     each with what came of it and where it opens (the proposal once people
@@ -124,12 +124,11 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
   const samsApp = await project('sam-shop', sam);
   // Private, and ada is not (or no longer) a collaborator there.
   const hidden = await project('hidden-lab', sam, { visibility: 'private' });
-  // Not on the live list: the bot only triages it in the background.
+  // Paused: the bot leaves it alone. Every other app is live (liveScope).
   const shadowApp = await project('shadow-app', ada);
   const ear = await project('ear-trainer', ada);
   await setting('homeroom_bot_mode', 'shadow');
-  await setting('homeroom_bot_dm_users', JSON.stringify([ada.username, sam.username]));
-  await setting('homeroom_bot_live_apps', JSON.stringify(['seed-swap', 'note-board', 'sam-shop', 'hidden-lab']));
+  await setting('homeroom_bot_paused_apps', JSON.stringify(['shadow-app']));
 
   await pool.query(
     `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES
@@ -138,7 +137,7 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     [seeds.id, notes.id, samsApp.id, ada.id, sam.id, hidden.id],
   );
   // An issue ada filed on Homeroom that the loop has not recorded yet, and
-  // one on the app it only triages in the background.
+  // one on the app the bot is paused on.
   await pool.query(
     `INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES
        ($1, 7, 'Export as CSV', $3), ($2, 1, 'Shadow request', $3)`,
@@ -302,7 +301,7 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     const all = [...ours.now, ...ours.needsYou, ...ours.history].map((job) => job.appSlug);
     assert.ok(!all.includes('sam-shop'), 'sam\'s work is not ada\'s');
     assert.ok(!all.includes('hidden-lab'), 'a private app she cannot view is left out');
-    assert.ok(!all.includes('shadow-app'), 'background triage is not work for her');
+    assert.ok(!all.includes('shadow-app'), 'an app the bot is paused on is not work for her');
 
     const sams = await tray.workFor(pool, { user: asSam });
     assert.deepEqual(sams.now.map(key), ['sam-shop#9'],
@@ -386,6 +385,8 @@ test('the Homeroom bot DM\'s activity tray reads one person\'s work, through the
     assert.equal(tray.noteWorkChanged(null), 0, 'an issue nobody on Homeroom filed tells nobody');
     assert.equal(tray.noteWorkChanged('x'), 0);
     const settings = await homeroomBot.readSettings(pool);
-    assert.ok(settings.liveApps.includes('seed-swap'));
+    const live = require('../src/services/homeroom-bot-live');
+    assert.ok(live.isLiveFor(settings, { slug: 'seed-swap' }), 'every app is live');
+    assert.equal(live.isLiveFor(settings, { slug: 'shadow-app' }), false, 'but a paused one');
   });
 });

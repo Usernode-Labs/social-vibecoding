@@ -204,9 +204,7 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['jordan', 'sam']));
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['flat-4b']));
 
   // Jordan's first version: the bot's change, waiting for approval, not live.
   await pool.query(

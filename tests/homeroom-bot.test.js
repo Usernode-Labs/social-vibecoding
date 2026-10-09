@@ -222,20 +222,21 @@ test('the last run says whether a live build is waiting or under way, as the rea
 test('settings default to off and clamp their numbers', () => {
   const s = bot.parseSettings([]);
   assert.deepEqual(s, {
-    mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [], liveApps: [],
+    mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [],
     turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
     shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
-    // #3624: nobody gets the bot's DM by default; $50 a week each.
-    dmUsers: [], userWeeklyCents: 5000, firstVersionApps: [],
+    // #3624: $50 a week each for what a person's requests cost the bot.
+    userWeeklyCents: 5000,
     // #3654: every stage on the platform default until an admin names one.
     models: { triage: '', spec: '', build: '', followup: '' },
-    // #3624 stage 2: live work, 6 at once and 2 per person; a DM is read.
-    liveAtOnce: 6, perPerson: 2, dmChat: true,
+    // Live work, 12 at once and 3 per person (raised from 6 and 2 when every
+    // project went live); a DM is read.
+    liveAtOnce: 12, perPerson: 3, dmChat: true,
     // Reading a request again continues the conversation it was read in.
     continueReads: true,
-    // The bot is for the people on the list until an admin says everyone;
-    // the platform's own project stays out; the proposal ceiling is automatic.
-    audience: 'list', audienceSince: null, livePlatform: false, proposalCeiling: 0, liveBuildStream: true, platformSlugs: [],
+    // The moment it went on for everyone is schema.sql's to write (readSettings
+    // fills in a database without it); the proposal ceiling is automatic.
+    everyoneSince: null, proposalCeiling: 0, liveBuildStream: true,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
@@ -253,70 +254,68 @@ test('settings default to off and clamp their numbers', () => {
     { key: bot.KEY_PER_PERSON, value: '0' },
     { key: bot.KEY_DM_CHAT, value: 'off' },
   ]);
-  assert.equal(u.liveAtOnce, 16, 'clamped to the ceiling');
+  assert.equal(u.liveAtOnce, 24, 'clamped to the ceiling');
   assert.equal(u.perPerson, 1, 'clamped to the floor');
   assert.equal(u.dmChat, false);
+  assert.equal(bot.parseSettings([{ key: bot.KEY_PER_PERSON, value: '99' }]).perPerson, 6, 'clamped to the ceiling');
   assert.deepEqual(bot.validateSettingsPatch({ liveAtOnce: 8, perPerson: 3, dmChat: false }).updates, [
     [bot.KEY_LIVE_AT_ONCE, '8'], [bot.KEY_PER_PERSON, '3'], [bot.KEY_DM_CHAT, 'off'],
   ]);
-  assert.equal(bot.validateSettingsPatch({ liveAtOnce: 17 }).ok, false);
-  assert.equal(bot.validateSettingsPatch({ perPerson: 5 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ liveAtOnce: 24 }).ok, true);
+  assert.equal(bot.validateSettingsPatch({ liveAtOnce: 25 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ perPerson: 6 }).ok, true);
+  assert.equal(bot.validateSettingsPatch({ perPerson: 7 }).ok, false);
   assert.equal(bot.validateSettingsPatch({ dmChat: 'yes' }).ok, false);
 });
 
-test('the audience, the platform switch and the proposal ceiling parse, clamp and validate', () => {
+test('the everyone moment and the proposal ceiling parse, clamp and validate', () => {
   const s = bot.parseSettings([
-    { key: bot.KEY_AUDIENCE, value: 'everyone' },
-    { key: bot.KEY_AUDIENCE_SINCE, value: '2026-10-05T09:00:00Z' },
-    { key: bot.KEY_LIVE_PLATFORM, value: 'on' },
+    { key: bot.KEY_EVERYONE_SINCE, value: '2026-10-05T09:00:00Z' },
     { key: bot.KEY_PROPOSAL_CEILING, value: '5000' },
   ]);
-  assert.equal(s.audience, 'everyone');
-  assert.equal(s.audienceSince, '2026-10-05T09:00:00.000Z');
-  assert.equal(s.livePlatform, true);
+  assert.equal(s.everyoneSince, '2026-10-05T09:00:00.000Z');
   assert.equal(s.proposalCeiling, 1000, 'clamped to the ceiling');
-  assert.equal(bot.parseSettings([{ key: bot.KEY_AUDIENCE, value: 'all' }]).audience, 'list', 'anything else is the list');
-  assert.equal(bot.parseSettings([{ key: bot.KEY_AUDIENCE_SINCE, value: 'soon' }]).audienceSince, null);
+  assert.equal(bot.parseSettings([{ key: bot.KEY_EVERYONE_SINCE, value: 'soon' }]).everyoneSince, null);
 
-  assert.deepEqual(bot.validateSettingsPatch({ audience: 'everyone', livePlatform: false, proposalCeiling: 40 }).updates, [
-    [bot.KEY_AUDIENCE, 'everyone'], [bot.KEY_LIVE_PLATFORM, 'off'], [bot.KEY_PROPOSAL_CEILING, '40'],
-  ]);
-  assert.equal(bot.validateSettingsPatch({ audience: 'some' }).ok, false);
-  assert.equal(bot.validateSettingsPatch({ livePlatform: 'yes' }).ok, false);
+  assert.deepEqual(bot.validateSettingsPatch({ proposalCeiling: 40 }).updates, [[bot.KEY_PROPOSAL_CEILING, '40']]);
+  assert.deepEqual(bot.validateSettingsPatch({ audience: 'everyone', livePlatform: false, proposalCeiling: 40 }).updates,
+    [[bot.KEY_PROPOSAL_CEILING, '40']], 'the retired audience and platform switch are not written');
   assert.equal(bot.validateSettingsPatch({ proposalCeiling: -1 }).ok, false);
   assert.equal(bot.validateSettingsPatch({ proposalCeiling: 1001 }).ok, false);
-  // The moment of the switch is the server's to write, never a patch's.
+  // The moment it went on for everyone is schema.sql's to write, never a patch's.
+  assert.equal(bot.validateSettingsPatch({ everyoneSince: '2020-01-01' }).ok, false);
   assert.equal(bot.validateSettingsPatch({ audienceSince: '2020-01-01' }).ok, false);
 });
 
-test('the proposal ceiling: an admin\'s number, else 5 per live app on the list, else a fixed one for everyone', () => {
-  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 15);
-  assert.equal(bot.botProposalCeiling({ liveApps: [] }), 5, 'never below one app\'s worth');
-  assert.equal(bot.botProposalCeiling({ audience: 'everyone', liveApps: ['a'] }), bot.EVERYONE_PROPOSAL_CEILING,
-    'every app is live, so "per live app" would be no ceiling at all');
-  assert.equal(bot.botProposalCeiling({ audience: 'everyone', proposalCeiling: 30 }), 30);
-  assert.equal(bot.botProposalCeiling({ liveApps: ['a'], proposalCeiling: 12 }), 12);
+test('the proposal ceiling: an admin\'s number, else a fixed one, since every app is live', () => {
+  assert.equal(bot.botProposalCeiling({}), bot.EVERYONE_PROPOSAL_CEILING);
+  assert.equal(bot.EVERYONE_PROPOSAL_CEILING, 100);
+  assert.equal(bot.botProposalCeiling(null), 100);
+  assert.equal(bot.botProposalCeiling({ liveApps: ['a', 'b'], firstVersionApps: ['c'] }), 100,
+    'the retired lists do not count: "per live app" would be no ceiling at all');
+  assert.equal(bot.botProposalCeiling({ proposalCeiling: 30 }), 30);
+  assert.equal(bot.botProposalCeiling({ proposalCeiling: 0 }), 100, 'unset is automatic');
 });
 
-test('switching to everyone records when, once, and rebuilds the queue', async () => {
+test('a settings save never writes the everyone moment, and more room wakes the loop', async () => {
   const writes = [];
-  let audience = 'list';
   const pool = {
     async query(sql, params) {
       const s = String(sql);
-      if (/SELECT key, value FROM platform_settings/.test(s)) return { rows: [{ key: bot.KEY_AUDIENCE, value: audience }] };
+      if (/SELECT key, value FROM platform_settings/.test(s)) return { rows: [{ key: bot.KEY_MODE, value: 'shadow' }] };
       if (/INSERT INTO platform_settings/.test(s)) { writes.push([params[0], params[1]]); return { rows: [] }; }
       return { rows: [] };
     },
   };
-  assert.deepEqual(await bot.writeSettings(pool, { audience: 'everyone' }, 1), { ok: true });
-  assert.deepEqual(writes.map(([k]) => k), [bot.KEY_AUDIENCE, bot.KEY_AUDIENCE_SINCE]);
-  assert.ok(Number.isFinite(Date.parse(writes[1][1])));
-  // Saved again while already everyone: the moment does not move.
-  writes.length = 0;
-  audience = 'everyone';
-  await bot.writeSettings(pool, { audience: 'everyone' }, 1);
-  assert.deepEqual(writes.map(([k]) => k), [bot.KEY_AUDIENCE]);
+  // What used to switch the bot to everyone changes nothing now.
+  assert.deepEqual(await bot.writeSettings(pool, { audience: 'everyone' }, 1), { ok: false, error: 'Nothing to update' });
+  assert.deepEqual(writes, []);
+  assert.deepEqual(await bot.writeSettings(pool, { liveAtOnce: 12, perPerson: 3 }, 1), { ok: true });
+  assert.deepEqual(writes.map(([k]) => k), [bot.KEY_LIVE_AT_ONCE, bot.KEY_PER_PERSON]);
+  assert.ok(!writes.some(([k]) => k === bot.KEY_EVERYONE_SINCE));
+  const write = SRC.slice(SRC.indexOf('async function writeSettings('), SRC.indexOf('// ── Identity'));
+  assert.doesNotMatch(write, /KEY_EVERYONE_SINCE/, 'the moment is schema.sql\'s, written once');
+  assert.match(write, /\[KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_CONCURRENCY\]\.includes\(key\)\)\) \{\s+wakeAll\(\);/);
 });
 
 test('validateSettingsPatch refuses live mode and bad values, accepts a real patch', () => {
@@ -1266,7 +1265,7 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   assert.equal(out.removed, 2);
 });
 
-test('the everyone audience: what the bot never read live before the switch waits for something new', async () => {
+test('the everyone moment: what the bot never read live before it went on for everyone waits for something new', async () => {
   const inserts = [];
   const since = '2026-10-05T00:00:00.000Z';
   const pool = {
@@ -1276,8 +1275,8 @@ test('the everyone audience: what the bot never read live before the switch wait
       if (/FROM homeroom_bot_dm_projects/.test(s)) return { rows: [] };
       if (/FROM homeroom_bot_runs/.test(s)) {
         return { rows: [
-          // #2 was read in the background a week before the switch; #3 was
-          // live already (its app was on the list), and changed since.
+          // #2 was read in the background a week before the moment; #3 was
+          // live already (its app was on the old live list), and changed since.
           { issue_number: 2, thread_seen_at: '2026-09-28T00:00:00Z', mode: 'shadow' },
           { issue_number: 3, thread_seen_at: '2026-09-28T00:00:00Z', mode: 'live' },
         ] };
@@ -1292,15 +1291,15 @@ test('the everyone audience: what the bot never read live before the switch wait
     async fetchPublicIssues() {
       return {
         issues: [
-          // Opened before the switch, untouched since, never read: left alone.
+          // Opened before the moment, untouched since, never read: left alone.
           { number: 1, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-02T00:00:00Z' },
-          // Read in the background, then commented on before the switch: left alone too.
+          // Read in the background, then commented on before the moment: left alone too.
           { number: 2, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' },
           // Live already: changed since its last look, so it is read.
           { number: 3, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' },
-          // Old, but somebody commented after the switch: read.
+          // Old, but somebody commented after the moment: read.
           { number: 4, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-10-06T00:00:00Z' },
-          // New since the switch: read.
+          // New since the moment: read.
           { number: 5, state: 'open', createdAt: '2026-10-06T00:00:00Z', updatedAt: '2026-10-06T00:00:00Z' },
         ],
       };
@@ -1311,10 +1310,15 @@ test('the everyone audience: what the bot never read live before the switch wait
   await bot.refreshApp(pool, app, { github, capRoom, everyoneSince: since });
   assert.deepEqual(inserts.map((p) => p[1]), [3, 4, 5]);
 
-  // Without the switch (the list audience), the same board reads as before.
+  // Without a moment (refreshApp handed none), the same board reads as before.
   inserts.length = 0;
   await bot.refreshApp(pool, app, { github, capRoom });
   assert.deepEqual(inserts.map((p) => p[1]), [1, 2, 3, 4, 5]);
+  // The moment always applies now: it is the stored one, whatever else is set.
+  const passes = SRC.slice(SRC.indexOf('async function refreshQueue'), SRC.indexOf('async function nextBatch'));
+  assert.equal((passes.match(/everyoneSince: everyoneSinceOf\(settings\)/g) || []).length, 2,
+    'both the timed refresh and a wake pass it');
+  assert.match(SRC, /function everyoneSinceOf\(settings\) \{\n  return settings\?\.everyoneSince \|\| null;\n\}/);
 });
 
 test('a new request on a live app gets its card when it is queued, under the key its read starts from', async () => {
@@ -1463,9 +1467,11 @@ test('capRoomFor counts the same two things the live check does', async () => {
     },
   };
   assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9),
-    { proposals_per_app: 4, proposals_total: 0, question_tripwire: 0 }, 'shadow: a ceiling of one app\'s cap');
-  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { liveApps: ['a', 'b'] }),
-    { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, '#3576: 5 per live app, across them all');
+    { proposals_per_app: 4, proposals_total: 93, question_tripwire: 0 }, '#3576: the automatic ceiling across every app');
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 10 }),
+    { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, 'an admin\'s ceiling, across them all');
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { proposalCeiling: 5 }),
+    { proposals_per_app: 4, proposals_total: 0, question_tripwire: 0 }, 'never below nothing');
   const tripwire = SRC.slice(SRC.indexOf('async function tripwireCount'), SRC.indexOf('async function capRoomFor'));
   assert.match(tripwire, /AND cap_suppressed IS NULL/,
     'a held question is not a posted one; counting it would let every retry keep the window full');
@@ -2071,7 +2077,7 @@ test('runTriage on a live app: announces the first look, posts the question, rec
   deps.domain = 'app.onhomeroom.com';
   const out = await bot.runTriage(pool, {}, {
     bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps,
-    settings: { mode: 'shadow', liveApps: [APP.slug], turnSeconds: 1200, turnInputTokens: 10_000_000 },
+    settings: { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000 },
   });
   assert.equal(out.verdict, 'question');
   assert.equal(out.acted, 'question');
@@ -2085,7 +2091,11 @@ test('runTriage on a live app: announces the first look, posts the question, rec
     'and what it has seen moves past its own comments');
 });
 
-test('runTriage on an app not in the live list stays silent', async () => {
+test('runTriage on a staging copy stays silent', async (t) => {
+  // Every app is live in production; a staging copy is where nothing is.
+  const prior = process.env.USERNODE_ENV;
+  t.after(() => { if (prior === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prior; });
+  process.env.USERNODE_ENV = 'staging';
   const { pool, deps, calls } = triageHarness({
     sessionId: 921,
     verdictText: 'x\n```json\n{"verdict":"question","determined":false,"missing_fact":"a","question":"Which?","default":"b"}\n```',
@@ -2093,7 +2103,7 @@ test('runTriage on an app not in the live list stays silent', async () => {
   deps.github.createIssueComment = async () => { throw new Error('must not post'); };
   const out = await bot.runTriage(pool, {}, {
     bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps,
-    settings: { mode: 'shadow', liveApps: ['some-other-app'], turnSeconds: 1200, turnInputTokens: 10_000_000 },
+    settings: { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000 },
   });
   assert.equal(out.acted, undefined);
   assert.ok(!calls.queries.some((q) => /homeroom_bot_posts/.test(q.s)));

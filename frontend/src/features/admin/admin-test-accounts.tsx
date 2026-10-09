@@ -43,7 +43,6 @@ export interface NewAccount {
   password: string;
   needsUsernameChoice: boolean;
   platformAccess: boolean;
-  homeroomBotDm: boolean;
   welcomeDm: boolean;
   note: string | null;
 }
@@ -64,7 +63,6 @@ export interface Fields {
   username: string;
   note: string;
   platformAccess: boolean;
-  homeroomBotDm: boolean;
   welcomeDm: boolean;
 }
 
@@ -72,7 +70,6 @@ export interface CreateBody {
   username?: string;
   note?: string;
   platformAccess: boolean;
-  homeroomBotDm: boolean;
   welcomeDm: boolean;
 }
 
@@ -95,7 +92,7 @@ export const RETIRE_CONFIRMATION = 'RETIRE';
 const USERNAME_RE = /^[A-Za-z0-9_]{3,32}$/;
 
 export const BLANK: Fields = Object.freeze({
-  username: '', note: '', platformAccess: true, homeroomBotDm: false, welcomeDm: false,
+  username: '', note: '', platformAccess: true, welcomeDm: false,
 }) as Fields;
 
 const HINT = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
@@ -137,7 +134,7 @@ async function send(fetchImpl: Fetch, method: 'GET' | 'POST', path: string, body
 /**
  * The sentence to show for a refusal, and the field it belongs to. The
  * server's own sentence wins, except where it names a connector parameter
- * (at_capacity, bot_dm_full) or is not a sentence at all (a 403 from a guard,
+ * (at_capacity) or is not a sentence at all (a 403 from a guard,
  * a bare 500). `unsure` says what to do when the request may have landed.
  */
 export function refusal(reply: Reply, unsure: string): { error: string; field: Field | null } {
@@ -149,13 +146,6 @@ export function refusal(reply: Reply, unsure: string): { error: string; field: F
     const live = Number.isFinite(data.live) ? data.live : MAX_LIVE;
     return {
       error: `There are already ${live} live test accounts, the most allowed at once. Retire one below, then try again.`,
-      field: null,
-    };
-  }
-  if (data.code === 'bot_dm_full') {
-    return {
-      error: 'The Homeroom bot\'s list is full. Make the account with "Homeroom bot builds for it" off, '
-        + 'or free a place in the Homeroom bot section first.',
       field: null,
     };
   }
@@ -183,7 +173,6 @@ export function buildCreateBody(fields: Fields):
   if (username) body.username = username;
   if (note) body.note = note;
   body.platformAccess = !!fields.platformAccess;
-  body.homeroomBotDm = !!fields.homeroomBotDm;
   body.welcomeDm = !!fields.welcomeDm;
   return { ok: true, body };
 }
@@ -195,7 +184,6 @@ function toNewAccount(a: any): NewAccount {
     password: String(a.password || ''),
     needsUsernameChoice: !!a.needsUsernameChoice,
     platformAccess: a.platformAccess !== false,
-    homeroomBotDm: !!a.homeroomBotDm,
     welcomeDm: !!a.welcomeDm,
     note: a.note ? String(a.note) : null,
   };
@@ -504,13 +492,10 @@ export function CreateCard({ full, max, onCreated }: { full: boolean; max: numbe
             ) : null}
           </div>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
           <Toggle id="admin-test-accounts-platform-access" checked={fields.platformAccess} disabled={busy}
             onChange={(v) => set({ platformAccess: v })} title="Let in now"
-            hint="It signs in to Homeroom itself. Off, it waits in the waiting room, to test that screen." />
-          <Toggle id="admin-test-accounts-bot-dm" checked={fields.homeroomBotDm} disabled={busy}
-            onChange={(v) => set({ homeroomBotDm: v })} title="Homeroom bot builds for it"
-            hint="Puts it on the Homeroom bot's list, as Settings, Experimental does: the bot builds its first version and talks to it in Messages." />
+            hint="It signs in to Homeroom itself, and Homeroom bot works for it as for anybody let in. Off, it waits in the waiting room, to test that screen." />
           <Toggle id="admin-test-accounts-welcome-dm" checked={fields.welcomeDm} disabled={busy}
             onChange={(v) => set({ welcomeDm: v })} title="Welcome DM"
             hint="Lets the welcome message reach it: a group with the people set in Welcome messages." />

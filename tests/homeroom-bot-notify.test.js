@@ -223,11 +223,6 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
   assert.deepEqual(benRang.map((r) => r.detail), ['hrbot:ready_group:Supper Club', 'hrbot:live:Supper Club']);
 
   await t.test('"it\'s built" waits until the change is ready to try, and is said once per approval round', async () => {
-    await pool.query(
-      `INSERT INTO platform_settings (key, value) VALUES ('homeroom_bot_dm_users', $1)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [JSON.stringify([maya.username])],
-    );
     const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE slug = $1', [plantPal.slug]);
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 9, $2, 'Water reminders')`,

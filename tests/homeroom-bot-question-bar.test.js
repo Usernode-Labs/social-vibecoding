@@ -244,13 +244,14 @@ test('live: a blocked build is said on the issue like a question, to whoever fil
 // ── Comparing old against new ────────────────────────────────────────────
 
 test('re-triage queues the latest question of each issue, on shadow apps only', async () => {
-  const seen = [];
-  const pool = {
+  // Every app but a paused one is live (live.liveScope), so outside a
+  // staging copy only a paused app's questions are the shadow's.
+  const poolFor = (seen) => ({
     async query(sql, params) {
       const s = String(sql);
       seen.push({ s, params });
       if (/FROM platform_settings/.test(s)) {
-        return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }, { key: 'homeroom_bot_live_apps', value: '["rss-reader-4113da"]' }] };
+        return { rows: [{ key: 'homeroom_bot_mode', value: 'shadow' }, { key: bot.KEY_PAUSED_APPS, value: '["pulse-2f06de"]' }] };
       }
       if (/SELECT DISTINCT ON \(r\.app_id, r\.issue_number\)/.test(s)) {
         return {
@@ -264,11 +265,26 @@ test('re-triage queues the latest question of each issue, on shadow apps only', 
       }
       return { rows: [] };
     },
-  };
-  const out = await bot.retriageQuestions(pool, { actorId: 5 });
-  assert.deepEqual(out, { ok: true, queued: 2, live: 1 });
+  });
+  const env = process.env.USERNODE_ENV;
+  const setEnv = (v) => { if (v === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = v; };
+  let seen = [];
+  let out;
+  try {
+    setEnv(undefined);
+    out = await bot.retriageQuestions(poolFor(seen), { actorId: 5 });
+    assert.deepEqual(out, { ok: true, queued: 1, live: 2 }, 'the platform and rss-reader are live; pulse is paused');
+    assert.deepEqual(seen.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s)).params, [[3], [13], 5]);
+    // A staging copy acts on nothing: every question is the shadow's.
+    setEnv('staging');
+    seen = [];
+    out = await bot.retriageQuestions(poolFor(seen), { actorId: 5 });
+  } finally {
+    setEnv(env);
+  }
+  assert.deepEqual(out, { ok: true, queued: 3, live: 0 });
   const ins = seen.find((q) => /INSERT INTO homeroom_bot_queue/.test(q.s));
-  assert.deepEqual(ins.params, [[1, 3], [3250, 13], 5]);
+  assert.deepEqual(ins.params, [[1, 2, 3], [3250, 24, 13], 5]);
   assert.match(ins.s, /SELECT app_id, issue_number, 0, 'retriage', \$3/, 'priority 0: a refresh keeps it until it runs');
   const latest = seen.find((q) => /SELECT DISTINCT ON/.test(q.s)).s;
   assert.match(latest, /ORDER BY r\.app_id, r\.issue_number, r\.id DESC/, 'the latest verdict per issue');

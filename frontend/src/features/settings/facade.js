@@ -64,8 +64,6 @@ const state = {
   walletLinkEnabled: false,
   aiProgressEstimate: false,
   sessionBridgeEnabled: false,
-  homeroomBotDm: false,
-  homeroomBotForEveryone: false,
   locale: null,
 };
 
@@ -247,8 +245,6 @@ const Facade = {
       state.walletLinkEnabled = !!u.walletLinkEnabled;
       state.aiProgressEstimate = !!u.aiProgressEstimate;
       state.sessionBridgeEnabled = !!u.sessionBridgeEnabled;
-      state.homeroomBotDm = !!u.homeroomBotDm;
-      state.homeroomBotForEveryone = !!u.homeroomBotForEveryone;
       state.locale = u.locale || null;
       // The CLI-credentials gate's memo, primed from the same payload. Written
       // to whichever object is window.Settings NOW — this one, or the module

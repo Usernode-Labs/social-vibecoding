@@ -51,6 +51,7 @@ const PLATFORM = { id: 1, slug: 'usernode-2d5619', name: 'Homeroom', repo_url: '
 const REAL = Object.fromEntries(['currentVersion', 'laterVersion', 'spawnSideBuilds', 'finishLive', 'recipeGuidance', 'abandonSideBuilds']
   .map((n) => [n, configs[n]]));
 const REAL_LIVE = { buildAndPropose: live.buildAndPropose, post: live.post };
+const ENV_BEFORE = process.env.USERNODE_ENV;
 
 /** Stub the configurations' doors the bot reaches for; what each was asked is kept. */
 function stubConfigs(t, { later = LATER, first = FIRST } = {}) {
@@ -230,12 +231,16 @@ function lane({ firstVersion = false } = {}) {
 
 async function shadowWith(t, h, outcome) {
   t.after(() => Object.assign(live, REAL_LIVE));
+  // A shadow build happens only where nothing is live: outside a staging
+  // copy every app but a paused one is (live.liveScope).
+  process.env.USERNODE_ENV = 'staging';
+  t.after(() => { if (ENV_BEFORE === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = ENV_BEFORE; });
   live.buildAndPropose = async (args) => { h.calls.builds.push(args); return outcome; };
   bot._resetForTests();
   return bot.runQueuedBuild(h.pool, {}, {
     bot: { id: 77, username: 'homeroom_bot' },
     claim: { id: 901, app_id: APP.id, issue_number: 12, build_note: 'Add an hourly refresh.' },
-    settings: { mode: 'shadow', liveApps: [], pausedApps: [], shadowBuilds: true, buildConcurrency: 2, shadowBuildPlatform: false, turnSeconds: 1200 },
+    settings: { mode: 'shadow', pausedApps: [], shadowBuilds: true, buildConcurrency: 2, shadowBuildPlatform: false, turnSeconds: 1200 },
     deps: h.deps,
   });
 }

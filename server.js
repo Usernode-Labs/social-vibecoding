@@ -1383,6 +1383,11 @@ async function becomeLeader() {
   // chose. Leader-only so one Pod sends; the queue row's lock and the
   // message's idempotency key keep a retry from sending twice anyway.
   require('./src/services/welcome-dm').start(config);
+  // The Homeroom bot's one welcome to everybody who had an account when it
+  // went on for everyone: a few a minute until nobody is left, then never
+  // again. Leader-only so one Pod sends; each person's one hello is claimed
+  // before the message goes, so a second sender could not send it twice.
+  require('./src/services/homeroom-bot-welcome').start(config);
   // Season challenges are read from the points ledger, and until this ran
   // only two of them ever wrote to it without an admin typing the rows in.
   // Leader-only and advisory-locked on top of that, because a tick costs
@@ -6369,6 +6374,9 @@ async function cleanup() {
   }
   try { require('./src/services/bench/lane').stop(); } catch (err) {
     log.warn('server', 'Stopping the benchmark lane failed', { err: err.message });
+  }
+  try { require('./src/services/homeroom-bot-welcome').stop(); } catch (err) {
+    log.warn('server', 'Stopping the Homeroom bot welcome failed', { err: err.message });
   }
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();

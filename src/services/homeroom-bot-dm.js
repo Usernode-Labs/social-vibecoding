@@ -35,10 +35,8 @@
 // in the DM quotes the message it started from. With several requests in
 // flight in one DM, each answer points at what it answers.
 //
-// Who it talks to is a list an admin keeps (`homeroom_bot_dm_users`), so it
-// can be tried one person at a time. A person can also put themselves on it,
-// or take themselves off, in Settings -> Experimental (setDmMember in
-// homeroom-bot.js); the list's cap holds either way. What each person's
+// It talks to everybody Homeroom has let in (hasBot). It was tried out one
+// person at a time first, on a list an admin kept. What each person's
 // requests may cost the platform in a week is capped
 // (`homeroom_bot_user_weekly_cents`, $50 to start), apart from their own
 // allowance for agents.
@@ -68,8 +66,8 @@ const MIRRORED_KINDS = new Set([...QUESTION_KINDS, 'blocked', 'person', 'empty']
 // short enough to be one request body.
 const MAX_BRIEF_CHARS = 4000;
 const MIN_BRIEF_CHARS = 10;
-// How often a person who is not on the list hears why the bot does not
-// answer: once a day is enough.
+// How often a person the bot does not work for (an account not let in yet)
+// hears why the bot does not answer: once a day is enough.
 const NOT_ENABLED_KEY_HOURS = 24;
 // A first version that could not be filed is tried again on the next
 // sweep, this many times.
@@ -101,37 +99,21 @@ function settingsModule() {
 }
 
 /**
- * Whether the bot talks to this username in a DM, by the settings alone.
- * Being on the list is the whole gate: the bot's Mode decides whether it
- * works at all (its loop idles while Off), not who it talks to, so a
- * project described while it is off waits for it, and says so.
- */
-function isDmUser(settings, username) {
-  if (!settings) return false;
-  const list = Array.isArray(settings.dmUsers) ? settings.dmUsers : [];
-  return !!username && list.includes(lower(username));
-}
-
-/**
  * Whether the bot works for this person: builds the projects they describe,
- * brings their requests' news to their DM, and answers them there. Under the
- * bot's audience (homeroom-bot.js KEY_AUDIENCE):
- *   - `list`: being on the list is the whole gate (isDmUser);
- *   - `everyone`: anybody who may use the platform (platform access, which
- *     an admin always has), and never a synthetic account. A private member
- *     (users.private_member_since) may: every read below takes
- *     `has_platform_access` as "may use the platform", and req.user callers
- *     fold `privateMember` in.
+ * brings their requests' news to their DM, and answers them there. That is
+ * anybody who may use the platform (platform access, which an admin always
+ * has), and never a synthetic account. A private member
+ * (users.private_member_since) may: every read below takes
+ * `has_platform_access` as "may use the platform", and req.user callers
+ * fold `privateMember` in.
  * `person` is the signed-in user (req.user), or a requester (requesterFrom):
  * { username, isSynthetic, hasPlatformAccess, isAdmin }.
- * Pure. Whether the bot is switched on at all is its Mode's, not this.
+ * Pure. Whether the bot is switched on at all is its Mode's, not this: a
+ * project described while it is off waits for it, and says so.
  */
 function hasBot(settings, person) {
   if (!settings || !person?.username) return false;
-  if (settings.audience === 'everyone') {
-    return !person.isSynthetic && !!(person.hasPlatformAccess || person.isAdmin || person.privateMember);
-  }
-  return isDmUser(settings, person.username);
+  return !person.isSynthetic && !!(person.hasPlatformAccess || person.isAdmin || person.privateMember);
 }
 
 /** Whether this signed-in person builds through the bot's DM (the create dialog asks). */
@@ -172,45 +154,11 @@ async function botAccount(pool) {
 const PROJECT_ORIGINS = Object.freeze(['import', 'fork', 'blank']);
 
 /**
- * The projects the bot acts on for real because somebody still on the list
- * made them, oldest first, with who: one it builds from a description
- * (origin 'description'), and one they imported, forked or created without
- * one. A first request the bot does not build (its creator was not on the
- * list when they made it) never makes a project live, and neither does
- * anything made before its maker was on the list.
- */
-async function projectsMadeFor(pool, settings) {
-  const users = Array.isArray(settings?.dmUsers) ? settings.dmUsers : [];
-  if (!users.length) return [];
-  const { rows } = await pool.query(
-    `SELECT a.slug, a.name, u.username, p.origin
-       FROM (
-         SELECT app_id, user_id, 'description' AS origin, created_at
-           FROM homeroom_bot_first_versions WHERE bot_builds
-         UNION ALL
-         SELECT app_id, user_id, origin, created_at FROM homeroom_bot_dm_projects
-       ) p
-       JOIN apps a ON a.id = p.app_id
-       JOIN users u ON u.id = p.user_id
-      WHERE LOWER(u.username) = ANY($1::text[])
-      ORDER BY p.created_at, a.id`,
-    [users],
-  );
-  return rows.filter((r) => typeof r.slug === 'string');
-}
-
-/** The slugs of projectsMadeFor: what readSettings calls firstVersionApps. */
-async function firstVersionAppSlugs(pool, settings) {
-  return [...new Set((await projectsMadeFor(pool, settings)).map((r) => r.slug))];
-}
-
-/**
  * A project was just made with no description to build from
- * (routes/apps.js): imported, forked, or created without one. When its
- * maker is on the list it is recorded, and the bot acts on it for real
- * while they stay there, as on a project it builds from a description.
- * Nothing is filed and nothing is said in the DM: there is no first
- * version to build. Resolves true when it was recorded.
+ * (routes/apps.js): imported, forked, or created without one. When the bot
+ * works for its maker it is recorded, so an import's backlog waits
+ * (importedAt). Nothing is filed and nothing is said in the DM: there is no
+ * first version to build. Resolves true when it was recorded.
  */
 async function noteProjectMade(pool, { app, user, origin }) {
   if (!app?.id || !user?.id || !PROJECT_ORIGINS.includes(origin)) return false;
@@ -221,13 +169,13 @@ async function noteProjectMade(pool, { app, user, origin }) {
      ON CONFLICT (app_id) DO NOTHING`,
     [app.id, user.id, origin],
   );
-  if (rowCount) log.info('homeroom-bot-dm', 'Project made by somebody on the list is live for the bot', { app: app.slug, userId: user.id, origin });
+  if (rowCount) log.info('homeroom-bot-dm', 'Project made without a description recorded for the bot', { app: app.slug, userId: user.id, origin });
   return rowCount > 0;
 }
 
 /**
- * When a project was imported by somebody on the list, or null: the issues
- * it arrived with are left until something happens on them after this.
+ * When a project was imported by somebody the bot works for, or null: the
+ * issues it arrived with are left until something happens on them after this.
  */
 async function importedAt(pool, appId) {
   const { rows } = await pool.query(
@@ -1125,7 +1073,6 @@ async function closeOpenQuestions(pool, { userId, appId, issueNumber, ws = null 
  */
 async function dmRecipient(pool, appId, issueNumber) {
   const settings = await settingsModule().readSettings(pool);
-  if (settings.audience !== 'everyone' && !settings.dmUsers?.length) return null;
   const requester = await requesterOf(pool, appId, issueNumber);
   return requester && hasBot(settings, requester)
     ? { userId: requester.userId, username: requester.username }
@@ -2755,21 +2702,10 @@ const HELP_TEXT = [
   'answers or write your own.',
 ].join(' ');
 
-// #3624: somebody not on the list can join it themselves, so the answer
-// says where.
-const NOT_ENABLED_TEXT = 'I\'m not taking your requests in messages yet. To try it, turn on Homeroom bot in '
-  + 'Settings, under Experimental. Until then, post a request on a project\'s page and I\'ll answer it there.';
-// With the bot on for everyone that switch is gone (settings.js hides it, and
-// joining the list answers 409), so it is never what somebody is sent to:
-// the people the bot still does not answer then are the accounts Homeroom
-// has not let in yet (hasBot).
-const NOT_ENABLED_EVERYONE_TEXT = 'I\'m not taking requests from your account yet. I will as soon as Homeroom lets '
+// What somebody the bot does not answer is told: the people it does not
+// work for are the accounts Homeroom has not let in yet (hasBot).
+const NOT_ENABLED_TEXT = 'I\'m not taking requests from your account yet. I will as soon as Homeroom lets '
   + 'your account in.';
-
-/** Pure: what somebody the bot does not answer is told, by who has it. */
-function notEnabledText(settings) {
-  return settings?.audience === 'everyone' ? NOT_ENABLED_EVERYONE_TEXT : NOT_ENABLED_TEXT;
-}
 
 /** Whether this conversation is the person's direct conversation with the bot. */
 async function isBotDirect(pool, conversationId, botId, userId) {
@@ -3055,7 +2991,7 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   if (!hasBot(settings, user)) {
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
     return sendDm(pool, {
-      bot, userId: user.id, replyToId: message.id, content: notEnabledText(settings), idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
+      bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
       moment: 'reply',
     });
   }
@@ -3064,7 +3000,7 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
     () => answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }));
 }
 
-/** What noteUserMessage does with a message from somebody on the list, while the bot types. */
+/** What noteUserMessage does with a message from somebody it works for, while the bot types. */
 async function answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }) {
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   const quoted = message?.reply?.id || null;
@@ -3961,15 +3897,10 @@ module.exports = {
   MIN_BRIEF_CHARS,
   HELP_TEXT,
   NOT_ENABLED_TEXT,
-  NOT_ENABLED_EVERYONE_TEXT,
-  notEnabledText,
-  isDmUser,
   hasBot,
   isEnabledFor,
   botAccount,
   PROJECT_ORIGINS,
-  projectsMadeFor,
-  firstVersionAppSlugs,
   noteProjectMade,
   importedAt,
   sendDm,

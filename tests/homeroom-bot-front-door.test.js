@@ -72,13 +72,14 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
   const dm = require('../src/services/homeroom-bot-dm');
   const communities = require('../src/services/communities');
   const user = async (username, extra = {}) => (await pool.query(
-    `INSERT INTO users (username, password, has_platform_access, is_synthetic, is_admin) VALUES ($1, 'x', TRUE, $2, $3)
+    `INSERT INTO users (username, password, has_platform_access, is_synthetic, is_admin) VALUES ($1, 'x', $4, $2, $3)
      RETURNING id, username, is_synthetic AS "isSynthetic", is_admin AS "isAdmin", has_platform_access AS "hasPlatformAccess"`,
-    [username, !!extra.synthetic, !!extra.admin],
+    [username, !!extra.synthetic, !!extra.admin, extra.access !== false],
   )).rows[0];
   await user('homeroom_bot', { synthetic: true });
   const maya = await user('maya');
-  const sam = await user('sam');
+  // Homeroom has not let Sam in yet, so the bot does not work for him.
+  const sam = await user('sam', { access: false });
   const boss = await user('boss', { admin: true });
   const project = async (slug, label) => {
     const { rows: [inserted] } = await pool.query(
@@ -96,9 +97,9 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
   );
-  await set('homeroom_bot_dm_users', JSON.stringify(['maya']));
+  // The bot builds on every project but a paused one: Quiet notes is paused.
   await set('homeroom_bot_mode', 'live');
-  await set('homeroom_bot_live_apps', JSON.stringify(['plant-pal']));
+  await set('homeroom_bot_paused_apps', JSON.stringify(['quiet-notes']));
 
   await t.test('only a member files a request; an admin always may', async () => {
     const refused = await communities.appNeedsJoin(pool, 'plant-pal', sam);

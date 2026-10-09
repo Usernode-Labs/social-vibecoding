@@ -95,10 +95,8 @@ const KEY_BATCH_SIZE = 'homeroom_bot_batch_size';
 const KEY_PAUSED_APPS = 'homeroom_bot_paused_apps';
 const KEY_TURN_SECONDS = 'homeroom_bot_turn_seconds';
 const KEY_TURN_INPUT_TOKENS = 'homeroom_bot_turn_input_tokens';
-// #3146: the apps the bot acts on for real — posts on their issues, and
-// builds and proposes the clear ones. Everything else stays in shadow.
-const KEY_LIVE_APPS = 'homeroom_bot_live_apps';
-// Shadow builds: on an app NOT in the live list, a ready verdict is also
+// Shadow builds: on an app the bot does not act on for real (every app on
+// a staging copy, live.liveScope), a ready verdict is also
 // built, on a branch of its own that nobody is shown: no proposal, no
 // post, nothing in the app. The dashboard and the export carry the branch,
 // so what the bot WOULD have proposed can be spot-checked before an app goes
@@ -110,13 +108,6 @@ const KEY_LIVE_APPS = 'homeroom_bot_live_apps';
 const KEY_SHADOW_BUILDS = 'homeroom_bot_shadow_builds';
 const KEY_BUILD_CONCURRENCY = 'homeroom_bot_build_concurrency';
 const KEY_SHADOW_BUILD_PLATFORM = 'homeroom_bot_shadow_build_platform';
-// #3624: the people the bot talks to in a DM (homeroom-bot-dm.js), one
-// at a time while it is tried out: their requests' questions and outcomes
-// reach them there, and a project they create can be built by the bot from
-// a description. Lower-cased usernames. An admin keeps it on the dashboard,
-// and a person can put themselves on it or take themselves off it from
-// Settings -> Experimental (setDmMember).
-const KEY_DM_USERS = 'homeroom_bot_dm_users';
 // #3624: what one person's requests may cost the bot in a week, in cents,
 // on top of (and apart from) their own weekly allowance for agents. The
 // platform pays; this is the ceiling that keeps one person from spending
@@ -141,34 +132,29 @@ const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
 const KEY_LIVE_AT_ONCE = 'homeroom_bot_live_at_once';
 const KEY_PER_PERSON = 'homeroom_bot_per_person';
 // #3624, stage 2: whether a DM to the bot is read by a model
-// (homeroom-bot-mayor.js). On by default for the people on the DM list; the
-// switch is there to stop it without taking anybody off the list.
+// (homeroom-bot-mayor.js). On by default; the switch is there to stop it
+// without switching the whole bot off.
 const KEY_DM_CHAT = 'homeroom_bot_dm_chat';
 // Whether reading a request again continues the conversation that read it
 // last (previousRead), so the model starts from what it already found
 // rather than from the repository. On by default; off reads every time
 // from scratch, as every read did before.
 const KEY_CONTINUE_READS = 'homeroom_bot_continue_reads';
-// Who has the bot: `list`, the people on KEY_DM_USERS and the projects they
-// made (everything above), or `everyone`: every person with platform
-// access, and every project but a paused one and the platform's own
-// (live.liveScope). It ships as `list`, and switching it is the decision to
-// turn the bot on for everybody, so it is an admin's alone; `list` stays a
-// working way back. When it is switched to `everyone` the moment is kept
-// (KEY_AUDIENCE_SINCE): a request nobody has touched since, older than that,
-// is not picked up on its own (refreshApp), or the first refresh would read
-// and build every open request on every app at once.
-const AUDIENCES = Object.freeze(['list', 'everyone']);
-const KEY_AUDIENCE = 'homeroom_bot_audience';
-const KEY_AUDIENCE_SINCE = 'homeroom_bot_audience_since';
-// With the `everyone` audience, whether the bot also acts for real on the
-// platform's own project. Off: its requests stay in shadow, as they do on
-// any project not in the live list today.
-const KEY_LIVE_PLATFORM = 'homeroom_bot_live_platform';
+// The bot works for every person with platform access, and acts for real
+// on every project but a paused one (live.liveScope), the platform's own
+// included. It used to be given out one person at a time (a DM list, a list
+// of live apps, a Settings -> Experimental switch, then an admin's switch
+// to everyone); this is what that switch became. The moment it went on for
+// everyone is kept (KEY_EVERYONE_SINCE, written once by schema.sql on the
+// first boot of this build): a request nobody has touched since, older than
+// that, is not picked up on its own (refreshApp), or the first refresh would
+// read and build every open request on every app at once. The key keeps the
+// name the switch wrote, so a moment an admin's switch already recorded
+// stands.
+const KEY_EVERYONE_SINCE = 'homeroom_bot_audience_since';
 // The most proposals the bot may have up for a vote at once, across every
-// app (botProposalCeiling). Unset (0) is automatic: 5 per live app with the
-// list audience, as before, and EVERYONE_PROPOSAL_CEILING with `everyone`,
-// where "per live app" would be every app there is.
+// app (botProposalCeiling). Unset (0) is automatic: EVERYONE_PROPOSAL_CEILING,
+// since "5 per live app" would be every app there is.
 const KEY_PROPOSAL_CEILING = 'homeroom_bot_proposal_ceiling';
 // #4449: Live, a first version shown taking shape while it is built
 // (services/first-version-live.js, which reads it through its own short
@@ -177,16 +163,14 @@ const KEY_PROPOSAL_CEILING = 'homeroom_bot_proposal_ceiling';
 const KEY_LIVE_BUILD_STREAM = 'live_build_stream';
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
-  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
+  KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
-  KEY_DM_USERS, KEY_USER_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
-  KEY_CONTINUE_READS, KEY_AUDIENCE, KEY_AUDIENCE_SINCE, KEY_LIVE_PLATFORM, KEY_PROPOSAL_CEILING,
+  KEY_USER_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
+  KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING,
   KEY_LIVE_BUILD_STREAM,
   ...Object.values(KEY_MODELS),
 ]);
-const MAX_DM_USERS = 50;
 const MAX_USER_WEEKLY_CENTS = 10_000_000;
-const USERNAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 
 // batchSize is how many of ONE app's issues a pass takes before the loop
 // looks for the most urgent app again — the fairness knob between apps, not
@@ -197,42 +181,33 @@ const DEFAULTS = Object.freeze({
   concurrency: 1,
   batchSize: 100,
   pausedApps: [],
-  liveApps: [],
   turnSeconds: 20 * 60,
   turnInputTokens: 10_000_000,
   shadowBuilds: false,
   buildConcurrency: 2,
   shadowBuildPlatform: false,
-  dmUsers: [],
   userWeeklyCents: 5000,
   // #3654: per-stage models; blank is the platform default (stageModel).
   models: Object.freeze({ triage: '', spec: '', build: '', followup: '' }),
-  liveAtOnce: 6,
-  perPerson: 2,
+  // Raised from 6 and 2 when every project went live: the background
+  // lane's shadow triage, which took workers beside it, has no app left to
+  // read in production.
+  liveAtOnce: 12,
+  perPerson: 3,
   dmChat: true,
   continueReads: true,
-  audience: 'list',
-  audienceSince: null,
-  livePlatform: false,
+  everyoneSince: null,
   proposalCeiling: 0,
   liveBuildStream: true,
-  // Not a stored setting: the projects somebody on the DM list made
-  // (homeroom-bot-dm.js projectsMadeFor), live like the apps in liveApps.
-  // readSettings fills it in, with the list audience only.
-  firstVersionApps: [],
-  // Not a stored setting either: the slugs of the platform's own project,
-  // which the `everyone` audience leaves out unless livePlatform is on.
-  // readSettings fills it in, with that audience only.
-  platformSlugs: [],
 });
 const MAX_CONCURRENCY = 4;
 const MAX_BUILD_CONCURRENCY = 4;
 // Each live turn holds a worker from the pool people's own coding sessions
-// use, so the ceiling stays well under it.
-const MAX_LIVE_AT_ONCE = 16;
-const MAX_PER_PERSON = 4;
+// use (the worker namespace's quota), so the ceiling stays well under it.
+const MAX_LIVE_AT_ONCE = 24;
+const MAX_PER_PERSON = 6;
 const MAX_PROPOSAL_CEILING = 1000;
-// The automatic ceiling with the `everyone` audience: what twenty live apps
+// The automatic ceiling: what twenty live apps
 // had under "5 per live app", and well past what 16 builds at once can fill
 // in the days a vote takes.
 const EVERYONE_PROPOSAL_CEILING = 100;
@@ -549,13 +524,6 @@ function parseSettings(rows) {
   } catch {
     pausedApps = DEFAULTS.pausedApps;
   }
-  let liveApps = DEFAULTS.liveApps;
-  try {
-    const parsed = JSON.parse(map.get(KEY_LIVE_APPS) || '[]');
-    if (Array.isArray(parsed)) liveApps = parsed.filter((s) => typeof s === 'string').slice(0, 50);
-  } catch {
-    liveApps = DEFAULTS.liveApps;
-  }
   const turnSeconds = clampInt(
     map.get(KEY_TURN_SECONDS), DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS,
   );
@@ -568,16 +536,6 @@ function parseSettings(rows) {
     map.get(KEY_BUILD_CONCURRENCY), DEFAULTS.buildConcurrency, 1, MAX_BUILD_CONCURRENCY,
   );
   const shadowBuildPlatform = map.get(KEY_SHADOW_BUILD_PLATFORM) === 'on';
-  let dmUsers = DEFAULTS.dmUsers;
-  try {
-    const parsed = JSON.parse(map.get(KEY_DM_USERS) || '[]');
-    if (Array.isArray(parsed)) {
-      dmUsers = [...new Set(parsed.filter((s) => typeof s === 'string' && USERNAME_RE.test(s))
-        .map((s) => s.toLowerCase()))].slice(0, MAX_DM_USERS);
-    }
-  } catch {
-    dmUsers = DEFAULTS.dmUsers;
-  }
   const userWeeklyCents = clampInt(
     map.get(KEY_USER_WEEKLY_CENTS), DEFAULTS.userWeeklyCents, 0, MAX_USER_WEEKLY_CENTS,
   );
@@ -590,29 +548,24 @@ function parseSettings(rows) {
   const perPerson = clampInt(map.get(KEY_PER_PERSON), DEFAULTS.perPerson, 1, MAX_PER_PERSON);
   const dmChat = map.get(KEY_DM_CHAT) !== 'off';
   const continueReads = map.get(KEY_CONTINUE_READS) !== 'off';
-  const audience = AUDIENCES.includes(map.get(KEY_AUDIENCE)) ? map.get(KEY_AUDIENCE) : DEFAULTS.audience;
-  // Written with the switch (writeSettings); readSettings fills in a switch
-  // made some other way.
-  const sinceMs = Date.parse(map.get(KEY_AUDIENCE_SINCE) || '');
-  const audienceSince = Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : null;
-  const livePlatform = map.get(KEY_LIVE_PLATFORM) === 'on';
+  // Written once by schema.sql; readSettings fills in a database without it.
+  const sinceMs = Date.parse(map.get(KEY_EVERYONE_SINCE) || '');
+  const everyoneSince = Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : null;
   const proposalCeiling = clampInt(map.get(KEY_PROPOSAL_CEILING), DEFAULTS.proposalCeiling, 0, MAX_PROPOSAL_CEILING);
   const liveBuildStream = map.get(KEY_LIVE_BUILD_STREAM) !== 'off';
   return {
-    mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens,
-    shadowBuilds, buildConcurrency, shadowBuildPlatform, dmUsers, userWeeklyCents,
+    mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
+    shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents,
     liveAtOnce, perPerson, dmChat, continueReads, models,
-    audience, audienceSince, livePlatform, proposalCeiling, liveBuildStream,
-    firstVersionApps: [],
-    platformSlugs: [],
+    everyoneSince, proposalCeiling, liveBuildStream,
   };
 }
 
-// The platform's own project, by slug, for the `everyone` audience to leave
-// out (live.liveScope): its self-hosted row (config.js SELF_APP_SLUG, never
-// renamed), and any app on the platform's repository. Read at most once a
-// minute: readSettings runs on every pass and every DM, and which app is
-// the platform's does not change. A read that fails keeps the last answer,
+// The platform's own project, by slug (#4239: a request about Homeroom
+// itself means nothing on Homeroom's own board): its self-hosted row
+// (config.js SELF_APP_SLUG, never renamed), and any app on the platform's
+// repository. Read at most once a minute: a triage reads it, and which app
+// is the platform's does not change. A read that fails keeps the last answer,
 // and the fixed slug is left out even before the first one.
 const PLATFORM_SELF_APP_SLUG = 'usernode-2d5619';
 const PLATFORM_SLUGS_TTL_MS = 60 * 1000;
@@ -665,31 +618,10 @@ async function readSettings(pool) {
       [SETTING_KEYS],
     );
     const settings = parseSettings(rows);
-    if (settings.audience === 'everyone') {
-      // Every project is live but these (live.liveScope), so the projects
-      // made by somebody on the list below need no reading: they are live
-      // already, and that list is unbounded.
-      settings.platformSlugs = await platformAppSlugs(pool);
-      // A switch to everyone made without writeSettings (a hand edit) has no
-      // moment of its own: it counts from when the audience row last changed
-      // (never null: the row was just read), not from no time at all, which
-      // would read every old request.
-      if (!settings.audienceSince) {
-        const { rows: at } = await pool.query(
-          'SELECT updated_at FROM platform_settings WHERE key = $1', [KEY_AUDIENCE],
-        ).catch(() => ({ rows: [] }));
-        if (at[0]?.updated_at) settings.audienceSince = new Date(at[0].updated_at).toISOString();
-      }
-      return settings;
-    }
-    // #3624: a project somebody on the DM list made (one the bot builds
-    // from its description, or one they imported, forked or created
-    // without one) is live while that person is still on the list.
-    try {
-      settings.firstVersionApps = await require('./homeroom-bot-dm').firstVersionAppSlugs(pool, settings);
-    } catch (err) {
-      log.warn('homeroom-bot', 'first-version apps read failed', { err: err.message });
-    }
+    // schema.sql writes the moment once; a database that has not run it
+    // yet counts from now, never from no time at all, which would read
+    // every old request.
+    if (!settings.everyoneSince) settings.everyoneSince = new Date().toISOString();
     return settings;
   } catch (err) {
     // platform_settings may not exist on a very first boot before migrate()
@@ -744,14 +676,6 @@ function validateSettingsPatch(patch) {
     if (typeof body.continueReads !== 'boolean') return { ok: false, error: 'continueReads must be true or false' };
     updates.push([KEY_CONTINUE_READS, body.continueReads ? 'on' : 'off']);
   }
-  if (body.audience !== undefined) {
-    if (!AUDIENCES.includes(body.audience)) return { ok: false, error: 'audience must be list or everyone' };
-    updates.push([KEY_AUDIENCE, body.audience]);
-  }
-  if (body.livePlatform !== undefined) {
-    if (typeof body.livePlatform !== 'boolean') return { ok: false, error: 'livePlatform must be true or false' };
-    updates.push([KEY_LIVE_PLATFORM, body.livePlatform ? 'on' : 'off']);
-  }
   if (body.liveBuildStream !== undefined) {
     if (typeof body.liveBuildStream !== 'boolean') return { ok: false, error: 'liveBuildStream must be true or false' };
     updates.push([KEY_LIVE_BUILD_STREAM, body.liveBuildStream ? 'on' : 'off']);
@@ -791,13 +715,6 @@ function validateSettingsPatch(patch) {
     }
     updates.push([KEY_PAUSED_APPS, JSON.stringify([...new Set(body.pausedApps)])]);
   }
-  if (body.liveApps !== undefined) {
-    if (!Array.isArray(body.liveApps) || body.liveApps.length > 50
-        || !body.liveApps.every((s) => typeof s === 'string' && /^[a-z0-9-]{1,120}$/.test(s))) {
-      return { ok: false, error: 'liveApps must be an array of up to 50 app slugs' };
-    }
-    updates.push([KEY_LIVE_APPS, JSON.stringify([...new Set(body.liveApps)])]);
-  }
   if (body.shadowBuilds !== undefined) {
     if (typeof body.shadowBuilds !== 'boolean') return { ok: false, error: 'shadowBuilds must be true or false' };
     updates.push([KEY_SHADOW_BUILDS, body.shadowBuilds ? 'on' : 'off']);
@@ -814,13 +731,6 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: 'shadowBuildPlatform must be true or false' };
     }
     updates.push([KEY_SHADOW_BUILD_PLATFORM, body.shadowBuildPlatform ? 'on' : 'off']);
-  }
-  if (body.dmUsers !== undefined) {
-    if (!Array.isArray(body.dmUsers) || body.dmUsers.length > MAX_DM_USERS
-        || !body.dmUsers.every((s) => typeof s === 'string' && USERNAME_RE.test(s.replace(/^@/, '')))) {
-      return { ok: false, error: `dmUsers must be an array of up to ${MAX_DM_USERS} usernames` };
-    }
-    updates.push([KEY_DM_USERS, JSON.stringify([...new Set(body.dmUsers.map((s) => s.replace(/^@/, '').toLowerCase()))])]);
   }
   if (body.userWeeklyCents !== undefined) {
     const n = Number(body.userWeeklyCents);
@@ -862,19 +772,10 @@ async function writeSettings(pool, patch, actorId, config = {}) {
   const valid = validateSettingsPatch(patch);
   if (!valid.ok) return valid;
   let modeBefore = null;
-  let audienceBefore = null;
-  if (valid.updates.some(([key]) => key === KEY_MODE || key === KEY_AUDIENCE)) {
+  if (valid.updates.some(([key]) => key === KEY_MODE)) {
     try {
-      const before = await readSettings(pool);
-      modeBefore = before.mode;
-      audienceBefore = before.audience;
+      modeBefore = (await readSettings(pool)).mode;
     } catch {}
-  }
-  const audienceAfter = valid.updates.find(([key]) => key === KEY_AUDIENCE)?.[1];
-  // The moment the bot was given to everyone: what is older than it, and
-  // untouched since, is not picked up on its own (refreshApp).
-  if (audienceAfter === 'everyone' && audienceBefore !== 'everyone') {
-    valid.updates.push([KEY_AUDIENCE_SINCE, new Date().toISOString()]);
   }
   for (const [key, value] of valid.updates) {
     await pool.query(
@@ -902,11 +803,8 @@ async function writeSettings(pool, patch, actorId, config = {}) {
       limits.invalidate();
     } catch {}
   }
-  // More room for live work is used now, not on the next idle pass. A new
-  // audience, or the platform's project in or out of it, changes which
-  // queue rows are live: the whole queue is rebuilt before the next pick, so
-  // a row queued for the background lane is not taken live untouched.
-  if (valid.updates.some(([key]) => [KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_CONCURRENCY, KEY_AUDIENCE, KEY_LIVE_PLATFORM].includes(key))) {
+  // More room for live work is used now, not on the next idle pass.
+  if (valid.updates.some(([key]) => [KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_CONCURRENCY].includes(key))) {
     wakeAll();
   }
   const modeAfter = valid.updates.find(([key]) => key === KEY_MODE)?.[1];
@@ -922,58 +820,6 @@ async function writeSettings(pool, patch, actorId, config = {}) {
     publishWake({ builds: true });
   }
   return { ok: true };
-}
-
-// How many times setDmMember re-reads the list when another write landed
-// between its read and its own. Every round, one of the writers racing for
-// the row lands, so this many joining at the same moment all get on.
-const DM_MEMBER_ATTEMPTS = 10;
-
-/**
- * Settings -> Experimental: a person puts themselves on the DM list, or
- * takes themselves off it. It is the list an admin keeps, not a second one:
- * the dashboard shows who joined this way, an admin can still take anybody
- * off, it holds MAX_DM_USERS at most, and each person's requests count
- * against the same weekly allowance.
- *
- * Written compare-and-swap: the UPDATE lands only if the list is still the
- * one it read, else it reads again, so a join or an admin's save that lands
- * meanwhile is never written out by this one. (An admin who saves a list
- * they loaded before somebody joined still replaces it, as any admin edit
- * of the list does.)
- *
- * Resolves { ok: true, joined, changed } (asking for what is already so is
- * not an error), or { ok: false, error } with error 'full' (and `max`) when
- * there is no room, 'invalid_username', or 'busy' when the list kept
- * changing underneath it.
- */
-async function setDmMember(pool, username, joined, actorId = null) {
-  const name = String(username || '').replace(/^@/, '').toLowerCase();
-  if (!USERNAME_RE.test(name)) return { ok: false, error: 'invalid_username' };
-  const want = !!joined;
-  // Seeded by schema.sql; this is for a database that predates the seed.
-  await pool.query(
-    `INSERT INTO platform_settings (key, value) VALUES ($1, '[]') ON CONFLICT (key) DO NOTHING`,
-    [KEY_DM_USERS],
-  );
-  for (let attempt = 0; attempt < DM_MEMBER_ATTEMPTS; attempt += 1) {
-    const { rows } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [KEY_DM_USERS]);
-    const stored = rows[0] ? rows[0].value : '[]';
-    const list = parseSettings([{ key: KEY_DM_USERS, value: stored }]).dmUsers;
-    if (list.includes(name) === want) return { ok: true, joined: want, changed: false };
-    if (want && list.length >= MAX_DM_USERS) return { ok: false, error: 'full', max: MAX_DM_USERS };
-    const next = want ? [...list, name] : list.filter((n) => n !== name);
-    const { rowCount } = await pool.query(
-      `UPDATE platform_settings SET value = $2, updated_at = NOW(), updated_by = $3
-        WHERE key = $1 AND value = $4`,
-      [KEY_DM_USERS, JSON.stringify(next), actorId || null, stored],
-    );
-    if (rowCount) {
-      log.info('homeroom-bot', want ? 'Joined the DM from Settings' : 'Left the DM from Settings', { username: name });
-      return { ok: true, joined: want, changed: true };
-    }
-  }
-  return { ok: false, error: 'busy' };
 }
 
 // ── Identity ─────────────────────────────────────────────────────────────
@@ -1580,8 +1426,8 @@ async function refreshApp(pool, app, {
   // #3264: on a live app (capRoom is set only there) a person's reply in the
   // discussion of the bot's own open proposal is activity on its issue, so
   // it comes back for a follow-up.
-  // #3624: a project somebody on the DM list imported is live from the
-  // start, but the issues it arrived with are new to nobody: each is judged
+  // #3624: an imported project is live from the start, but the issues it
+  // arrived with are new to nobody: each is judged
   // as if the bot had seen it at the import, so it waits until something
   // happens on it, rather than the whole backlog being worked at once.
   // "Triage again" on the admin screen takes all of them.
@@ -1593,13 +1439,13 @@ async function refreshApp(pool, app, {
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
   ]);
   const backlogUntil = toMs(importedAt);
-  // The `everyone` audience (KEY_AUDIENCE_SINCE), on a live app: what the
-  // bot had not read live before the switch is judged as if it had read it
-  // then, as an import's backlog is just above. A request nobody has touched
+  // The moment the bot went on for everyone (KEY_EVERYONE_SINCE), on a live
+  // app: what the bot had not read live before it is judged as if it had
+  // read it then, as an import's backlog is just above. A request nobody has touched
   // since waits for somebody to (a comment, an answer, "Ask Homeroom bot to
   // build this"); one the bot only read in the background is read again only
   // when something new happens on it. Without this, the first refresh after
-  // the switch would read, and build, every open request on every app.
+  // that moment would read, and build, every open request on every app.
   const everyoneMs = capRoom ? toMs(everyoneSince) : 0;
   // #3751: on a live app, a mention of the bot on a request a person holds
   // is answered (who holds it, and how to ask it to go ahead anyway), and a
@@ -1689,9 +1535,9 @@ async function refreshApp(pool, app, {
   return out;
 }
 
-/** When the bot was given to everyone, while it is (refreshApp), else null. */
+/** When the bot went on for everyone (refreshApp), or null. */
 function everyoneSinceOf(settings) {
-  return settings?.audience === 'everyone' ? settings.audienceSince || null : null;
+  return settings?.everyoneSince || null;
 }
 
 /**
@@ -2243,7 +2089,7 @@ async function insertRun(pool, run) {
 
 /**
  * The most proposals the bot may have up for a vote at once, across every
- * app (#3576): the per-app cap on each live app. It stands in for the
+ * app (#3576). It stands in for the
  * platform's per-user cap (session-caps.js, 5), which the bot ran into with
  * four live apps and found out about only after a paid build could not be
  * proposed. The Propose route honours it for the bot's own in-process
@@ -2253,9 +2099,7 @@ function botProposalCeiling(settings) {
   // An admin's number, when there is one (KEY_PROPOSAL_CEILING).
   const fixed = Number(settings?.proposalCeiling);
   if (Number.isInteger(fixed) && fixed > 0) return fixed;
-  if (settings?.audience === 'everyone') return EVERYONE_PROPOSAL_CEILING;
-  const apps = (settings?.liveApps || []).length + (settings?.firstVersionApps || []).length;
-  return PROPOSALS_PER_APP_CAP * Math.max(1, apps);
+  return EVERYONE_PROPOSAL_CEILING;
 }
 
 /**
@@ -7195,8 +7039,8 @@ function liveDeps(deps = {}) {
 //
 // Two lanes, both run from the loop below.
 //
-// LIVE work is an issue on an app the bot acts on for real, or on a project
-// it is building for somebody (live.isLiveFor). It is started one issue at a
+// LIVE work is an issue on an app the bot acts on for real: every app but a
+// paused one (live.isLiveFor). It is started one issue at a
 // time, up to `liveAtOnce` across the platform, up to `perPerson` for any one
 // person, and never two at once on one app: the bot has ONE session per app
 // (ensureBotSession), and two turns in it would fight over it. The person is
@@ -7214,8 +7058,8 @@ function liveDeps(deps = {}) {
 // eleven minutes behind two other requests' builds on that project, the
 // newer request taken first, and was reported as the bot not answering.
 //
-// BACKGROUND work is shadow triage of every other app: the calibration
-// sweep. It keeps its old shape, a batch of one app's issues at a time,
+// BACKGROUND work is shadow triage of the apps it does not act on for real
+// (every app on a staging copy): the calibration sweep. It keeps its old shape, a batch of one app's issues at a time,
 // `concurrency` apps at once, in slots of its own, so it never holds up
 // somebody waiting in a DM.
 //
@@ -7402,7 +7246,7 @@ function heldForFirstVersion(holds, { appId, issueNumber, firstVersion = false, 
 async function liveCandidates(pool, {
   scope: given = null, liveSlugs = [], excludeAppIds, pausedApps, busyAppIds = [], botId = null, limit = 200, excludeFollowUps = [],
 }) {
-  // A scope from live.liveScope; a bare list of slugs reads as the list audience.
+  // A scope from live.liveScope; a bare list of slugs is just those apps.
   const scope = given || { all: false, slugs: liveSlugs, except: [] };
   if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
@@ -8227,15 +8071,12 @@ async function runOnce(pool, config, deps = {}) {
     const bot = await ensureBotUser(pool, config);
     if (forceAll || now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
       // #3624: a project waiting for its first version whose creation hook
-      // missed it is filed here, before the refresh that queues it. With the
-      // `everyone` audience there is no list to be empty.
-      if (settings.dmUsers?.length || settings.audience === 'everyone') {
-        try {
-          const filed = await (deps.dm || require('./homeroom-bot-dm')).sweepFirstVersions(pool, config, deps);
-          if (filed) log.info('homeroom-bot', 'First versions filed', { filed });
-        } catch (err) {
-          log.warn('homeroom-bot', 'First-version sweep failed', { err: err.message });
-        }
+      // missed it is filed here, before the refresh that queues it.
+      try {
+        const filed = await (deps.dm || require('./homeroom-bot-dm')).sweepFirstVersions(pool, config, deps);
+        if (filed) log.info('homeroom-bot', 'First versions filed', { filed });
+      } catch (err) {
+        log.warn('homeroom-bot', 'First-version sweep failed', { err: err.message });
       }
       const summary = await refreshQueue(pool, settings, { ...deps, bot });
       lastRefreshAt = now;
@@ -8780,33 +8621,15 @@ async function adminPayload(pool, config, {
     },
     builds: await buildLaneSummary(pool),
     mentionOptOuts: await mentionOptOutList(pool),
-    dmUsers: await dmUserList(pool, settings),
-    // #3624: the projects it acts on for real because somebody on that list
-    // made them, and who, shown in the live list beside the stored ones.
-    builtFor: await builtForList(pool, settings),
     // #3624 stage 2: what runs now, and what the DM's answers cost.
     workingNow: await workingNow(pool, settings),
     dmChat: await dmChatSummary(pool),
-    // Before it is on for everyone: whether it is working, over the last
-    // week (homeroom-bot-health.js).
+    // Whether it is working, over the last week (homeroom-bot-health.js).
     health: await require('./homeroom-bot-health').rolloutHealth(pool, { botUsername: BOT_USERNAME }),
     // #4210: errors that should not happen (a build a restart cut short),
     // the last week's, newest first (platform-incidents.js).
     incidents: await incidents().recent(pool),
   };
-}
-
-/** #3624: projectsMadeFor, as the dashboard lists them. */
-async function builtForList(pool, settings) {
-  try {
-    const rows = await require('./homeroom-bot-dm').projectsMadeFor(pool, settings);
-    const seen = new Set();
-    return rows.filter((r) => !seen.has(r.slug) && seen.add(r.slug))
-      .map((r) => ({ slug: r.slug, name: r.name || r.slug, username: r.username, origin: r.origin }));
-  } catch (err) {
-    log.warn('homeroom-bot', 'Built-for list failed', { err: err.message });
-    return [];
-  }
 }
 
 /**
@@ -8852,32 +8675,6 @@ async function dmChatSummary(pool) {
     log.warn('homeroom-bot', 'DM chat summary failed', { err: err.message });
     return { turns: 0, failed: 0, recovered: 0, people: 0, costUsd: 0, recentFailures: [] };
   }
-}
-
-/**
- * #3624: the people on the DM list, as the dashboard shows them: whether
- * the name is an account at all, and what their requests cost the bot this
- * week against the per-person allowance.
- */
-async function dmUserList(pool, settings) {
-  const names = settings?.dmUsers || [];
-  if (!names.length) return [];
-  const dm = require('./homeroom-bot-dm');
-  const { rows } = await pool.query(
-    'SELECT id, username FROM users WHERE LOWER(username) = ANY($1::text[]) AND is_synthetic = FALSE',
-    [names],
-  );
-  const byName = new Map(rows.map((r) => [r.username.toLowerCase(), r]));
-  const out = [];
-  for (const name of names) {
-    const user = byName.get(name);
-    let weeklySpentCents = null;
-    if (user) {
-      try { weeklySpentCents = await dm.weeklySpentCents(pool, user.id); } catch { weeklySpentCents = null; }
-    }
-    out.push({ username: user ? user.username : name, exists: !!user, weeklySpentCents });
-  }
-  return out;
 }
 
 const MENTION_OPTOUTS_PAGE = 100;
@@ -9011,22 +8808,21 @@ async function retriageQuestions(pool, { actorId = null } = {}) {
  * as Run now's do, because the refresh drops an unchanged issue's row
  * otherwise. What the regular refresh leaves out stays out: a closed issue,
  * and one somebody is working on (issueHolders). A row the bot is on
- * right now is left alone. Live apps only (the list, or a project somebody
- * on the DM list made), and not while paused.
+ * right now is left alone. Not while paused, and never on a staging copy.
  */
 async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
   if (typeof slug !== 'string' || !/^[a-z0-9-]{1,120}$/.test(slug)) {
     return { ok: false, status: 400, error: 'Invalid app slug' };
   }
   const settings = await readSettings(pool);
-  // #3624: a project somebody on the DM list made is live too, and an
-  // import's backlog waits for exactly this. Off, or on a staging copy,
-  // nothing is (live.liveScope), but the queue still holds what it is told.
-  if (!live.inScope(live.liveScope({ ...settings, mode: 'shadow' }), slug)) {
-    return { ok: false, status: 409, error: 'The bot does not act on this app for real: add it to the live apps first' };
-  }
   if ((settings.pausedApps || []).includes(slug)) {
     return { ok: false, status: 409, error: 'The app is paused for the bot' };
+  }
+  // An import's backlog waits for exactly this. Off, nothing is live
+  // (live.liveScope), but the queue still holds what it is told; a staging
+  // copy never acts.
+  if (!live.inScope(live.liveScope({ ...settings, mode: 'shadow' }), slug)) {
+    return { ok: false, status: 409, error: 'The bot does not act on apps for real on a staging copy' };
   }
   const { rows: [app] } = await pool.query(
     'SELECT id, slug, name, repo_url FROM apps WHERE slug = $1 AND repo_url IS NOT NULL', [slug],
@@ -9155,8 +8951,6 @@ module.exports = {
   pauseIdleSession,
   readSettings,
   writeSettings,
-  setDmMember,
-  MAX_DM_USERS,
   validateSettingsPatch,
   parseSettings,
   adminPayload,
@@ -9335,16 +9129,12 @@ module.exports = {
   KEY_CONCURRENCY,
   KEY_BATCH_SIZE,
   KEY_PAUSED_APPS,
-  KEY_LIVE_APPS,
   KEY_LIVE_AT_ONCE,
   KEY_PER_PERSON,
   KEY_DM_CHAT,
   KEY_CONTINUE_READS,
   KEY_LIVE_BUILD_STREAM,
-  AUDIENCES,
-  KEY_AUDIENCE,
-  KEY_AUDIENCE_SINCE,
-  KEY_LIVE_PLATFORM,
+  KEY_EVERYONE_SINCE,
   KEY_PROPOSAL_CEILING,
   EVERYONE_PROPOSAL_CEILING,
   pickLive,
