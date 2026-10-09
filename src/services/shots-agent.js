@@ -39,11 +39,18 @@ browser named for each change's persona in the brief: browser_member for
 member, browser_admin for read_only_admin, browser_full_admin for full_admin,
 browser_guest for guest. The guest browser is not signed in: it sees what a
 visitor who is not signed in sees, and the brief says what that is here.
+A phone screen (narrower than 768 px) has a browser of its own: the same
+name with _phone (browser_member_phone for member, and so on), signed in as
+the same persona. It presents as an iPhone running Safari, with a phone's
+user agent, touch and screen density, so the app shows what it shows on a
+phone. The brief's screenBrowsers names the browser for every change and
+screen: use that one, and never shoot a phone screen in a desktop browser.
 Do not sign in (the guest stays signed out too), expose storage, leave the
 two addresses, or change or add a change.
 
 For each declared change and each of its screen sizes (viewports):
-1. Call browser_resize with that width and height. Then open the start path
+1. In the browser screenBrowsers names for that change and screen, call
+   browser_resize with that width and height. Then open the start path
    again, even when the page is already open: some apps choose their layout
    once, when the page loads, so a page loaded at another size keeps the
    wrong layout (a desktop page squeezed into a phone screen).
@@ -88,11 +95,11 @@ For each declared change and each of its screen sizes (viewports):
    thing appears on the after side, do not look for a different screen, and
    leave out the element shot on that side.
 8. If the change's intent.animation is "motion", a still cannot show it, so
-   also record a clip of each side: call browser_close, browser_resize to the
-   same screen size again, open the start path, do only the steps that
-   trigger the motion, wait for it to finish, call browser_close again, then
-   call save_clip with the change, screen and side. Each browser_close ends
-   one recording; keep clips short.
+   also record a clip of each side in that screen's browser: call
+   browser_close, browser_resize to the same screen size again, open the
+   start path, do only the steps that trigger the motion, wait for it to
+   finish, call browser_close again, then call save_clip with the change,
+   screen and side. Each browser_close ends one recording; keep clips short.
 
 Read what save_shot answers. It refuses an element shot wider than its
 screen or more than two screens tall: retake the screen after opening the
@@ -132,6 +139,12 @@ and name, drawn from that side's own dapp.json) at homeTile.path, and
 homeTile.differs says whether the two sides differ. For a change to how the
 app looks on the home screen, open homeTile.path on each address and shoot
 that page.
+
+If the brief has installStrip, Homeroom's "Add it to your home screen" strip
+is dismissed on every page these browsers open, so it stays out of the
+shots. For a change to the strip itself, open the start path with
+installStrip.param added to its query (before any #), on both addresses and
+in the phone browser, so the strip shows as it does on a member's phone.
 
 If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with
@@ -266,6 +279,10 @@ async function dispatchClaude(config, options, deps) {
     shotsNavigationHints: options.navigationHints,
     shotsRecordClips: options.recordClips === true,
     ...(options.recordClips === true && options.clipSize ? { shotsClipSize: options.clipSize } : {}),
+    ...(options.recordClips === true && options.phoneClipSize
+      ? { shotsPhoneClipSize: options.phoneClipSize } : {}),
+    // Who gets a phone browser: the personas with a phone screen.
+    shotsPhonePersonas: Array.isArray(options.phonePersonas) ? options.phonePersonas : [],
     shotsPlatformAssets: options.platformAssets === true,
     telemetryComponent: 'shots_agent',
     telemetryCorrelationId: runId,

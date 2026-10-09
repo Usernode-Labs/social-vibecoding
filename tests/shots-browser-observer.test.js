@@ -133,7 +133,9 @@ test('observer forwards MCP JSON-RPC unchanged through a child server', async ()
   }
 });
 
-for (const persona of ['full_admin', 'guest']) test(`observer command-line entry point accepts the ${persona} shots persona`, async () => {
+// A persona's phone browser runs in the same observer as `<persona>_phone`,
+// and reports as that persona, marked as the phone.
+for (const persona of ['full_admin', 'guest', 'member_phone', 'admin_phone']) test(`observer command-line entry point accepts the ${persona} shots persona`, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-browser-observer-cli-'));
   const diagnosticFile = path.join(dir, 'diagnostics.log');
   const stubPath = path.join(dir, 'mcp-server-playwright');
@@ -173,13 +175,30 @@ process.stdin.on('data', chunk => {
     assert.equal(JSON.parse(Buffer.concat(stdout).toString()).id, 11);
     const diagnostics = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
       .map(line => JSON.parse(line.slice(MARKER.length)));
-    assert.equal(diagnostics[0].persona, persona);
+    const phone = persona.endsWith('_phone');
+    for (const event of diagnostics) {
+      assert.equal(event.persona, persona.replace(/_phone$/, ''));
+      assert.equal(event.phone, phone ? true : undefined, `${event.kind} says which browser it was`);
+    }
     assert.deepEqual(diagnostics.map(event => event.kind), [
       'browser_call_start', 'browser_call_end', 'browser_server_exit',
     ]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('the observer wraps only a shots persona\'s browser or its phone browser', () => {
+  const { browserName } = require('../worker/shots-browser-observer');
+  assert.deepEqual(browserName('member'), { persona: 'member', phone: false });
+  assert.deepEqual(browserName('full_admin_phone'), { persona: 'full_admin', phone: true });
+  for (const value of ['read_only_admin', 'member_phone_phone', 'phone', 'member-phone', '', undefined]) {
+    assert.equal(browserName(value), null, String(value));
+  }
+  const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
+  const refused = require('node:child_process').spawnSync(process.execPath, [observerPath, 'member-phone'],
+    { stdio: 'ignore' });
+  assert.equal(refused.status, 2, 'anything else starts no browser');
 });
 
 // #4087: a button left under the pointer after a click was shot in its hover

@@ -40,7 +40,7 @@ test('shots worker reports the last browser tool without retaining its inputs or
       briefToolAvailable: true, saveShotToolAvailable: true,
       skipChangeToolAvailable: true,
       browserMemberToolCount: 0, browserAdminToolCount: 0, browserFullAdminToolCount: 0,
-      browserGuestToolCount: 0 },
+      browserGuestToolCount: 0, browserPhoneToolCount: 0 },
     { kind: 'first_stream' },
     { kind: 'first_output' },
     { kind: 'tool_start', sequence: 1, tool: 'browser_navigate', persona: 'member' },
@@ -54,17 +54,20 @@ test('provider init distinguishes unavailable shots tools from absent tool metad
   const state = worker.newWatchState();
   state.shotsDiagnosticObserver = (event) => events.push(event);
   // The retired shots tools do not count as the shots tools.
+  // A phone browser's tools are counted as the phone browsers', not the persona's.
   worker.parseLine(JSON.stringify({
     type: 'system', subtype: 'init', tools: ['mcp__browser_member__browser_navigate',
       'mcp__browser_guest__browser_navigate', 'mcp__browser_guest__browser_snapshot',
+      'mcp__browser_member_phone__browser_navigate', 'mcp__browser_admin_phone__browser_resize',
+      'mcp__browser_admin_phone__browser_snapshot',
       'mcp__evidence__evidence_get_context', 'mcp__evidence__evidence_capture'],
   }), () => {}, state);
   assert.deepEqual(events, [{
-    kind: 'provider_init', mcpServerCount: null, toolDefinitionCount: 5,
+    kind: 'provider_init', mcpServerCount: null, toolDefinitionCount: 8,
     briefToolAvailable: false, saveShotToolAvailable: false,
     skipChangeToolAvailable: false,
     browserMemberToolCount: 1, browserAdminToolCount: 0, browserFullAdminToolCount: 0,
-    browserGuestToolCount: 2,
+    browserGuestToolCount: 2, browserPhoneToolCount: 3,
   }]);
 
   const missing = [];
@@ -76,7 +79,7 @@ test('provider init distinguishes unavailable shots tools from absent tool metad
     briefToolAvailable: null, saveShotToolAvailable: null,
     skipChangeToolAvailable: null,
     browserMemberToolCount: null, browserAdminToolCount: null,
-    browserFullAdminToolCount: null, browserGuestToolCount: null,
+    browserFullAdminToolCount: null, browserGuestToolCount: null, browserPhoneToolCount: null,
   }]);
 });
 
@@ -91,6 +94,29 @@ test('a guest browser tool is reported as the guest\'s', () => {
   }), () => {}, state);
   assert.deepEqual(events.filter((event) => event.kind === 'tool_start'),
     [{ kind: 'tool_start', sequence: 1, tool: 'browser_snapshot', persona: 'guest' }]);
+});
+
+test('a phone browser tool is reported as its persona\'s, marked as the phone', () => {
+  const events = [];
+  const state = worker.newWatchState();
+  state.shotsDiagnosticObserver = (event) => events.push(event);
+  for (const [id, name] of [
+    ['phone-call', 'mcp__browser_admin_phone__browser_resize'],
+    ['desktop-call', 'mcp__browser_admin__browser_resize'],
+  ]) {
+    worker.parseLine(JSON.stringify({
+      type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input: {} }] },
+    }), () => {}, state);
+    worker.parseLine(JSON.stringify({
+      type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: false, content: 'ok' }] },
+    }), () => {}, state);
+  }
+  assert.deepEqual(events.filter((event) => event.kind === 'tool_start' || event.kind === 'tool_end'), [
+    { kind: 'tool_start', sequence: 1, tool: 'browser_resize', persona: 'admin', phone: true },
+    { kind: 'tool_end', sequence: 1, tool: 'browser_resize', persona: 'admin', phone: true, outcome: 'ok' },
+    { kind: 'tool_start', sequence: 2, tool: 'browser_resize', persona: 'admin' },
+    { kind: 'tool_end', sequence: 2, tool: 'browser_resize', persona: 'admin', outcome: 'ok' },
+  ]);
 });
 
 test('the brief result reports its shape and normal model exit without retaining content', () => {

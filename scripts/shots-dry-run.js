@@ -29,6 +29,9 @@ const PERSONAS = Object.freeze({
   full_admin: { dir: 'full_admin', server: 'browser_full_admin' },
   guest: { dir: 'guest', server: 'browser_guest' },
 });
+// A phone screen's browser presents as this device, as a hosted turn's does
+// (worker/write-shots-mcp-config.js); tests/shots-dry-run.test.js pins the pair.
+const PHONE_DEVICE = 'iPhone 15';
 // The same MCP browser tools a hosted turn is denied (worker/run-cc.sh).
 const DENIED_BROWSER_TOOLS = ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install'];
 
@@ -160,16 +163,19 @@ function localBridge(runtimeDir) {
 
 // Each browser runs inside the same observer the worker uses, so a dry run's
 // screenshots carry the page-site stamps the shots bridge requires before it
-// publishes one (worker/shots-boundary.js).
-function browserServer(options, persona, shotsDir, clipSize) {
+// publishes one (worker/shots-boundary.js). A persona's phone browser has the
+// same sign-in and presents as a phone, saving beside the persona's.
+function browserServer(options, persona, shotsDir, clipSize, { phone = false } = {}) {
   // The guest is the browser that is not signed in, whatever the directory holds.
   const statePath = options.stateDir && persona !== 'guest'
     ? path.join(options.stateDir, `${persona}.json`) : null;
+  const dir = `${PERSONAS[persona].dir}${phone ? '_phone' : ''}`;
   return {
     command: process.execPath,
     args: [
-      path.join(ROOT, 'worker', 'shots-browser-observer.js'), PERSONAS[persona].dir,
+      path.join(ROOT, 'worker', 'shots-browser-observer.js'), dir,
       '--browser', options.browser, '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
+      ...(phone ? ['--device', PHONE_DEVICE] : []),
       ...(statePath && fs.existsSync(statePath) ? ['--storage-state', statePath] : []),
       // No shots proxy runs here to keep a page off this machine's own
       // network, so the dry run's browsers keep to the pair (the worker's
@@ -177,7 +183,7 @@ function browserServer(options, persona, shotsDir, clipSize) {
       '--allowed-origins', `${options.before};${options.after}`,
       '--block-service-workers', '--image-responses', 'allow',
       '--timeout-action', '10000', '--timeout-navigation', '30000',
-      '--output-dir', path.join(shotsDir, PERSONAS[persona].dir),
+      '--output-dir', path.join(shotsDir, dir),
       ...(clipSize ? [`--save-video=${clipSize}`] : []),
       ...(options.executablePath ? ['--executable-path', options.executablePath] : []),
     ],
@@ -312,11 +318,19 @@ async function main() {
   if (intent.impact === 'none' || !intent.stories.length) {
     throw new Error('This declaration has no visible change, so there is nothing to shoot.');
   }
-  const clipSize = planContract.clipSize(intent);
+  // Every browser records when a change is motion: the desktop ones at the
+  // other motion screens' size, the phone ones at the phone screens'.
+  const recording = planContract.clipSize(intent) != null;
+  const clipSize = recording ? planContract.clipSize(intent, { phone: false }) || '1280x800' : null;
+  const phoneClipSize = recording ? planContract.clipSize(intent, { phone: true }) || clipSize : null;
+  const phonePersonas = planContract.phonePersonas(intent);
   const runtimeDir = path.join(options.out, 'runtime');
   const shotsDir = path.join(runtimeDir, 'shots');
-  for (const persona of Object.values(PERSONAS)) {
-    fs.mkdirSync(path.join(shotsDir, persona.dir), { recursive: true, mode: 0o700 });
+  for (const [persona, { dir }] of Object.entries(PERSONAS)) {
+    fs.mkdirSync(path.join(shotsDir, dir), { recursive: true, mode: 0o700 });
+    if (phonePersonas.includes(persona)) {
+      fs.mkdirSync(path.join(shotsDir, `${dir}_phone`), { recursive: true, mode: 0o700 });
+    }
   }
   fs.mkdirSync(path.join(options.out, 'shots'), { recursive: true });
 
@@ -364,6 +378,8 @@ async function main() {
     },
     ...Object.fromEntries(Object.entries(PERSONAS).map(([persona, { server: name }]) =>
       [name, browserServer(options, persona, shotsDir, clipSize)])),
+    ...Object.fromEntries(phonePersonas.map((persona) => [`${PERSONAS[persona].server}_phone`,
+      browserServer(options, persona, shotsDir, phoneClipSize, { phone: true })])),
   } }, null, 2)}\n`, { mode: 0o600 });
 
   const streamFile = path.join(options.out, 'agent.jsonl');
@@ -376,7 +392,8 @@ async function main() {
     // An empty working directory keeps any project CLAUDE.md, settings or
     // .mcp.json out of the turn; --strict-mcp-config loads only ours.
     const cwd = fs.mkdtempSync(path.join(runtimeDir, 'cwd-'));
-    const servers = Object.values(PERSONAS).map((p) => p.server);
+    const servers = [...Object.values(PERSONAS).map((p) => p.server),
+      ...phonePersonas.map((persona) => `${PERSONAS[persona].server}_phone`)];
     const args = [
       '--print', '--verbose', '--output-format', 'stream-json',
       '--mcp-config', mcpConfig, '--strict-mcp-config',
@@ -459,5 +476,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  PERSONAS, parseArgs, revisionContext, contactSheet, agentEnv, watchAgentStream, browserServer,
+  PERSONAS, PHONE_DEVICE, parseArgs, revisionContext, contactSheet, agentEnv, watchAgentStream, browserServer,
 };

@@ -345,6 +345,8 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.deepEqual(dispatchOptions.origins, ORIGINS);
   assert.equal(dispatchOptions.recordClips, false, 'no declared change is motion');
   assert.equal(dispatchOptions.clipSize, null);
+  assert.equal(dispatchOptions.phoneClipSize, null);
+  assert.deepEqual(dispatchOptions.phonePersonas, [], 'no screen is a phone\'s');
   assert.equal(dispatchOptions.resumeThreadId, null);
   assert.equal('forceBackend' in dispatchOptions, false, 'there is one shots agent');
   assert.equal(dispatchOptions.platformAssets, true, 'a child app loads the platform\'s assets through the proxy');
@@ -976,9 +978,73 @@ test('the brief names the declared changes, both addresses and revisions, and no
     assert.doesNotMatch(JSON.stringify(brief),
       /secret\.jwt|fixture-session-secret|fixture-db-password|evidence_(?:base|head)_db|sha256:(?:base|head)/);
     assert.equal('previewAt' in brief, false, 'no declared moment, no previewAt');
+    assert.deepEqual(brief.screenBrowsers, { 'invite-suggestions': { desktop: 'browser_member' } });
+    assert.ok(Object.values(brief.browsers).every((entry) => !('phoneTool' in entry)), 'no phone screen, no phone browser');
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }
+});
+
+test('a phone screen is shot in its persona\'s phone browser, and the run starts one only where needed', async () => {
+  // Below 768 px a screen is a phone's (visible-changes.phoneScreen): a
+  // tablet's 768 stays in the desktop browser.
+  const raw = fixtures.motionIntent();
+  const phone = { name: 'phone', width: 390, height: 844 };
+  const tablet = { name: 'tablet', width: 768, height: 1024 };
+  raw.stories[0] = { ...raw.stories[0], persona: 'read_only_admin', viewports: [raw.stories[0].viewports[0], phone] };
+  raw.stories[1] = { ...raw.stories[1], viewports: [tablet, { name: 'small', width: 360, height: 740 }] };
+  let brief = null;
+  let dispatchOptions = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchOptions = options;
+      brief = controlFor(options).getContext();
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.run.intent = contract.parseIntent(raw);
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
+
+  assert.deepEqual(brief.screenBrowsers, {
+    'invite-suggestions': { desktop: 'browser_admin', phone: 'browser_admin_phone' },
+    'saved-toast': { tablet: 'browser_member', small: 'browser_member_phone' },
+  });
+  assert.equal(brief.browsers.read_only_admin.phoneTool, 'browser_admin_phone');
+  assert.equal(brief.browsers.member.phoneTool, 'browser_member_phone');
+  assert.equal('phoneTool' in brief.browsers.full_admin, false, 'no phone screen of its own, no phone browser');
+  assert.equal('phoneTool' in brief.browsers.guest, false);
+  assert.deepEqual(brief.declaredChanges, fixture.run.intent.stories, 'the declared changes are not rewritten');
+  // The worker starts exactly those phone browsers, and each kind records
+  // clips at its own motion screens' size.
+  assert.deepEqual(dispatchOptions.phonePersonas, ['member', 'read_only_admin']);
+  assert.equal(dispatchOptions.recordClips, true);
+  assert.equal(dispatchOptions.clipSize, '768x1024');
+  assert.equal(dispatchOptions.phoneClipSize, '360x740');
+});
+
+test('Homeroom\'s own copies tell the agent how to show the install strip, when a screen is a phone\'s', async () => {
+  // Every shots page opens with the strip dismissed (worker/shots-page-init.js);
+  // a change to the strip itself (4420, 4321) opens its start path with this flag.
+  const briefs = [];
+  for (const [selfAppSlug, phone] of [['demo', true], ['other-app', true], ['demo', false]]) {
+    const raw = fixtures.intent();
+    if (phone) raw.stories[0].viewports = [{ name: 'phone', width: 390, height: 844 }];
+    let brief = null;
+    const fixture = setup({
+      dispatch: async (options) => {
+        brief = controlFor(options).getContext();
+        return { backend: 'claude_code', threadId: 'shots-thread' };
+      },
+    });
+    fixture.run.intent = contract.parseIntent(raw);
+    await assert.rejects(execute(fixture, { selfAppSlug }), { code: 'shots_capture_incomplete' });
+    briefs.push(brief);
+  }
+  assert.deepEqual(briefs[0].installStrip, orchestrator.INSTALL_STRIP);
+  assert.match(briefs[0].installStrip.note, /dismissed on every page these browsers open/);
+  assert.match(briefs[0].installStrip.note, /on both addresses, in the phone browser/);
+  assert.equal('installStrip' in briefs[1], false, 'a child app\'s copies have no strip');
+  assert.equal('installStrip' in briefs[2], false, 'no phone screen, nothing would show it');
 });
 
 test('each side\'s home tile reaches the run: described in the brief, served from its own dapp.json', async (t) => {

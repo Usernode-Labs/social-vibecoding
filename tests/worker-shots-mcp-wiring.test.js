@@ -148,8 +148,12 @@ test('every shots browser, the guest\'s included, is denied the tools that run c
   const denied = new Set(flags.split(/\s+/));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-denied-tools-'));
   try {
-    const servers = Object.keys(writeConfig(dir).config.mcpServers).filter((name) => name.startsWith('browser_'));
-    assert.deepEqual(servers.sort(), ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member']);
+    // Every phone browser too, whichever personas a run gives one.
+    const servers = Object.keys(writeConfig(dir, {
+      SHOTS_PHONE_PERSONAS: '["member","read_only_admin","full_admin","guest"]',
+    }).config.mcpServers).filter((name) => name.startsWith('browser_'));
+    assert.deepEqual(servers.sort(), ['browser_admin', 'browser_admin_phone', 'browser_full_admin',
+      'browser_full_admin_phone', 'browser_guest', 'browser_guest_phone', 'browser_member', 'browser_member_phone']);
     for (const server of servers) {
       for (const tool of ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install']) {
         assert.ok(denied.has(`mcp__${server}__${tool}`), `${server} is denied ${tool}`);
@@ -278,6 +282,75 @@ test('the config writer gives each persona its own shots directory and records c
     // Without a shots directory there is nowhere safe to save, so no config.
     for (const missing of [undefined, '']) {
       assert.throws(() => writeConfig(dir, { SHOTS_DIR: missing }), /inputs are incomplete/);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a persona with a phone screen gets a phone browser: its sign-in, its proxy listener, a phone\'s device', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-phone-config-'));
+  const ports = '{"member":17892,"read_only_admin":17893,"full_admin":17894,"guest":17895}';
+  try {
+    const shotsDir = path.join(dir, 'shots');
+    // No phone screen, no phone browser.
+    for (const value of [undefined, '[]']) {
+      const { config } = writeConfig(dir, { SHOTS_PHONE_PERSONAS: value, SHOTS_PROXY_PERSONA_PORTS: ports });
+      assert.deepEqual(Object.keys(config.mcpServers).filter((name) => name.endsWith('_phone')), [], String(value));
+      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
+        assert.equal(config.mcpServers[server].args.includes('--device'), false, `${server} stays a desktop browser`);
+      }
+    }
+
+    const { config } = writeConfig(dir, {
+      SHOTS_PHONE_PERSONAS: '["member","read_only_admin","guest"]', SHOTS_PROXY_PERSONA_PORTS: ports,
+    });
+    assert.deepEqual(Object.keys(config.mcpServers).filter((name) => name.endsWith('_phone')).sort(),
+      ['browser_admin_phone', 'browser_guest_phone', 'browser_member_phone'], 'only the personas named');
+    for (const [desktop, persona] of [['browser_member', 'member'], ['browser_admin', 'admin'], ['browser_guest', 'guest']]) {
+      const phone = config.mcpServers[`${desktop}_phone`];
+      const desktopArgs = config.mcpServers[desktop].args;
+      const args = phone.args;
+      assert.equal(phone.command, 'node');
+      assert.deepEqual(phone.env, config.mcpServers[desktop].env);
+      // The same observer, under the phone browser's own name.
+      assert.equal(args[0], '/usr/local/bin/shots-browser-observer.js');
+      assert.equal(args[1], `${persona}_phone`);
+      // Presents as an iPhone: Playwright's device descriptor sets its user
+      // agent, touch, isMobile and screen density.
+      assert.equal(args[args.indexOf('--device') + 1], 'iPhone 15');
+      // Saves beside the persona's directory, never into it: one closed
+      // session record per directory (shots-boundary.js).
+      assert.equal(args[args.indexOf('--output-dir') + 1], path.join(shotsDir, `${persona}_phone`));
+      assert.ok(fs.statSync(path.join(shotsDir, `${persona}_phone`)).isDirectory());
+      // Everything else is the persona's own browser: the same storage state
+      // (signed in as the same persona, or the guest's signed-out state), the
+      // same proxy listener (the same identity on a hosted app), the same
+      // init script and limits.
+      const strip = (list) => list.filter((arg, index) => index > 1
+        && !['--device', 'iPhone 15', '--output-dir'].includes(arg) && !arg.startsWith(shotsDir));
+      assert.deepEqual(strip(args), strip(desktopArgs), desktop);
+      assert.equal(args[args.indexOf('--proxy-server') + 1], desktopArgs[desktopArgs.indexOf('--proxy-server') + 1]);
+      assert.equal(args[args.indexOf('--storage-state') + 1], desktopArgs[desktopArgs.indexOf('--storage-state') + 1]);
+    }
+    assert.equal(fs.existsSync(path.join(shotsDir, 'full_admin_phone')), false, 'no directory for a browser that is not there');
+
+    // The phone browsers record at the phone motion screens' size, the
+    // others at theirs; a phone browser with no size of its own takes theirs.
+    const clips = writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_RECORD_CLIPS: '1',
+      SHOTS_CLIP_SIZE: '1280x800', SHOTS_PHONE_CLIP_SIZE: '390x844' }).config;
+    assert.ok(clips.mcpServers.browser_member.args.includes('--save-video=1280x800'));
+    assert.ok(clips.mcpServers.browser_member_phone.args.includes('--save-video=390x844'));
+    const shared = writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_RECORD_CLIPS: '1',
+      SHOTS_CLIP_SIZE: '1280x800', SHOTS_PHONE_CLIP_SIZE: '390' }).config;
+    assert.ok(shared.mcpServers.browser_member_phone.args.includes('--save-video=1280x800'));
+    assert.equal(writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_PHONE_CLIP_SIZE: '390x844' })
+      .config.mcpServers.browser_member_phone.args.some((arg) => arg.startsWith('--save-video')), false,
+    'a size alone records nothing');
+
+    // A persona list the platform did not write is refused, not guessed at.
+    for (const odd of ['["admin"]', '["member","../state"]', '"member"', '{}', 'not json']) {
+      assert.throws(() => writeConfig(dir, { SHOTS_PHONE_PERSONAS: odd }), /inputs are invalid/, odd);
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -629,6 +702,75 @@ test('the guest browser\'s shots and clips are read from its own directory', asy
   const clip = await bridge.call('save_clip', { change: 'signed-out-landing', screen: 'desktop', side: 'before' });
   assert.equal(clip.isError, false);
   assert.equal(Buffer.from(uploads(bridge).at(-1).body).toString(), 'guest clip');
+});
+
+test('a phone screen\'s shots and clips are read from its phone browser\'s directory', async (t) => {
+  const bridge = bridgeFixture(t, { declaredChanges: [
+    { id: 'install-strip', persona: 'member', intent: { animation: 'motion' } },
+    { id: 'admin-sheet', persona: 'read_only_admin', intent: { animation: 'motion' } },
+  ] });
+  // As the brief names them: each change's phone screen in the persona's
+  // phone browser, its desktop screen in the persona's own.
+  const context = (await bridge.call('get_brief')).value;
+  context.screenBrowsers = {
+    'install-strip': { desktop: 'browser_member', phone: 'browser_member_phone' },
+    'admin-sheet': { phone: 'browser_admin_phone' },
+  };
+  const platformFetch = bridge.platformFetch;
+  const { tools } = loadBridge(bridge.env, async (url, init) => (new URL(url).pathname.endsWith('/context')
+    ? new Response(JSON.stringify({ ok: true, context }), { status: 200 })
+    : platformFetch(url, init)));
+  const call = async (name, args) => {
+    const result = await tools.get(name)(args);
+    return { isError: result.isError === true, value: JSON.parse(result.content[0].text) };
+  };
+  const member = path.join(bridge.shotsDir, 'member');
+  const memberPhone = path.join(bridge.shotsDir, 'member_phone');
+  const adminPhone = path.join(bridge.shotsDir, 'admin_phone');
+  for (const dir of [memberPhone, adminPhone]) fs.mkdirSync(dir);
+  const record = (dir, name, content, secondsAgo, ...pages) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, content);
+    const when = new Date(Date.now() - secondsAgo * 1000);
+    fs.utimesSync(file, when, when);
+    if (pages.length) boundary.recordSession(dir, pages);
+  };
+  const lastBody = () => Buffer.from(uploads(bridge).at(-1).body).toString();
+
+  // A still the phone browser saved, stamped by its own observer.
+  fs.writeFileSync(path.join(memberPhone, 'strip-phone-after.png'), 'phone still');
+  stamp(bridge, 'member_phone', 'strip-phone-after.png', `${HEAD}/`);
+  const still = await call('save_shot', { shots: [
+    { change: 'install-strip', screen: 'phone', side: 'after', file: 'strip-phone-after.png' },
+  ] });
+  assert.equal(still.isError, false);
+  assert.equal(lastBody(), 'phone still');
+  // Two browsers that saved the same name: the one saved last is the one meant.
+  record(member, 'same-name.png', 'desktop, earlier', 30);
+  stamp(bridge, 'member', 'same-name.png', `${HEAD}/`);
+  record(memberPhone, 'same-name.png', 'phone, just now', 1);
+  stamp(bridge, 'member_phone', 'same-name.png', `${HEAD}/`);
+  assert.equal((await call('save_shot', { shots: [
+    { change: 'install-strip', screen: 'phone', side: 'after', file: 'same-name.png' },
+  ] })).isError, false);
+  assert.equal(lastBody(), 'phone, just now');
+
+  // The desktop browser's newer session never stands for the phone clip,
+  // nor the phone browser's for the desktop one.
+  record(memberPhone, 'phone-before.webm', 'phone clip', 20, `${BASE}/`);
+  record(member, 'desktop-after.webm', 'desktop clip', 10, `${HEAD}/`);
+  assert.equal((await call('save_clip', { change: 'install-strip', screen: 'phone', side: 'before' })).isError, false);
+  assert.equal(lastBody(), 'phone clip');
+  assert.equal((await call('save_clip', { change: 'install-strip', screen: 'desktop', side: 'after' })).isError, false);
+  assert.equal(lastBody(), 'desktop clip');
+  // The read-only admin's phone browser records into admin_phone.
+  record(adminPhone, 'sheet.webm', 'admin phone clip', 1, `${HEAD}/`);
+  assert.equal((await call('save_clip', { change: 'admin-sheet', screen: 'phone', side: 'after' })).isError, false);
+  assert.equal(lastBody(), 'admin phone clip');
+  // A brief without screenBrowsers reads the persona's own directory, as
+  // before: the phone directory only when the brief names that browser.
+  assert.equal((await bridge.call('save_clip', { change: 'install-strip', screen: 'phone', side: 'after' })).isError, false);
+  assert.equal(lastBody(), 'desktop clip');
 });
 
 test('save_clip publishes a recording only when its whole session stayed on its side\'s address', async (t) => {
