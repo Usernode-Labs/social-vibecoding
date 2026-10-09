@@ -82,7 +82,10 @@ const PLURAL = /_(zero|one|two|few|many|other)$/;
  * the mistake this is for. Nothing else in the client sources has this shape
  * today; if something ever does, name it here rather than narrowing the shape.
  */
-const ID_SHAPE = /(['"`])([a-z][A-Za-z]*:[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+)\1/g;
+// The namespace part is wider than what the pack builder accepts (lowercase
+// letters and hyphens, scripts/language-packs.js NAMESPACE): a hyphenated
+// namespace is valid, and a capital in one is a typo to report, not to skip.
+const ID_SHAPE = /(['"`])([a-z][A-Za-z-]*:[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+)\1/g;
 const NOT_IDS = new Set();
 
 function usedIds(root = ROOT, files = sourceFiles(root)) {

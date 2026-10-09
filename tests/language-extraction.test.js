@@ -167,6 +167,16 @@ test('the id check finds an id in a namespace nobody defined, and an unknown key
     'probe.count_other': { text: '{{count}} probes', description: 'Fixture.' },
     'probe.unused': { text: 'Unused', description: 'Fixture.' },
   }));
+  // A hyphenated namespace is valid for the pack builder, so it is checked too.
+  put('frontend/locales/en/new-surface.json', JSON.stringify({
+    'probe.label': { text: 'Probe', description: 'Fixture.' },
+  }));
+  put('frontend/src/b.ts', [
+    "t('new-surface:probe.label');",
+    "t('new-surface:probe.missing');",
+    "t('other-surface:probe.label');",
+    "el.addEventListener('usernode:friends-changed', () => {});",
+  ].join('\n'));
   put('frontend/src/a.ts', [
     "t('core:probe.label');",
     "t('core:probe.count', { count: 2 });",
@@ -177,9 +187,11 @@ test('the id check finds an id in a namespace nobody defined, and an unknown key
     "fetch('https://example.com/a.b');",
   ].join('\n'));
   const { used, unknown, unused } = checkIds(root);
-  assert.equal(used, 6, 'every id-shaped literal is a candidate, whatever its namespace; an event name is not');
-  assert.deepEqual(unknown.map(({ id, line }) => `${line} ${id}`),
-    ['3 typo:probe.label', '4 core:probe.missing', '5 core:probe.alsoMissing']);
+  assert.equal(used, 9, 'every id-shaped literal is a candidate, whatever its namespace; an event name is not');
+  assert.deepEqual(unknown.map(({ id, file, line }) => `${file.slice(-4)}:${line} ${id}`), [
+    'a.ts:3 typo:probe.label', 'a.ts:4 core:probe.missing', 'a.ts:5 core:probe.alsoMissing',
+    'b.ts:2 new-surface:probe.missing', 'b.ts:3 other-surface:probe.label',
+  ]);
   assert.deepEqual(unused, ['core:probe.unused']);
 });
 
