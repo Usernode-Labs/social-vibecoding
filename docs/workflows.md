@@ -411,11 +411,13 @@ separate workflow Pod.
 
 - **Every process** records its flags in `wf_settings` at boot (`startWorkflow` in
   `server.js`): a flag that is on turns its machine's ownership guard on
-  (`enabled:<machine>`). A flag that is off leaves the guard as it is. The flag is per
-  process and the guard is the cluster's, so a Pod still running with the flag off (the
-  old one in a rollout, a rollback, a restart) never switches it off under the Pods that
-  run the machine. Once no process runs it, an admin turns it off in Admin → Workflows,
-  which lists a guard that is on while the flag is off. With a flag on, it also starts the runtime on its own pool
+  (`enabled:<machine>`). In `log` mode (production) a flag that is off leaves the guard
+  as it is: the flag is per process and the guard is the cluster's, so a Pod still running
+  with the flag off (the old one in a rollout, a rollback, a restart) never switches it off
+  under the Pods that run the machine. Once no process runs it, an admin turns it off in
+  Admin → Workflows, which lists a guard that is on while the flag is off. In `raise` mode
+  (development, previews, tests: one process) a flag-off boot turns it off. A rollback to
+  code from before this rule deletes it, as that code did. With a flag on, it also starts the runtime on its own pool
   (`application_name` `homeroom-workflow`), listens for outcomes so routes can wait for
   them, and runs pipeline slots. A Pod that is not the leader (the new one, during a
   rollout) therefore applies its own events at once instead of answering `202`. With

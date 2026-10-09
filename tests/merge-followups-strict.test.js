@@ -58,3 +58,18 @@ test('homeroom-bot-chat noteRequestStatus: strict throws; otherwise it resolves 
   assert.equal(await chat.noteRequestStatus(down(), { appId: 2, issueNumber: 7, status: 'live' }), 0);
   await assert.rejects(chat.noteRequestStatus(down(), { appId: 2, issueNumber: 7, status: 'live', deps: { strict: true } }), /db down/);
 });
+
+test('homeroom-bot-chat noteRequestStatus strict: the chip write itself failing throws too', async () => {
+  const chat = require('../src/services/homeroom-bot-chat');
+  const pool = {
+    async query(sql) {
+      if (/FROM chat_bot_requests r JOIN apps a/.test(String(sql))) {
+        return { rows: [{ kind: 'filed', chat_message_id: 3, app_id: 2, app_slug: 'shop', requester_id: 1, issue_number: 7 }] };
+      }
+      if (/UPDATE chat_messages/.test(String(sql))) throw new Error('db down');
+      return { rows: [] };
+    },
+  };
+  assert.equal(await chat.noteRequestStatus(pool, { appId: 2, issueNumber: 7, status: 'live' }), 1, 'never throws without strict');
+  await assert.rejects(chat.noteRequestStatus(pool, { appId: 2, issueNumber: 7, status: 'live', deps: { strict: true } }), /db down/);
+});

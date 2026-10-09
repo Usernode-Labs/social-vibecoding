@@ -291,6 +291,7 @@ async function setStatus(pool, { appId, messageId, issueNumber, status, sessionI
     wsModule(deps).broadcast(Number(appId), { type: 'bot_request_status', messageId: Number(messageId), botRequest: value });
     return true;
   } catch (err) {
+    if (deps.strict) throw err;
     log.warn('homeroom-bot-chat', 'Could not set a chat request\'s status', { appId, messageId, err: err.message });
     return false;
   }
@@ -625,6 +626,7 @@ async function followCards(pool, { rows, deps = {} }) {
       });
       for (const card of cards) pushCard(userId, theirs[0].app_slug, card, deps);
     } catch (err) {
+      if (deps.strict) throw err;
       log.warn('homeroom-bot-chat', 'Could not bring a chat request\'s card up to date', { userId, err: err.message });
     }
   }

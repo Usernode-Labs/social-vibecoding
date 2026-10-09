@@ -32,11 +32,12 @@ let log: Logger | null = null;
 // - ownership_mode: 'raise' (tests, staging, local) or 'log' (production,
 //   until no legacy writer is left);
 // - enabled:<machine>: the machine's guard. A boot with its flag on sets
-//   it; a boot with its flag off leaves it. The flag is per process and the
-//   guard is the cluster's: an old Pod still running (a rollout, a rollback,
-//   a restart of a Pod from before) must not switch it off under the Pods
-//   that run the machine. It goes only when an admin turns it off
-//   (turnGuardOff, Admin → Workflows) once no process runs the machine.
+//   it. In 'log' mode (production) a boot with its flag off leaves it: the
+//   flag is per process and the guard is the cluster's, and an old Pod still
+//   running (a rollout, a rollback, a restart of a Pod from before) must not
+//   switch it off under the Pods that run the machine. It goes when an admin
+//   turns it off (turnGuardOff, Admin → Workflows) once no process runs the
+//   machine. In 'raise' mode a flag-off boot turns it off, as before.
 //   With it off, the triggers leave enrolled rows to the legacy writers
 //   again, and the machine closes any instance whose row they closed when
 //   it comes back.
@@ -57,8 +58,21 @@ const FLAGS = new Map<string, { flag: string; on: (config: any) => boolean }>([
 ]);
 
 export async function syncSettings(pool: Pool, config: any): Promise<void> {
-  await setSetting(pool, 'ownership_mode', config.wfOwnershipMode === 'log' ? 'log' : null);
-  for (const [name, { on }] of FLAGS) if (on(config)) await setSetting(pool, `enabled:${name}`, '1');
+  const logMode = config.wfOwnershipMode === 'log';
+  await setSetting(pool, 'ownership_mode', logMode ? 'log' : null);
+  for (const [name, f] of FLAGS) {
+    if (f.on(config)) { await setSetting(pool, `enabled:${name}`, '1'); continue; }
+    // In 'raise' mode (development, staging previews, tests: one process,
+    // where a guard left on refuses every legacy write to the rows it
+    // held), a flag-off boot turns it off as before. In 'log' mode
+    // (production, where Pods overlap) it stays until an admin turns it off.
+    if (!logMode) { await setSetting(pool, `enabled:${name}`, null); continue; }
+    const { rows } = await pool.query('SELECT 1 FROM wf_settings WHERE key = $1', [`enabled:${name}`]);
+    if (rows.length) {
+      (log || legacy('services/logger')).warn('workflow', 'A machine\'s ownership guard is on while its flag is off here; turn it off in Admin → Workflows once no process runs it',
+        { machine: name, flag: f.flag });
+    }
+  }
 }
 
 // Each machine's guard, and whether this process's flag runs it: the admin

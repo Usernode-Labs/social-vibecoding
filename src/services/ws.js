@@ -92,6 +92,7 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
         const github = require('./github');
         const numbers = Array.isArray(payload.numbers) ? payload.numbers : [];
         if (numbers.length) github.noteIssuesClosed(r.owner, r.repo, numbers);
+        if (Array.isArray(payload.open) && payload.open.length) github.unsuppressIssues(r.owner, r.repo, payload.open);
         github.invalidateIssuesCache(r.owner, r.repo);
       }
       return;

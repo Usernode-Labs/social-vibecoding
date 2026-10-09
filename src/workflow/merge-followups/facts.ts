@@ -51,11 +51,14 @@ export interface Facts { session: Session | null; app: App | null }
 // (`r`, shot_runs): not finished, and heard from lately. A live run renews
 // updated_at every 30 seconds; a run silent for five minutes (forty-five
 // for one that never reported progress) is one services/shots-gc.js
-// recovers as interrupted, and no longer holds anything. This is what
-// worker.js's in-memory hold said, in the process that held it.
-export const LIVE_SHOTS_RUN = `r.state IN ('planned', 'provisioning', 'exploring', 'replaying', 'reviewing')
-     AND r.updated_at > NOW() - (CASE WHEN COALESCE(r.trace_summary, '{}'::jsonb) ? 'progress'
-                                      THEN INTERVAL '5 minutes' ELSE INTERVAL '45 minutes' END)`;
+// recovers as interrupted, and no longer holds anything. A 'planned' row is
+// claimed within seconds of being made (shots-orchestrator
+// scheduleForSession), or never: a merged change starts no new run. This is
+// what worker.js's in-memory hold said, in the process that held it.
+export const LIVE_SHOTS_RUN = `((r.state = 'planned' AND r.updated_at > NOW() - INTERVAL '2 minutes')
+     OR (r.state IN ('provisioning', 'exploring', 'replaying', 'reviewing')
+         AND r.updated_at > NOW() - (CASE WHEN COALESCE(r.trace_summary, '{}'::jsonb) ? 'progress'
+                                          THEN INTERVAL '5 minutes' ELSE INTERVAL '45 minutes' END)))`;
 
 // The newest such run of one change, or null: worker.retire's read.
 export async function liveShotsRun(db: Pick<Tx, 'query'>, sessionId: number): Promise<string | null> {

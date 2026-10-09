@@ -29,10 +29,6 @@ export interface Applied {
  *           refused: [{ key, scope, reason }] }.
  */
 export async function applyInTransaction(db: Queryable, { sessionId, dataKey }: { sessionId: number; dataKey: string }): Promise<Applied> {
-  // A process without the data key would read every held value as
-  // unreadable and discard it: that is a configuration fault, never a
-  // verdict about the values.
-  if (!dataKey) throw new Error('The data encryption key is not configured; the declared values cannot be read');
   const { rows } = await db.query(
     `SELECT id, app_id, scope, key, declaration, value_enc, value_applied_at, created_by
        FROM pending_secret_declarations
@@ -48,6 +44,10 @@ export async function applyInTransaction(db: Queryable, { sessionId, dataKey }: 
     let hadValue = !!r.value_applied_at;
     let reason: string | null = null;
     if (r.value_enc) {
+      // A process without the data key would read every held value as
+      // unreadable and discard it: that is a configuration fault, never a
+      // verdict about the values.
+      if (!dataKey) throw new Error('The data encryption key is not configured; the declared values cannot be read');
       const plaintext = decrypt(r.value_enc, dataKey);
       if (plaintext == null) {
         reason = 'its value could no longer be read';

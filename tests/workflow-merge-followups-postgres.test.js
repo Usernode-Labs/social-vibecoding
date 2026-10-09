@@ -529,7 +529,8 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     const { rows: [digest] } = await pool.query(`SELECT read_at FROM notifications WHERE user_id = $1 AND kind = 'vote_digest'`, [digested.id]);
     assert.ok(digest.read_at, 'its one waiting change is decided, though the row still read promoted when it settled');
     const told = pushed.filter((p) => p.kind === 'user' && p.data.type === 'notifications_changed').map((p) => p.routing.userId).sort();
-    assert.deepEqual(told, [digested.id, asked.id].sort(), 'not the one whose row was already read');
+    // And everyone with a row about the change: its wording follows the change's status.
+    assert.deepEqual(told, [digested.id, asked.id, read.id].sort());
   });
 
   await t.test('every web process stops listing the requests a merge closes, and re-reads when they close', async () => {
@@ -539,9 +540,10 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
     await merge(s);
     const closed = pushed.filter((p) => p.kind === 'issues_closed');
     assert.deepEqual(closed.map((p) => [p.routing, p.data.numbers]), [[{ owner: 'acme', repo: a.slug }, [5, 6]]]);
-    work.results.set(WORK.issues, { closedByWatcher: [5, 6] });
+    work.results.set(WORK.issues, { closed: [5], skipped: [], stillOpen: [9] });
     try { await settle(); } finally { work.results.delete(WORK.issues); }
-    assert.ok(pushed.filter((p) => p.kind === 'issues_closed').length >= 2, 'and the lists forget their copy when the work ends');
+    const ended = pushed.filter((p) => p.kind === 'issues_closed').at(-1);
+    assert.deepEqual(ended.data, { numbers: [5], open: [9] }, 'what the work closed, and what it found still open, in every process');
   });
 
   await t.test('a process without the data key fails the merge transition instead of discarding held values', async () => {
@@ -552,7 +554,30 @@ test('merge-followups machine against the full PostgreSQL schema', { timeout: 12
       `INSERT INTO pending_secret_declarations (app_id, session_id, scope, key, declaration, value_enc, created_by)
        VALUES ($1, $2, 'app', 'KEPT', '{}', $3, $4)`, [a.id, s.id, secrets.encrypt('v', DATA_KEY), s.author.id]);
     await assert.rejects(applyInTransaction(pool, { sessionId: s.id, dataKey: '' }), /data encryption key is not configured/);
+    // A merge that declared nothing needs no key.
+    const plain = await proposal(a);
+    assert.deepEqual(await applyInTransaction(pool, { sessionId: plain.id, dataKey: '' }), { applied: [], refused: [] });
     const { rows: [held] } = await pool.query('SELECT status FROM pending_secret_declarations WHERE session_id = $1', [s.id]);
     assert.equal(held.status, 'pending', 'kept for a process that can read it');
+  });
+
+  await t.test('what counts as a shots run still using the worker: heard from lately, or a planned row just made', async () => {
+    const { liveShotsRun } = require('../src/workflow/merge-followups/facts.ts');
+    const a = await app();
+    const run = async (state, { ago, progress = true } = {}) => {
+      const s = await proposal(a);
+      const id = crypto.randomBytes(16).toString('hex');
+      await pool.query(
+        `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, trace_summary, updated_at)
+         VALUES ($1, $2, $3, $4, '{}', $5, $6, NOW() - make_interval(secs => $7))`,
+        [id, s.id, SHA('0'), SHA('1'), state, progress ? '{"progress": {}}' : null, ago]);
+      return (await liveShotsRun(pool, s.id)) === id;
+    };
+    assert.equal(await run('exploring', { ago: 4 * 60 }), true, 'heartbeated four minutes ago');
+    assert.equal(await run('exploring', { ago: 6 * 60 }), false, 'silent past five minutes: interrupted');
+    assert.equal(await run('provisioning', { ago: 30 * 60, progress: false }), true, 'never reported progress: forty-five minutes');
+    assert.equal(await run('planned', { ago: 30 }), true, 'just made, about to be claimed');
+    assert.equal(await run('planned', { ago: 3 * 60 }), false, 'a planned row nobody claimed will never start');
+    assert.equal(await run('failed', { ago: 0 }), false, 'finished');
   });
 });

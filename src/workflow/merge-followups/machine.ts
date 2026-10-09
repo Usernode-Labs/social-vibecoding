@@ -439,13 +439,17 @@ function resultOf(status: Followup['status']) {
     // open issues (an included change's own closes are named), and the
     // lists re-read. Only when it ran: GitHub off skips it, as [main]'s
     // merge did.
-    if (p.kind === WORK.issues && status === 'done' && !(result as { skipped?: string }).skipped && d.repo) {
-      const closeOnly = !!(prev.input as { closeOnly?: boolean } | null)?.closeOnly;
-      const closed = closeOnly ? ((result as { closed?: unknown[] }).closed || []).map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
-      const cache = issuesClosed({ ...d.repo, numbers: closed });
-      if (closeOnly) return { next: { name: s.name, data: d }, push: [cache] };
-      return { next: { name: s.name, data: d }, push: [cache, issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' })],
-        notify: [{ type: 'boardChange', appId: d.appId, appSlug: d.appSlug }] };
+    // What the work closed, and what it found still open (shown again),
+    // in every process: the handler's own updates reached only its own.
+    // (`skipped` is a reason when the work did not run, GitHub off; the
+    // watcher's own result carries a list of that name.)
+    if (p.kind === WORK.issues && status === 'done' && typeof (result as { skipped?: unknown }).skipped !== 'string' && d.repo) {
+      const numbers = (v: unknown) => (Array.isArray(v) ? v : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      const r = result as { closed?: unknown; stillOpen?: unknown };
+      return { next: { name: s.name, data: d }, push: [
+        issuesClosed({ ...d.repo, numbers: numbers(r.closed), open: numbers(r.stillOpen) }),
+        issueUpdate({ action: 'github_synced', appSlug: d.appSlug, appId: d.appId, source: 'pr_merged' }),
+      ], notify: [{ type: 'boardChange', appId: d.appId, appSlug: d.appSlug }] };
     }
     return { next: { name: s.name, data: d } };
   };
@@ -522,7 +526,11 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
 
   return defineMachine<MFState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: the retire waits on the shots run's row and asks again later, the
+    // carried head and busy refusals, teardown after the delivery's result,
+    // the issue lists' push. During a rollout an older Pod leaves the
+    // instances this version wrote alone.
+    version: 2,
     events: EVENTS,
     create: ['Merged', 'Included'],
     terminal: ['live'],
@@ -604,13 +612,15 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         await changeClosed(tx,
           { change: { id: w.sessionId, agent_session_id: w.agentSessionId, pr_number: w.prNumber }, outcome: 'merged' });
       },
-      // Everyone whose bell the decision settled re-reads it: the asks
-      // about this change, and digests it was the last one waiting in
-      // (those name no session).
+      // Everyone whose bell the decision changed re-reads it: the asks it
+      // settled, digests it was the last one waiting in (those name no
+      // session), and every row about the change, whose wording follows its
+      // status (going live, then live).
       bell: async (tx, w, ctx) => {
-        for (const userId of await settleDecidedChange(tx, w.sessionId, { status: 'merged' })) {
-          ctx.push(toUser(userId, { type: 'notifications_changed' }));
-        }
+        const told = new Set(await settleDecidedChange(tx, w.sessionId, { status: 'merged' }));
+        const { rows } = await tx.query('SELECT DISTINCT user_id FROM notifications WHERE session_id = $1', [w.sessionId]);
+        for (const r of rows) told.add(Number(r.user_id));
+        for (const userId of told) ctx.push(toUser(userId, { type: 'notifications_changed' }));
       },
       mergedLine: writeMergedLine,
       mergedNotification: writeMergedNotification,

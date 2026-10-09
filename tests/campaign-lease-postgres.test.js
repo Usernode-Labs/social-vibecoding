@@ -111,6 +111,21 @@ test('maintenance campaigns: one driver at a time, whichever process calls', { t
     assert.deepEqual((await rowsOf(id)).map((r) => r.runner_id), after.map((r) => r.runner_id), 'nothing it wrote landed');
   });
 
+  await t.test('a campaign a driver from before the lease is still moving is left to it', async () => {
+    const id = await campaign();
+    const { rows: [one] } = await pool.query(`SELECT id FROM apps WHERE slug = 'one'`);
+    // Its rows, as that driver leaves them: one claimed a minute ago, no lease taken.
+    await pool.query(
+      `INSERT INTO maintenance_campaign_apps (campaign_id, app_id, state, updated_at) VALUES ($1, $2, 'running', NOW() - INTERVAL '1 minute')`,
+      [id, one.id]);
+    assert.deepEqual(await fleet.runCampaign({}, pool, id), { ran: false, reason: 'not_taken' });
+    // Quiet for half an hour: it is gone, and the campaign is taken up.
+    await pool.query(`UPDATE maintenance_campaign_apps SET updated_at = NOW() - INTERVAL '31 minutes' WHERE campaign_id = $1`, [id]);
+    model.calls = 0;
+    assert.deepEqual(await fleet.runCampaign({}, pool, id), { ran: true });
+    assert.deepEqual((await rowsOf(id)).map((r) => r.state), ['skipped', 'skipped']);
+  });
+
   await t.test('a process shutting down stops between apps and lets the lease go for the next leader', async () => {
     const id = await campaign();
     shutdown.now = true;

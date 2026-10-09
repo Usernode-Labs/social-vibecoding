@@ -86,21 +86,24 @@ test('a notification named by a workflow push is read by the relay and reaches i
 test('issues a workflow closed reach this process\'s copy of the open-issues list, and no socket', async () => {
   const github = require('../src/services/github');
   const calls = [];
-  const saved = { note: github.noteIssuesClosed, bust: github.invalidateIssuesCache };
+  const saved = { note: github.noteIssuesClosed, bust: github.invalidateIssuesCache, show: github.unsuppressIssues };
   github.noteIssuesClosed = (...a) => { calls.push(['note', ...a]); };
   github.invalidateIssuesCache = (...a) => { calls.push(['bust', ...a]); };
+  github.unsuppressIssues = (...a) => { calls.push(['show', ...a]); };
   const sock = await openEvents('author');
   try {
     relay({ kind: 'issues_closed', routing: { owner: 'acme', repo: 'shop' }, data: { numbers: [5, 6] }, fromWorkflow: true });
-    relay({ kind: 'issues_closed', routing: { owner: 'acme', repo: 'shop' }, data: { numbers: [] }, fromWorkflow: true });
+    // Still open after all: shown again.
+    relay({ kind: 'issues_closed', routing: { owner: 'acme', repo: 'shop' }, data: { numbers: [], open: [8] }, fromWorkflow: true });
     // Only a machine says so: a peer's publish of this kind is not one.
     relay({ kind: 'issues_closed', routing: { owner: 'acme', repo: 'shop' }, data: { numbers: [7] } });
     await settle();
-    assert.deepEqual(calls, [['note', 'acme', 'shop', [5, 6]], ['bust', 'acme', 'shop'], ['bust', 'acme', 'shop']]);
+    assert.deepEqual(calls, [['note', 'acme', 'shop', [5, 6]], ['bust', 'acme', 'shop'], ['show', 'acme', 'shop', [8]], ['bust', 'acme', 'shop']]);
     assert.deepEqual(sock.received.filter((m) => m.type !== 'platform_version'), [], 'nothing for browsers');
   } finally {
     github.noteIssuesClosed = saved.note;
     github.invalidateIssuesCache = saved.bust;
+    github.unsuppressIssues = saved.show;
     sock.close();
   }
 });

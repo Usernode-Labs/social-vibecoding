@@ -214,9 +214,12 @@ Rules:
  * the caller records those as state='failed' with the message.
  *
  * `onUsage(usage, servedModel)` is invoked per LLM call so the caller
- * can attribute spend.
+ * can attribute spend. `stopped()`, asked before each call, ends the run
+ * (an error with code 'campaign_stopped') when the caller no longer drives
+ * the campaign: its lease went to another driver, or its process is
+ * shutting down.
  */
-async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
+async function runAppChange({ campaign, app, exemplarSummary, onUsage, stopped = null }) {
   const repo = parseRepo(app.repo_url);
   if (!repo) throw new Error(`Unparseable repo_url: ${app.repo_url}`);
 
@@ -311,6 +314,9 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
   let nudged = false;
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+    if (stopped && stopped()) {
+      throw Object.assign(new Error('The campaign is no longer this driver\'s'), { code: 'campaign_stopped' });
+    }
     const res = await llm.streamChat({
       messages,
       systemPrompt,
@@ -512,13 +518,20 @@ function kickChecks(config, pool, session, app) {
 
 // The lease, taken: the campaign row is this driver's while lease_until is
 // ahead, and nobody else's lease is. No row back: another driver holds it,
-// or the campaign is not running.
+// or the campaign is not running. A campaign no driver ever leased whose
+// app row moved in the last half hour is driven by a process from before
+// the lease (the rollout that brings it): left to that driver, which keeps
+// its rows moving, until it goes quiet.
 async function takeLease(pool, campaignId, runner) {
   const { rows } = await pool.query(
     `UPDATE maintenance_campaigns
         SET runner_id = $2, lease_until = NOW() + make_interval(secs => $3)
       WHERE id = $1 AND status = 'running'
         AND (lease_until IS NULL OR lease_until < NOW() OR runner_id = $2)
+        AND NOT (runner_id IS NULL AND EXISTS (
+              SELECT 1 FROM maintenance_campaign_apps
+               WHERE campaign_id = $1 AND state = 'running'
+                 AND updated_at > NOW() - INTERVAL '30 minutes'))
       RETURNING *`,
     [campaignId, runner, CAMPAIGN_LEASE_SECONDS]
   );
@@ -551,14 +564,20 @@ async function runCampaign(config, pool, campaignId) {
     return { ran: false, reason: 'not_taken' };
   }
   let lost = false;
-  const keep = async () => {
-    if (lost) return false;
-    try {
-      if (!(await renewLease(pool, campaignId, runner))) lost = true;
-    } catch (err) {
+  let renewing = Promise.resolve(true);
+  // Renew the lease. A renewal that fails is not proof it is still this
+  // driver's: the heartbeat lets it pass (the next renewal decides), but
+  // before anything it must not do twice (`sure`) the driver stops.
+  const keep = ({ sure = false } = {}) => {
+    if (lost) return Promise.resolve(false);
+    renewing = renewLease(pool, campaignId, runner).then((mine) => {
+      if (!mine) lost = true;
+      return mine;
+    }, (err) => {
       log.warn('fleet-maintenance', 'Campaign lease renewal failed', { campaignId, err: err.message });
-    }
-    return !lost;
+      return !sure;
+    });
+    return renewing;
   };
   const heartbeat = setInterval(() => { void keep(); }, CAMPAIGN_RENEW_MS);
   heartbeat.unref?.();
@@ -659,6 +678,7 @@ async function runCampaign(config, pool, campaignId) {
       try {
         const out = await runAppChange({
           campaign, app, exemplarSummary,
+          stopped: () => lost || lifecycle.isShuttingDown(),
           onUsage: (usage, servedModel) => {
             const cost = llm.estimateCostCents(usage, servedModel);
             // Attributed to the platform user purely as an audit trail
@@ -682,9 +702,15 @@ async function runCampaign(config, pool, campaignId) {
         }
 
         // Opening the PR is the step that must not happen twice: only with
-        // the lease still this driver's.
-        if (!(await keep())) {
-          log.warn('fleet-maintenance', 'Campaign lease lost before opening a PR; another driver goes on', { campaignId, slug: app.slug });
+        // the lease renewed just now, and not in a process on its way out
+        // (its pool may close before the row records the PR). The row stays
+        // 'running', and the next driver runs it again.
+        if (lifecycle.isShuttingDown()) {
+          log.info('fleet-maintenance', 'Campaign paused before opening a PR: this process is shutting down', { campaignId, slug: app.slug });
+          return { ran: true, paused: 'shutting_down' };
+        }
+        if (!(await keep({ sure: true }))) {
+          log.warn('fleet-maintenance', 'Campaign lease not certain before opening a PR; another driver goes on', { campaignId, slug: app.slug });
           return { ran: true, paused: 'lease_lost' };
         }
         const opened = await openCampaignProposal({
@@ -698,6 +724,11 @@ async function runCampaign(config, pool, campaignId) {
           [row.row_id, opened.sessionId, runner]
         );
       } catch (err) {
+        // Stopped mid-app: the row is left 'running' for the next driver.
+        if (err.code === 'campaign_stopped') {
+          log.info('fleet-maintenance', 'Campaign app stopped: no longer this driver\'s', { campaignId, slug: app.slug });
+          return { ran: true, paused: lifecycle.isShuttingDown() ? 'shutting_down' : 'lease_lost' };
+        }
         log.warn('fleet-maintenance', 'Campaign app failed', {
           campaignId, slug: app.slug, err: err.message,
         });
@@ -739,6 +770,8 @@ async function runCampaign(config, pool, campaignId) {
     return { ran: true };
   } finally {
     clearInterval(heartbeat);
+    // A renewal already on its way must not land after the release below.
+    await renewing.catch(() => {});
     // Let it go at once, for the next driver (a resume after a shutdown).
     await pool.query(
       `UPDATE maintenance_campaigns SET lease_until = NULL WHERE id = $1 AND runner_id = $2`,

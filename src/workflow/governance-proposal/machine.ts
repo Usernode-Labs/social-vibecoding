@@ -375,7 +375,10 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
 
   return defineMachine<GovState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2: campaign.run work (the startCampaign notifier went), the issue lists'
+    // push, the forcing admin as a platform variable's author. During a
+    // rollout an older Pod leaves the instances this version wrote alone.
+    version: 2,
     events: EVENTS,
     create: ['Filed'],
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],
