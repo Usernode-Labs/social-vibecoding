@@ -197,6 +197,34 @@ test('what the bot\'s progress says waits on them is Needs you, the question it 
   assert.deepEqual(work.history, [], 'the group\'s vote is not theirs, and it has no run here');
 });
 
+// #4539: a request closed while it still waited on its person leaves Needs
+// you and reads stopped in History, the tile a build stopped by its request
+// closing already gets. Nothing is retired, so reopening brings it back.
+test('#4539: a request closed while it waited on its person reads stopped, in History and not Needs you', () => {
+  // Its plan was ready and waited for Build it.
+  const waiting = [run(10, 9, 1, { verdict: 'ready', awaiting_go_at: at(1).toISOString() })];
+  const open = tray.arrange([], waiting);
+  assert.deepEqual(open.history.map((job) => [job.outcome, job.doing]), [[null, tray.NOT_FINISHED]], 'open, it is not an ending');
+  const closed = tray.arrange([], [run(10, 9, 1, { verdict: 'ready', awaiting_go_at: at(1).toISOString(), request_closed: true })]);
+  assert.deepEqual(closed.needsYou, [], 'a closed request needs nobody');
+  const [stopped] = closed.history;
+  assert.deepEqual([stopped.key, stopped.outcome, stopped.doing], ['ear-trainer#9', 'stopped', null]);
+  // So does its question that was never answered; an open one still waits.
+  const asked = tray.arrange([], [run(12, 4, 2, { request_closed: true })]);
+  assert.deepEqual(asked.needsYou, []);
+  assert.deepEqual(asked.history.map((job) => [job.key, job.outcome]), [['ear-trainer#4', 'stopped']]);
+  assert.deepEqual(tray.arrange([], [run(12, 4, 2, {})]).needsYou.map((job) => [job.key, job.outcome]), [['ear-trainer#4', 'question']]);
+  // Its earlier runs keep their own words.
+  const withEarlier = tray.arrange([], [run(12, 9, 0.5, { request_closed: true }), run(11, 9, 1, { verdict: 'question' })]);
+  assert.deepEqual(withEarlier.history.map((job) => job.outcome), ['stopped']);
+  assert.deepEqual(withEarlier.history[0].earlier.map((r) => [r.id, r.outcome]), [[11, 'question']]);
+  // A proposal still open shows the proposal's state, not the stop: the
+  // closed request's lead is its proposal's run.
+  const proposed = tray.arrange([], [run(12, 9, 2, { request_closed: true, verdict: 'ready',
+    proposal_session_id: 40, proposal_status: 'promoted', proposal_at: at(2.5) })]);
+  assert.deepEqual(proposed.history.map((job) => [job.id, job.outcome]), [[12, 'proposed']]);
+});
+
 test('a build the bot is still on is the work Now shows, not an earlier run; one nothing finished yet says so, never that it stopped', () => {
   const rows = [run(2, 7, 1, { verdict: 'ready' }), run(1, 7, 20, { verdict: 'question' })];
   const building = tray.arrange([entry(7, 'building', { step: 3, stepName: 'Build it' })], rows);
