@@ -750,6 +750,16 @@ const AppView = {
   // asserting a count or an emptiness they don't know yet. See
   // frontend/src/features/dev-board/card/skeleton.tsx.
   _devDataReady: false,
+  // The app the dev-data lists (`_ghIssues`, `_proposals`, `_merged`, …)
+  // were loaded FOR — set beside `_devDataReady` in _fetchDevData and
+  // deliberately NOT cleared by open() or close() (#4524). The lists are
+  // only overwritten when the next app's own load lands, so until then they
+  // still name the app they were read for, and `_findItem` consults them
+  // only for that app: issue numbers repeat across every app's repo, and a
+  // topic page that now paints before the board loads would otherwise
+  // resolve against the previous app's rows. Stale lists for the SAME app
+  // are the cached answer a topic page may draw from.
+  _devDataSlug: null,
   // One-shot flag set by the "Create proposal" button so the freshly
   // opened dev session renders a "promoting this PR creates the
   // proposal" hint.
@@ -4655,35 +4665,95 @@ const AppView = {
       return;
     }
 
-    const ok = await AppView._loadDevData();
-    // The view may have been replaced (or retargeted) while the fetch
-    // was in flight.
-    let t = AppView._devTopic;
-    if (!document.getElementById('dev-topic-thread') || !t
-        || t.kind !== ref.kind || t.id !== ref.id) return;
-    // The Completed list is keyset-paginated, so a merged proposal beyond
-    // the first page (deep link, shared URL, or one paged-in then lost when
-    // _loadDevData reset _merged) won't be in any cached list. Rather than
-    // bounce to the forum, fetch just that one proposal on demand and keep
-    // it in a dedicated cache that survives WS-driven _loadDevData resets.
-    // (#1115) The same applies to an APPLIED close-issue proposal: those
-    // rows live in the very same keyset-paginated Completed stream, and
-    // _govProposals only ever holds OPEN governance rows — so every settled
-    // close proposal outside the freshly-reset first page was a dead click.
-    // (#2365) And a CLOSED issue: _ghIssues holds open issues only, so the
-    // issue a merged proposal closed — which that proposal still links to —
-    // resolves only through its own single-issue fetch.
-    if (ok && ['proposal', 'session', 'gov', 'issue'].includes(ref.kind)
-        && !AppView._findTopicItem()) {
-      if (ref.kind === 'gov') await AppView._fetchGovProposalById(ref.id);
-      else if (ref.kind === 'issue') await AppView._fetchIssueByNumber(ref.id);
-      else await AppView._fetchProposalById(ref.id);
-      // Re-check staleness: the user may have navigated away mid-fetch.
-      t = AppView._devTopic;
-      if (!document.getElementById('dev-topic-thread') || !t
-          || t.kind !== ref.kind || t.id !== ref.id) return;
-    }
-    if (!ok || !AppView._findTopicItem()) {
+    // ── Fast open (#4524): the page draws when ITS OWN item is in hand ──
+    //
+    // The board load used to gate everything here: _loadDevData ran to
+    // completion before the topic even looked for its item, and on an app
+    // this browser had not opened recently the slowest board read (a cold
+    // /github-issues) gated the page for seconds. Now the board load runs
+    // on UNAWAITED, and the page paints from whichever resolves the item
+    // first — the board (which may already hold it, same app) or the
+    // item's own single fetch, started in the same instant. Board details
+    // that come from the lists ("in progress", headless) can appear a
+    // moment later, when the board settles and the head repaints from its
+    // row. Nothing here changes what the page shows once loaded.
+    const appSlug = AppView.appData && AppView.appData.slug;
+    const attemptId = window.UITelemetry?.attempt?.('topic_load', {
+      screen: 'app_detail', appSlug, timeoutMs: 12_000, abandonOnHide: true,
+    });
+    // The view may have been replaced (or retargeted) while a fetch is in
+    // flight; every continuation checks this before it writes anything.
+    const live = () => {
+      const t = AppView._devTopic;
+      return !!document.getElementById('dev-topic-thread') && !!t
+        && t.kind === ref.kind && t.id === ref.id;
+    };
+    const note = (outcomeCode, detail) => {
+      if (attemptId) window.UITelemetry?.outcome?.(attemptId, outcomeCode, detail);
+    };
+    const cancelAttempt = () => {
+      if (attemptId) window.UITelemetry?.cancel?.(attemptId);
+    };
+    let painted = false;
+    let concluded = false;
+    let boardDone = false;
+    let itemDone = false;
+    let ok = false;
+    let finish;
+    const settled = new Promise((resolve) => { finish = resolve; });
+    // Their threads need no item to mount — the request's and the
+    // governance discussion are reply threads on the ref alone. A change's
+    // (proposal/session) thread still waits for the item, because its
+    // "Only you can see this change" notice reads the row's status.
+    let threadMounted = ref.kind === 'issue' || ref.kind === 'gov';
+    if (threadMounted) AppView._mountTopicThread();
+    // Paint at most once: from the same-app lists or an on-demand cache if
+    // they already resolve the item, otherwise from the single fetch.
+    const paint = () => {
+      if (painted || concluded) return true;
+      if (!live()) {
+        concluded = true;
+        cancelAttempt();
+        finish();
+        return true;
+      }
+      const item = AppView._findTopicItem();
+      if (!item) return false;
+      painted = true;
+      // #2605: a link that asked for this change's Build panel predates the
+      // move, and the panel is the dev session's own page now. Checked here,
+      // once the item has resolved, because whether the change HAS a build
+      // surface is what decides between redirecting and staying put. The
+      // page still opened — record it, rather than leave the mark to time
+      // out on a screen this module handed off.
+      if (['proposal', 'session'].includes(ref.kind)
+          && AppView._redirectLegacyBuildLink(item)) {
+        note('success');
+        finish();
+        return true;
+      }
+      // #4367: an old `dev/proposals/<id>` address of a change that has a
+      // pull request becomes `dev/changes/<N>`, in place (no Back entry).
+      if (ref.kind === 'proposal') {
+        AppView._canonicalizeChangeAddress(AppView._findTopicItem());
+      }
+      // #363: mount the thread FIRST so its header slot (#gc-thread-head)
+      // exists, then paint the topic card/body into it.
+      if (!threadMounted) {
+        threadMounted = true;
+        AppView._mountTopicThread();
+      }
+      AppView._renderTopicHead();
+      note('success');
+      finish();
+      return true;
+    };
+    // Both sources settled and nothing painted, still on this topic: today's
+    // miss branch, unchanged. `settled` is released by the caller below, so
+    // the awaited openTopic callers are not held by the fallback itself.
+    const onMiss = () => {
+      concluded = true;
+      note('failure', { errorCode: 'not_found' });
       // Missing ref (an issue GitHub no longer serves, archived session, bad
       // link, or a proposal that genuinely doesn't exist / is inaccessible)
       // — fall back to the card list.
@@ -4696,26 +4766,66 @@ const AppView = {
       //
       // (#2776) Unless this was the Workshop tab returning to the card you
       // left: that one goes quietly back to the app selector instead.
-      if (App._abandonWorkshopResume?.()) return;
-      if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast('Couldn’t open that proposal’s discussion.');
+      if (!ok || !AppView._findTopicItem()) {
+        if (App._abandonWorkshopResume?.()) return;
+        if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
+          PlatformUI.toast('Couldn’t open that proposal’s discussion.');
+        }
+        App.switchTab('dev');
+        return;
       }
-      App.switchTab('dev');
-      return;
+    };
+    const settle = () => {
+      if (painted || concluded) return;
+      if (!boardDone || !itemDone) return;
+      if (!live()) {
+        concluded = true;
+        cancelAttempt();
+        finish();
+        return;
+      }
+      onMiss();
+      finish();
+    };
+    // The Completed list is keyset-paginated, so a merged proposal beyond
+    // the first page (deep link, shared URL, or one paged-in then lost when
+    // _loadDevData reset _merged) won't be in any cached list, and a CLOSED
+    // issue is not in _ghIssues's open list. The single fetch answers both —
+    // and since the page no longer waits for the board, it is also what
+    // paints a cold open. The fetchers are best-effort and swallow their own
+    // errors, so a rejection here is not expected; treat it as a miss all
+    // the same.
+    if (paint()) {
+      itemDone = true;
+    } else {
+      AppView._fetchTopicItem(ref).finally(() => {
+        itemDone = true;
+        paint();
+        settle();
+      });
     }
-    // #2605: a link that asked for this change's Build panel predates the
-    // move, and the panel is the dev session's own page now. Checked here,
-    // once the item has resolved, because whether the change HAS a build
-    // surface is what decides between redirecting and staying put.
-    if (['proposal', 'session'].includes(ref.kind)
-        && AppView._redirectLegacyBuildLink(AppView._findTopicItem())) return;
-    // #4367: an old `dev/proposals/<id>` address of a change that has a pull
-    // request becomes `dev/changes/<N>`, in place (no Back entry).
-    if (ref.kind === 'proposal') AppView._canonicalizeChangeAddress(AppView._findTopicItem());
-    // #363: mount the thread FIRST so its header slot (#gc-thread-head) exists,
-    // then paint the topic card/body into it.
-    AppView._mountTopicThread();
-    AppView._renderTopicHead();
+    AppView._loadDevData().then((loaded) => {
+      ok = loaded;
+      boardDone = true;
+      if (painted) {
+        // The board's list row carries what the single-item row cannot
+        // (who is working on an open request, the checks badge): repaint
+        // from it now that the board is in.
+        if (ok && live()) AppView._renderTopicHead();
+        return;
+      }
+      if (concluded) return;
+      paint();
+      settle();
+    }, () => {
+      boardDone = true;
+      if (concluded || painted) return;
+      paint();
+      settle();
+    });
+    // Resolves after the first paint or the fallback, so openTopic's
+    // awaiting callers (submitImportPr and friends) keep their contract.
+    await settled;
   },
 
   // #4367: the session a change's pull request number names on this app, or
@@ -4762,6 +4872,17 @@ const AppView = {
     return t ? AppView._findItem(t.kind, t.id) : null;
   },
 
+  // The single-item fetch behind the topic page's fast open (#4524):
+  // dispatches to the by-id fetchers the recovery path has always used —
+  // a session resolves through the proposal one, since a session IS a
+  // chat_session row the proposal endpoints serve. Returns the row or null;
+  // each fetcher is best-effort and swallows its own errors.
+  async _fetchTopicItem(ref) {
+    if (ref.kind === 'gov') return AppView._fetchGovProposalById(ref.id);
+    if (ref.kind === 'issue') return AppView._fetchIssueByNumber(ref.id);
+    return AppView._fetchProposalById(ref.id);
+  },
+
   /**
    * One item, by kind and id — the lookup `_findTopicItem` has always done,
    * with the current topic no longer baked into it.
@@ -4772,11 +4893,27 @@ const AppView = {
    */
   _findItem(kind, id) {
     const t = { kind, id };
+    // The LIST caches hold whichever app's board was last loaded, and a
+    // topic page opened from a link can now paint before that load lands
+    // (#4524). Issue numbers repeat across every app's repo, so the lists
+    // answer only for the app their load named — `_devDataSlug`, set beside
+    // `_devDataReady` and not cleared on an app switch, because the lists
+    // keep the previous app's rows until the new load overwrites them. An
+    // UNSET slug means no board load has ever succeeded this visit, so there
+    // is no previous app the lists could belong to (they are empty, or a
+    // load that never finished for the app now open) and the lookup reads
+    // them as today's code always did — `openTopic`'s PR lookup at card tap
+    // time runs on exactly that state.
+    // The one-shot caches are keyed differently (`_topicIssue` carries its
+    // own slug; proposal and governance ids are global and the caches are
+    // cleared per topic), so they need no guard here.
+    const listsCurrent = !AppView._devDataSlug
+      || AppView._devDataSlug === (AppView.appData && AppView.appData.slug);
     if (t.kind === 'issue') {
       // _ghIssues holds OPEN issues only; _topicIssue is the fetch-on-demand
       // fallback (#2365) for a closed one — checked last, and keyed by number
       // AND app, since issue numbers repeat across every app's repo.
-      return (AppView._ghIssues || []).find((i) => i.number === t.id)
+      return (listsCurrent ? (AppView._ghIssues || []).find((i) => i.number === t.id) : null)
         || (AppView._topicIssue && AppView._topicIssue.number === t.id
             && AppView._topicIssueSlug === (AppView.appData && AppView.appData.slug)
           ? AppView._topicIssue : null)
@@ -4788,10 +4925,10 @@ const AppView = {
       // _topicProposal is the fetch-on-demand fallback (a proposal opened
       // from beyond the cached Completed page) — checked last, and keyed by
       // id so a stale one from a previous topic never resolves.
-      return (AppView._proposals || []).find((p) => p.id === t.id)
-        || (AppView._mySessions || []).find((p) => p.id === t.id)
-        || (AppView._sharedSessions || []).find((p) => p.id === t.id)
-        || (AppView._merged || []).find((p) => p.id === t.id)
+      return (listsCurrent ? (AppView._proposals || []).find((p) => p.id === t.id) : null)
+        || (listsCurrent ? (AppView._mySessions || []).find((p) => p.id === t.id) : null)
+        || (listsCurrent ? (AppView._sharedSessions || []).find((p) => p.id === t.id) : null)
+        || (listsCurrent ? (AppView._merged || []).find((p) => p.id === t.id) : null)
         || (AppView._topicProposal && AppView._topicProposal.id === t.id
             ? AppView._topicProposal : null)
         || null;
@@ -4801,8 +4938,8 @@ const AppView = {
       // from the shared list; the owner (opening via their card's 💬
       // badge) from their own pinned rows. Un-shared / archived mid-view
       // → miss → the topic view falls back to the card list.
-      return (AppView._sharedSessions || []).find((s) => s.id === t.id)
-        || (AppView._mySessions || []).find((s) => s.id === t.id)
+      return (listsCurrent ? (AppView._sharedSessions || []).find((s) => s.id === t.id) : null)
+        || (listsCurrent ? (AppView._mySessions || []).find((s) => s.id === t.id) : null)
         || AppView._findItem('proposal', t.id);
     }
     // Open governance proposals first; APPLIED close-issue proposals live
@@ -4811,9 +4948,9 @@ const AppView = {
     // _topicGov is the fetch-on-demand fallback (#1115) for a settled close
     // proposal opened from beyond the cached Completed page — checked last,
     // and keyed by id so a stale one from a previous topic never resolves.
-    return (AppView._govProposals || []).find((i) => i.id === t.id)
-      || (AppView._merged || []).find(
-        (r) => r.row_type === 'close_issue' && r.id === t.id)
+    return (listsCurrent ? (AppView._govProposals || []).find((i) => i.id === t.id) : null)
+      || (listsCurrent ? (AppView._merged || []).find(
+        (r) => r.row_type === 'close_issue' && r.id === t.id) : null)
       || (AppView._topicGov && AppView._topicGov.id === t.id
           ? AppView._topicGov : null)
       || null;
@@ -9213,6 +9350,10 @@ const AppView = {
       // own error, and a not-ready-yet call (the `null` return above) never
       // reaches here.
       AppView._devDataReady = true;
+      // #4524: the lists above now belong to `slug`. Set on the same success
+      // path, and never cleared — a same-app stale list is exactly the
+      // cached answer a topic page paints from while the board reloads.
+      AppView._devDataSlug = slug;
       return true;
     } catch {
       return AppView._mergedPagerActive(pager) ? false : null;
@@ -17061,7 +17202,7 @@ const AppView = {
       // Under this many, folding costs a click and saves nothing.
       foldPasses: passCount > AppView.PASS_FOLD_AT,
       advisoryNote: (!failing && advisoryRows.length)
-        ? 'Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.'
+        ? 'Advisory checks have not yet passed on a change that merged, so they report without blocking. Fix one, and once the fix merges it guards every change after it.'
         : null,
       checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
       // #1442 — WHICH main the verdict is a statement about. `stale` above
@@ -19294,8 +19435,13 @@ const AppView = {
       extra.push({ t: 'note', key: 'work', text: workState.note, workState: workState.key });
     }
     // B8: under the bot's button on the request's page, how long it takes.
+    // #4530: or, while the bot is waiting on an answer there, what for.
     if (noNav && !closed && !issue.bot && AppView._botDoor() && !AppView.readOnly) {
-      extra.push({ t: 'note', key: 'bot-door', text: AppView._botDoorHint(AppView._botDoor()) });
+      const waiting = AppView._botWaiting(issue);
+      extra.push({
+        t: 'note', key: 'bot-door',
+        text: waiting ? AppView._botWaitingHint(waiting) : AppView._botDoorHint(AppView._botDoor()),
+      });
     }
     // Topic-view-only admin escape hatch: the live claimer list with a
     // per-claim clear control, so a stuck claim can be removed without SQL.
@@ -19486,6 +19632,18 @@ const AppView = {
     // building it yourself is the first row of its ≡ (_issueMenuItems).
     const door = AppView._botDoor();
     if (door) {
+      // #4530: not while it is waiting on an answer here. Asking read the
+      // request again and posted the same question again (the server now
+      // refuses it, 409 awaiting_reply); answering is what moves it on.
+      const waiting = AppView._botWaiting(issue);
+      if (waiting) {
+        return {
+          key: 'primary', cls: 'gc-vote-btn',
+          label: waiting.kind === 'question' ? 'Answer Homeroom bot\'s question' : 'Reply to Homeroom bot',
+          title: AppView._botWaitingHint(waiting),
+          act: { fn: 'answerBotOnRequest', args: [n, Number(waiting.messageId) || 0, noNav ? 1 : 0] },
+        };
+      }
       return {
         key: 'primary', cls: 'gc-vote-btn', label: 'Ask Homeroom bot to build this',
         title: AppView._botDoorHint(door),
@@ -19573,6 +19731,52 @@ const AppView = {
   },
 
   /**
+   * #4530: the bot's note on this request that nobody has answered yet
+   * (`issue.botAwaits`, routes/issues.js: { kind, messageId }), or null.
+   */
+  _botWaiting(issue) {
+    const w = issue && issue.botAwaits;
+    return w && typeof w === 'object' && ['question', 'person', 'empty'].includes(w.kind) ? w : null;
+  },
+
+  /** #4530: the line under "Answer Homeroom bot's question": what it waits for. */
+  _botWaitingHint(waiting) {
+    if (waiting.kind === 'question') return 'Homeroom bot asked a question here. Answer it, and it reads the request again.';
+    if (waiting.kind === 'person') return 'Homeroom bot said a person needs to decide this one. Reply to it once that is settled, and it reads the request again.';
+    return 'Homeroom bot found nothing to build here yet. Reply to it with more to go on, and it reads the request again.';
+  },
+
+  /**
+   * #4530: "Answer Homeroom bot's question" (or "Reply to Homeroom bot"):
+   * the request's discussion, with a Reply to the bot's note staged in its
+   * composer, so what the person writes is for the bot (homeroom-bot-
+   * addressed.js counts a Reply to its message). From the board it opens
+   * the request first. The note arrives with the discussion's first page,
+   * a moment after the page paints; when it does not (or none is
+   * recorded), the box starts with @homeroom_bot, which counts the same.
+   */
+  async answerBotOnRequest(issueNumber, messageId, onPage) {
+    const n = Number(issueNumber);
+    if (!Number.isInteger(n) || n <= 0) return;
+    if (!onPage) await AppView.openTopic('issue', n);
+    const id = Number(messageId) || 0;
+    const chat = typeof GroupChat !== 'undefined' ? GroupChat : null;
+    const staged = () => !!(chat && chat.replyDraft && Number(chat.replyDraft.refMsgId) === id);
+    for (let i = 0; id > 0 && chat && typeof chat.replyToMessage === 'function' && i < 8; i += 1) {
+      chat.replyToMessage(id, 'thread');
+      if (staged()) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const input = document.getElementById('gc-thread-input');
+    if (!input) return;
+    if (!String(input.value || '').trim()) {
+      input.value = '@homeroom_bot ';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    input.focus();
+  },
+
+  /**
    * B8: "Ask Homeroom bot to build this". It goes first in the bot's queue,
    * paid from the viewer's building time, and its card arrives in the chat
    * of whoever it is for; the page shows the bot on it at the next read.
@@ -19590,6 +19794,9 @@ const AppView = {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         PlatformUI.toast(data.error || `Couldn't ask Homeroom bot just now (HTTP ${resp.status}).`);
+        // #4530: it is waiting on an answer this page did not know about:
+        // read again, so the card offers to answer it instead.
+        if (data.code === 'awaiting_reply') AppView.refreshDevData('issue');
         return;
       }
       PlatformUI.toast(data.mine

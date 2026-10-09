@@ -47,12 +47,14 @@ test('a declared check blocks, and the one exception is a legacy backlog', async
   const out = await checkHistory.loadGraduated(pool, 7);
   assert.deepEqual([...out], ['aa']);
   const q = pool.seen.find((s) => /SELECT check_key FROM/.test(s.sql));
-  // "Has ever passed" is not the gate any more, it is the EXEMPTION from
-  // the gate running backwards: a check seen before and never once passing
-  // is unfinished rather than broken by the proposal in front of it. A
-  // check on its FIRST appearance blocks immediately, which visuals decides
-  // from loadSeen, not from here.
-  assert.match(q.sql, /first_passed_at IS NOT NULL/);
+  // "Has passed on main" is not the gate any more, it is the EXEMPTION
+  // from the gate running backwards: a check seen before and never passing
+  // on a change that merged is unfinished rather than broken by the
+  // proposal in front of it. A check on its FIRST appearance blocks
+  // immediately, which visuals decides from loadSeen, not from here.
+  // Merged, not first passed anywhere (9 Oct 2026): an unmerged fix's pass
+  // made the Custom domain check block proposals that lacked the fix.
+  assert.match(q.sql, /merged_pass_at IS NOT NULL/);
   assert.deepEqual(q.params, [7]);
 });
 
@@ -85,8 +87,9 @@ test('the legacy-head bootstrap grandfathers straight to the threshold', async (
   const ins = pool.seen.find((s) => /INSERT INTO app_check_history\s*$|INSERT INTO app_check_history\n/.test(s.sql));
   assert.ok(ins, 'the bootstrap wrote');
   assert.match(ins.sql, /consecutive_passes/);
-  assert.match(ins.sql, new RegExp(`, ${checkHistory.GRADUATION_PASSES}\\)`),
-    'it reproduces build zero\'s gating set, so it must gate immediately');
+  assert.match(ins.sql, new RegExp(`, ${checkHistory.GRADUATION_PASSES}, NOW\\(\\), TRUE\\)`),
+    'it reproduces build zero\'s gating set, so it must gate immediately, for everybody (merged_pass_at)');
+  assert.match(ins.sql, /merged_pass_at, merged_pass_known\)/);
 });
 
 test('raising the bar demotes nothing that is gating today', () => {

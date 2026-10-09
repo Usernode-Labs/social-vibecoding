@@ -2703,7 +2703,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // First run for this app pre-graduates the head the merge gate used
         // to enforce, so turning this on never OPENS a gate that was closed.
         await checkHistory.bootstrapIfEmpty(pool, app.id, declaredTests);
-        const passedOnce = await checkHistory.loadGraduated(pool, app.id);
+        const passedOnce = await checkHistory.loadGraduated(pool, app.id, { sessionId: session.id });
         // Cosmetic, and loaded beside the gating set so it costs one more
         // query per run rather than one per check. A check with no failures
         // in its whole history is simply absent from the map.
@@ -3412,7 +3412,7 @@ async function settleCaptureRun(config, pool, run) {
         // And the render-health row: advisory until this app's pages have
         // been seen rendering with their stylesheets once.
         if (renderOutcome) historyRows.push(renderOutcome.history);
-        await checkHistory.recordRun(pool, app.id, historyRows);
+        await checkHistory.recordRun(pool, app.id, historyRows, { sessionId: session.id });
       }
       log.info('visuals', 'Checks stored', {
         sessionId: session.id, state: checksResult.state,

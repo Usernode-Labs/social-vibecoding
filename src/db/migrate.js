@@ -11231,9 +11231,9 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
     'passing', passingResults, '445566778899aabbccddeeff0011223344556677'
   );
 
-  // Matching history: the 40 passes and the blocking failure have all been
-  // observed passing at some point (so they gate), the advisory ones never
-  // have (first_passed_at NULL). Without these rows the cards would claim a
+  // Matching history: the 40 passes and the blocking failure have all
+  // passed on a change that merged (so they gate: merged_pass_at), the
+  // advisory ones never have. Without these rows the cards would claim a
   // graduation state the Dev-side data doesn't back up.
   const crypto = require('crypto');
   const key = (name, p) => crypto.createHash('sha256').update(`${name}\n${p}`).digest('hex');
@@ -11241,8 +11241,10 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
   for (const r of graduated) {
     await pool.query(
       `INSERT INTO app_check_history
-         (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, pass_count)
-       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '30 days', NOW() - INTERVAL '1 day', NOW(), 12)
+         (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, pass_count,
+          merged_pass_at, merged_pass_known)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '30 days', NOW() - INTERVAL '1 day', NOW(), 12,
+               NOW() - INTERVAL '30 days', TRUE)
        ON CONFLICT (app_id, check_key) DO NOTHING`,
       [appId, key(r.name, r.path), r.name, r.path]
     );
@@ -11250,8 +11252,8 @@ async function seedStagingChecksAdvisoryCard(pool, config) {
   for (const r of advisoryFailures) {
     await pool.query(
       `INSERT INTO app_check_history
-         (app_id, check_key, check_name, check_path, last_failed_at, last_seen_at, fail_count)
-       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '1 day', NOW(), 5)
+         (app_id, check_key, check_name, check_path, last_failed_at, last_seen_at, fail_count, merged_pass_known)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '1 day', NOW(), 5, TRUE)
        ON CONFLICT (app_id, check_key) DO NOTHING`,
       [appId, key(r.name, r.path), r.name, r.path]
     );

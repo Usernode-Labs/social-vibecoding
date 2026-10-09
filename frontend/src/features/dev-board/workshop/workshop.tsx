@@ -1190,7 +1190,9 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
   const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
   if (row.kind === 'vote' && st) {
-    if (voted) out.push({ key: 'voted', tone: 'ok', text: youAnswered(row, voted) });
+    // A no vote (and a "Not approved") is the blocked tone, not the ok one:
+    // #4568. The existing factTone/chipTone maps give the red classes.
+    if (voted) out.push({ key: 'voted', tone: voted === 'no' ? 'blocked' : 'ok', text: youAnswered(row, voted) });
     // The count in the change page's own words: an at-least-N rule's pill
     // reads "1 of 2 approvals" there (AppView.statusPillState), and every
     // rule's count reads the same way here.
@@ -1199,7 +1201,7 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
   } else if (row.kind === 'vote' && row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
-    if (voted) out.push({ key: 'voted', tone: 'ok', text: youAnswered(row, voted) });
+    if (voted) out.push({ key: 'voted', tone: voted === 'no' ? 'blocked' : 'ok', text: youAnswered(row, voted) });
     const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
@@ -1791,7 +1793,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       <div className="dev-ws-item-progress" aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
       <div className="dev-ws-item-top">
         {voted ? (
-          <span className="dev-ws-item-done" data-ws-item-done="">
+          <span className="dev-ws-item-done" data-ws-item-done="" data-ws-voted={voted}>
             <CheckIcon className="dev-ws-item-tick" aria-hidden="true" />
             {`${answeredWords(row, voted)} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
           </span>
@@ -2986,6 +2988,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               type="button"
               className={voted ? 'dev-ws-rail-btn dev-ws-rail-vote is-on' : 'dev-ws-rail-btn dev-ws-rail-vote'}
               data-ws-rail-btn="vote"
+              data-ws-voted={voted || undefined}
               aria-haspopup="dialog"
               aria-expanded={sheet === 'vote'}
               disabled={!voted && !!sending[row.key]}

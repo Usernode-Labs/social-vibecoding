@@ -28,6 +28,10 @@
     'shell_boot', 'app_detail_load', 'app_discussion_load',
     'feedback_submit', 'content_report_submit', 'change_create', 'preview_open',
     'push_permission',
+    // A request/proposal/governance page opened from a link (#4524): the
+    // measure the fast-open work reports against. Keep identical with the
+    // server's ACTIONS.
+    'topic_load',
   ]);
   const OUTCOMES = new Set(['success', 'failure', 'cancelled']);
   const ERRORS = new Set([

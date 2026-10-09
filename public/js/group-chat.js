@@ -5230,6 +5230,12 @@ const MentionAutocomplete = {
   // keystroke, rather than on every mount (see RefAutocomplete.attach).
   attach(input, slug) {
     if (!input) return;
+    // #4571: remember the slug on the element too, so a composer kept across
+    // topic mounts (#4517) picks up the new project when its listener
+    // retakes the menu below. The singleton stays "whoever attached last"
+    // here; the per-event `own()` is what makes the menu follow the box
+    // being typed in.
+    input._gcMentionSlug = slug;
     MentionAutocomplete._input = input;
     MentionAutocomplete._slug = slug;
     if (document.activeElement === input) MentionAutocomplete._loadCandidates(slug);
@@ -5237,22 +5243,34 @@ const MentionAutocomplete = {
     if (input._gcMentionBound) return;
     input._gcMentionBound = true;
 
+    // The menu answers for ONE box at a time — whichever was used last.
+    // Without this, a composer mounted after this one (the side panel's
+    // thread beside a tab's, or vice versa) left this box's keystrokes
+    // reading the other's value and caret, and no menu opened.
+    const own = () => {
+      if (MentionAutocomplete._input !== input) {
+        MentionAutocomplete.close();
+        MentionAutocomplete._input = input;
+        MentionAutocomplete._slug = input._gcMentionSlug;
+      }
+    };
     input.addEventListener('focus', () => {
-      if (MentionAutocomplete._input === input) MentionAutocomplete._loadCandidates(MentionAutocomplete._slug);
+      own();
+      MentionAutocomplete._loadCandidates(MentionAutocomplete._slug);
     });
 
     input.addEventListener('compositionstart', () => { MentionAutocomplete._composing = true; });
     input.addEventListener('compositionend', () => {
       MentionAutocomplete._composing = false;
-      MentionAutocomplete._sync();
+      own(); MentionAutocomplete._sync();
     });
-    input.addEventListener('input', () => MentionAutocomplete._sync());
-    input.addEventListener('click', () => MentionAutocomplete._sync());
+    input.addEventListener('input', () => { own(); MentionAutocomplete._sync(); });
+    input.addEventListener('click', () => { own(); MentionAutocomplete._sync(); });
     input.addEventListener('keyup', (e) => {
       // The keys we manage in the capture-phase keydown handler don't
       // change the token; skip re-detecting on their keyup.
       if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
-      MentionAutocomplete._sync();
+      own(); MentionAutocomplete._sync();
     });
     // Capture phase so we win over the composer's own keydown handler and
     // the form's implicit Enter-submit while the menu is open.
@@ -5613,6 +5631,10 @@ const RefAutocomplete = {
   // needed (on the platform app, two of the board's largest).
   attach(input, slug) {
     if (!input) return;
+    // #4571: the slug on the element, as MentionAutocomplete now keeps it —
+    // a composer kept across topic mounts picks up the new project when its
+    // listener retakes the menu below.
+    input._gcRefSlug = slug;
     RefAutocomplete._input = input;
     RefAutocomplete._slug = slug;
     if (document.activeElement === input) RefAutocomplete._loadCandidates(slug);
@@ -5620,20 +5642,31 @@ const RefAutocomplete = {
     if (input._gcRefBound) return;
     input._gcRefBound = true;
 
+    // Same retarget as the mention menu's `own()`: the menu answers for
+    // whichever composer was used last, so a box typed into after another
+    // was mounted still opens its own list.
+    const own = () => {
+      if (RefAutocomplete._input !== input) {
+        RefAutocomplete.close();
+        RefAutocomplete._input = input;
+        RefAutocomplete._slug = input._gcRefSlug;
+      }
+    };
     input.addEventListener('focus', () => {
-      if (RefAutocomplete._input === input) RefAutocomplete._loadCandidates(RefAutocomplete._slug);
+      own();
+      RefAutocomplete._loadCandidates(RefAutocomplete._slug);
     });
 
     input.addEventListener('compositionstart', () => { RefAutocomplete._composing = true; });
     input.addEventListener('compositionend', () => {
       RefAutocomplete._composing = false;
-      RefAutocomplete._sync();
+      own(); RefAutocomplete._sync();
     });
-    input.addEventListener('input', () => RefAutocomplete._sync());
-    input.addEventListener('click', () => RefAutocomplete._sync());
+    input.addEventListener('input', () => { own(); RefAutocomplete._sync(); });
+    input.addEventListener('click', () => { own(); RefAutocomplete._sync(); });
     input.addEventListener('keyup', (e) => {
       if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
-      RefAutocomplete._sync();
+      own(); RefAutocomplete._sync();
     });
     // Capture phase so we win over the composer's own keydown handler and
     // the form's implicit Enter-submit while the menu is open. Only
