@@ -265,7 +265,8 @@ test('send_test_release_email sends what it was given and hands back the address
   assert.deepEqual(sc.mail, { status: 'sent', error: null });
   assert.ok(sc.steps.some((s) => /evan\+test1a2b3c@example\.com/.test(s)), 'the steps name the inbox');
   assert.ok(sc.steps.some((s) => /Create my account/.test(s)));
-  assert.ok(sc.steps.some((s) => /6-digit code/.test(s)));
+  assert.ok(sc.steps.some((s) => /signs in once by itself/.test(s)));
+  assert.ok(sc.steps.some((s) => /6-digit code/.test(s)), 'and the code it falls back to');
   assert.match(sc.nextStep, /on its way/);
   assert.match(sc.nextStep, /retire_test_account/);
   assert.equal(JSON.stringify(sc).includes('password"'), false, 'no credential comes back');

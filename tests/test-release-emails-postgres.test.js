@@ -103,6 +103,15 @@ test('test release emails against the full PostgreSQL schema', { timeout: 180000
 
   let alias;
   let madeId;
+  let key;
+  // The account step after a proven address: a username, and no password
+  // (#4595, "Skip for now").
+  const finishSignup = async (verify, username) => {
+    const cookie = (verify.headers.get('set-cookie') || '').split(';')[0];
+    const done = await call('POST', '/api/auth/otp/set-password', { username }, { who: null, cookie });
+    assert.equal(done.status, 200);
+    return (await done.json()).user.id;
+  };
 
   await t.test('with no address, the real release mail goes to a fresh +test alias of the admin\'s own', async () => {
     const res = await call('POST', '/api/test-accounts/release-emails', { note: 'Release mail copy, round 1' });
@@ -119,6 +128,10 @@ test('test release emails against the full PostgreSQL schema', { timeout: 180000
     assert.equal(mail.hasAccount, false);
     const link = new URL(mail.url);
     assert.equal(link.searchParams.get('signup'), '1');
+    // Admit's one-time sign-in link (#4594), minted for this row.
+    key = link.searchParams.get('key');
+    assert.match(key, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(mail.signInLink, true);
     // The link's token is the row's own, and resolves to the address: the
     // signup screen prefills it from there (GET /api/public/waitlist/more).
     const signup = await waitlist.getSignupByMoreToken(pool, link.searchParams.get('t'));
@@ -136,22 +149,16 @@ test('test release emails against the full PostgreSQL schema', { timeout: 180000
     assert.equal(listed.releases[0].email, alias);
   });
 
-  await t.test('signing up from the mail makes a test account, fenced before it is let in', async () => {
-    assert.equal((await call('POST', '/api/auth/otp/request', { email: alias }, { who: null })).status, 200);
-    const otp = mails.filter((m) => m.kind === 'otp' && m.to === alias).pop();
-    assert.ok(otp && /^[0-9]{6}$/.test(otp.code), 'the sign-in code went to the same address');
-    const verify = await call('POST', '/api/auth/otp/verify', { email: alias, code: otp.code }, { who: null });
+  await t.test('following the mail\'s link makes a test account, fenced before it is let in', async () => {
+    const verify = await call('POST', '/api/auth/release-link', { token: key }, { who: null });
     assert.equal(verify.status, 200);
     const verified = await verify.json();
     assert.equal(verified.next, 'set-password');
     assert.equal(verified.created, true);
     assert.equal(verified.waitlisted, false, 'let in by the release, so no waiting room');
-    const cookie = (verify.headers.get('set-cookie') || '').split(';')[0];
-    const done = await call('POST', '/api/auth/otp/set-password', {
-      username: 'release_tester', password: 'a-long-password-1', passwordConfirmation: 'a-long-password-1',
-    }, { who: null, cookie });
-    assert.equal(done.status, 200);
-    madeId = (await done.json()).user.id;
+    madeId = await finishSignup(verify, 'release_tester');
+    // The link is single use.
+    assert.equal((await call('POST', '/api/auth/release-link', { token: key }, { who: null })).status, 422);
 
     const u = await row(madeId);
     assert.equal(u.username, 'release_tester');
@@ -240,12 +247,16 @@ test('test release emails against the full PostgreSQL schema', { timeout: 180000
     await pool.query('DELETE FROM users WHERE id = $1', [waiting.id]);
   });
 
-  await t.test('welcomeDm lets the welcome DM reach the account the mail makes', async () => {
+  await t.test('the code the page falls back to makes a test account too, and welcomeDm lets the welcome DM reach it', async () => {
     const sent = await send({ email: 'qa+welcome@example.com', welcomeDm: true });
     assert.equal(sent.welcomeDm, true);
-    const user = await realUser({ email: 'qa+welcome@example.com' });
-    await pool.query('UPDATE users SET has_platform_access = FALSE WHERE id = $1', [user.id]);
-    await waitlist.linkUserByEmail(pool, { userId: user.id, email: 'qa+welcome@example.com', newAccount: true });
+    assert.equal((await call('POST', '/api/auth/otp/request', { email: 'qa+welcome@example.com' }, { who: null })).status, 200);
+    const otp = mails.filter((m) => m.kind === 'otp' && m.to === 'qa+welcome@example.com').pop();
+    assert.ok(otp && /^[0-9]{6}$/.test(otp.code), 'the sign-in code went to the same address');
+    const verify = await call('POST', '/api/auth/otp/verify', { email: 'qa+welcome@example.com', code: otp.code }, { who: null });
+    assert.equal(verify.status, 200);
+    assert.equal((await verify.clone().json()).waitlisted, false);
+    const user = { id: await finishSignup(verify, 'welcome_tester') };
     const u = await row(user.id);
     assert.ok(u.test_account_created_at);
     assert.equal(u.test_account_welcome_dm, true);

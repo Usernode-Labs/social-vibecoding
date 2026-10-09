@@ -245,8 +245,9 @@ row, so `send_test_release_email` makes one: the address becomes a waitlist
 row, confirmed and released like an admitted signup, marked in
 `test_waitlist_releases`, and the mail goes through the same sender, mobile
 steps and throttle as Admit (three a day per address, a minute apart, which a
-fresh alias avoids). Its link starts the ordinary email-code sign-up, and the
-NEW account that makes is marked a test account before it is let in
+fresh alias avoids). Its link is Admit's too: a freshly minted one-time
+sign-in link, or the email code once that is spent. The NEW account either
+makes is marked a test account before it is let in
 (`waitlist.linkUserByEmail` with `newAccount`, then
 `testAccounts.adoptReleasedAccount`), without the invite-tree skips a release
 by hand gives. An account that already existed is never let in by a test

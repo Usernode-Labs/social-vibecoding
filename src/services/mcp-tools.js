@@ -7913,7 +7913,7 @@ function registerTools(server, ctx) {
     // signing up from it needs the code the mailbox receives.
     server.registerTool('send_test_release_email', {
       title: 'Test accounts: send a waitlist release email',
-      description: 'Admin only. Send the waitlist\'s real "You\'re in. Welcome to Homeroom" email to an address you read, so the flow from that email can be tested in any environment, production included: open it, tap its button, sign up with the 6-digit code Homeroom then emails, and land let in. Name any address (a +test alias such as you+test123456@gmail.com is the usual), or leave email out for a fresh +test alias of your own account\'s address. The address becomes a waitlist entry, released like an admitted signup and kept out of Admin → Waitlist and the Journey, and the account its link makes is a test account: fenced like one create_test_account makes, listed by list_test_accounts and retired with retire_test_account. Sending to the same address again sends the email again (the mail throttle allows three a day per address, a minute apart; a fresh alias avoids it); when the address already has a live test account the email is the "sign in" version. It refuses an address that belongs to a real account or a real waitlist signup. The result says whether the email went out. Never send it to somebody else\'s address. Read get_connector_guidance\'s "test-accounts" section first.',
+      description: 'Admin only. Send the waitlist\'s real "You\'re in. Welcome to Homeroom" email to an address you read, so the flow from that email can be tested in any environment, production included: open it, tap its button (a one-time link that signs in by itself, or a 6-digit code once that link is spent), choose a username, and land let in. Name any address (a +test alias such as you+test123456@gmail.com is the usual), or leave email out for a fresh +test alias of your own account\'s address. The address becomes a waitlist entry, released like an admitted signup and kept out of Admin → Waitlist and the Journey, and the account its link makes is a test account: fenced like one create_test_account makes, listed by list_test_accounts and retired with retire_test_account. Sending to the same address again sends the email again (the mail throttle allows three a day per address, a minute apart; a fresh alias avoids it); when the address already has a live test account the email is the "sign in" version. It refuses an address that belongs to a real account or a real waitlist signup. The result says whether the email went out. Never send it to somebody else\'s address. Read get_connector_guidance\'s "test-accounts" section first.',
       inputSchema: {
         email: z.string().optional().describe('The address to send to, one you (or the tester) read. Omit it for a fresh +test alias of your own account\'s address.'),
         welcomeDm: z.boolean().optional().describe('Let the welcome DM reach the account the email makes (default false). The welcome DM puts staff into a group with the account.'),
@@ -7977,8 +7977,8 @@ function registerTools(server, ctx) {
           : [
             `Open the email "You're in. Welcome to Homeroom" sent to ${to}.`,
             'If the browser it opens in is signed in to Homeroom, sign out first, or open the link in a private window.',
-            'Tap Create my account. Homeroom emails a 6-digit code to the same address.',
-            'Enter the code, then choose a username and password.',
+            'Tap Create my account. The link signs in once by itself; if it was already used or has expired, Homeroom emails a 6-digit code to the same address instead.',
+            'Choose a username. A password is optional (Skip for now).',
           ],
         nextStep: outcome[status] || `Could not confirm the email went out (${status}). The delivery log in the admin console shows what happened.`,
       });

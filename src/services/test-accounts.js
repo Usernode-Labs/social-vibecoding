@@ -642,15 +642,27 @@ async function sendRelease(pool, body, { actorId, config = {} } = {}) {
   }
 
   // The mail Admit sends (routes/topochain/admin/waitlist.js sendReleaseMail),
-  // with its store-listing steps. A failed lookup drops only those steps.
+  // with its store-listing steps and, for an address with no account yet,
+  // its one-time sign-in link (services/release-links.js), freshly minted
+  // so the newest mail's link is the one that works. A failed lookup or
+  // mint drops only that part: the link still prefills the address and
+  // sends a code.
   const mobile = await require('./mobile-store-links').loadMobileAppUrls(pool).catch((err) => {
     log.warn('test-accounts', 'Release mail mobile links failed', { message: err.message });
     return null;
   });
+  let signInToken = null;
+  if (!release.account) {
+    signInToken = await require('./release-links').mint(pool, { signupId: release.signupId, email }).catch((err) => {
+      log.error('test-accounts', 'Release sign-in link not minted', { signupId: release.signupId, message: err.message });
+      return null;
+    });
+  }
   const { rows: [{ at }] } = await pool.query('SELECT clock_timestamp() AS at');
   await require('./mail').sendWaitlistReleaseMail(config, email, {
     mobile,
     hasAccount: !!release.account,
+    signInToken,
     moreToken: release.moreToken || null,
   });
   const { rows: [delivery] } = await pool.query(
