@@ -2057,6 +2057,21 @@
       "classicPath": "#admin"
     },
     {
+      "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/sms/failures",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.sms.failures.5e7e21c7",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
       "source": "src/routes/agent-session-drafts.js",
       "method": "GET",
       "path": "/api/agent-sessions/:id/drafts",
