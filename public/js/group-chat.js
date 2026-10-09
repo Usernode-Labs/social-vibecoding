@@ -716,7 +716,11 @@ const GroupChat = {
         // its rows are merged with the GitHub comments, and a spec posted
         // live has to reach the head's spec cards and status card too.
         if (a.language === 'request') {
-          GroupChat.renderThread({ keepScroll: true });
+          // #4511: renderThread publishes batched unless asked to flush, so
+          // scrollHeight below measured before the new row was committed and
+          // the scroll was a no-op — a just-sent reply sat under the fold.
+          // The other branch flushes inside appendTranscriptMessage (#2389).
+          GroupChat.renderThread({ keepScroll: true, flush: true });
           if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
           return;
         }
