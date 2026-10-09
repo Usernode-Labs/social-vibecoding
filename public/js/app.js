@@ -6272,10 +6272,13 @@ const App = {
     // #4417: `…/c/<topic>[/m/<id>]` is a message in one of the project's
     // topic channels (a notification's address), Homeroom's included: its
     // channel's place on the project page, once the page's record names it.
+    // #4417 follow-up: at the place in it the address names, as #general's
+    // own address is (`m/<id>` brought into view and marked, `thread/<root>`
+    // opened beside the channel).
     const topicRef = rest && rest[0] === 'c' ? App._numericSegment(rest[1]) : null;
     const topics = window.UsernodeReact?.places?.openTopicRef;
     if (slug && topicRef != null && topicRef <= 2147483647 && topics) {
-      void topics(slug, topicRef);
+      void topics(slug, topicRef, App._messagesExtras(rest.slice(2)));
       return true;
     }
     if (!slug || App._appChatIsArchive(slug)) return false;
@@ -6320,7 +6323,9 @@ const App = {
     if (parts[1] === 'app' && parts[2]) {
       try { slug = decodeURIComponent(parts[2]); } catch (_) { return false; }
       // #4417: a topic channel's message is that channel's, not #general's.
-      if (parts[3] === 'c') return false;
+      // #4417 follow-up: so the page turns to that channel in place, at the
+      // place the address names, as it turns to #general's.
+      if (parts[3] === 'c') return App._topicInPlace(slug, parts.slice(4));
       if (App._appChatIsArchive(slug)) return false;
       target = App._messagesExtras(parts.slice(3));
     } else {
@@ -6332,6 +6337,21 @@ const App = {
     if (!slug || typeof AppView === 'undefined' || !AppView._onProjectPage?.(slug)) return false;
     if (!App._isScreenVisible?.('app-view')) return false;
     AppView._landOnDiscussion(slug, target);
+    return true;
+  },
+
+  // #4417 follow-up: `…/c/<topic>[/m/<id>|/thread/<root>]` followed while
+  // `slug`'s page is the page on screen: the page turns to that topic's
+  // channel in place (places/place-store.ts openTopicRef, which moves a page
+  // that is up for the project without an address), with what the address
+  // named waiting for it. True when it turned.
+  _topicInPlace(slug, rest) {
+    const topicRef = App._numericSegment(rest[0]);
+    const topics = window.UsernodeReact?.places?.openTopicRef;
+    if (topicRef == null || topicRef > 2147483647 || !topics) return false;
+    if (typeof AppView === 'undefined' || !AppView._onProjectPage?.(slug)) return false;
+    if (!App._isScreenVisible?.('app-view')) return false;
+    void topics(slug, topicRef, App._messagesExtras(rest.slice(1)));
     return true;
   },
 

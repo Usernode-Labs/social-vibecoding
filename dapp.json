@@ -2509,9 +2509,9 @@
       "expectText": "All items"
     },
     {
-      "name": "#4417: a topic's channel has an address of its own, which opens its project's page on that place: what the topic is for and its requests above the room",
+      "name": "#4417: a topic's channel has an address of its own, which opens its project's page on that place: what the topic is for and its requests above the room, which is #general's pane: each message's ⋯ offers Reply in thread",
       "path": "/?demo=1#app/usernode-2d5619/dev/c/onboarding",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"c:onboarding\"]:has(> [data-place-bar=\"c:onboarding\"]) section.dev-ws-topic-channel[data-ws-topic=\"onboarding\"][data-ws-topic-state=\"live\"] > .dev-ws-topic-head + .dev-ws-discussion-host",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"c:onboarding\"]:has(> [data-place-bar=\"c:onboarding\"]) [data-ws-topic=\"onboarding\"][data-ws-topic-state=\"live\"][data-discussion-app] > .dev-ws-topic-head + .dev-ws-discussion-host #gc-messages .gc-msg-more-action",
       "expectText": "requests"
     },
     {

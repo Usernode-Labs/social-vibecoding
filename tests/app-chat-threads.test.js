@@ -198,6 +198,36 @@ test('#4417 a mention in a topic channel opens the channel, on the message', () 
   assert.equal(href, '#messages/app/recipe%20box/c/12/m/88');
 });
 
+// #4417 follow-up: a reply thread can start in a topic's channel. A row about
+// a message in one opens the thread beside THAT channel, which the row's read
+// learns from the thread's first message (THREAD_ROOT_COLUMNS_SQL, in every
+// read that hydrates a row: the list, one row by id, the live pushes).
+test('#4417 follow-up: a reply in a topic message\'s thread opens beside the topic, a #general one beside #general', () => {
+  const row = (over) => notifications.serialize({
+    id: 1, kind: 'thread_reply', read_at: null, created_at: 'now', app_id: 5, app_slug: 'recipe box', app_name: 'Recipe Box',
+    chat_message_id: 90, message_content: 'x', thread_type: 'message', thread_ref: 70,
+    session_id: null, source_username: 'bob', detail: null, ...over,
+  });
+  assert.equal(row({ root_thread_type: 'category', root_thread_ref: 12 }).href, '#messages/app/recipe%20box/c/12/thread/70');
+  assert.equal(row({ kind: 'mention', root_thread_type: 'category', root_thread_ref: 12 }).href, '#messages/app/recipe%20box/c/12/thread/70');
+  assert.equal(row({ root_thread_type: null, root_thread_ref: null }).href, '#messages/app/recipe%20box/thread/70');
+  assert.equal(row({}).href, '#messages/app/recipe%20box/thread/70', 'a row read without the columns keeps #general\'s');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  const service = src('src/services/notifications.js');
+  assert.match(notifications.THREAD_ROOT_COLUMNS_SQL, /WHERE cm\.thread_type = 'message' AND thread_root\.id = cm\.thread_ref\) AS root_thread_type/);
+  assert.equal((service.match(/cm\.thread_type, cm\.thread_ref,\s*\$\{THREAD_ROOT_COLUMNS_SQL\},/g) || []).length, 3,
+    'listForUser, getForUser and hydrateNotification');
+  // The socket's own reads for a reply, a mention and a reaction spell the
+  // same columns out: static SQL (tests/app-blocks-postgres.test.js runs them as written).
+  const spelled = notifications.THREAD_ROOT_COLUMNS_SQL.replace(/\s+/g, ' ');
+  const ws = src('src/services/ws.js');
+  const reads = [...ws.matchAll(/`(SELECT n\.id,[^`]+WHERE n\.id = ANY\(\$1::int\[\]\)[^`]+)`/g)].map((m) => m[1].replace(/\s+/g, ' '));
+  assert.equal(reads.length, 3);
+  for (const sql of reads) assert.ok(sql.includes(`cm.thread_type, cm.thread_ref, ${spelled},`), sql.slice(0, 80));
+});
+
 test('a deleted row reads as a placeholder that keeps its sender', () => {
   const shaped = appChat.shapeRow({
     id: 4, user_id: 2, username: 'bob', content: 'secret', msg_type: 'message',

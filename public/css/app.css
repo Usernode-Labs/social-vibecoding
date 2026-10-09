@@ -18895,6 +18895,22 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 }
 .dev-ws-topic-head-link { color: var(--accent); text-decoration: none; white-space: nowrap; }
 .dev-ws-topic-head-link:hover { text-decoration: underline; }
+/* #4417 follow-up: A TOPIC'S REPLY THREAD OPENS AS #general's DOES, beside
+   the room on a desktop and over it on a phone (the rules above). The
+   topic's line sits over the room, so beside a thread it runs over both:
+   two rows, the room and the thread side by side in the second, the thread
+   as wide as it is beside an app channel. On a phone it goes with the room. */
+@media (max-width: 767.98px) {
+  .dev-ws-topic-channel.dev-ws-discussion-threaded > .dev-ws-topic-head { display: none; }
+}
+@media (min-width: 768px) {
+  .dev-ws-topic-channel.dev-ws-discussion-threaded {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) min(420px, 42%);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .dev-ws-topic-channel.dev-ws-discussion-threaded > .dev-ws-topic-head { grid-column: 1 / -1; }
+}
 /* "Discuss in #name ›" at the foot of a topic's card in By category. */
 .dev-ws-topic-link { display: inline-block; margin-top: 6px; font-size: 13px; font-weight: 600; }
 /* AFTER A MERGE, A CARD MARKS IT (merged-topic-card.tsx): a row in the

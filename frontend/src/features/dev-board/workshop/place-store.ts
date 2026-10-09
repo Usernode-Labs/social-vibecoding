@@ -62,7 +62,10 @@ export function clearPlace(slug: string): void {
   if (placeStore.get().slug === slug) placeStore.set({ slug: null, place: 'status', owed: 0, side: false });
 }
 
-type ViewApi = { _landOnTab?: (slug: string, tab: string) => void };
+type ViewApi = {
+  _landOnTab?: (slug: string, tab: string) => void;
+  _stashDiscussionTarget?: (slug: string, target: Record<string, unknown>) => void;
+};
 type AppApi = { _hubHref?: (slug: string) => string };
 
 /**
@@ -87,13 +90,26 @@ export function openPlace(slug: string, key: PlaceKey, opts: { replace?: boolean
   return false;
 }
 
+/** What a door names in a channel: a message to bring into view, a reply thread to open. */
+export interface ChannelTarget {
+  focusMessageId?: number | null;
+  threadRootId?: number | null;
+}
+
 /**
  * A topic's channel by its registry row (a notification's address names the
  * thread, `#messages/app/<slug>/c/<id>/m/<id>`): the channel's place once the
  * project's record says which topic that is, replacing the address it came
  * from. A row the record does not know opens #general.
+ *
+ * #4417 follow-up: and the place in it the address named (`m/<id>`, a
+ * message; `thread/<root>`, a reply thread), handed to the channel the way
+ * #general's door hands it hers (AppView._stashDiscussionTarget), named for
+ * this topic so only its place takes it (project-discussion.tsx
+ * TopicChannel): the message brought into view and marked, the thread
+ * opened beside the channel.
  */
-export async function openTopicRef(slug: string, ref: number): Promise<void> {
+export async function openTopicRef(slug: string, ref: number, target: ChannelTarget | null = null): Promise<void> {
   if (!slug) return;
   let record = cachedCommunity(slug);
   const known = () => channelsOf(record?.places).some((c) => c.kind === 'topic' && Number(c.id) === Number(ref));
@@ -102,7 +118,30 @@ export async function openTopicRef(slug: string, ref: number): Promise<void> {
     record = cachedCommunity(slug);
   }
   const topic = channelsOf(record?.places).find((c) => c.kind === 'topic' && Number(c.id) === Number(ref)) || null;
+  if (topic && target && (target.focusMessageId || target.threadRootId)) {
+    const w = window as unknown as { AppView?: ViewApi };
+    try {
+      w.AppView?._stashDiscussionTarget?.(slug, {
+        focusMessageId: target.focusMessageId || null,
+        threadRootId: target.threadRootId || null,
+        topicRef: Number(topic.id),
+      });
+    } catch { /* the channel opens at its newest */ }
+  }
   openPlace(slug, topic ? channelPlace(topic.handle) : 'discussion', { replace: true });
+}
+
+/**
+ * #4417 follow-up: a topic's channel was read (or marked unread) in the
+ * group chat's pane (public/js/group-chat.js markRead / markUnread). The
+ * places list's count for it is the project's record, read again when it
+ * showed one, or when the reader asked for one back (`unread`).
+ */
+export function channelRead(slug: string, ref: number, unread = false): void {
+  if (!slug) return;
+  const record = cachedCommunity(slug);
+  const channel = channelsOf(record?.places).find((c) => c.kind === 'topic' && Number(c.id) === Number(ref)) || null;
+  if (unread || (channel && Number(channel.unread) > 0)) void reloadCommunity(slug);
 }
 
 /*
@@ -129,5 +168,5 @@ export function topicHandles(slug: string | null | undefined): Record<string, st
 if (typeof window !== 'undefined') {
   const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
   w.UsernodeReact = w.UsernodeReact || {};
-  w.UsernodeReact.places = { topicHandles, openPlace, openTopicRef };
+  w.UsernodeReact.places = { topicHandles, openPlace, openTopicRef, channelRead };
 }

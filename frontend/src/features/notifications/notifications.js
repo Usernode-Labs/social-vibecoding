@@ -1088,6 +1088,27 @@ const Notifications = {
           return;
         }
       }
+      // #4417 follow-up: a message in one of the project's TOPIC channels
+      // (thread_type 'category', its ref the topic) opens that channel on its
+      // project page, brought into view and marked as a #general message is,
+      // at the address the server worked out for the row
+      // (`#messages/app/<slug>/c/<topic>/m/<id>`, which the router takes to
+      // the channel's place). A reply in one of its reply threads is a
+      // 'message' row above, whose address names the topic too.
+      if (chatKinds.has(item.kind) && item.threadType === 'category' && item.threadRef != null) {
+        const topic = parseInt(item.threadRef, 10);
+        const message = parseInt(item.chatMessageId, 10);
+        const href = typeof item.href === 'string' && item.href.startsWith('#messages/app/')
+          ? item.href
+          : (Number.isInteger(topic) && topic > 0 && Number.isInteger(message) && message > 0
+            ? `#messages/app/${encodeURIComponent(item.appSlug)}/c/${topic}/m/${message}` : null);
+        if (href) {
+          const messages = window.UsernodeReact?.messages;
+          if (messages?.openAddress) messages.openAddress(href);
+          else window.location.hash = href;
+          return;
+        }
+      }
       if (chatKinds.has(item.kind) && item.threadType && item.threadRef != null) {
         const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
         const topicKind = kindMap[item.threadType];

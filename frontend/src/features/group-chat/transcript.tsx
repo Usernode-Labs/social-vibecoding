@@ -1297,7 +1297,7 @@ export function TranscriptRows({ view, source }: {
     while (marker < markers.length && Date.parse(markers[marker].at) <= at) {
       const m = markers[marker];
       marker += 1;
-      if (Number.isFinite(at) && !drawn.length && view.lead.earlier) continue;
+      if (Number.isFinite(at) && !drawn.length && (view.lead.earlier || view.lead.moreBefore)) continue;
       drawn.push(<TranscriptMarkerCard key={`marker-${m.key}`} marker={m} />);
     }
   };

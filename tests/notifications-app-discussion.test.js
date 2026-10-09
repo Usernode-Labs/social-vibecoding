@@ -113,6 +113,34 @@ test('a mention inside a reply thread opens the thread too, even without an href
   assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/thread/70']]);
 });
 
+// #4417 follow-up: a message in one of the project's TOPIC channels opens
+// that channel on its project page, on the message (brought into view and
+// marked there, tests/group-chat-topic-channel.test.js), at the address the
+// server put on the row, or the one its refs spell when there is none. It
+// used to fall through to #general.
+for (const kind of ['mention', 'reply', 'reaction']) {
+  test(`a ${kind} in a topic's channel opens that channel, on the message`, () => {
+    const { N, calls } = load();
+    N.items = [row({ kind, chatMessageId: 88, threadType: 'category', threadRef: 12,
+      href: '#messages/app/garden-ab12/c/12/m/88' })];
+    N._onItemClick(1);
+    assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/c/12/m/88']],
+      'the topic\'s own address, never #general\'s reveal');
+    const bare = load();
+    bare.N.items = [row({ kind, chatMessageId: 88, threadType: 'category', threadRef: '12' })];
+    bare.N._onItemClick(1);
+    assert.deepEqual(nav(bare.calls), [['address', '#messages/app/garden-ab12/c/12/m/88']]);
+  });
+}
+
+test('a reply in a topic message\'s reply thread opens that thread beside the topic\'s channel', () => {
+  const { N, calls } = load();
+  N.items = [row({ kind: 'thread_reply', chatMessageId: 90, threadType: 'message', threadRef: '70',
+    href: '#messages/app/garden-ab12/c/12/thread/70' })];
+  N._onItemClick(1);
+  assert.deepEqual(nav(calls), [['address', '#messages/app/garden-ab12/c/12/thread/70']]);
+});
+
 test('a mention inside a topic thread still opens that topic, where the message is', () => {
   const { N, calls } = load();
   N.items = [row({ kind: 'mention', chatMessageId: 9, threadType: 'issue', threadRef: '44' })];
