@@ -167,6 +167,8 @@ type MilePerson = {
   // Getting started: the tour and the season's First challenges, x of n.
   // `null` without an account; `shown: false` when the card was never drawn.
   onboard?: { shown: boolean; done: number | null; total: number | null; complete: boolean } | null;
+  // What the admit mail's tracking saw; `null` when it was not tracked.
+  mail?: { opened: boolean; clicked: boolean } | null;
 };
 type Summary = {
   demo?: boolean;
@@ -337,6 +339,7 @@ type Cohorts = { cohorts: Array<{ day: string; admitted: number; withAccount: nu
 type FirstMile = {
   cohort: string; people: MilePerson[];
   steps: Array<{ key: string; passed: number; stuck: Array<Person & { days: number; reason: string | null }> }>;
+  mail?: { tracked: number; opened: number; clicked: number } | NotRecorded;
   notRecorded?: Record<string, NotRecorded>;
 };
 
@@ -614,7 +617,7 @@ const MILE_KEYS = Object.keys(MILE_STEPS);
 // "mail" is the provider taking the message, not the inbox getting it.
 const MILE_HELP: Record<string, string> = {
   admitted: 'Let in from the waitlist.',
-  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. That does not prove it reached the inbox.',
+  mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. Since 7 Oct it is tracked: a person\u2019s panel says whether they opened it or clicked its link. An open is approximate, and no open is not proof it went unread.',
   code_asked: 'A sign-in code was asked for. The mail\u2019s button asks for one as it opens, so this is the first proof the link was followed.',
   account: 'Account created and finished.',
   access: 'The account has platform access.',
@@ -710,6 +713,15 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
   }).length;
   const label = (cohort: string) => (cohort === 'other_way' ? 'Came in another way' : `Admitted ${weekLabel(cohort)}`);
   const onboarded = people.filter((p) => p.onboard && p.onboard.complete).length;
+  // The admit mail's tracking, on the card's own meta line: counts over the
+  // people whose mail was tracked, the gap said as a gap, and nothing when
+  // nobody here was sent one (all came in another way).
+  const mailed = people.filter((p) => p.steps.some((st) => st.key === 'mail_sent'));
+  const tracked = mailed.flatMap((p) => (p.mail ? [p.mail] : []));
+  const mailNote = !mailed.length ? ''
+    : tracked.length
+      ? ` \u00b7 mail: ${tracked.filter((m) => m.opened).length} opened \u00b7 ${tracked.filter((m) => m.clicked).length} clicked of ${tracked.length} tracked`
+      : ' \u00b7 mail opens not tracked';
   // One column note open at a time, and how it opened: a tap keeps it until
   // the next tap, a hover only while the mouse stays.
   const [help, setHelp] = useState<{ id: string; how: 'tap' | 'hover' } | null>(null);
@@ -731,7 +743,7 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
       onOpen={(how) => setHelp({ id, how })} onClose={() => setHelp(null)} />
   );
   return (
-    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week`}>
+    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week${mailNote}`}>
       {miles ? (n ? (
         <>
           {/* One grid for the staircase and every track, so each bar stands

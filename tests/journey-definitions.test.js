@@ -143,6 +143,18 @@ test('the real-person rule leaves out admins, bots, test accounts, restricted, d
   assert.deepEqual(journey.notRecorded('no record'), { recorded: false, reason: 'no record' });
 });
 
+test('the admit mail\'s engagement: a followed link is an open, and an untracked mail is a gap', () => {
+  const base = { mail_status: 'sent', mail_tracked: true, mail_opened_at: null, mail_clicked_at: null };
+  assert.deepEqual(journey.mailEngagement({ ...base, mail_clicked_at: '2026-10-07T11:36:00Z' }),
+    { tracked: true, opened: true, clicked: true, note: 'clicked the link' });
+  assert.deepEqual(journey.mailEngagement({ ...base, mail_opened_at: '2026-10-07T11:35:00Z' }),
+    { tracked: true, opened: true, clicked: false, note: 'opened' });
+  assert.deepEqual(journey.mailEngagement(base), { tracked: true, opened: false, clicked: false, note: 'no open seen' });
+  assert.deepEqual(journey.mailEngagement({ ...base, mail_tracked: null }),
+    { tracked: false, opened: false, clicked: false, note: 'not tracked' });
+  assert.equal(journey.mailEngagement({ mail_status: null, mail_tracked: null }).note, null, 'no mail, no note');
+});
+
 test('first-mile steps: expired mail proof reads unknown, and nothing counts past an unfinished account', () => {
   const now = at('2026-11-15T12:00:00Z');
   const old = journey.firstMileSteps({

@@ -144,6 +144,24 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
        VALUES ($1, $2, 'challenge', 500, NOW(), $3)`, [userId, event.id, challengeId]);
     await credit(ana, firsts[0].id);
 
+    // The admit mail's tracking (services/mail): ana clicked the link (no
+    // open seen: images blocked), dee's mail was opened through an image
+    // proxy, cy's only "click" was a link scanner's, and ben's mail went out
+    // before tracking began.
+    const track = async (recipient, events) => {
+      const { rows: [d] } = await pool.query(
+        `UPDATE mail_deliveries SET engagement_tracked = TRUE
+          WHERE recipient = $1 AND kind = 'waitlist_released' RETURNING id`, [recipient]);
+      for (const [type, uaClass, at] of events) {
+        await pool.query(
+          'INSERT INTO mail_events (delivery_id, type, user_agent_class, created_at) VALUES ($1, $2, $3, $4)',
+          [d.id, type, uaClass, at]);
+      }
+    };
+    await track('ana@example.test', [['clicked', 'unknown_client', `${D}T09:58:00Z`]]);
+    await track('dee@example.test', [['opened', 'image_proxy', `${D}T11:50:00Z`]]);
+    await track('cy@example.test', [['clicked', 'scanner_or_prefetch', `${D}T09:00:09Z`]]);
+
     const leftOutIds = [qa];
     const list = await journey.cohorts(pool, { now, leftOutIds });
     assert.deepEqual(list.cohorts, [
@@ -190,7 +208,17 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     const stuckOn = Object.fromEntries(mile.steps.map((s) => [s.key, s.stuck.map((p) => p.name)]));
     assert.deepEqual(stuckOn.code_asked, ['ben@example.test']);
     assert.deepEqual(stuckOn.join, ['dee']);
-    assert.deepEqual(mile.notRecorded.followedLink.recorded, false);
+    const mailNote = (name) => by[name].steps.find((s) => s.key === 'mail_sent').note;
+    assert.equal(mailNote('ana'), 'clicked the link');
+    assert.equal(mailNote('dee'), 'opened');
+    assert.equal(mailNote('cy'), null, 'cy\'s admit mail failed, so it has no engagement note');
+    assert.equal(mailNote('ben@example.test'), 'not tracked', 'a mail sent before tracking is a gap, not "no open"');
+    assert.deepEqual(by.ana.mail, { opened: true, clicked: true }, 'a followed link counts as an open');
+    assert.deepEqual(by.cy.mail, { opened: false, clicked: false }, 'a link scanner is not the person');
+    assert.equal(by['ben@example.test'].mail, null);
+    assert.deepEqual(mile.mail, { tracked: 3, opened: 2, clicked: 1 });
+    const later = await journey.firstMile(pool, { day: '2026-09-26', now, leftOutIds });
+    assert.equal(later.mail.recorded, false, 'a cohort with no tracked mail says so, never 0 of 0');
 
     const other = await journey.firstMile(pool, { day: 'other_way', now, leftOutIds });
     assert.deepEqual(other.people.map((p) => [p.name, p.door]), [['guest', 'invite_link']]);
