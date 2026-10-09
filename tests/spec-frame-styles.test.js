@@ -29,6 +29,8 @@
 //      (worker/Dockerfile, @playwright/mcp), so it runs there.
 //
 // Run with: node --test tests/spec-frame-styles.test.js
+//
+// test:changed: when server.js, src/services/static-cache.js, frontend/src/head.html (the headers and stylesheet links a spec frame depends on; scripts/test-changed.js)
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -93,9 +95,11 @@ function frameStyleRequest(url) {
   });
 }
 
-function assertLoadableFromOpaqueFrame(res, url) {
-  assert.equal(res.status, 200, `${url} answered ${res.status} to a sandboxed frame's stylesheet request`);
-  assert.match(res.headers.get('content-type') || '', /^text\/css\b/, `${url} must be served as text/css`);
+function assertLoadableFromOpaqueFrame(res, url, built) {
+  if (built) {
+    assert.equal(res.status, 200, `${url} answered ${res.status} to a sandboxed frame's stylesheet request`);
+    assert.match(res.headers.get('content-type') || '', /^text\/css\b/, `${url} must be served as text/css`);
+  }
   const corp = res.headers.get('cross-origin-resource-policy');
   assert.ok(!corp || corp.trim().toLowerCase() === 'cross-origin',
     `${url} carries Cross-Origin-Resource-Policy: ${corp}. A spec screen's frame has an opaque origin, `
@@ -106,12 +110,13 @@ function assertLoadableFromOpaqueFrame(res, url) {
 test('the shell stylesheets load for a sandboxed, opaque-origin frame', async () => {
   for (const cssPath of CSS_PATHS) {
     // tailwind.css is built by `npm run build:css`; the test script's preflight
-    // builds only the document. The browser test reads it when it is there.
-    if (!present(cssPath.slice(1))) continue;
+    // builds only the document. Unbuilt, its 404 still passes every global
+    // header middleware, so the CORP rule is checked on it all the same.
+    const built = present(cssPath.slice(1));
     for (const url of [`${base}${cssPath}`, `${base}/b/${OTHER_BUILD}${cssPath}`]) {
       const res = await frameStyleRequest(url);
       await res.arrayBuffer();
-      assertLoadableFromOpaqueFrame(res, url);
+      assertLoadableFromOpaqueFrame(res, url, built);
     }
   }
 });
@@ -124,16 +129,15 @@ test('the shell document sends no policy that would stop its spec frames styling
   assert.ok(!coep || /^unsafe-none\b/i.test(coep.trim()),
     `The shell document sends Cross-Origin-Embedder-Policy: ${coep}. Its spec frames' stylesheets carry no CORP, `
     + 'so they would be blocked and every spec screen would lose its styling (#4439).');
-  for (const name of ['content-security-policy', 'content-security-policy-report-only']) {
-    // A srcdoc frame inherits its parent's policy, on top of its own. Before
-    // a policy goes on the shell, prove spec screens still style: the browser
-    // test below renders one under whatever this document sends.
-    assert.equal(res.headers.get(name), null,
-      `The shell document sends ${name}. Spec screens' frames inherit it; check the browser test in this file `
-      + 'passes under it (it skips without Chromium), then update this guard (#4439).');
-  }
-  assert.doesNotMatch(html, /<meta[^>]+http-equiv=["']?content-security-policy/i,
-    'The shell document declares a CSP in a <meta>; spec screens\' frames inherit it (#4439).');
+  // A srcdoc frame inherits its parent's policy, on top of its own. A
+  // Report-Only policy cannot block anything, so only an enforcing one counts.
+  const cspAdvice = 'Spec screens\' sandboxed srcdoc frames inherit it. If a CSP is added on purpose, it must allow '
+    + 'the frame stylesheets (style-src for the shell origin, loaded from an opaque-origin srcdoc frame), and this '
+    + 'test should be updated to assert that instead (the browser test below renders a spec under it) (#4439).';
+  assert.equal(res.headers.get('content-security-policy'), null,
+    `The shell document sends Content-Security-Policy: ${res.headers.get('content-security-policy')}. ${cspAdvice}`);
+  assert.doesNotMatch(html, /<meta[^>]+http-equiv=["']?content-security-policy["'\s>]/i,
+    `The shell document declares a Content-Security-Policy in a <meta>. ${cspAdvice}`);
 
   // frameDoc keeps only the stylesheet links on the document's own origin.
   const hrefs = [...html.matchAll(/<link\b[^>]*\brel=["']?stylesheet["']?[^>]*>/gi)]
@@ -171,7 +175,10 @@ async function launchChromium() {
   for (const extra of options.executablePath ? [{}] : [{ channel: 'chromium' }, {}]) {
     try { return { browser: await chromium.launch({ ...options, ...extra }) }; } catch (err) { firstError ||= err; }
   }
-  return { skip: `Chromium will not launch here: ${String(firstError && firstError.message).split('\n')[0]}` };
+  // The whole launch error, so a broken browser in the unit container is
+  // visible in the run's output rather than a silent skip.
+  const message = String((firstError && firstError.message) || firstError).replace(/\s+/g, ' ').trim().slice(0, 600);
+  return { skip: `Chromium will not launch here: ${message}` };
 }
 
 // One screen whose markup carries a probe for each stylesheet. Each class is
@@ -243,7 +250,9 @@ test('a spec screen is drawn with its stylesheets inside the sandboxed frame', a
       + 'the sandboxed (opaque-origin) frame could not load it. A CORP/COEP header, a CSP on the shell, '
       + 'or a stylesheet moved to another host strips every spec screen (#4439).';
 
-    await t.test('platform spec: the shell\'s three stylesheets', async () => {
+    const tailwindBuilt = present('css/tailwind.css');
+    await t.test('platform spec: the shell\'s three stylesheets', async (st) => {
+      if (!tailwindBuilt) st.diagnostic('public/css/tailwind.css is not built (npm run build:css): its computed-style check is skipped');
       const frames = await renderAndRead(page, 'platform');
       for (const f of frames) {
         assert.ok(f.links.some((p) => p.endsWith('/css/app.css')), `the ${f.side} frame links no app.css: ${f.links}`);
@@ -252,7 +261,7 @@ test('a spec screen is drawn with its stylesheets inside the sandboxed frame', a
         assert.equal(f.appDisplay, 'flex', `${unstyled} (app.css, ${f.side})`);
         // .un-swipe-action (native.css) has min-width 80px; a bare div has auto.
         assert.equal(f.nativeMinWidth, '80px', `${unstyled} (native.css, ${f.side})`);
-        if (present('css/tailwind.css')) {
+        if (tailwindBuilt) {
           assert.equal(f.tailwindRadius, '20px', `${unstyled} (tailwind.css, ${f.side})`);
         }
       }
