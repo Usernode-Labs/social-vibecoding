@@ -1013,9 +1013,9 @@
       ]
     },
     {
-      "name": "Dev board: every folded row wears the fold mark, closed — two chevrons apart, the bar between them drawn but scaled away",
+      "name": "Dev board (#4486): a column is one card of rows, the Workshop’s, each with the card’s ☰ and no fold mark",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .dev-ws-rowwrap > .dev-ws-row[aria-expanded=\"false\"] > span.dev-fold-mark[aria-hidden=\"true\"]:not([data-open]) > svg > path.dev-fold-top + path.dev-fold-bar + path.dev-fold-bottom"
+      "expectSelector": "#dev-kanban .dev-kanban-col > .dev-kanban-card > .dev-ws-wlist > .dev-ws-wrow.dev-ws-brow:not(:has(.dev-fold-mark)) > .dev-ws-wrow-menu > button.dev-card-menu-btn[data-card-menu]"
     },
     {
       "name": "Dev board: the open card's fold mark is the same glyph stretched open, and the button that folds the card",
@@ -1051,8 +1051,8 @@
       "expectText": "Claim it"
     },
     {
-      "name": "A Workshop row unfolds into the Activity sheet: the card, its thread, the send disc",
-      "path": "/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop",
+      "name": "With its cards open the board draws each as the Activity sheet: the card, its thread, the send disc",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
     },
     {
@@ -1121,10 +1121,10 @@
       "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] .gc-card-actions .gc-vote-btn[data-act=\"_setSessionShared\"]"
     },
     {
-      "name": "Dev board (mobile): the In-progress column shows section dividers, not grey captions",
+      "name": "Dev board: Underway leads with your private sessions, tagged Only you with a lock, and keeps its dividers (#4486)",
       "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inprogress.dev-kanban-col-active .dev-col-divider .dev-col-divider-label",
-      "expectText": "Yours · not shared"
+      "expectSelector": "#dev-kanban-col-inprogress.dev-kanban-col-active .dev-kanban-card:has(.dev-col-divider-label) > .dev-ws-wlist:first-child > .dev-ws-wrow[data-session-chip]:first-child .dev-ws-tag:first-child > svg",
+      "expectText": "Only you"
     },
     {
       "name": "Dev board: every ⋯ menu row leads with an aligned icon",
@@ -1528,7 +1528,7 @@
     },
     {
       "name": "Session/proposal cards render reverse #N issue chips",
-      "path": "/?demo=1#app/usernode-2d5619/board",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectSelector": "[data-issue-chip]"
     },
     {
@@ -2396,20 +2396,20 @@
       "expectSelector": "#dev-body #dev-workshop"
     },
     {
-      "name": "A retired ?view=kanban link lands on the stage pane, and a tap unfolds a row into its card, whose Open card leads to its page",
-      "path": "/?demo=1&view=kanban&shot=board-unfold#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-stage] .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-edge] .gc-card-actions > a.dev-ws-open-btn[href*=\"/dev/\"]",
-      "expectText": "Open card"
+      "name": "A retired ?view=kanban link lands on the stage pane, and a tap on a row opens its page beside the board (#4486)",
+      "path": "/?demo=1&view=kanban&shot=board-open#app/usernode-2d5619/dev",
+      "expectSelector": "body:has(.dev-ws-side[data-ws-side] #dev-topic-thread) #dev-workshop [data-ws-stage] #dev-kanban .dev-ws-wrow[data-on] > .dev-ws-wrow-main > a.dev-ws-wrow-link[aria-current=\"true\"]",
+      "expectText": "Open as a page"
     },
     {
-      "name": "The Workshop renders its themes into #dev-workshop; the deep link opens one, with its items as folded rows under stage lanes",
+      "name": "The Workshop renders its themes in #dev-workshop; the deep link opens one, its items the board’s rows under stage lanes",
       "path": "/?demo=1&ws=all&shot=themes&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] .dev-ws-row[role=\"button\"][aria-expanded]"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] > .dev-ws-wlist > .dev-ws-wrow.dev-ws-brow:not(:has(.dev-ws-wrow-tile, [data-attr-field=\"category\"])) a.dev-ws-wrow-link"
     },
     {
-      "name": "#app/<slug>/board resolves onto the stage pane, its cards folded to rows",
+      "name": "#app/<slug>/board resolves onto the stage pane, its cards drawn as the Workshop’s rows (#4486)",
       "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-kanban-card .dev-ws-wrow.dev-ws-brow[data-issue-row] > .dev-ws-wrow-main > a.dev-ws-wrow-link[href*=\"/dev/issues/\"]"
     },
     {
       "name": "A project's Workshop tab leads All items with its one line on what the open work is about",
@@ -2425,9 +2425,9 @@
     },
     {
       "id": "workshop.grouping-ear",
-      "name": "The grouping strip leads All items' pane head, at every width, on category by default",
+      "name": "All items' head is one row: the way back and its name, the grouping, then the tools, on category by default (#4486)",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-group[role=\"tablist\"]:first-child > [data-ws-group=\"category\"][aria-selected=\"true\"]",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-allbar > [data-ws-pagehead]:first-child + .dev-ws-group[role=\"tablist\"] > [data-ws-group=\"category\"][aria-selected=\"true\"]",
       "expectText": "By category",
       "visual": true,
       "impact": [
@@ -2439,14 +2439,14 @@
       ]
     },
     {
-      "name": "...and the pane head holds the grouping, then the tools, with no eyebrow",
+      "name": "...and that row holds the grouping, then the tools, with no eyebrow over the page's name",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head:not(:has(> .dev-ws-eyebrow)) > .dev-ws-group + #dev-actions"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > .dev-ws-group + #dev-actions"
     },
     {
-      "name": "On By stage the grouping strip stays in the pane head, over the board's own columns",
+      "name": "On By stage the one-row head and the pipeline's steps pin together, over the board's own columns (#4486)",
       "path": "/?demo=1&ws=all&group=stage#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-group [data-ws-group=\"stage\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head:has(> #dev-kanban-tabs[role=\"tablist\"] > [data-kanban-tab=\"done\"]) > .dev-ws-allbar > .dev-ws-group [data-ws-group=\"stage\"][aria-selected=\"true\"]"
     },
     {
       "name": "The Workshop offers the two groupings as tabs at the head of All items, on category by default",
@@ -2457,7 +2457,7 @@
     {
       "name": "?group=stage swaps All items' pane for the board's own columns",
       "path": "/?demo=1&ws=all&group=stage#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-wrow"
     },
     {
       "name": "The Workshop carries the board's search and filter bar, and keeps it when the search matches nothing (#2090)",
@@ -2482,8 +2482,8 @@
       "expectSelector": "#dev-body [data-issue-row=\"900003\"]"
     },
     {
-      "name": "An unfolded Workshop row has an auto-growing reply box and send arrow (#1584)",
-      "path": "/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop",
+      "name": "An unfolded card has an auto-growing reply box and send arrow (#1584)",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
     },
     {
@@ -2597,7 +2597,7 @@
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
-      "path": "/?demo=1#app/usernode-2d5619/board",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectSelector": ".attr-avatar"
     },
     {
@@ -2617,14 +2617,14 @@
       "expectText": "PR#990002"
     },
     {
-      "name": "Own sessions pin under the private-sessions divider",
+      "name": "Own private sessions say Only you, with the line the divider carried as their tooltip (#4486)",
       "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectText": "Yours · not shared",
-      "expectSelector": ".dev-col-divider-label[title=\"Only you can see your active sessions here. Their code is on public GitHub.\"]"
+      "expectText": "Only you",
+      "expectSelector": "#dev-kanban .dev-ws-wrow .dev-ws-tag[title=\"Only you can see your active sessions here. Their code is on public GitHub.\"]"
     },
     {
       "name": "Shared session cards show the owner subtitle",
-      "path": "/?demo=1#app/usernode-2d5619/board",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectText": "is working on this"
     },
     {
@@ -4272,19 +4272,19 @@
       "expectSelector": "#notifications-sheet:not(:has([data-group-toggle]))"
     },
     {
-      "name": "An unfolded Workshop row is a card on a sheet",
-      "path": "/?demo=1&ws=all&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "name": "An unfolded card is a card on a sheet",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-feed-entry > .gc-vote-item"
     },
     {
-      "name": "An unfolded issue row shows recent comments with relative ages (#1585)",
-      "path": "/?demo=1&ws=all&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "name": "An unfolded issue card shows recent comments with relative ages (#1585)",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
     },
     {
       "id": "dev-board.long-comment-show-more",
       "name": "A long comment in a card's recent comments shows four lines and a Show more (#2556)",
-      "path": "/?demo=1&ws=all&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-clamp + button.dev-feed-comment-toggle:not([hidden])",
       "expectText": "Show more",
       "visual": true,
@@ -4478,7 +4478,7 @@
     },
     {
       "name": "#1808: an unfolded card's comment preview stamps each reply and hovers the full instant",
-      "path": "/?demo=1&ws=all&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time[title]"
     },
     {
