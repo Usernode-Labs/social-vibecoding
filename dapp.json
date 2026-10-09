@@ -2707,6 +2707,12 @@
       "expectText": "Waiting for a checks slot (2 ahead)"
     },
     {
+      "name": "A change merged into Homeroom itself says when the next release carries it, on its page where anyone reads it, not a bare Going live (#4309 follow-up)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9100035",
+      "expectSelector": "[data-change-gate=\"votes\"] .dev-change-gate-note[data-change-release]",
+      "expectText": "Merged; goes live in the next release (about"
+    },
+    {
       "name": "Checks card says an author's commit started the run (#1144), in Details (B10b)",
       "path": "/?demo=1&details=1#app/usernode-2d5619/dev/proposals/9000022",
       "expectText": "Triggered by a new commit on this proposal."
