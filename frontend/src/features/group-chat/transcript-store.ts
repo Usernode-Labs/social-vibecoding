@@ -426,6 +426,8 @@ export interface SpecShareView {
   /** The header the panel shows while the fetch is in flight. */
   previewTitle: string;
   sharedBy: string;
+  /** `sharedBy` is a stand-in word, not an account's name: sentences use their unnamed wording. */
+  sharedByUnknown?: boolean;
   version: number;
   /** Formatted build time, or null when the share carried none. */
   built: string | null;

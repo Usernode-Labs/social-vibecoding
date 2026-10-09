@@ -4060,6 +4060,9 @@ const GroupChat = {
       // through the DOM to find it.
       previewTitle: meta.title || PlatformI18n.t('chat:group.spec.previewTitle', { version: meta.version }),
       sharedBy: meta.sharedBy?.username || msg.username || PlatformI18n.t('chat:group.spec.someone'),
+      // Nobody to name: the lines that say who shared it have an unnamed
+      // wording, and never take the stand-in above as a username.
+      sharedByUnknown: !(meta.sharedBy?.username || msg.username),
       version: meta.version,
       built,
       prNumber: meta.prNumber || null,

@@ -793,8 +793,8 @@ export function AppsSwitcherSheet(): ReactNode {
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
-          {view === 'about' ? <AboutPane label={appLabel} /> : view === 'invite' ? (
-            <InvitePane slug={slug || null} label={appLabel} />
+          {view === 'about' ? <AboutPane label={appLabel} unnamed={!appName} /> : view === 'invite' ? (
+            <InvitePane slug={slug || null} label={appLabel} unnamed={!appName} />
           ) : (
           <>
           {/*

@@ -180,12 +180,12 @@ function SkeletonLine({ className, shape = 'muted' }: { className: string; shape
  * common case: one link of their own, two lines each for what the link does,
  * who is new, and the joining rule.
  */
-export function InviteSkeleton({ label, canShare }: { label: string; canShare: boolean }): ReactNode {
+export function InviteSkeleton({ label, unnamed = false, canShare }: { label: string; unnamed?: boolean; canShare: boolean }): ReactNode {
   const t = useMessages('agent');
   return (
     <div id="app-invite-pane" className="pb-2" data-invite-loading="">
       <div className="px-5 pt-1">
-        <div className={TITLE}>{t('agent:appContext.invite.title', { project: label })}</div>
+        <div className={TITLE}>{unnamed ? t('agent:appContext.invite.titleUnnamed') : t('agent:appContext.invite.title', { project: label })}</div>
       </div>
       {/* The pulse is opacity alone, on the compositor, and still under
           reduced motion. */}
@@ -226,7 +226,12 @@ export function InviteSkeleton({ label, canShare }: { label: string; canShare: b
   );
 }
 
-export function InvitePane({ slug, label }: { slug: string | null; label: string }) {
+/**
+ * `label` is the project's name. With `unnamed`, no name has loaded and `label`
+ * is a stand-in: the sentences here use their unnamed wording instead of
+ * taking the stand-in as a name.
+ */
+export function InvitePane({ slug, label, unnamed = false }: { slug: string | null; label: string; unnamed?: boolean }) {
   const t = useMessages('agent');
   // What AppContext.openInvite() read before the sheet went up, when it came
   // in time: the pane's first render is then the loaded one.
@@ -294,7 +299,7 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
   };
   const share = async () => {
     if (!url || typeof navigator.share !== 'function') return;
-    try { await navigator.share({ title: t('agent:appContext.invite.shareTitle', { project: label }), url }); } catch { /* dismissed */ }
+    try { await navigator.share({ title: unnamed ? t('agent:appContext.invite.shareTitleUnnamed') : t('agent:appContext.invite.shareTitle', { project: label }), url }); } catch { /* dismissed */ }
   };
   const make = async () => {
     if (!base) return;
@@ -337,14 +342,14 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
       </div>
     );
   }
-  if (!state) return <InviteSkeleton label={label} canShare={canShare} />;
+  if (!state) return <InviteSkeleton label={label} unnamed={unnamed} canShare={canShare} />;
   if (!state.canCreate) {
     return (
       <div id="app-invite-pane">
         <p className={NOTE}>
           {state.grant === 'collaborator'
-            ? t('agent:appContext.invite.buildersOnly', { project: label })
-            : t('agent:appContext.invite.joinFirst', { project: label })}
+            ? (unnamed ? t('agent:appContext.invite.buildersOnlyUnnamed') : t('agent:appContext.invite.buildersOnly', { project: label }))
+            : (unnamed ? t('agent:appContext.invite.joinFirstUnnamed') : t('agent:appContext.invite.joinFirst', { project: label }))}
         </p>
       </div>
     );
@@ -353,7 +358,7 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
     <div id="app-invite-pane" className="pb-2">
       <div className="px-5 pt-1">
         <div className={TITLE}>
-          {t('agent:appContext.invite.title', { project: label })}
+          {unnamed ? t('agent:appContext.invite.titleUnnamed') : t('agent:appContext.invite.title', { project: label })}
         </div>
       </div>
       {current ? (

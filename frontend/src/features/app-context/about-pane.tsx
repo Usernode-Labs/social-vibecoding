@@ -311,7 +311,11 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
   );
 }
 
-export function AboutPane({ label }: { label: string }): ReactNode {
+/**
+ * `label` is the app's name. With `unnamed`, no name has loaded and `label` is
+ * a stand-in: the note uses its unnamed wording, not the stand-in as a name.
+ */
+export function AboutPane({ label, unnamed = false }: { label: string; unnamed?: boolean }): ReactNode {
   const t = useMessages('agent');
   const {
     slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab, deploying,
@@ -392,7 +396,8 @@ export function AboutPane({ label }: { label: string }): ReactNode {
   // The platform's rules are its row's, which a cold tab may still be loading
   // (./about-data.ts asks Home for the list): no sentence until they are here,
   // rather than the default rules for a moment and then the platform's own.
-  const note = platform ? platformNote(label, !!restricted) : appNote(label);
+  const note = platform ? platformNote(label, !!restricted)
+    : unnamed ? t('agent:appContext.about.note.unnamedApp') : appNote(label);
   // The name the note is about, as appNote and platformNote read it.
   const named = typeof label === 'string' && label.trim() ? label.trim() : '';
   // Where "How changes work" goes: the app's Workshop, or the platform's for
@@ -584,7 +589,8 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             <RichMessage
               id={platform
                 ? 'agent:appContext.about.noteHow.platform'
-                : named ? 'agent:appContext.about.noteHow.app' : 'agent:appContext.about.noteHow.thisApp'}
+                : unnamed ? 'agent:appContext.about.noteHow.unnamedApp'
+                  : named ? 'agent:appContext.about.noteHow.app' : 'agent:appContext.about.noteHow.thisApp'}
               values={{ name: named || 'Homeroom', app: named }}
               components={[
                 <a

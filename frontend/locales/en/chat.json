@@ -855,17 +855,33 @@
     "text": "Shared by <0>{{name}}</0> · v{{version}}",
     "description": "Line on the card of a spec (the written description of a change) that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the spec's version number, and 'v' abbreviates version. Shared is a verb form."
   },
+  "group.specCard.sharedBySomeone": {
+    "text": "Shared by <0>Someone</0> · v{{version}}",
+    "description": "Line on the card of a spec (the written description of a change) that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the spec's version number."
+  },
   "group.specCard.sharedByBuilt": {
     "text": "Shared by <0>{{name}}</0> · v{{version}} · {{built}}",
     "description": "Line on the card of a spec that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the spec's version number, and 'v' abbreviates version; {{built}} is the date and time the change was built, already formatted."
+  },
+  "group.specCard.sharedBySomeoneBuilt": {
+    "text": "Shared by <0>Someone</0> · v{{version}} · {{built}}",
+    "description": "Line on the card of a spec that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the spec's version number. {{built}} is when it was built, already formatted."
   },
   "group.specCard.sharedByPr": {
     "text": "Shared by <0>{{name}}</0> · v{{version}} · <1>PR #{{number}}</1>",
     "description": "Line on the card of a spec that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the spec's version number, and 'v' abbreviates version; the <1> link opens the pull request, and {{number}} is its number. PR is the usual abbreviation of pull request."
   },
+  "group.specCard.sharedBySomeonePr": {
+    "text": "Shared by <0>Someone</0> · v{{version}} · <1>PR #{{number}}</1>",
+    "description": "Line on the card of a spec that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the spec's version number. {{number}} is the pull request's number; keep \"PR #\"."
+  },
   "group.specCard.sharedByBuiltPr": {
     "text": "Shared by <0>{{name}}</0> · v{{version}} · {{built}} · <1>PR #{{number}}</1>",
     "description": "Line on the card of a spec that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the spec's version number; {{built}} is the date and time the change was built, already formatted; the <1> link opens the pull request, and {{number}} is its number. PR abbreviates pull request."
+  },
+  "group.specCard.sharedBySomeoneBuiltPr": {
+    "text": "Shared by <0>Someone</0> · v{{version}} · {{built}} · <1>PR #{{number}}</1>",
+    "description": "Line on the card of a spec that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the spec's version number. {{built}} is when it was built, already formatted. {{number}} is the pull request's number; keep \"PR #\"."
   },
   "group.specCard.loading": {
     "text": "Loading…",

@@ -84,7 +84,7 @@ test('two panes of ONE sheet, not two sheets', () => {
   // the ordering the wallet row already worked around — and About is where
   // the menu GOES rather than something that opens over it.
   // The invite pane is a third, on the same terms (./invite-pane.tsx).
-  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>\s*\) : \(/,
+  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} unnamed=\{!appName\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} unnamed=\{!appName\} \/>\s*\) : \(/,
     'the pane replaces the rows inside the same scroller');
   assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
   // The platform's back disc, at a 44pt hit box (#4218).

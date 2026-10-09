@@ -254,6 +254,25 @@ test('an app or an owner with no name gets an unnamed sentence that reads as the
   ]) {
     assert.equal(message(unnamed, values), message(named, { ...values, app: 'This app' }), unnamed);
   }
+  for (const [named, unnamed, standIn] of [
+    ['agent:appContext.invite.title', 'agent:appContext.invite.titleUnnamed', { project: 'this app' }],
+    ['agent:appContext.invite.shareTitle', 'agent:appContext.invite.shareTitleUnnamed', { project: 'this app' }],
+    ['agent:appContext.invite.buildersOnly', 'agent:appContext.invite.buildersOnlyUnnamed', { project: 'this app' }],
+    ['agent:appContext.invite.joinFirst', 'agent:appContext.invite.joinFirstUnnamed', { project: 'this app' }],
+    ['agent:appContext.about.note.app', 'agent:appContext.about.note.unnamedApp', { app: 'this app' }],
+    ['agent:appContext.about.noteHow.app', 'agent:appContext.about.noteHow.unnamedApp', { app: 'this app' }],
+    ['chat:group.specCard.sharedBy', 'chat:group.specCard.sharedBySomeone', { name: 'Someone' }],
+    ['chat:group.specCard.sharedByBuilt', 'chat:group.specCard.sharedBySomeoneBuilt', { name: 'Someone' }],
+    ['chat:group.specCard.sharedByPr', 'chat:group.specCard.sharedBySomeonePr', { name: 'Someone' }],
+    ['chat:group.specCard.sharedByBuiltPr', 'chat:group.specCard.sharedBySomeoneBuiltPr', { name: 'Someone' }],
+    ['project:topic.request.stream.postedSpecVersion', 'project:topic.request.stream.postedSpecVersionUnnamed', { author: 'Someone' }],
+    ['project:topic.change.line.postedSpec', 'project:topic.change.line.postedSpecUnnamed', { author: 'Someone' }],
+    ['project:topic.request.spec.by', 'project:topic.request.spec.bySomeone', { author: 'Someone' }],
+    ['project:topic.request.spec.byAt', 'project:topic.request.spec.bySomeoneAt', { author: 'Someone' }],
+  ]) {
+    const rest = { version: 3, built: 'built 2h ago', number: 7, time: '2h ago' };
+    assert.equal(message(unnamed, rest), message(named, { ...rest, ...standIn }), unnamed);
+  }
   assert.equal(message('changes:session.shared.workingSomeone'), message('changes:session.shared.working', { owner: 'someone' }));
   assert.equal(message('changes:session.shared.importedBySomeone', { author: 'ada' }),
     message('changes:session.shared.imported', { author: 'ada', owner: 'someone' }));

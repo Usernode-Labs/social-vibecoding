@@ -81,8 +81,11 @@ export function changeLine(msg: TranscriptMessage): ChangeLine | null {
   if (msg.kind === 'spec_share' && msg.specShare) {
     return {
       kind: 'spec', glyph: '📋', actor: msg.specShare.sharedBy,
-      id: 'project:topic.change.line.postedSpec',
-      values: { author: msg.specShare.sharedBy, version: msg.specShare.version },
+      // Nobody to name has a wording of its own.
+      id: msg.specShare.sharedByUnknown ? 'project:topic.change.line.postedSpecUnnamed' : 'project:topic.change.line.postedSpec',
+      values: msg.specShare.sharedByUnknown
+        ? { version: msg.specShare.version }
+        : { author: msg.specShare.sharedBy, version: msg.specShare.version },
     };
   }
   if (msg.stagingBuild === 'started') return null;

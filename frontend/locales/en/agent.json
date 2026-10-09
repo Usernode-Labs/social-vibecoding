@@ -1567,6 +1567,10 @@
     "text": "{{app}}’s community builds it together.",
     "description": "Line in the About pane of the app menu (the sheet opened from the app's name in the header): the app is built by the people who joined it. {{app}} is the app's name."
   },
+  "appContext.about.note.unnamedApp": {
+    "text": "this app’s community builds it together.",
+    "description": "Line in the About pane of the app menu (the sheet opened from the app's name in the header): the app is built by the people who joined it. Used when the app's name has not loaded; it begins \"this app\" in lower case, as the pane has always shown it."
+  },
   "appContext.about.note.platform": {
     "text": "{{name}}’s community builds it together, the same way as the apps on it.",
     "description": "Line in the About pane for Homeroom itself: the platform is built by its own community, like the apps it hosts. {{name}} is the platform's name, Homeroom."
@@ -1871,6 +1875,10 @@
     "text": "Invite people to {{project}}",
     "description": "Title of the Invite pane of the app menu. {{project}} is the project's (app's) name."
   },
+  "appContext.invite.titleUnnamed": {
+    "text": "Invite people to this app",
+    "description": "Title of the Invite pane of the app menu. Used when the project's name has not loaded; \"this app\" is written as the pane has always shown it."
+  },
   "appContext.invite.making": {
     "text": "Making your link",
     "description": "Screen-reader text for the placeholder shown in the Invite pane of the app menu while the person's invite link is being created."
@@ -1883,6 +1891,10 @@
     "text": "Join {{project}} on Homeroom",
     "description": "Title handed to the device's share sheet when the person shares an invite link. {{project}} is the project's (app's) name. \"Join\" is a verb."
   },
+  "appContext.invite.shareTitleUnnamed": {
+    "text": "Join this app on Homeroom",
+    "description": "Title handed to the device's share sheet when the person shares an invite link. Used when the project's name has not loaded; \"this app\" is written as the pane has always shown it."
+  },
   "appContext.invite.noProject": {
     "text": "Open a project to invite people to it.",
     "description": "Shown in the Invite pane of the app menu when it is opened with no project in context. \"Open\" is a verb."
@@ -1891,9 +1903,17 @@
     "text": "Only the people building {{project}} can invite others to it.",
     "description": "Shown in the Invite pane of the app menu to someone who may not make invite links, on a project where building is by invitation. {{project}} is the project's name."
   },
+  "appContext.invite.buildersOnlyUnnamed": {
+    "text": "Only the people building this app can invite others to it.",
+    "description": "Shown in the Invite pane of the app menu to someone who may not make invite links, on a project where building is by invitation. Used when the project's name has not loaded; \"this app\" is written as the pane has always shown it."
+  },
   "appContext.invite.joinFirst": {
     "text": "Join {{project}} to invite people to it.",
     "description": "Shown in the Invite pane of the app menu to someone who is not a member yet and so may not make invite links. {{project}} is the project's name. \"Join\" is a verb."
+  },
+  "appContext.invite.joinFirstUnnamed": {
+    "text": "Join this app to invite people to it.",
+    "description": "Shown in the Invite pane of the app menu to someone who is not a member yet and so may not make invite links. Used when the project's name has not loaded; \"this app\" is written as the pane has always shown it."
   },
   "appContext.invite.linkLabel": {
     "text": "Invite link",
@@ -2011,6 +2031,10 @@
     "text": "{{app}}’s community builds it together. <0>How changes work</0>",
     "description": "Line in the About pane of the app menu: the app is built by the people who joined it. {{app}} is the app's name. The sentence is followed by a link to the app's Workshop, where the voting rules are explained: keep the <0> tags around the link's words. \"changes\" is a noun."
   },
+  "appContext.about.noteHow.unnamedApp": {
+    "text": "this app’s community builds it together. <0>How changes work</0>",
+    "description": "Line in the About pane of the app menu: the app is built by the people who joined it. Used when the app's name has not loaded; it begins \"this app\" in lower case, as the pane has always shown it. <0></0> is the link to the page that explains how changes are proposed and voted on."
+  },
   "appContext.about.noteHow.thisApp": {
     "text": "This app’s community builds it together. <0>How changes work</0>",
     "description": "Line in the About pane of the app menu when the app's name is not known: the app is built by the people who joined it. The sentence is followed by a link to the app's Workshop, where the voting rules are explained: keep the <0> tags around the link's words. \"changes\" is a noun."
@@ -2093,7 +2117,7 @@
   },
   "appContext.thisApp": {
     "text": "this app",
-    "description": "Stands in for the app's name at the top of the app menu, and where a pane names the app, when the name has not loaded. Lower case."
+    "description": "Stands where the app's name is shown on its own at the top of the app menu when the name has not loaded. Shown alone, as a label; lower case in English. Sentences that name the app have unnamed wordings of their own."
   },
   "appContext.sheetLabel": {
     "text": "Menu",

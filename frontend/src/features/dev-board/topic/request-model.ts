@@ -36,6 +36,8 @@ export interface RequestSpecCard {
   /** Null for the bot's GitHub copy, which carries no version. */
   version: number | null;
   by: string;
+  /** `by` is a stand-in word, not a name: the card uses its unnamed wording. */
+  byUnknown?: boolean;
   at: string | null;
   time: string;
   timeTitle: string;
@@ -69,6 +71,7 @@ export function requestStream(rows: TranscriptMessage[]): { rows: TranscriptMess
         title: s.title,
         version: s.version,
         by: s.sharedBy,
+        byUnknown: !!s.sharedByUnknown,
         at: m.at || null,
         time: m.time,
         timeTitle: m.timeTitle,

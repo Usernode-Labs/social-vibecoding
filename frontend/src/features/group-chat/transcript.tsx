@@ -513,9 +513,13 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
         {/* One sentence per shape, so the name, the version, the date and
             the link keep their order in the language on screen. */}
         <RichMessage
-          id={spec.built
-            ? (spec.prNumber ? 'chat:group.specCard.sharedByBuiltPr' : 'chat:group.specCard.sharedByBuilt')
-            : (spec.prNumber ? 'chat:group.specCard.sharedByPr' : 'chat:group.specCard.sharedBy')}
+          id={spec.sharedByUnknown
+            ? (spec.built
+              ? (spec.prNumber ? 'chat:group.specCard.sharedBySomeoneBuiltPr' : 'chat:group.specCard.sharedBySomeoneBuilt')
+              : (spec.prNumber ? 'chat:group.specCard.sharedBySomeonePr' : 'chat:group.specCard.sharedBySomeone'))
+            : (spec.built
+              ? (spec.prNumber ? 'chat:group.specCard.sharedByBuiltPr' : 'chat:group.specCard.sharedByBuilt')
+              : (spec.prNumber ? 'chat:group.specCard.sharedByPr' : 'chat:group.specCard.sharedBy'))}
           values={{ name: spec.sharedBy, version: spec.version, built: spec.built, number: spec.prNumber }}
           components={[
             <strong />,
@@ -1004,7 +1008,9 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
   // Each line is one whole message, with <0> around who did it.
   if (spec) {
     glyph = '📋';
-    text = <RichMessage id="project:topic.request.stream.postedSpecVersion" values={{ author: spec.sharedBy, version: spec.version }} components={[<b />]} />;
+    text = spec.sharedByUnknown
+      ? <RichMessage id="project:topic.request.stream.postedSpecVersionUnnamed" values={{ version: spec.version }} components={[<b />]} />
+      : <RichMessage id="project:topic.request.stream.postedSpecVersion" values={{ author: spec.sharedBy, version: spec.version }} components={[<b />]} />;
   } else if (gh) {
     glyph = '📋';
     text = <RichMessage id="project:topic.request.stream.postedSpec" values={{ author: displayName(msg.username) }} components={[<b />]} />;

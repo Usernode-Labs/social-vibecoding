@@ -2499,6 +2499,10 @@
     "text": "<0>{{author}}</0> posted spec v{{version}}",
     "description": "One line among the replies on a change's page, saying something that happened: a spec (the written plan for the change) was posted. {{author}} is who posted it, a username, drawn bold by <0></0>. {{version}} is the spec's version number; \"v\" abbreviates version."
   },
+  "topic.change.line.postedSpecUnnamed": {
+    "text": "<0>Someone</0> posted spec v{{version}}",
+    "description": "One line among the replies on a change's page, saying something that happened: a spec (the written plan for the change) was posted. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the spec's version number."
+  },
   "topic.change.line.previewReady": {
     "text": "The preview is ready",
     "description": "One line among the replies on a change's page, saying something that happened: the preview build of the change finished and can be opened. A \"Try it\" button follows it. No full stop."
@@ -2819,9 +2823,17 @@
     "text": "by {{author}}",
     "description": "Line under the title on a spec's card under a request, when the time is not known: who posted the spec. {{author}} is a username, or the assistant's name, Homeroom bot."
   },
+  "topic.request.spec.bySomeone": {
+    "text": "by Someone",
+    "description": "Line under the title on a spec's card under a request, when the time is not known: who posted the spec. Used when nobody can be named; \"Someone\" is written as the line has always shown it."
+  },
   "topic.request.spec.byAt": {
     "text": "by {{author}} · <0>{{time}}</0>",
     "description": "Line under the title on a spec's card under a request: who posted the spec, and when. {{author}} is a username, or the assistant's name, Homeroom bot. {{time}} is when, already formatted, for example 2:41 PM or Oct 5; keep it inside <0></0>."
+  },
+  "topic.request.spec.bySomeoneAt": {
+    "text": "by Someone · <0>{{time}}</0>",
+    "description": "Line under the title on a spec's card under a request: who posted the spec, and when. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{time}} is when, already formatted."
   },
   "topic.request.spec.read": {
     "text": "Read",
@@ -2878,6 +2890,10 @@
   "topic.request.stream.postedSpecVersion": {
     "text": "<0>{{author}}</0> posted spec v{{version}}",
     "description": "One line among the replies on a request's page, saying something that happened: a spec (the written plan for the change) was posted. {{author}} is the username of who posted it, drawn bold by <0></0>. {{version}} is the spec's version number; \"v\" abbreviates version."
+  },
+  "topic.request.stream.postedSpecVersionUnnamed": {
+    "text": "<0>Someone</0> posted spec v{{version}}",
+    "description": "One line among the replies on a request's page, saying something that happened: a spec (the written plan for the change) was posted. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the spec's version number."
   },
   "topic.request.stream.postedSpec": {
     "text": "<0>{{author}}</0> posted a spec",
