@@ -1372,7 +1372,16 @@ export function approvalStep(
  * project, with their names ("evan or snait"); otherwise a few members'
  * and "+N" for the rest of the electorate; on a project that is just you,
  * yours. The wait rule adds a line under it. The steps run across a wide
- * card and stack on a phone and beside the Workshop's side panel (app.css).
+ * card and stack on a phone and beside the Workshop's side panel (app.css);
+ * the middle step takes the wider share, because the faces crowd its words
+ * otherwise.
+ *
+ * WHO CAN CHANGE THE RULE also reaches in from here (#4527): the heading's
+ * Edit button, drawn like the dashboard's "See all", shows for exactly whom
+ * the card's data says can manage (`can_manage`, the same rule the
+ * governance proposal enforces) and opens the Members & approvals dialog on
+ * its Proposal approvals section — where the change is proposed and voted
+ * on. Nothing here edits the rule itself.
  */
 export function ApprovalRules({ slug }: { slug: string }) {
   const data = useCommunity(slug);
@@ -1391,6 +1400,17 @@ export function ApprovalRules({ slug }: { slug: string }) {
     <section className="dev-ws-strip" data-ws-approval-rules="">
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Approval rules</span>
+        {data.can_manage ? (
+          <button
+            type="button"
+            className="dev-ws-hub-open dev-ws-head-end un-touch-target"
+            data-ws-rules-edit=""
+            aria-label="Edit approval rules"
+            onClick={() => (window as any).AppView?.openMembersModal?.({ focus: 'approvals' })}
+          >
+            Edit
+          </button>
+        ) : null}
       </div>
       <ol className="dev-ws-rules" data-ws-community-rule="" aria-label={approvalLine(data.approval, data)}>
         <li className="dev-ws-rule-step">
