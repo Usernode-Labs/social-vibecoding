@@ -58,6 +58,68 @@ test('the snake_case user_id form counts as your own message too', () => {
   assert.equal(h.scrolled(), 1);
 });
 
+// #4511: on a request's page the live message re-renders the whole stream
+// (`renderThread`) instead of appending one row, and that publish is batched
+// unless `flush` is passed — so the `scrollHeight` measured on the next line
+// was still the old height and the new message landed under the fold.
+function setupRequest() {
+  const renderOpts = [];
+  const sandbox = {
+    window: {}, URLSearchParams, location: { search: '' },
+    App: { user: { id: 7, username: 'evan' } },
+    document: {
+      getElementById: (id) => {
+        if (id === 'gc-thread-messages') return { dataset: {} };
+        if (id === 'gc-thread-scroll') return scroll;
+        return null;
+      },
+    },
+  };
+  const scroll = { scrollTop: 0, scrollHeight: 1000, clientHeight: 500 };
+  vm.createContext(sandbox);
+  vm.runInContext(read('public/js/group-chat.js'), sandbox);
+  const gc = sandbox.window.GroupChat;
+  gc._lockedToBottom = false;
+  gc.activeThread = { type: 'issue', ref: 1, language: 'request' };
+  // Stands in for the committed row: a flushed publish has the new row in
+  // the DOM by the time renderThread returns, so the stream is taller.
+  gc.renderThread = (opts) => {
+    // A copy: `opts` was made inside the vm sandbox, whose Object.prototype
+    // deepEqual in this realm treats as a different structure.
+    renderOpts.push({ ...opts });
+    scroll.scrollHeight += 500;
+  };
+  return { gc, scroll, renderOpts };
+}
+
+const threadChat = (id, userId) => ({
+  type: 'chat', id, userId, content: 'hi', thread: { type: 'issue', ref: 1 },
+});
+
+test('on a request page your own message flushes the render and scrolls to it, even scrolled up', () => {
+  const h = setupRequest();
+  h.scroll.scrollTop = 0; // 500px above the bottom, and still yours
+  h.gc.handleIncoming(threadChat(10, 7));
+  assert.deepEqual(h.renderOpts, [{ keepScroll: true, flush: true }]);
+  assert.equal(h.scroll.scrollTop, 1500);
+});
+
+test('on a request page someone else\'s message still follows a reader near the bottom', () => {
+  const h = setupRequest();
+  h.scroll.scrollTop = 480; // 20px from the bottom: within the stick threshold
+  h.gc.handleIncoming(threadChat(11, 99));
+  assert.deepEqual(h.renderOpts, [{ keepScroll: true, flush: true }]);
+  assert.equal(h.scroll.scrollTop, 1500);
+});
+
+test('on a request page someone else\'s message does not yank a reader who has scrolled up', () => {
+  const h = setupRequest();
+  h.scroll.scrollTop = 0;
+  h.gc.handleIncoming(threadChat(12, 99));
+  assert.deepEqual(h.renderOpts, [{ keepScroll: true, flush: true }]);
+  assert.equal(h.scroll.scrollTop, 0);
+});
+
 test('the live append is flushed synchronously, so the scroll measures the new row', () => {
   const src = read('frontend/src/features/group-chat/mount.ts');
   const fn = src.match(/export function appendTranscriptMessage\([\s\S]*?\n\}/);

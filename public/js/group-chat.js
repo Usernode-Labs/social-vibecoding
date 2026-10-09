@@ -716,7 +716,12 @@ const GroupChat = {
         // its rows are merged with the GitHub comments, and a spec posted
         // live has to reach the head's spec cards and status card too.
         if (a.language === 'request') {
-          GroupChat.renderThread({ keepScroll: true });
+          // `flush` commits the new row before the measurement below: the
+          // publish is batched by default, so scrollHeight would otherwise
+          // still be the old height and the message would land under the
+          // fold. Same reason appendTranscriptMessage publishes flushed.
+          // Safe here: this runs from the WebSocket, outside React render.
+          GroupChat.renderThread({ keepScroll: true, flush: true });
           if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
           return;
         }
