@@ -192,6 +192,13 @@ const USER_ACTIVITIES = [
     id: 1, user_id: 1, season_event_id: 100, challenge_id: 1, activity_type: 'bug_report',
     points: '20.00', description: 'Found an XSS', activity_at: T(-2),
   },
+  // A graded credit alongside the ungraded one: the breakdown's activities
+  // list carries metadata->'grade'->>'reason' through (#3200).
+  {
+    id: 2, user_id: 1, season_event_id: 100, challenge_id: 1, activity_type: 'proposal_accepted',
+    points: '150.00', description: 'Accepted proposal', activity_at: T(-1),
+    metadata: { grade: { score: 150, reason: 'Clear scope and a clean spec' } },
+  },
 ];
 
 // ─── Mock pool: SQL shape -> in-memory computation ──────────────────────
@@ -456,7 +463,7 @@ function makeMockPool() {
         .map((a) => {
           const c = CHALLENGES.find((cc) => cc.id === a.challenge_id);
           const t = CHALLENGE_TEMPLATES.find((tt) => tt.id === c.challenge_template_id);
-          return { ...a, activity_kind: t.kind };
+          return { ...a, activity_kind: t.kind, grade_reason: a.metadata && a.metadata.grade ? a.metadata.grade.reason : null };
         });
       return { rows };
     }
@@ -810,14 +817,23 @@ test('me/breakdown event scope: full shape incl. challenge_progress + activities
     assert.equal(body.data.challenge_progress.length, 1);
     assert.deepEqual(body.data.challenge_progress[0], {
       challenge_id: 1, state: 'none', current: null, target: 5,
-      pending_points: 0, earned_points: 20, description: 'Report a bug (template)',
+      // 20 (the ungraded ledger row) + 150 (the graded one added above).
+      pending_points: 0, earned_points: 170, description: 'Report a bug (template)',
     });
 
     // activities: activity_sub_category -> activity_kind rename.
-    assert.equal(body.data.activities.length, 1);
+    assert.equal(body.data.activities.length, 2);
+    // Newest first: the graded proposal credit (T(-1)) before the older
+    // ungraded bug report (T(-2)).
     assert.equal(body.data.activities[0].activity_kind, 'REPORT_BUG');
     assert.equal(body.data.activities[0].challenge_id, 1);
-    assert.equal(body.data.activities[0].points, 20);
+    assert.equal(body.data.activities[0].points, 150);
+    // #3200: the ledger's grade reason rides through when the metadata has
+    // one, and a credit with no grade shows points only rather than null
+    // leaking into the payload.
+    assert.equal(body.data.activities[1].grade_reason, null, 'the ungraded credit carries no reason');
+    assert.equal(body.data.activities[0].grade_reason, 'Clear scope and a clean spec',
+      'the graded credit carries its scorer reason');
   });
 });
 

@@ -135,6 +135,14 @@ function resetFixtures() {
       metadata: { kind: 'challenge_completion', session_id: 'sess-carol-1', nullifier_hex: '0xdeadc001', wallet_address: 'wallet_carol_100' },
       activity_at: T(-2), created_at: T(-2),
     },
+    // A graded credit WITH a scorer reason (challenge 2), so the mobile
+    // route's own-activities SELECT is seen carrying metadata->'grade'
+    // through to the payload alongside the ungraded row on challenge 1.
+    {
+      id: 10, user_id: 3, challenge_id: 2, points: '150.00',
+      metadata: { kind: 'proposal_accepted', grade: { score: 150, reason: 'Clear scope and a clean spec' } },
+      activity_at: T(-1), created_at: T(-1),
+    },
     // ivan holds the session/nullifier that collision tests probe against
     // — a DIFFERENT (user, challenge) pair than whatever the test targets.
     {
@@ -291,11 +299,12 @@ function handleQuery(rawSql, params = []) {
   }
 
   // ── GET /challenges: the user's own activities on the in-scope ids ──────
-  if (sql.startsWith('SELECT challenge_id, points, description, activity_at FROM user_activities')) {
+  if (sql.startsWith("SELECT challenge_id, points, description, activity_at, metadata->'grade'->>'reason' AS grade_reason FROM user_activities")) {
     const [userId, ids] = params;
     const rows = userActivities
       .filter((a) => a.user_id === userId && ids.includes(a.challenge_id))
-      .map((a) => ({ challenge_id: a.challenge_id, points: a.points, description: a.description || null, activity_at: a.activity_at }));
+      .map((a) => ({ challenge_id: a.challenge_id, points: a.points, description: a.description || null, activity_at: a.activity_at,
+        grade_reason: a.metadata && a.metadata.grade ? a.metadata.grade.reason : null }));
     return { rows };
   }
 
@@ -507,6 +516,13 @@ test('GET /challenges: event scope — effective merge, category uppercase, cta_
     assert.equal(item.activities.length, 1);
     assert.equal(item.activities[0].points, 10);
     assert.equal(item.activities_total, 10);
+    // #3200: the scorer's grade reason rides along on the ledger row when the
+    // metadata carries one — the detail page's "why" for a credit's points.
+    assert.equal(item.activities[0].grade_reason, null, 'an ungraded completion carries no reason');
+    const graded = body.data.find((c) => c.id === 2);
+    assert.equal(graded.activities.length, 1);
+    assert.equal(graded.activities[0].grade_reason, 'Clear scope and a clean spec',
+      'the grade reason from metadata rides through unmodified');
   });
 });
 

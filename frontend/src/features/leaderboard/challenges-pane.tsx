@@ -48,6 +48,7 @@ import type { ReactNode } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { SectionHeading } from '@/components/ui/field';
+import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { resolveIllustration } from '../../lib/challenge-illustrations';
@@ -204,6 +205,10 @@ type DetailView = {
   fill: number | null;
   counted: boolean;
   cadence: string | null;
+  // The viewer's own credits on this challenge, with each one's grade reason
+  // when the scorer wrote one. Null when there are none: the whole section
+  // drops out rather than rendering an empty list.
+  credits: { key: string; points: string; reason: string | null }[] | null;
   cta: CtaView | null;
   // #3186: the Me screen's "Your feedback", on the feedback challenge only.
   feedbackLink?: boolean;
@@ -311,6 +316,31 @@ function Card({ view }: { view: CardView }): ReactNode {
       className={'tc-se-card' + (view.featured ? CARD_FEATURED : '')}
       onClick={() => controller()?._openIdx(view.idx)}
     />
+  );
+}
+
+// The viewer's credits on this challenge (#3200): the same rows the meta
+// line's points-so-far sums, each with the scorer's reason beside its points.
+// Read-only rows, so no chevron and no `as` — a credit is not a link.
+function CreditsList({ credits }: { credits: NonNullable<DetailView['credits']> }): ReactNode {
+  return (
+    <GroupedList className="mx-0">
+      {credits.map((row) => (
+        <ListRow
+          key={row.key}
+          title={row.points}
+          titleClassName="shrink-0 tabular-nums text-zinc-700 dark:text-zinc-300"
+          subtitle={row.reason ? (
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span>·</span>
+              <span>{row.reason}</span>
+            </span>
+          ) : null}
+          subtitleClassName="mt-1 text-[0.8125rem] whitespace-normal text-zinc-500 dark:text-zinc-400"
+          chevron={false}
+        />
+      ))}
+    </GroupedList>
   );
 }
 
@@ -689,6 +719,12 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
       {view.description ? <p className={PROSE}>{view.description}</p> : null}
       {view.requirements ? <PageSection heading="Requirements">{view.requirements}</PageSection> : null}
       {view.scoring ? <PageSection heading="Scoring">{view.scoring}</PageSection> : null}
+      {view.credits ? (
+        <section className="flex flex-col">
+          <SectionHeading title="Your credits" />
+          <CreditsList credits={view.credits} />
+        </section>
+      ) : null}
       <section className="flex flex-col gap-2 border-t border-zinc-200 pt-3.5 dark:border-zinc-800">
         <div className="flex items-baseline justify-between gap-3">
           {/* `mb-0`: this heading is an ITEM on a shared baseline with the

@@ -1719,6 +1719,20 @@ const TopochainChallenges = {
     else if (points) amount = { text: `${points.toLocaleString('en-US')} pts so far`, earned: false };
     else if (reward) amount = { text: reward, earned: false };
 
+    // The viewer's own credits on this challenge, reason and all: the same
+    // rows `activities_total` sums, carried through from the mobile route so
+    // a graded credit can say WHY it is worth what it is. Null when there are
+    // none, so the page draws no section rather than an empty one.
+    const mineActivities = mine && Array.isArray(mine.activities) ? mine.activities : [];
+    const credits = mineActivities.length
+      ? mineActivities.map((a, i) => ({
+        key: `${challenge.id}|${i}`,
+        points: TopochainChallenges._pts(a && a.points),
+        reason: a && a.grade_reason != null && String(a.grade_reason).trim() !== ''
+          ? str(a.grade_reason) : null,
+      }))
+      : null;
+
     const bpStep = TopochainChallenges._isBlockProduction(challenge)
       ? TopochainChallenges.blockProductionStep(
         TopochainChallenges._bpState, TopochainChallenges._bpEnv(), TopochainChallenges._bpRequesting)
@@ -1775,6 +1789,7 @@ const TopochainChallenges = {
       stateLabel: rail.stateLabel,
       fill: rail.fill,
       counted: !!rail.counted,
+      credits,
       // The card's line under the rail, under the page's rail too.
       cadence: TopochainChallenges._cadenceOf(challenge),
       // #3186: on the feedback challenge, the way to what the viewer sent
