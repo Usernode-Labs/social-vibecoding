@@ -3751,10 +3751,6 @@
     "text": "Open the workflow run",
     "description": "Link at the end of the amber 'merged but not released' banner on the platform project's page: opens, on GitHub, the run of the release workflow the banner is about. 'Open' is a verb; 'run' is a noun."
   },
-  "releaseStall.unknownCommit": {
-    "text": "(unknown)",
-    "description": "Stands in for a commit's short code inside the 'merged but not released' banner when the code is not known, as in 'Commit (unknown) landed on main'. Keep the parentheses."
-  },
   "releaseStall.failed.prCommit": {
     "text": "PR #{{pr}} ({{commit}}) merged but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a merged change is not live because the automated release job failed. {{pr}} is the GitHub pull request's number and {{commit}} the merged commit's short code. 'Run it' means run the release workflow; 'main' is the main branch's name and stays as it is."
@@ -3775,9 +3771,17 @@
     "text": "Commit {{commit}} landed on main but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live because the automated release job failed. {{commit}} is the commit's short code, or the word for unknown in parentheses. 'Run it' means run the release workflow; 'main' is the branch's name and stays as it is."
   },
+  "releaseStall.failed.commitUnknown": {
+    "text": "Commit (unknown) landed on main but was not released: its release workflow did not complete. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live because the automated release job failed. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it."
+  },
   "releaseStall.failed.commitRunning": {
     "text": "Commit {{commit}} landed on main but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live because the automated release job failed. {{commit}} is the commit's short code, or the word for unknown in parentheses; {{running}} is the short code of the build still being served. 'Run it' means run the release workflow; 'main' is the branch's name and stays as it is."
+  },
+  "releaseStall.failed.commitUnknownRunning": {
+    "text": "Commit (unknown) landed on main but was not released: its release workflow did not complete. The platform is still running {{running}}. Run it on main to release the latest commit; a later merge would also carry this change.",
+    "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live because the automated release job failed. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "releaseStall.slow.prCommit": {
     "text": "PR #{{pr}} ({{commit}}) merged and its release workflow is still running, well past the usual couple of minutes.",
@@ -3799,9 +3803,17 @@
     "text": "Commit {{commit}} landed on main and its release workflow is still running, well past the usual couple of minutes.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live yet because the automated release job is taking far longer than normal. {{commit}} is the commit's short code, or the word for unknown in parentheses. 'main' is the branch's name and stays as it is."
   },
+  "releaseStall.slow.commitUnknown": {
+    "text": "Commit (unknown) landed on main and its release workflow is still running, well past the usual couple of minutes.",
+    "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live yet because the automated release job is taking far longer than normal. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it."
+  },
   "releaseStall.slow.commitRunning": {
     "text": "Commit {{commit}} landed on main and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live yet because the automated release job is taking far longer than normal. {{commit}} is the commit's short code, or the word for unknown in parentheses; {{running}} is the short code of the build still being served. 'main' is the branch's name and stays as it is."
+  },
+  "releaseStall.slow.commitUnknownRunning": {
+    "text": "Commit (unknown) landed on main and its release workflow is still running, well past the usual couple of minutes. The platform is still running {{running}}.",
+    "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live yet because the automated release job is taking far longer than normal. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "releaseStall.notRolled.prCommit": {
     "text": "PR #{{pr}} ({{commit}}) merged and its release workflow succeeded, but the platform has not rolled onto it.",
@@ -3823,9 +3835,17 @@
     "text": "Commit {{commit}} landed on main and its release workflow succeeded, but the platform has not rolled onto it.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch was built successfully, yet the servers have not switched to the new build. {{commit}} is the commit's short code, or the word for unknown in parentheses. 'main' is the branch's name and stays as it is."
   },
+  "releaseStall.notRolled.commitUnknown": {
+    "text": "Commit (unknown) landed on main and its release workflow succeeded, but the platform has not rolled onto it.",
+    "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch was built successfully, yet the servers have not switched to the new build. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it."
+  },
   "releaseStall.notRolled.commitRunning": {
     "text": "Commit {{commit}} landed on main and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch was built successfully, yet the servers have not switched to the new build. {{commit}} is the commit's short code, or the word for unknown in parentheses; {{running}} is the short code of the build still being served. 'main' is the branch's name and stays as it is."
+  },
+  "releaseStall.notRolled.commitUnknownRunning": {
+    "text": "Commit (unknown) landed on main and its release workflow succeeded, but the platform has not rolled onto it. The platform is still running {{running}}.",
+    "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch was built successfully, yet the servers have not switched to the new build. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "releaseStall.noRun.prCommit": {
     "text": "PR #{{pr}} ({{commit}}) merged but is not running yet, and no release workflow run could be found for it.",
@@ -3847,9 +3867,17 @@
     "text": "Commit {{commit}} landed on main but is not running yet, and no release workflow run could be found for it.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live and no run of the automated release job was found for it. {{commit}} is the commit's short code, or the word for unknown in parentheses. 'main' is the branch's name and stays as it is."
   },
+  "releaseStall.noRun.commitUnknown": {
+    "text": "Commit (unknown) landed on main but is not running yet, and no release workflow run could be found for it.",
+    "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live and no run of the automated release job was found for it. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it."
+  },
   "releaseStall.noRun.commitRunning": {
     "text": "Commit {{commit}} landed on main but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
     "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live and no run of the automated release job was found for it. {{commit}} is the commit's short code, or the word for unknown in parentheses; {{running}} is the short code of the build still being served. 'main' is the branch's name and stays as it is."
+  },
+  "releaseStall.noRun.commitUnknownRunning": {
+    "text": "Commit (unknown) landed on main but is not running yet, and no release workflow run could be found for it. The platform is still running {{running}}.",
+    "description": "Amber banner on the platform project's page: a commit pushed straight to the main branch is not live and no run of the automated release job was found for it. Used when the commit is not known; \"(unknown)\" is written as the banner has always shown it. {{running}} is the build still serving."
   },
   "clamp.showMore": {
     "text": "Show more",

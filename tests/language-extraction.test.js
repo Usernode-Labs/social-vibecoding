@@ -711,3 +711,20 @@ test('the reply strip words a nameless row in its own sentence', async (t) => {
   assert.equal(message('chat:group.composer.replyingToSystem'), message('chat:group.composer.replyingTo', { name: '@System' }));
   assert.equal(message('chat:group.composer.replyingToSomeone'), message('chat:group.composer.replyingTo', { name: '@Someone' }));
 });
+
+test('the release banner has a whole sentence for a commit that is not known', async (t) => {
+  const kinds = { workflow_failed: 'failed', workflow_running: 'slow', rollout_missing: 'notRolled', unknown: 'noRun' };
+  for (const key of Object.values(kinds)) {
+    assert.equal(message(`project:releaseStall.${key}.commitUnknown`), message(`project:releaseStall.${key}.commit`, { commit: '(unknown)' }), key);
+    assert.equal(message(`project:releaseStall.${key}.commitUnknownRunning`, { running: 'abc1234' }),
+      message(`project:releaseStall.${key}.commitRunning`, { commit: '(unknown)', running: 'abc1234' }), key);
+  }
+  const { module: stall } = await loadInSpanish(t, 'frontend/src/features/dev-board/release-stall-store.ts', {
+    'project:releaseStall.failed.commit': 'El commit {{commit}} llegó a main pero no se publicó.',
+    'project:releaseStall.failed.commitUnknown': 'Un commit que no conocemos llegó a main pero no se publicó.',
+  });
+  assert.equal(stall.releaseStallText({ kind: 'workflow_failed', sha: null, prNumber: null, running: null }),
+    'Un commit que no conocemos llegó a main pero no se publicó.');
+  assert.equal(stall.releaseStallText({ kind: 'workflow_failed', sha: '7817d05', prNumber: null, running: null }),
+    'El commit 7817d05 llegó a main pero no se publicó.');
+});
