@@ -27,8 +27,9 @@
 //   node claude-openrouter-request.js <claude arguments...>
 //
 // Env: OPENROUTER_API_KEY, AGENT_MODEL (required); OPENROUTER_API_BASE,
-// AGENT_MODEL_MAX_OUTPUT_TOKENS, AGENT_REASONING_EFFORT, HOMEROOM_MCP_TOKEN,
-// AGENT_MODEL_SUPPORTS_IMAGES, AGENT_MODEL_SUPPORTS_FILES, MODE (optional).
+// AGENT_MODEL_MAX_OUTPUT_TOKENS, AGENT_MODEL_CONTEXT_WINDOW,
+// AGENT_REASONING_EFFORT, HOMEROOM_MCP_TOKEN, AGENT_MODEL_SUPPORTS_IMAGES,
+// AGENT_MODEL_SUPPORTS_FILES, MODE (optional).
 
 const http = require('node:http');
 const crypto = require('node:crypto');
@@ -621,6 +622,31 @@ function makeRedactor(secrets) {
   return line => list.reduce((out, secret) => out.split(secret).join('****'), line);
 }
 
+// Claude Code compacts the conversation once its context reaches this many
+// tokens, or the model's whole window when that is smaller: the limit Codex
+// compacts at (build-codex-model-catalog.js AUTO_COMPACT_TOKEN_LIMIT). An
+// OpenRouter model is one Claude Code does not know: an older Claude Code
+// compacted only once the provider refused a prompt as too long, which GLM
+// 5.3 Flash's 1,310,720-token window never does, and a newer one assumes a
+// window of its own. A bot build resent its whole history on every request,
+// 0.5 to 1.2 MB each, and 13 of the week's builds to 2026-10-09 ran out of
+// time doing it (one, at $5.77, was on its 317th request, of 540 KB).
+const AUTO_COMPACT_TOKEN_LIMIT = 200_000;
+
+// Claude Code's compaction settings for this turn: the model's real window
+// (AGENT_MODEL_CONTEXT_WINDOW, from the catalog) and the window it compacts
+// at. A value already in the environment is kept.
+function compactionEnv(env) {
+  const window = Number(env.AGENT_MODEL_CONTEXT_WINDOW);
+  const known = Number.isSafeInteger(window) && window > 0;
+  const out = {
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(known ? Math.min(window, AUTO_COMPACT_TOKEN_LIMIT) : AUTO_COMPACT_TOKEN_LIMIT),
+  };
+  if (known) out.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
+  for (const name of Object.keys(out)) if (env[name]) delete out[name];
+  return out;
+}
+
 // The environment Claude Code runs with. Exported for tests: the key must not
 // be in it, and every model alias must resolve to the session's model.
 function claudeChildEnv(env, { baseUrl, localToken, model }) {
@@ -639,6 +665,7 @@ function claudeChildEnv(env, { baseUrl, localToken, model }) {
     // Anthropic-only beta headers mean nothing to another provider and are
     // the usual reason a gateway rejects a Claude Code request.
     CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
+    ...compactionEnv(env),
   });
   return child;
 }
@@ -702,4 +729,5 @@ if (require.main === module) {
 
 module.exports = {
   startMessagesAdapter, applyTurnPolicy, makeRedactor, claudeChildEnv, runClaude, replyFields, PROVIDER_PREFERENCES,
+  AUTO_COMPACT_TOKEN_LIMIT,
 };

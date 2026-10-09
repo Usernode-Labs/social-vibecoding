@@ -43,7 +43,9 @@
 #                              claude-openrouter-request.js adapter, and needs
 #                              OPENROUTER_API_KEY + AGENT_MODEL (MODEL is the
 #                              same slug); OPENROUTER_API_BASE,
-#                              AGENT_MODEL_MAX_OUTPUT_TOKENS and
+#                              AGENT_MODEL_MAX_OUTPUT_TOKENS,
+#                              AGENT_MODEL_CONTEXT_WINDOW (sets the window
+#                              Claude Code compacts at) and
 #                              AGENT_REASONING_EFFORT are optional.
 #   DISCARD_FAILED_TURN        1: a build whose claude failed commits and
 #                              pushes nothing (the Homeroom bot's turns);
