@@ -33,6 +33,13 @@
       "name": "Infra",
       "icon": "🛠️",
       "about": "Builds, staging, deploys and the servers the apps run on"
+    },
+    {
+      "id": "project-workflows",
+      "handle": "project-workflows",
+      "name": "Project workflows",
+      "icon": "🧭",
+      "about": "How work moves before it's a proposal: request types, triage, discussion and decisions"
     }
   ],
   "secrets": [
