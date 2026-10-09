@@ -20,7 +20,7 @@
  * publishes, since the specs are posted in it).
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -45,6 +45,7 @@ import {
 } from './request-model';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
+import { fetchPins, issueImageIds, withPins, type Pin } from './screenshot-pins';
 
 function appView(): any {
   return typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -98,10 +99,32 @@ function reducedMotion(): boolean {
  * animating the text's height between the fold and its full length; reduced
  * motion snaps. Whether there is anything to fold is measured, so a short
  * request has no control under it.
+ *
+ * A screenshot a C comment was filed with (#4482) keeps its pin as data;
+ * once the pin is read, the dot and the comment bubble are drawn over that
+ * image, and a "Hide comment" button beside the reveal takes them away so
+ * the clean picture shows. Comments are shown on open; hiding them lasts
+ * only while this page is up.
  */
 export function RequestWords({ html }: { html: string }): ReactNode {
   const text = useRef<HTMLDivElement>(null);
-  const inner = useInnerHtml(html);
+  // The pins arrive after the first render, so the initial markup is the
+  // body's own (no hydration change); the overlay and the button come with
+  // the effect's second render, as any data load does.
+  const [pins, setPins] = useState<Record<string, Pin>>({});
+  const [hidePins, setHidePins] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const ids = issueImageIds(html);
+    if (!ids.length) { setPins({}); return; }
+    fetchPins(ids).then((found) => {
+      if (live) setPins(found);
+    });
+    return () => { live = false; };
+  }, [html]);
+  const pinned = useMemo(() => withPins(html, pins), [html, pins]);
+  const inner = useInnerHtml(pinned);
+  const pinCount = Object.keys(pins).length;
   // `open` is what the clamp says; `shown` is what the button says, which
   // turns with the press rather than when the text has finished moving.
   const [open, setOpen] = useState(false);
@@ -113,7 +136,7 @@ export function RequestWords({ html }: { html: string }): ReactNode {
     if (!el || open) return;
     // Clamped, it is shorter than its content exactly when it folds something.
     setFolds(el.scrollHeight > el.clientHeight + 1);
-  }, [html, open]);
+  }, [html, open, pinned]);
   const toggle = () => {
     const el = text.current;
     if (!el || moving.current) return;
@@ -149,10 +172,11 @@ export function RequestWords({ html }: { html: string }): ReactNode {
   };
   if (!html) return null;
   return (
-    <div className="dev-request-ask">
-      {/* DevChat.renderMarkdown's output, sanitised where it is built. The
-          clamp class is React's; the fold writes the node's height only for
-          the length of the animation, and puts the clamp back as it ends so
+    <div className="dev-request-ask" data-pins-hidden={hidePins ? '' : undefined}>
+      {/* DevChat.renderMarkdown's output, sanitised where it is built, with a
+          pinned screenshot's overlay wrapped around its image. The clamp
+          class is React's; the fold writes the node's height only for the
+          length of the animation, and puts the clamp back as it ends so
           React's next render agrees with the DOM. */}
       <div ref={text} className={`dev-request-ask-text${open ? '' : ' line-clamp-4'}`} data-request-words="" dangerouslySetInnerHTML={inner} />
       {folds || open ? (
@@ -164,6 +188,18 @@ export function RequestWords({ html }: { html: string }): ReactNode {
         >
           <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
           {shown ? 'Show less' : 'Show more'}
+        </button>
+      ) : null}
+      {pinCount > 0 && (!folds || open) ? (
+        <button
+          type="button"
+          className="dev-ws-reveal dev-ws-reveal-start touch-target-32 dev-request-pins-toggle"
+          aria-pressed={hidePins}
+          onClick={() => setHidePins((h) => !h)}
+        >
+          {hidePins
+            ? (pinCount > 1 ? 'Show comments' : 'Show comment')
+            : (pinCount > 1 ? 'Hide comments' : 'Hide comment')}
         </button>
       ) : null}
     </div>

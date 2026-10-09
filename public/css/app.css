@@ -15948,6 +15948,55 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @media (prefers-reduced-motion: reduce) {
   .dev-request-more .dev-ws-reveal-chev { transition: none; }
 }
+/* A C comment's pin over its screenshot (#4482): the picture itself is the
+   clean page, and the dot and bubble are data drawn on top, so a press of
+   the toggle below takes them away. The overlay never catches a pointer:
+   a tap on the picture still opens the image viewer. */
+.dev-request-pin-shot {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+}
+.dev-request-pin-overlay { position: absolute; inset: 0; pointer-events: none; }
+.dev-request-pin-dot {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #0a6ee0;
+  border: 3px solid #ffffff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+}
+/* The bubble looks like the one the C comment paints into a handover
+   picture: a white card with a hairline and a soft shadow, at most six
+   lines, offset 14px from the point, flipped left or up when it would run
+   off the picture. */
+.dev-request-pin-bubble {
+  position: absolute;
+  max-width: min(240px, 70%);
+  padding: 10px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+  line-height: 1.4;
+  color: #18181b;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  transform: translate(14px, 14px);
+}
+.dev-request-pin-bubble.is-left { transform: translate(calc(-100% - 14px), 14px); }
+.dev-request-pin-bubble.is-up { transform: translate(14px, calc(-100% - 14px)); }
+.dev-request-pin-bubble.is-left.is-up { transform: translate(calc(-100% - 14px), calc(-100% - 14px)); }
+/* The toggle sits with the request's own reveal, and reads the same. */
+.dev-request-pins-toggle.dev-ws-reveal-start { margin-top: 4px; padding-left: 0; width: auto; }
+.dev-request-ask[data-pins-hidden] .dev-request-pin-overlay { display: none; }
 
 /* Where it stands: a card on the sheet, the stepper, a sentence, the next step. */
 .dev-request-status {

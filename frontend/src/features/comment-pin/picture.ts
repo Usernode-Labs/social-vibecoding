@@ -24,9 +24,13 @@
  * ── Two halves ─────────────────────────────────────────────────────────
  *
  * The page is drawn the moment the comment opens (`takeBase`), so it shows
- * the page as it was, and is ready by the time the words are; the pin and
- * the words are drawn on a copy when it is sent (`finishPicture`). The
- * layout helpers are pure and exported for tests.
+ * the page as it was, and is ready by the time the words are. What is SENT
+ * (#4482) is that clean base, with the pin's spot saved beside it as
+ * fractions of the picture (`pinFraction`) — the request view draws the
+ * pin and the bubble over it. `finishPicture`, which paints them into a
+ * copy, is now only for the handover to "Suggest an improvement": that
+ * dialog has no way to save a pin, so its picture keeps the comment.
+ * The layout helpers are pure and exported for tests.
  */
 
 export const LIB_SRC = '/usernode-bridge/v1/snapdom.js';
@@ -37,6 +41,12 @@ export const SNAPSHOT_KEY = '__usernode_snapshot';
 export const APP_PICTURE_TIMEOUT_MS = 8000;
 /** The pin's fill: the shell's accent, violet-600 as tailwind.config.js remaps it. */
 export const PIN_FILL = '#0a6ee0';
+/**
+ * How many characters of the comment go with the screenshot (#4482): the
+ * bubble shows at most six lines, and the cap keeps the upload URL well
+ * under Node's 16 KB header limit even for multi-byte text.
+ */
+export const PIN_COMMENT_MAX = 500;
 
 export interface Point { x: number; y: number }
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -252,6 +262,24 @@ export interface Base {
   scale: number;
   /** What the app said about the element under the pin, when it was asked. */
   app: AppPicture | null;
+}
+
+/**
+ * Where the pin sits as a fraction of the picture (#4482): how far across
+ * and down it was, 0..1 both ways, clamped. The base canvas is `scale`
+ * device pixels to the CSS pixel, and the pin is in CSS pixels, so it is
+ * the CSS position times the scale over the canvas's own side. Stored like
+ * this, a JPEG fallback or a smaller encode never moves the pin.
+ */
+export function pinFraction(
+  base: { canvas: { width: number; height: number }; scale: number },
+  pin: Point,
+): Point {
+  const clamp = (v: number) => Math.max(0, Math.min(1, v));
+  return {
+    x: clamp((pin.x * base.scale) / Math.max(1, base.canvas.width)),
+    y: clamp((pin.y * base.scale) / Math.max(1, base.canvas.height)),
+  };
 }
 
 /**

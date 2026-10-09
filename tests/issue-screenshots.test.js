@@ -49,6 +49,8 @@ const {
   validateScreenshotUpload,
   buildScreenshotEmbed,
   MAX_SCREENSHOT_BYTES,
+  parsePinQuery,
+  PIN_COMMENT_MAX,
 } = require('../src/routes/feedback');
 const { issueImageRoutes } = require('../src/routes/issue-images');
 const { USERNODE_DOMAIN } = require('../src/services/caddy');
@@ -105,6 +107,31 @@ test('buildScreenshotEmbed: exact markdown suffix', () => {
   );
 });
 
+// ── #4482: a C comment's pin on the upload ───────────────────────────
+
+test('parsePinQuery: no pin, a pin, a pin without a comment, a comment cut to 500', () => {
+  assert.deepEqual(parsePinQuery({}), { ok: true, pin: null });
+  assert.deepEqual(parsePinQuery({ pinX: '0.5', pinY: '0.25' }), { ok: true, pin: { x: 0.5, y: 0.25, comment: null } });
+  assert.deepEqual(parsePinQuery({ pinX: 0, pinY: 1, pinComment: '  had to refresh  ' }),
+    { ok: true, pin: { x: 0, y: 1, comment: 'had to refresh' } });
+  const long = 'x'.repeat(PIN_COMMENT_MAX + 10);
+  assert.deepEqual(parsePinQuery({ pinX: '0.1', pinY: '0.2', pinComment: long }),
+    { ok: true, pin: { x: 0.1, y: 0.2, comment: 'x'.repeat(PIN_COMMENT_MAX) } });
+  assert.deepEqual(parsePinQuery({ pinX: '0.1', pinY: '0.2', pinComment: '   ' }),
+    { ok: true, pin: { x: 0.1, y: 0.2, comment: null } }, 'an empty comment stores as null');
+});
+
+test('parsePinQuery: out of range, NaN, one coordinate, comment without a pin', () => {
+  assert.equal(parsePinQuery({ pinX: '0.5', pinY: '1.5' }).ok, false);
+  assert.equal(parsePinQuery({ pinX: '-0.1', pinY: '0.5' }).ok, false);
+  assert.equal(parsePinQuery({ pinX: 'abc', pinY: '0.5' }).ok, false);
+  assert.equal(parsePinQuery({ pinX: '0.5' }).ok, false, 'only one coordinate');
+  assert.equal(parsePinQuery({ pinY: '0.5' }).ok, false);
+  assert.equal(parsePinQuery({ pinComment: 'where is it' }).ok, false, 'a comment without a pin');
+  assert.equal(parsePinQuery({ pinX: '0.5', pinY: '0.5', pinComment: 7 }).ok, true, 'a non-string comment is ignored, not refused');
+  assert.deepEqual(parsePinQuery({ pinX: '0.5', pinY: '0.5', pinComment: 7 }).pin.comment, null);
+});
+
 // ── Upload route ─────────────────────────────────────────────────────
 
 test('POST /api/feedback/screenshot stores a PNG and returns a 32-hex id', async () => {
@@ -140,6 +167,69 @@ test('POST /api/feedback/screenshot rejects a non-image body with 400', async ()
       body: Buffer.alloc(64, 7),
     });
     assert.equal(res.status, 400);
+    assert.equal(poolQueries.some((q) => q.sql.includes('INSERT INTO issue_screenshots')), false);
+  } finally {
+    server.close();
+  }
+});
+
+test('an upload with a pin query INSERTs the pin beside the bytes', async () => {
+  reset();
+  const server = await startServer();
+  try {
+    const res = await realFetch(
+      `http://127.0.0.1:${server.address().port}/api/feedback/screenshot?pinX=0.25&pinY=0.75&pinComment=${encodeURIComponent('had to refresh')}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: PNG,
+      }
+    );
+    assert.equal(res.status, 200);
+    const insert = poolQueries.find((q) => q.sql.includes('INSERT INTO issue_screenshots'));
+    assert.ok(insert);
+    assert.match(insert.sql, /pin_x, pin_y, pin_comment/);
+    assert.equal(insert.params[5], 0.25);
+    assert.equal(insert.params[6], 0.75);
+    assert.equal(insert.params[7], 'had to refresh');
+  } finally {
+    server.close();
+  }
+});
+
+test('an upload without a pin query INSERTs nulls, byte-identical to the dialog flow', async () => {
+  reset();
+  const server = await startServer();
+  try {
+    const res = await realFetch(`http://127.0.0.1:${server.address().port}/api/feedback/screenshot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: PNG,
+    });
+    assert.equal(res.status, 200);
+    const insert = poolQueries.find((q) => q.sql.includes('INSERT INTO issue_screenshots'));
+    assert.equal(insert.params[5], null);
+    assert.equal(insert.params[6], null);
+    assert.equal(insert.params[7], null);
+  } finally {
+    server.close();
+  }
+});
+
+test('an invalid pin query is a 400, nothing inserted', async () => {
+  reset();
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    for (const q of ['pinX=0.5', 'pinY=2', 'pinX=abc&pinY=0.5', 'pinComment=nothing']) {
+      const res = await realFetch(`http://127.0.0.1:${port}/api/feedback/screenshot?${q}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: PNG,
+      });
+      assert.equal(res.status, 400, q);
+      assert.match((await res.json()).error, /pin/i);
+    }
     assert.equal(poolQueries.some((q) => q.sql.includes('INSERT INTO issue_screenshots')), false);
   } finally {
     server.close();
@@ -259,6 +349,42 @@ test('GET /issue-images/:id 404s on bad or unknown ids', async () => {
     assert.equal((await realFetch(`http://127.0.0.1:${port}/issue-images/nope`)).status, 404);
     // The malformed id must never reach the DB.
     assert.equal(poolQueries.filter((q) => q.sql.includes('issue_screenshots')).length, 1);
+  } finally {
+    server.close();
+  }
+});
+
+// ── #4482: the pin read route ────────────────────────────────────────
+
+test('GET /issue-images/:id/pin returns the pin saved with the row', async () => {
+  reset();
+  poolHandler = async () => ({ rows: [{ pin_x: 0.25, pin_y: 0.75, pin_comment: 'had to refresh' }] });
+  const server = await startServer();
+  try {
+    const res = await realFetch(`http://127.0.0.1:${server.address().port}/issue-images/${GOOD_ID}/pin`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(await res.json(), { pin: { x: 0.25, y: 0.75, comment: 'had to refresh' } });
+  } finally {
+    server.close();
+  }
+});
+
+test('GET /issue-images/:id/pin answers { pin: null } for no pin and for an unknown id', async () => {
+  reset();
+  poolHandler = async (sql, params) => {
+    if (String(params[0]) === 'ff'.repeat(16)) return { rows: [] }; // unknown row
+    return { rows: [{ pin_x: null, pin_y: null, pin_comment: null }] }; // pre-#4482 row
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    assert.deepEqual(await (await realFetch(`http://127.0.0.1:${port}/issue-images/${'ff'.repeat(16)}/pin`)).json(), { pin: null });
+    assert.deepEqual(await (await realFetch(`http://127.0.0.1:${port}/issue-images/${'ee'.repeat(16)}/pin`)).json(), { pin: null });
+    // A malformed id never reaches the DB, here either.
+    assert.equal((await realFetch(`http://127.0.0.1:${port}/issue-images/nope/pin`)).status, 404);
+    assert.equal(poolQueries.filter((q) => q.sql.includes('pin_x')).length, 2);
   } finally {
     server.close();
   }

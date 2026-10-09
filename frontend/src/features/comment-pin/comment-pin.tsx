@@ -35,7 +35,7 @@ import { Button } from '@/components/ui/button';
 
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import {
-  describeElement, encodeUnder, finishPicture, inRect, pictureScale, placeBeside, takeBase, thumbnail,
+  describeElement, encodeUnder, finishPicture, inRect, pinFraction, pictureScale, placeBeside, takeBase, thumbnail,
   type Base, type ElementInfo, type Point, type Rect,
 } from './picture';
 import { handOver, postComment, whereLine, type CommentPost, type Target } from './post';
@@ -153,15 +153,24 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
       at = shellElementAt(pin, session.host);
     }
     const screen = pinInApp ? (base?.app?.path || '') : session.screen;
+    // The picture that goes with the request is the page as it looked
+    // (#4482): the clean base, with the pin's spot saved beside it. The
+    // painted-in copy is only for the handover below, whose dialog has no
+    // way to save a pin.
     let picture: Blob | null = null;
+    let saved: CommentPost['pin'] = null;
     if (keepShot && base) {
-      try { picture = await encodeUnder(finishPicture(base, pin, words)); } catch { picture = null; }
+      try {
+        picture = await encodeUnder(base.canvas);
+        if (picture) saved = { ...pinFraction(base, pin), comment: words };
+      } catch { picture = null; }
     }
     const post: CommentPost = {
       text: words,
       target,
       appSlug: session.app?.slug ?? null,
       picture,
+      pin: saved,
       where: whereLine({ inApp: pinInApp, screen, at }),
     };
     const outcome = await postComment(post);
@@ -176,7 +185,14 @@ function CommentPin({ session, onClose }: { session: Session; onClose: () => voi
     }
     if (outcome.handover) {
       onClose();
-      handOver(post);
+      // The dialog keeps a picture that shows the comment: bake the pin
+      // and the bubble into a copy first, falling back to the clean one
+      // if the bake throws.
+      let baked = post.picture;
+      if (baked && base) {
+        try { baked = await encodeUnder(finishPicture(base, pin, words)) ?? baked; } catch { /* the clean picture still shows it was asked about */ }
+      }
+      handOver({ ...post, pin: null, picture: baked });
       return;
     }
     setSending(false);

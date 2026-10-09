@@ -72,6 +72,19 @@ test('the picture is the screen\'s own pixels, up to 2x, and never past 3000 on 
   assert.equal(picture.inRect({ x: 1, y: 1 }, null), false);
 });
 
+// #4482: the pin is saved as a fraction of the picture, so a JPEG fallback
+// or a smaller encode never moves it.
+test('the pin’s spot is a fraction of the picture, clamped to it', () => {
+  assert.deepEqual(picture.pinFraction({ canvas: { width: 800, height: 600 }, scale: 1 }, { x: 200, y: 150 }),
+    { x: 0.25, y: 0.25 });
+  assert.deepEqual(picture.pinFraction({ canvas: { width: 1600, height: 1200 }, scale: 2 }, { x: 200, y: 150 }),
+    { x: 0.25, y: 0.25 }, 'device pixels and CSS pixels agree');
+  assert.deepEqual(picture.pinFraction({ canvas: { width: 800, height: 600 }, scale: 1 }, { x: -10, y: 900 }),
+    { x: 0, y: 1 }, 'clamped to the picture');
+  assert.deepEqual(picture.pinFraction({ canvas: { width: 1, height: 1 }, scale: 1 }, { x: 0.4, y: 0 }),
+    { x: 0.4, y: 0 }, 'a one-pixel canvas never divides by zero');
+});
+
 // ── 2. Posting ────────────────────────────────────────────────────────
 
 test('the request says where the comment was pinned, in words', () => {
@@ -98,7 +111,7 @@ function withFetch(responses, fn) {
 }
 
 const blob = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' });
-const base = { text: 'Make it bigger', target: 'app', appSlug: 'demo', picture: blob, where: 'Pinned with C in the app at /.' };
+const base = { text: 'Make it bigger', target: 'app', appSlug: 'demo', picture: blob, pin: null, where: 'Pinned with C in the app at /.' };
 
 test('a comment is the dialog\'s two requests: the picture, then the request naming it', () => withFetch([
   { status: 200, body: { id: 'a'.repeat(32) } },
@@ -130,6 +143,36 @@ test('a picture the server will not take does not cost the words', () => withFet
 ], async (calls) => {
   assert.deepEqual(await post.postComment(base), { ok: true, botWillBuild: false });
   assert.equal(JSON.parse(calls[1].init.body).screenshotIds, undefined);
+}));
+
+test('a pin rides in the upload URL, and without one the URL is bare', () => withFetch([
+  { status: 200, body: { id: 'a'.repeat(32) } },
+  { status: 200, body: {} },
+], async (calls) => {
+  await post.postComment({ ...base, pin: { x: 0.25, y: 0.75, comment: 'had to refresh & <more>' } });
+  assert.match(calls[0].url, /^\/api\/feedback\/screenshot\?/);
+  const q = new URLSearchParams(calls[0].url.split('?')[1]);
+  assert.equal(q.get('pinX'), '0.25');
+  assert.equal(q.get('pinY'), '0.75');
+  assert.equal(q.get('pinComment'), 'had to refresh & <more>');
+}));
+
+test('the pin’s comment is cut to the 500-character cap before it reaches the URL', () => withFetch([
+  { status: 200, body: { id: 'b'.repeat(32) } },
+  { status: 200, body: {} },
+], async (calls) => {
+  const long = 'w'.repeat(picture.PIN_COMMENT_MAX + 40);
+  await post.postComment({ ...base, pin: { x: 1, y: 0, comment: long } });
+  const q = new URLSearchParams(calls[0].url.split('?')[1]);
+  assert.equal(q.get('pinComment'), 'w'.repeat(picture.PIN_COMMENT_MAX));
+}));
+
+test('without a pin the upload URL stays bare', () => withFetch([
+  { status: 200, body: { id: 'a'.repeat(32) } },
+  { status: 200, body: {} },
+], async (calls) => {
+  await post.postComment({ ...base, pin: null });
+  assert.equal(calls[0].url, '/api/feedback/screenshot');
 }));
 
 test('a refusal with a reason stays in the box; failures hand the comment to the dialog', async () => {
@@ -301,4 +344,21 @@ test('the comment opens on demand into a host of its own, and stands in the way 
   // The dialog's rule for when a request can go to the app, read the same way.
   assert.match(src, /!\/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(data\.repo_url \|\| ''\) \|\| data\.self_hosted/);
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const hasRepo = \/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(repoUrl\);/);
+});
+
+// #4482: what is posted is the clean base, with the pin saved as data.
+test('the post path encodes the clean base; the painted picture is only for the handover', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  assert.match(src, /picture = await encodeUnder\(base\.canvas\)/, 'the request carries the page as it looked');
+  assert.match(src, /saved = \{ \.\.\.pinFraction\(base, pin\), comment: words \}/, 'the pin rides as data beside it');
+  // The only finishPicture call sits in the handover branch, after the
+  // outcome came back, and the handed-over post carries no pin.
+  const paints = [...src.matchAll(/finishPicture\(base, pin, words\)/g)].length;
+  assert.equal(paints, 1, 'painted once, for the dialog');
+  const paintAt = src.indexOf('finishPicture(base, pin, words)');
+  const handover = src.indexOf('if (outcome.handover)');
+  const postAt = src.indexOf('const outcome = await postComment(post)');
+  assert.ok(handover > postAt && paintAt > handover, 'the bake is inside the handover branch');
+  assert.match(src, /handOver\(\{ \.\.\.post, pin: null, picture: baked \}\)/, 'the dialog gets no pin to save');
+  assert.match(src, /encodeUnder\(finishPicture\(base, pin, words\)\) \?\? baked/, 'a failed bake falls back to the clean picture');
 });

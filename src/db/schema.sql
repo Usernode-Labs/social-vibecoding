@@ -3909,6 +3909,15 @@ CREATE INDEX IF NOT EXISTS idx_issue_screenshots_orphan
 -- Private: the bytea can contain anything visible on the reporter's
 -- screen; staging gets the schema only.
 COMMENT ON TABLE issue_screenshots IS 'staging:private';
+-- #4482: a C comment's pin, saved beside the image instead of painted into
+-- it. Both coordinates are fractions of the picture (0..1), so a JPEG
+-- fallback or a smaller encode never moves the pin; written once at
+-- upload, from the query the C comment's client sends. Rows filed before
+-- this (and the feedback dialog's uploads) stay NULL and keep the bubble
+-- painted into the image as before.
+ALTER TABLE issue_screenshots ADD COLUMN IF NOT EXISTS pin_x REAL;
+ALTER TABLE issue_screenshots ADD COLUMN IF NOT EXISTS pin_y REAL;
+ALTER TABLE issue_screenshots ADD COLUMN IF NOT EXISTS pin_comment TEXT;
 
 -- #3940: video clips attached to filed GitHub issues from the feedback
 -- modal. Bytea-in-Postgres like issue_screenshots above (the platform

@@ -44,6 +44,33 @@ function issueImageRoutes(config) {
     }
   });
 
+  // #4482: a C comment's pin, stored beside the image, read back for the
+  // request view to draw over it. Same pre-auth router, so the same privacy
+  // stance as the image itself: the unguessable id. Written once with the
+  // row, so the immutable header is safe — and answering { pin: null }
+  // rather than a 404 for a row without a pin keeps the old screenshots'
+  // fetches out of the browser console as network errors.
+  router.get('/issue-images/:id/pin', async (req, res) => {
+    const id = String(req.params.id || '');
+    if (!/^[a-f0-9]{32}$/.test(id)) return res.status(404).end();
+    try {
+      const { rows } = await pool.query(
+        'SELECT pin_x, pin_y, pin_comment FROM issue_screenshots WHERE id = $1',
+        [id]
+      );
+      const row = rows[0];
+      const pin = row && row.pin_x != null && row.pin_y != null
+        ? { x: Number(row.pin_x), y: Number(row.pin_y), comment: row.pin_comment || '' }
+        : null;
+      res.set('Cache-Control', 'public, max-age=31536000, immutable');
+      res.set('X-Content-Type-Options', 'nosniff');
+      return res.json({ pin });
+    } catch (err) {
+      log.error('issue-images', 'Failed to serve issue screenshot pin', { id, err: err.message });
+      return res.status(500).end();
+    }
+  });
+
   return router;
 }
 

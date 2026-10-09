@@ -2,7 +2,9 @@
  * Filing a C comment: the same two requests "Suggest an improvement" makes
  * (../dialogs/feedback-controller.js submitFeedback), without its dialog.
  *
- *   POST /api/feedback/screenshot   raw PNG/JPEG body → { id }
+ *   POST /api/feedback/screenshot   raw PNG/JPEG body, plus the pin's
+ *                                   spot and words as ?pinX&pinY&pinComment
+ *                                   when a pin is stored with it (#4482) → { id }
  *   POST /api/feedback              { description, target, appSlug?, screenshotIds? }
  *
  * The title is left to the server, which writes one from the words, as it
@@ -20,7 +22,7 @@
  * in it.
  */
 
-import type { ElementInfo } from './picture';
+import { PIN_COMMENT_MAX, type ElementInfo } from './picture';
 
 export type Target = 'app' | 'platform';
 
@@ -31,6 +33,8 @@ export interface CommentPost {
   picture: Blob | null;
   /** Where it was pinned, said in words under the comment. */
   where: string;
+  /** The pin saved with the picture, as fractions of it (#4482); null when there is no picture. */
+  pin: { x: number; y: number; comment: string } | null;
 }
 
 export type PostOutcome =
@@ -87,9 +91,18 @@ export async function postComment(post: CommentPost): Promise<PostOutcome> {
 
   let screenshotId: string | null = null;
   if (post.picture) {
+    // The pin rides in the URL, not the body: the body is the raw bytes.
+    const params = post.pin
+      ? `?${new URLSearchParams({
+        pinX: String(post.pin.x),
+        pinY: String(post.pin.y),
+        pinComment: post.pin.comment.slice(0, PIN_COMMENT_MAX),
+      })}`
+      : '';
+    const upload = `/api/feedback/screenshot${params}`;
     let res: Response;
     try {
-      res = await window.fetch('/api/feedback/screenshot', {
+      res = await window.fetch(upload, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
         body: post.picture,

@@ -57,6 +57,38 @@ function buildScreenshotEmbed(id, domain) {
   return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id})`;
 }
 
+// #4482: a C comment's pin travels as query params on the raw-byte upload
+// (the body is the image, so the pin's spot and words ride in the URL),
+// and are stored with the row to be drawn over it in the request view.
+// The upload body is raw, so the cap on the words keeps the URL well under
+// Node's 16 KB header limit even for multi-byte text.
+const PIN_COMMENT_MAX = 500;
+
+// Pure (exported for tests): the pin a screenshot upload carries.
+// Returns { ok: true, pin: null } when no pin is given (the dialog's
+// uploads, every screenshot filed before this), { ok: true, pin } when
+// both coordinates are finite numbers in [0,1] — `pinComment` is optional,
+// trimmed and cut to PIN_COMMENT_MAX, with empty stored as null — and
+// { ok: false, error } otherwise (only one coordinate given, a value out
+// of range or not a number, or a comment without a pin).
+function parsePinQuery(query) {
+  const q = query || {};
+  const hasX = q.pinX !== undefined && q.pinX !== null && q.pinX !== '';
+  const hasY = q.pinY !== undefined && q.pinY !== null && q.pinY !== '';
+  if (!hasX && !hasY && (q.pinComment === undefined || q.pinComment === null || q.pinComment === '')) {
+    return { ok: true, pin: null };
+  }
+  if (!hasX && !hasY) return { ok: false, error: 'Invalid pin' };
+  const x = Number(q.pinX);
+  const y = Number(q.pinY);
+  if (!hasX || !hasY || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) {
+    return { ok: false, error: 'Invalid pin' };
+  }
+  const raw = typeof q.pinComment === 'string' ? q.pinComment : '';
+  const comment = raw.trim().slice(0, PIN_COMMENT_MAX) || null;
+  return { ok: true, pin: { x, y, comment } };
+}
+
 // #3027: how many images one feedback submit may carry ("one before saving
 // and one after saving", with room for a third). Enforced here, on the ids
 // the server itself validates; the dialog's own limit is only a courtesy.
@@ -545,12 +577,16 @@ function feedbackRoutes(config) {
         const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
         const verdict = validateScreenshotUpload(data);
         if (!verdict.ok) return res.status(400).json({ error: verdict.error });
+        // #4482: a C comment's pin, when the upload carries one.
+        const parsedPin = parsePinQuery(req.query);
+        if (!parsedPin.ok) return res.status(400).json({ error: parsedPin.error });
 
         const id = crypto.randomBytes(16).toString('hex');
+        const pin = parsedPin.pin;
         await pool.query(
-          `INSERT INTO issue_screenshots (id, user_id, content_type, size_bytes, data)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [id, req.user.id, verdict.contentType, data.length, data]
+          `INSERT INTO issue_screenshots (id, user_id, content_type, size_bytes, data, pin_x, pin_y, pin_comment)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [id, req.user.id, verdict.contentType, data.length, data, pin?.x ?? null, pin?.y ?? null, pin?.comment ?? null]
         );
         return res.json({ id });
       } catch (err) {
@@ -1056,6 +1092,9 @@ module.exports = {
   validateScreenshotUpload,
   buildScreenshotEmbed,
   MAX_SCREENSHOT_BYTES,
+  // #4482: a C comment's pin on the screenshot upload.
+  parsePinQuery,
+  PIN_COMMENT_MAX,
   // #3027: several images per submit — tests/feedback-multi-screenshot-server.test.js.
   parseScreenshotIds,
   buildScreenshotsEmbed,
