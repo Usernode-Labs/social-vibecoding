@@ -19,9 +19,10 @@
  * scrolls, with the wheel or a finger, and the pins move with what they
  * were put on; a tap is a comment, as a click is.
  *
- * The bar sits at the foot until the person drags its handle somewhere
- * else (kept on the device). Resting the pointer on it moves it out of the
- * way, so what is under it can be commented on.
+ * The bar sits at the foot every time the mode opens; within a session the
+ * person can drag its handle somewhere else, and a double-click on the
+ * handle puts it back. It never moves out of the way on its own: what is
+ * under it is reached by dragging the handle.
  *
  * ── The box ───────────────────────────────────────────────────────────
  *
@@ -309,23 +310,18 @@ function titleToSend(d: Draft): string {
   return '';
 }
 
-/** Where the person moved the bar, as fractions of the window, kept on the device; null: the foot, centred. */
-const BAR_KEY = 'usernode:comment-bar';
+/**
+ * Whether the first-use note has been shown on this device (#4541): shown
+ * on the mode's first open, gone once the person taps the page or Got it.
+ */
+const INTRO_KEY = 'usernode:comment-intro';
 
-function savedBarAt(): Point | null {
-  try {
-    const v = JSON.parse(window.localStorage.getItem(BAR_KEY) || 'null') as Point | null;
-    return v && Number.isFinite(v.x) && Number.isFinite(v.y) ? v : null;
-  } catch {
-    return null;
-  }
+function introSeen(): boolean {
+  try { return window.localStorage.getItem(INTRO_KEY) === '1'; } catch { return true; }
 }
 
-function saveBarAt(p: Point | null): void {
-  try {
-    if (p) window.localStorage.setItem(BAR_KEY, JSON.stringify({ x: p.x, y: p.y }));
-    else window.localStorage.removeItem(BAR_KEY);
-  } catch { /* private mode: it goes back to the foot next time */ }
+function markIntroSeen(): void {
+  try { window.localStorage.setItem(INTRO_KEY, '1'); } catch { /* private mode: it shows again next time */ }
 }
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
@@ -344,8 +340,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const [budget, setBudget] = useState<Budget>(kudosBudget);
   const [boxAt, setBoxAt] = useState<Point>({ x: -9999, y: -9999 });
   const [cardAt, setCardAt] = useState<Point>({ x: -9999, y: -9999 });
-  const [barAt, setBarAt] = useState<Point | null>(savedBarAt);
+  const [barAt, setBarAt] = useState<Point | null>(null);
   const [barSize, setBarSize] = useState({ width: 0, height: 0 });
+  // #4541: the first-use note, on the mode's first open on this device.
+  const [intro, setIntro] = useState(() => !introSeen());
   const boxRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -358,8 +356,6 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const touch = useRef<{ id: number; start: Point; last: Point; moved: boolean; scroller: Element | null } | null>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  const barAtRef = useRef(barAt);
-  barAtRef.current = barAt;
 
   const update = useCallback((key: number, patch: Partial<Draft> | ((d: Draft) => Partial<Draft>)) => {
     setDraft((d) => (d && d.key === key ? { ...d, ...(typeof patch === 'function' ? patch(d) : patch) } : d));
@@ -369,6 +365,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   // even when the app's frame had it.
   useEffect(() => { barRef.current?.focus({ preventScroll: true }); }, []);
   useEffect(() => { void refreshKudosBudget().then(() => setBudget(kudosBudget())); }, []);
+  // The note has shown: it does not come back, even if the person leaves
+  // before tapping anything.
+  useEffect(() => { if (intro) markIntroSeen(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** The note's Got it; a tap on the page dismisses it too, in `place`. */
+  const dropIntro = useCallback(() => setIntro(false), []);
 
   // The pins move with the page: any scroll, or a new window size, redraws,
   // and is a new view (a picture of the old one no longer shows it).
@@ -436,6 +438,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
    * next comment there (after "Add a comment"), or a new request there.
    */
   const place = useCallback((at: Point) => {
+    dropIntro();
     if (open != null) { setOpen(null); return; }
     const p = clampToViewport(at);
     const anchor = anchorAt(p, host);
@@ -502,7 +505,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       comments: [{ key, anchor, inApp, screen, picture: got.picture, pin, text: c?.text || '' }],
       active: key,
     });
-  }, [open, host, draft, carry, pictureFor]);
+  }, [open, host, draft, carry, pictureFor, dropIntro]);
 
   // The open comment's words have the keyboard whenever a comment opens.
   const draftKey = draft?.key;
@@ -748,10 +751,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   // ── The bar ─────────────────────────────────────────────────────────
   //
-  // At the foot, centred, until the person drags its handle; then where they
-  // put it, kept on the device (a double-click on the handle puts it back).
-  // It never moves out of the way on its own: what is under it is reached by
-  // dragging the handle, which wears the four-arrow move glyph and cursor.
+  // At the foot, centred, every time the mode opens. Within the session the
+  // person can drag its handle somewhere else, and a double-click on the
+  // handle puts it back at the foot. It never moves out of the way on its
+  // own: what is under it is reached by dragging the handle, which wears
+  // the four-arrow move glyph and cursor.
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
@@ -772,9 +776,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     setBarAt({ x: clamp01((e.clientX - d.dx) / Math.max(1, window.innerWidth)), y: clamp01((e.clientY - d.dy) / Math.max(1, window.innerHeight)) });
   };
   const onGripUp = () => {
-    if (!drag.current) return;
     drag.current = null;
-    saveBarAt(barAtRef.current);
   };
   const barPlace = barAt
     ? {
@@ -879,9 +881,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   };
 
   const postedCount = posted.length;
+  // #4541: the bar's own words say what a tap does, so the idle hint is gone;
+  // what is said while a request is being written stays.
   const hint = draft
     ? (draft.active == null ? 'Click where the next comment goes' : 'Enter posts it. Esc discards it.')
-    : carry ? 'Click where your words belong' : postedCount ? 'Click to leave another' : 'Click anything to comment on it';
+    : carry ? 'Click where your words belong' : '';
 
   const first = draft ? draft.comments[0] : null;
   const target: Target | null = draft ? (app ? (draft.chosen ?? (first?.inApp ? 'app' : 'platform')) : 'platform') : null;
@@ -1339,6 +1343,31 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         </div>
       ) : null}
 
+      {/* #4541: the first-use note, once per device, above the bar where it
+          always starts. A tap on the page is a comment and dismisses it. */}
+      {intro ? (
+        <div
+          id="comment-pin-intro"
+          role="note"
+          className="absolute bottom-[76px] left-1/2 flex w-[340px] max-w-[calc(100vw-24px)] -translate-x-1/2 flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
+        >
+          <p className="text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
+            Tap anywhere on the page to leave a comment there. Drag the bar's handle to move the bar.
+          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="min-w-0 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
+              The <span className="font-semibold text-zinc-900 dark:text-white">Form</span> button switches back to the form at any time.
+            </p>
+            <button
+              type="button"
+              onClick={dropIntro}
+              className="shrink-0 rounded-full bg-zinc-900 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div
         ref={barRef}
         tabIndex={-1}
@@ -1358,7 +1387,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           onPointerMove={onGripMove}
           onPointerUp={onGripUp}
           onPointerCancel={onGripUp}
-          onDoubleClick={() => { setBarAt(null); saveBarAt(null); }}
+          onDoubleClick={() => { setBarAt(null); }}
           className="grid h-8 w-6 shrink-0 cursor-move touch-none place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
         >
           <ArrowsMoveIcon className="h-4 w-4" />
@@ -1385,11 +1414,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           </>
         ) : (
           <>
-            <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300">
-              <ChatIcon className="h-[18px] w-[18px]" />
-              <span className="hidden sm:inline">Comment mode</span>
+            <span className="inline-flex min-w-0 items-center gap-1.5 text-sm font-bold text-violet-700 dark:text-violet-300">
+              <ChatIcon className="h-[18px] w-[18px] shrink-0" />
+              {hint ? (
+                <span className="hidden min-w-0 truncate text-[13px] font-medium text-zinc-500 sm:inline dark:text-zinc-400">{hint}</span>
+              ) : (
+                <span className="hidden sm:inline">Tap anywhere to suggest an improvement</span>
+              )}
             </span>
-            <span className="hidden min-w-0 truncate text-[13px] text-zinc-500 md:inline dark:text-zinc-400">{hint}</span>
             {postedCount ? (
               <span className="hidden shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-bold tabular-nums text-zinc-600 md:inline dark:bg-zinc-800 dark:text-zinc-300">
                 {`${postedCount} posted`}

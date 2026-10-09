@@ -472,12 +472,24 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /if \(inUse \+ d\.images\.length >= MAX_PICTURES\) return \{ pictures: d\.pictures, picture: null \};/);
   // Kudos is one line that says who it is for.
   assert.match(src, />Kudos for whoever solves it</);
-  // The bar: moved by its handle (four arrows, a move cursor) and kept on the device; it never hides on its own.
-  assert.match(src, /const BAR_KEY = 'usernode:comment-bar';/);
+  // The bar: moved by its handle (four arrows, a move cursor) and never
+  // hidden on its own. #4541: it starts at the foot every time, not where
+  // the person last left it, so nothing of its place is kept on the device.
+  assert.doesNotMatch(src, /usernode:comment-bar|BAR_KEY|saveBarAt/, 'the bar opens at the foot, not where it was last left');
+  assert.match(src, /const \[barAt, setBarAt\] = useState<Point \| null>\(null\);/);
   assert.match(src, /<ArrowsMoveIcon className="h-4 w-4" \/>/);
   assert.match(src, /cursor-move touch-none/);
-  assert.match(src, /onDoubleClick=\{\(\) => \{ setBarAt\(null\); saveBarAt\(null\); \}\}/);
+  assert.match(src, /onDoubleClick=\{\(\) => \{ setBarAt\(null\); \}\}/);
   assert.doesNotMatch(src, /DUCK_AFTER_MS|ducked|onBarEnter/, 'resting the pointer on the bar never hides it');
+  // #4541: the bar's own words say what a tap does, and a first-use note
+  // explains the mode the first time it opens, once per device.
+  assert.match(src, />Tap anywhere to suggest an improvement</);
+  assert.doesNotMatch(src, /Click anything to comment on it/, 'the idle hint is folded into the bar\'s label');
+  assert.match(src, /const INTRO_KEY = 'usernode:comment-intro';/);
+  assert.match(src, /id="comment-pin-intro"/);
+  assert.match(src, /if \(intro\) markIntroSeen\(\);/, 'the note is marked shown, so it never comes back');
+  assert.match(src, /onClick=\{dropIntro\}/, 'the note is dismissed with a tap');
+  assert.doesNotMatch(src, /Comment mode</, 'the bar no longer names the mode on its left');
   // A finger: a tap is a comment, a drag scrolls.
   assert.match(src, /if \(!t\.moved\) place\(\{ x: e\.clientX, y: e\.clientY \}\);/);
   // The form is called the form.
