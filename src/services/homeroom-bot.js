@@ -5548,8 +5548,14 @@ async function runFollowUp(pool, config, {
   // turns already failed to answer them (followup.repliesSince).
   let noteSessionId = null;
   let priorFailures = 0;
+  // #4613: what this run has read through, once the replies are read. The
+  // queue row's mark can be older than them, or missing (a checks row, Run
+  // now, a restart): recording only it had the next look read the same
+  // message as new and answer it a second time. Set below, before any run
+  // is recorded; fail() reads it.
+  let seenThrough = null;
   const fail = async (error, extra = {}, opts = {}) => {
-    const out = await recordFailure(error, { proposalSessionId: proposal.id, ...extra }, opts);
+    const out = await recordFailure(error, { proposalSessionId: proposal.id, threadSeenAt: seenThrough, ...extra }, opts);
     if (!opts.infra && out?.runId) await recordSnapshot(out.runId);
     // #4610: a reply turn that failed used to post nothing, so the person
     // who wrote heard nothing at all. A wait (a refusal) is said where it
@@ -5610,6 +5616,11 @@ async function runFollowUp(pool, config, {
     sinceMs: toMs(since.sinceAt),
   });
   noteSessionId = replies.some((r) => r.where === 'proposal') ? proposal.id : null;
+  // #4613: every run this turn records carries a mark past what it read, so
+  // the next look does not read the same replies again (followup.readThrough).
+  // advanceSeen still raises it further when it can (the GitHub comment's
+  // own stamp), and a person writing while the turn runs stays after it.
+  seenThrough = followup.readThrough(replies, item.thread_seen_at || null);
   // Its own red checks: a failing verdict on the proposal's current head
   // that no follow-up has looked at yet is a reason to look again even when
   // nobody said anything. A person's reply comes first; a fix still due
@@ -5711,7 +5722,7 @@ async function runFollowUp(pool, config, {
       pool, config, bot, repo, session, prompt, mode, issueNumber, turnBudgetMs, model, deps,
       turnMark: followUpMark({
         kind: 'reply', app, item, runMode, model, startedMs, seedReadAt, session,
-        threadSeenAt: item.thread_seen_at || null,
+        threadSeenAt: seenThrough,
         extra: { onProposal: replies.some((r) => r.where === 'proposal') },
       }),
       // #4610: once the turn is really going ahead, the person hears so.
@@ -5799,7 +5810,7 @@ async function runFollowUp(pool, config, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
-      reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
+      reason: parsed.reply, threadSeenAt: seenThrough, model,
       durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
     });
     await recordSnapshot(runId);
@@ -5843,7 +5854,7 @@ async function runFollowUp(pool, config, {
     questionAnswers: askAnswers,
     reason: reply,
     buildNote: action === 'revise' ? (parsed?.summary || null) : null,
-    threadSeenAt: item.thread_seen_at || null, model,
+    threadSeenAt: seenThrough, model,
     durationMs: Date.now() - startedMs, proposalSessionId: session.id, ...spent,
   });
   await recordSnapshot(runId);
