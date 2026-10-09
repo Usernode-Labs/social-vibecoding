@@ -4016,10 +4016,11 @@ export function DevWorkshop(): ReactNode {
   const firstWeek = v.dashboard ? v.dashboard.firstWeek : null;
   // #4457: the week whose page is open, while it is still in the list.
   const weekUp = openWeek ? weeks.find((w) => sinceWeekStateKey(w) === openWeek) || null : null;
-  // Since your last visit is what OTHER people did: your own work is the
-  // list above it, and is not repeated here.
+  // Since your last visit is what OTHER people did, plus your own changes
+  // that went live: your work in flight is the list above it, and is not
+  // repeated here.
   const sinceRows = (v.since ? v.since.rows : [])
-    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && !r.brief.mine);
+    .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief && (!r.brief.mine || r.brief.stage === 'live'));
   const openWeekPage = (key: string) => {
     setOpenWeek(key);
     scrollToHead(hostRef.current);
@@ -4364,8 +4365,9 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       {/* ── Since your last visit ──
-          #4457: ALWAYS DRAWN, and only what OTHER people did since you were
-          last here, in the same rows as Your work. It no longer carries the
+          #4457: ALWAYS DRAWN, and what OTHER people did since you were last
+          here, plus your own changes that went live, in the same rows as
+          Your work. It no longer carries the
           weeks: those are Week by week, below, each its own page (#3947).
           Nothing new is one line. Clear moves the line to now. A person who
           has not joined, or a first visit, reads "Recently": what moved

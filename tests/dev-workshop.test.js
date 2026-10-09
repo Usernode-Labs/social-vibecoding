@@ -1090,11 +1090,34 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // Nothing new is ONE line. Clear moves the line to now.
   assert.match(WORKSHOP, /<p className="dev-ws-none" data-ws-since-none="">Nothing new since you were last here\.<\/p>/);
   assert.match(WORKSHOP, /callAppView\('_workshopClearSince', slug, v\.since\.through\)/);
-  // Your own work is not repeated in it.
-  assert.match(WORKSHOP, /\.filter\(\(r\): r is WorkCardRow => r\.t === 'card' && !!r\.brief && !r\.brief\.mine\)/);
+  // Your own work in flight is not repeated in it; your own merged changes are.
+  assert.match(WORKSHOP, /\.filter\(\(r\): r is WorkCardRow => r\.t === 'card' && !!r\.brief && \(!r\.brief\.mine \|\| r\.brief\.stage === 'live'\)\)/);
   // The reveals keep their own shape.
   assert.match(CSS, /\.dev-ws-reveal-start \{[^}]*justify-content: flex-start;/);
   assert.match(CSS, /\.dev-ws-reveal \{[^}]*justify-content: center;/);
+});
+
+test('your own merged change is drawn under Since your last visit', () => {
+  const store = {};
+  store['workshopSeen:demo-app'] = String(Date.now() - 3.5 * 86400000);
+  const AppView = makeAppView({ localStorage: store, App: { user: { id: 1, username: 'alice' }, currentApp: 'demo-app', currentSubTab: 'forum' } });
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  const html = workshopHtml(AppView, 'workshop');
+  // The merged change YOU made while away is a row here now, counted and
+  // described like anybody else's: the row itself, its "yours" line and its
+  // Live tag, and the sentence over the list says it went live.
+  assert.ok(html.includes('data-ws-row="since:merged:78"'), 'your merged change is in the list');
+  const live = html.slice(html.indexOf('data-ws-row="since:merged:78"'));
+  assert.match(live, /Change #40 · yours</, 'the row reads "yours", not your name');
+  assert.match(live, /<span class="dev-ws-tag" data-tone="ok">(<svg[\s\S]*?<\/svg>)?Live<\/span>/, 'it carries the Live tag');
+  assert.match(html, /<p class="dev-ws-since-sum" data-ws-since-sum="">[^<]*1 change live\.<\/p>/, 'the sentence counts it as live');
+  // Your work still in flight is NOT repeated here: with the viewer as the
+  // author of the promoted proposal, that row keeps out of the strip.
+  const carol = makeAppView({ localStorage: store, App: { user: { id: 1, username: 'carol' }, currentApp: 'demo-app', currentSubTab: 'forum' } });
+  seed(carol);
+  const carolHtml = workshopHtml(carol, 'workshop');
+  assert.ok(!carolHtml.includes('data-ws-row="since:proposal:34"'), 'your own change up for a vote stays out');
 });
 
 test('#4457: the sentence over Since your last visit counts the rows under it', () => {
