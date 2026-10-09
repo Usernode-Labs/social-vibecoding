@@ -315,7 +315,7 @@ function waitlistCode(payload) {
 const RELEASE_CODE_NOTE = 'Opening it emails you a 6-digit code to sign in with. '
   + 'The code expires in 10 minutes.';
 
-const RELEASE_HEADLINE = 'Make and share small apps with friends and groups.';
+const RELEASE_HEADLINE = 'Make and share apps with groups and friends.';
 
 // The landing page's people illustration, the same file that screen draws at
 // /brand/people.png. An absolute URL for the same reason the logo's is: a
@@ -443,7 +443,7 @@ function waitlistReleased(payload) {
 
   return {
     subject: "You're in. Welcome to Homeroom",
-    preheader: "Make and share small apps with friends and groups. Here's how to get started.",
+    preheader: "Make and share apps with groups and friends. Here's how to get started.",
     text,
     html,
   };

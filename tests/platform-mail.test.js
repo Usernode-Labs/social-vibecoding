@@ -558,7 +558,7 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
   });
   assert.equal(m.subject, "You're in. Welcome to Homeroom");
   for (const part of [m.text, m.html]) {
-    assert.match(part, /Make and share small apps with friends and groups\./);
+    assert.match(part, /Make and share apps with groups and friends\./);
     assert.match(part, /Make an app for your group/);
     assert.match(part, /Suggest, preview and vote on changes/);
     assert.match(part, /Evan from Homeroom/);
@@ -568,7 +568,7 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
   // would otherwise be what the inbox shows.
   const pre = m.html.indexOf("Here's how to get started.");
   assert.ok(pre > -1 && pre < m.html.indexOf('<img '), 'preheader leads the body');
-  assert.match(m.html, /display:none[^"]*">Make and share small apps with friends and groups\. Here's how/);
+  assert.match(m.html, /display:none[^"]*">Make and share apps with groups and friends\. Here's how/);
   // #4570: the landing page's hero. The illustration sits between the
   // frame's logo and the button, and is an <img>, not a link, so the pill
   // stays the mail's first anchor.
