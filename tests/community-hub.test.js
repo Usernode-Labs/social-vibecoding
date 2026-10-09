@@ -71,18 +71,22 @@ test('the bar reads Home, Discover, Messages, Communities, you — Messages in t
   assert.match(STORE, /communities: state\.conversations\.filter\(\(item\) => item\.kind === 'channel' && item\.unreadCount > 0\)\.length\s*\+ state\.discussions\.filter\(\(item\) => item\.section !== 'more' && \(item\.unreadCount \|\| 0\) > 0\)\.length,/);
 });
 
-test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with All items the Workshop\'s page (#852)', () => {
+test('a project page is its places, Hub, Needs you, Workshop and #general, with All items the Workshop\'s page (#852, #4417)', () => {
   const { pageParent, pageTitle } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const band = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
-  assert.deepEqual(band.PROJECT_TABS.map((t) => [t.key, t.label]),
-    [['status', 'Hub'], ['discussion', 'Discussion'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
-  assert.equal(band.litTab('all'), 'workshop', 'the Workshop tab stays lit over All items');
+  const places = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
+  const { placeRows } = loadTsx('frontend/src/features/dev-board/workshop/project-places.tsx');
+  // A project with no topics: the three pages, then #general.
+  const rows = placeRows(null, 0);
+  assert.deepEqual(rows.pages.map((p) => [p.key, p.label]), [['status', 'Hub'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
+  assert.deepEqual([rows.general.key, rows.general.label], ['discussion', 'general']);
+  assert.deepEqual(rows.topics, []);
+  assert.equal(places.litPlace('all'), 'workshop', 'the Workshop stays lit over All items');
   assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
   // #4417: a channel's page is called by its handle: #general (was
   // Discussion), and a topic's channel by its own.
   assert.deepEqual(['needs', 'workshop', 'all', 'discussion', 'c:onboarding'].map(pageTitle),
     ['Needs you', 'Workshop', 'All items', '#general', '#onboarding']);
-  // The band on every page; All items adds its way back under it.
+  // The place bar on every page; All items adds its way back under it.
   assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
   assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
@@ -150,9 +154,9 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.match(av, /_isWorkshopPlace\(key\) \{\n\s*return AppView\.WORKSHOP_TABS\.indexOf\(key\) !== -1\n\s*\|\| \(typeof key === 'string' && AppView\.WORKSHOP_CHANNEL_RE\.test\(key\)\);/);
   assert.match(av, /const next = AppView\._isWorkshopPlace\(key\) && key !== 'plan' \? key : 'status';/);
   assert.match(av, /if \(AppView\._isWorkshopPlace\(stored\) && stored !== 'plan'\) return stored;/);
-  const { litTab } = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
-  assert.equal(litTab('plan'), 'status', 'Hub stays lit over the plan');
-  assert.equal(litTab('all'), 'workshop');
+  const { litPlace } = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
+  assert.equal(litPlace('plan'), 'status', 'Hub stays lit over the plan');
+  assert.equal(litPlace('all'), 'workshop');
 });
 
 test('the hub\'s channel card shows the last messages, what is new, and the way in', () => {

@@ -18253,8 +18253,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
     }
   }
 }
-/* THE BAND: Hub, Discussion, Needs you, Workshop, under the header, in its
-   colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)
+/* THE BAND: the place bar (#4417, place-bar.tsx; it held the four tabs,
+   Hub, Discussion, Needs you, Workshop, until the places became one list),
+   under the header, in its colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)
    for the two hooks that measure it, and bleeds to the column's edges and
    up under the header's overlap (`-mb-2` on the bar, plus the body's own
    top padding), so the colour runs unbroken from the top of the screen to
@@ -18275,57 +18276,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   background: var(--community-tint, #2a2e34);
   gap: 0;
 }
-/* FOUR EQUAL CELLS, each label centred in its own (#852 review): the whole
-   cell is the tap target, a quarter of the band each. They hugged their
-   labels once, spread across the band, which made Hub's target a third of
-   Needs you's and set no word over the middle of anything. */
-.dev-ws-band .dev-ws-tabtrack {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-  flex: 1 1 auto; min-width: 0;
-}
-.dev-ws-ctab {
-  position: relative; min-width: 0;
-  display: flex; align-items: center; justify-content: center;
-  height: 40px; padding: 0;
-  border: 0; background: none;
-  color: rgba(255, 255, 255, .72);
-  font: inherit; font-size: 14px; font-weight: 600; white-space: nowrap;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-/* The WORD is centred, and what it carries hangs off its top-right corner
-   rather than pushing it aside: "Needs you" and its count together are
-   wider than a phone's quarter. */
-.dev-ws-ctab-text { position: relative; display: inline-block; }
-.dev-ws-band .dev-ws-ctab-count {
-  position: absolute; right: -10px; top: -12px;
-}
-.dev-ws-band .dev-ws-filter-dot {
-  position: absolute; left: calc(100% + 3px); top: 1px;
-}
-/* The narrowest phones take the labels a point down. */
-@media (max-width: 379.98px) {
-  .dev-ws-band .dev-ws-ctab { font-size: 13px; }
-}
-.dev-ws-ctab[aria-selected="true"] { color: #fff; }
-.dev-ws-ctab[aria-selected="true"]::after {
-  content: ''; position: absolute; left: 10px; right: 10px; bottom: 0;
-  height: 3px; border-radius: 3px 3px 0 0; background: #fff;
-}
-.dev-ws-ctab:focus-visible { outline: 2px solid #fff; outline-offset: -2px; border-radius: 6px; }
-@media (hover: hover) {
-  .dev-ws-ctab:hover { color: #fff; }
-}
-/* How many votes wait on you, on Needs you: white, the colour for its ink,
-   ringed in the band so it sits cleanly on the label's corner. */
-.dev-ws-ctab-count {
-  display: inline-block;
-  min-width: 17px; height: 17px; padding: 0 4px; box-sizing: border-box;
-  border-radius: 999px; background: #fff; color: var(--community-tint, #2a2e34);
-  box-shadow: 0 0 0 2px var(--community-tint, #2a2e34);
-  font-size: 10.5px; font-weight: 750; line-height: 17px; text-align: center;
-}
-.dev-ws-band .dev-ws-filter-dot { background: #fff; }
+/* #4417: THE BAND HOLDS THE PLACE BAR (place-bar.tsx): the tray's button
+   and the place's name, one row. The four cells it held are retired with
+   the tabs (project-band.tsx); the places are one list now. */
 /* On a phone the band is the page's own: no pinned sheet behind it (the
    strip's band below is for the pill it replaced). */
 .dev-ws-tabs.dev-ws-band::before { content: none; }
@@ -18426,13 +18379,13 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   transform: translateY(var(--dev-ptr-pull));
 }
 
-/* ON A WIDE WINDOW THE TABS ARE THE PANEL'S FIRST ROW (#852 review: they
+/* ON A WIDE WINDOW THE BAR IS THE PANEL'S FIRST ROW (#852 review: the tabs
    sat in the coloured header's row for a round). Not a band: the header
    above already says whose page this is, so the row is the page's own ink,
-   with the tab you are on, its underline and the count in the community's
-   colour. Left-aligned, each tab as wide as its word plus room to press. It
-   pins under the header's edge as the old strip did, on the sheet band that
-   strip drew while pinned (`data-ws-pinned`, usePinnedStrip). */
+   and since #4417 it is the page's title, naming the place (the list is the
+   section column beside the strip). It pins under the header's edge as the
+   old strip did, on the sheet band that strip drew while pinned
+   (`data-ws-pinned`, usePinnedStrip). */
 @media (min-width: 768px) {
   .dev-ws-tabs.dev-ws-band {
     margin: 0 0 4px;
@@ -18440,25 +18393,100 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
     background: none;
     box-shadow: inset 0 -1px 0 var(--app-sheet-line);
   }
-  .dev-ws-band .dev-ws-tabtrack { display: flex; gap: 4px; }
-  .dev-ws-band .dev-ws-ctab {
-    height: 44px; padding: 0 14px;
-    color: var(--text-muted); font-size: 15px;
-  }
-  .dev-ws-band .dev-ws-ctab[aria-selected="true"] { color: var(--community-tint, var(--lit-ink)); }
-  .dev-ws-band .dev-ws-ctab[aria-selected="true"]::after { left: 8px; right: 8px; background: var(--community-tint, var(--lit-ink)); }
-  .dev-ws-band .dev-ws-ctab:focus-visible { outline-color: var(--accent); }
-  @media (hover: hover) {
-    .dev-ws-band .dev-ws-ctab:not([aria-selected="true"]):hover { color: var(--text-primary); }
-  }
-  /* The count rides after the word here, where there is room. */
-  .dev-ws-band .dev-ws-ctab-text { display: inline-flex; align-items: center; gap: 6px; }
-  .dev-ws-band .dev-ws-ctab-count {
-    position: static;
-    background: var(--community-tint, var(--accent)); color: #fff; box-shadow: none;
-  }
-  .dev-ws-band .dev-ws-filter-dot { position: static; background: var(--accent); }
   .dev-ws-tabs.dev-ws-band::before { content: ''; }
+}
+
+/* ── #4417: A PROJECT'S PLACES (project-places.tsx) ───────────────────
+   One list where the four tabs were: Hub, Needs you, Workshop, a line, then
+   Channels (#general) and Topics, each under its own small-caps heading.
+   Rows are the left rail's: 40px, a 20px glyph, 15px words, and the place
+   you are on in the rail's lit-row treatment (`--lit-tint`, `--lit-ink`).
+   A count is the accent, a number that asks for you; a zero is not drawn. */
+.dev-ws-places { display: flex; flex-direction: column; min-height: 100%; }
+.dev-ws-places-nav { display: flex; flex-direction: column; gap: 2px; }
+.dev-ws-place {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; height: 40px; padding: 0 10px; border-radius: 10px;
+  border: 0; background: none; text-align: left;
+  font: inherit; font-size: 15px; line-height: 20px; white-space: nowrap;
+  color: var(--text-primary); text-decoration: none; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (hover: hover) {
+  .dev-ws-place:not([aria-current="page"]):hover { background: var(--bg-secondary); }
+}
+.dev-ws-place:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dev-ws-place[aria-current="page"] { background: var(--lit-tint); color: var(--lit-ink); font-weight: 600; }
+.dev-ws-place-glyph { width: 20px; height: 20px; flex: 0 0 20px; color: var(--text-muted); }
+.dev-ws-place-hash { width: 18px; height: 18px; margin: 0 1px; }
+.dev-ws-place[aria-current="page"] .dev-ws-place-glyph { color: inherit; }
+.dev-ws-place-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dev-ws-place-count {
+  flex-shrink: 0; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 700; line-height: 20px; text-align: center;
+}
+.dev-ws-place .dev-ws-filter-dot { position: static; flex-shrink: 0; background: var(--accent); }
+.dev-ws-places-line { height: 1px; margin: 8px 10px; background: var(--app-sheet-line); }
+.dev-ws-places-group { display: flex; flex-direction: column; gap: 2px; }
+.dev-ws-places-head {
+  padding: 4px 10px; font-size: 12px; font-weight: 700; line-height: 16px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted);
+}
+.dev-ws-places-group + .dev-ws-places-group .dev-ws-places-head { padding-top: 12px; }
+.dev-ws-places-foot { margin-top: auto; padding-top: 12px; }
+
+/* THE PLACE BAR (place-bar.tsx): the band's box, one row: the tray's
+   button, then the place's name. On a phone it is the band, in the
+   community's colour; its 44px button sits at the band's left edge. */
+.dev-ws-placebar .dev-ws-tabtrack {
+  display: flex; align-items: center; gap: 4px; min-width: 0; height: 44px;
+}
+.dev-ws-places-btn {
+  position: relative; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; margin-left: -6px;
+  border: 0; background: none; border-radius: 10px;
+  color: #fff; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.dev-ws-places-btn:focus-visible { outline: 2px solid #fff; outline-offset: -4px; }
+.dev-ws-places-btn-glyph { width: 22px; height: 22px; }
+.dev-ws-places-dot {
+  position: absolute; top: 9px; right: 8px; width: 9px; height: 9px; border-radius: 999px;
+  background: #ff5a4f; box-shadow: 0 0 0 2px var(--community-tint, #2a2e34);
+}
+.dev-ws-place-title {
+  min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 17px; font-weight: 650; letter-spacing: -0.01em; line-height: 22px; color: #fff;
+}
+.dev-ws-place-title-hash { margin-right: 3px; opacity: 0.6; }
+@media (min-width: 768px) {
+  .dev-ws-placebar .dev-ws-tabtrack { height: 52px; }
+  .dev-ws-places-btn { color: var(--text-muted); margin-left: -10px; }
+  .dev-ws-places-btn:focus-visible { outline-color: var(--accent); }
+  @media (hover: hover) { .dev-ws-places-btn:hover { background: var(--bg-secondary); color: var(--text-primary); } }
+  .dev-ws-places-dot { box-shadow: 0 0 0 2px var(--bg-primary); }
+  .dev-ws-place-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+}
+
+/* THE TRAY (places-tray.tsx): the list, slid in from the left over a
+   scrim, on a phone. Over the tab bar and the header (z 60), under a
+   dialog. */
+.dev-ws-tray-root { position: fixed; inset: 0; z-index: 60; }
+.dev-ws-tray-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.45); animation: dev-ws-tray-fade 160ms ease-out; }
+.dev-ws-tray {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: min(296px, calc(100vw - 56px));
+  padding: calc(16px + var(--platform-safe-top, 0px)) 12px calc(16px + var(--platform-safe-bottom, 0px));
+  overflow-y: auto; overscroll-behavior: contain;
+  background: var(--dc-sheet-solid, var(--bg-primary));
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.25);
+  animation: dev-ws-tray-in 200ms cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes dev-ws-tray-in { from { transform: translateX(-100%); } to { transform: none; } }
+@keyframes dev-ws-tray-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .dev-ws-tray, .dev-ws-tray-scrim { animation: none; }
 }
 
 /* ── The hero's rows (community-card.tsx) ──

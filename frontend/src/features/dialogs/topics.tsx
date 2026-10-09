@@ -69,8 +69,9 @@ export function topicRowLine(topic: PlaceChannel, channels: PlaceChannel[] = [])
     return `#${topic.handle} · merged into ${into ? `#${into.handle}` : 'another topic'}`;
   }
   if (topic.state === 'archived') return `#${topic.handle} · archived`;
+  // A zero says nothing (AGENTS.md, "let zero say nothing").
   const n = Number(topic.requests) || 0;
-  return `#${topic.handle} · ${n} ${n === 1 ? 'request' : 'requests'}`;
+  return n > 0 ? `#${topic.handle} · ${n} ${n === 1 ? 'request' : 'requests'}` : `#${topic.handle}`;
 }
 
 function TopicTile({ icon }: { icon: string }) {
@@ -279,7 +280,7 @@ export function TopicsDialog() {
                 )}
 
                 <form id="topics-form" className="space-y-3" data-topics-op={mode.op} onSubmit={submit}>
-                  <SectionHeader className="px-0 pt-0">{formTitle}</SectionHeader>
+                  {mode.op !== 'add' ? <SectionHeader className="px-0 pt-0">{formTitle}</SectionHeader> : null}
                   {mode.op === 'add' || mode.op === 'rename' ? (
                     <>
                       <div>
@@ -314,7 +315,7 @@ export function TopicsDialog() {
                           box="dialog"
                           hint="muted"
                           ring="seamless"
-                          placeholder="onboarding"
+                          placeholder="Made from the name"
                           onInput={() => { handleTouched.current = true; }}
                         />
                         {mode.op === 'rename' ? (

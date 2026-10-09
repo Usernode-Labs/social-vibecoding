@@ -3072,8 +3072,9 @@ test('"By stage" swaps the pane for the board\'s own columns, and keeps everythi
   // are the bar at the bottom — so what has to hold is that the grouping
   // choice is a control WITHIN one destination and does not move you off it.
   assert.ok(!html.includes('data-ws-dashboard'), 'the status strip is the Workshop page\'s');
-  assert.match(html, /data-ws-band=""[\s\S]*?data-ws-tab-btn="workshop" aria-selected="true"[\s\S]*?data-ws-pagebar=""/,
-    'and you are still on All items: the Workshop tab lit, the page\'s back bar under it (#852)');
+  // #4417: the place bar names the Workshop over All items, its page.
+  assert.match(html, /data-ws-band="" data-place-bar="all"[\s\S]*?data-place-title="">Workshop<\/h2>[\s\S]*?data-ws-pagebar=""/,
+    'and you are still on All items: the bar names the Workshop, the page\'s back bar under it (#852)');
 });
 
 test('the stage pane is the SAME board component, not a second one', () => {
@@ -3463,7 +3464,7 @@ test('a search that matches nothing keeps the pane on screen, with the search bo
   assert.ok(html.includes('data-ws-pane'), 'the pane renders');
   assert.ok(html.includes('id="dev-actions"'), 'with its toolbar');
   assert.ok(html.includes('id="dev-kanban-filterbar"'), 'and the host the search box fills');
-  assert.ok(html.includes('data-ws-tab-btn="workshop"'), 'and the project\'s tabs above it');
+  assert.ok(html.includes('data-place-bar="all"'), 'and the project\'s place bar above it');
   assert.ok(html.includes('data-ws-group="category"'), 'and the grouping tabs');
   // The rows' place says why they are gone, UNDER the controls it is about.
   assert.match(html, /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
@@ -3558,12 +3559,18 @@ test('#2915: while a search or filter is on, a dot on the way to All items says 
   // rides the Workshop tab (#852: All items is the Workshop's page, reached
   // by its See all) and that See all, the two ways to the page it narrows,
   // and leaves while All items itself is up, where the search box says so.
+  // #4417: the Workshop is a row of the places list (the section column, or
+  // the tray), drawn apart from the page: the page hands it the dot.
+  const { ProjectPlaces } = loadTsx('frontend/src/features/dev-board/workshop/project-places.tsx');
+  const list = (filtered) => renderToHtml(createElement(ProjectPlaces, {
+    slug: 'x', name: 'X', place: 'status', owed: 0, places: null, filtered, onPlace: () => {},
+  }));
+  assert.match(list(true), /data-place="workshop"[^>]*>[\s\S]*?<span class="dev-ws-place-label">Workshop<\/span><span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span><\/a>/,
+    'the dot on the Workshop\'s row, and its words');
+  assert.doesNotMatch(list(false), /data-ws-filtered/);
+  assert.match(WORKSHOP, /filtered=\{!!v\.meta\.filtered && tab !== 'all'\}/, 'from everywhere but All items');
   for (const over of [{ q: 'dark' }, { assignedToMe: true }, { priority: 'high' }]) {
     AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), ...over };
-    for (const tab of ['status', 'needs', 'workshop']) {
-      assert.match(workshopHtml(AppView, tab), /data-ws-tab-btn="workshop"[^>]*><span class="dev-ws-ctab-text"><span class="dev-ws-ctab-label">Workshop<\/span><span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><\/span><span class="sr-only"> \(filtered\)<\/span>/,
-        `${tab} / ${JSON.stringify(over)}: the dot on the Workshop tab, and its words`);
-    }
     const ws = workshopHtml(AppView, 'workshop');
     assert.match(ws, /data-ws-all-open="">See all<span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>/,
       `workshop / ${JSON.stringify(over)}: on See all`);
@@ -3576,19 +3583,20 @@ test('#2915: while a search or filter is on, a dot on the way to All items says 
   assert.match(CSS, /\.dev-ws-filter-dot \{ flex: none; width: 6px; height: 6px; border-radius: 999px; background: var\(--accent\); \}/);
 });
 
-test('the tabs are a band in the community\'s colour, not the old pill: nothing slides', () => {
+test('the band in the community\'s colour is the place bar, not the old pill: nothing slides', () => {
   // The hub and the Workshop were two tabs under a segmented control with a
-  // sliding marker, and then no tabs at all. #852 brings back four (Hub,
-  // Discussion, Needs you, Workshop) as a band under the coloured header,
-  // with an underline rather than a marker; All items is the Workshop's page.
-  assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"/);
-  // #4417: a topic's channel lights Discussion, #general's, until the places list.
-  assert.match(WORKSHOP, /<ProjectBand\s+tab=\{isChannelPlace\(tab\) \? 'discussion' : \(tab as ProjectTabKey\)\}\s+owed=\{owed\}/);
+  // sliding marker, then four tabs as a band under the coloured header
+  // (#852). #4417 makes the places one list, and the band holds the bar that
+  // opens it and names the place you are on; All items is the Workshop's page.
+  assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"|ProjectBand/);
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/project-band.tsx')),
+    'the four tabs are retired');
+  assert.match(WORKSHOP, /<PlaceBar\s+name=\{projectName\}\s+place=\{tab\}\s+owed=\{owed\}/);
   assert.match(WORKSHOP, /<div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/,
     'All items\' back bar keeps the strip\'s box');
-  const band = read('frontend/src/features/dev-board/workshop/project-band.tsx');
-  assert.match(band, /className="dev-ws-tabs dev-ws-band"/, 'and so does the band');
-  assert.match(band, /<div className="dev-ws-tabtrack" role="tablist" aria-label="Project"/);
+  const bar = read('frontend/src/features/dev-board/workshop/place-bar.tsx');
+  assert.match(bar, /className="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band=""/, 'and so does the bar');
+  assert.match(bar, /<div className="dev-ws-tabtrack">/);
 });
 
 test('#2915: declared checks open the Workshop page and the hub with a search on', () => {
@@ -3597,9 +3605,9 @@ test('#2915: declared checks open the Workshop page and the hub with a search on
   assert.ok(whole, 'a check opens the Workshop tab narrowed by ?q=');
   assert.match(whole.expectSelector, /\.dev-ws\[data-ws-tab="workshop"\]:not\(:has\(\[data-ws-empty\]\)\)/,
     'and expects no "nothing here" note on it');
-  const dot = searched('status').find((t) => /data-ws-filtered/.test(t.expectSelector || ''));
-  assert.ok(dot, 'and one expects the dot on the Workshop tab from the hub');
-  assert.match(dot.expectSelector, /\.dev-ws\[data-ws-tab="status"\] \[data-ws-band\] \[data-ws-tab-btn="workshop"\] \[data-ws-filtered\]/);
+  // #4417: and the dot on the Workshop's row in the places list says the
+  // search is still on (folded into the same check: the row is lit there).
+  assert.match(whole.expectSelector, /\[data-places\] \[data-place="workshop"\]\[aria-current="page"\] \[data-ws-filtered\]/);
 });
 
 test('an empty board still gets the All items pane, and the note names the ⋯ and where it is', () => {
@@ -5354,7 +5362,7 @@ test('#3651: on All items one header pins, the tabs and the head, in the pane\'s
   const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
 
   // 1. THE TABS ARE THE BAR ON EVERY PAGE; the back bar is not measured.
-  assert.match(WORKSHOP, /<ProjectBand[^>]*?\n\s*barRef=\{setBar\}\n\s*\/>/, 'the band is the bar, All items too');
+  assert.match(WORKSHOP, /<PlaceBar\s[\s\S]{0,400}?\n\s*barRef=\{setBar\}\n/, 'the place bar is the bar, All items too');
   assert.match(WORKSHOP, /<div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/, 'the back bar carries no ref');
   assert.equal((WORKSHOP.match(/\{setBar\}/g) || []).length, 1, 'and nothing else is the bar');
 

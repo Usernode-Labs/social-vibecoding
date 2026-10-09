@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { Fragment, memo, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useId, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
@@ -80,7 +80,7 @@ import { CardSkeleton } from '../card/skeleton';
 import { VotePicker } from '../card/dev-card';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
-import { describe as describeCommunity } from '../../workshop/community-scope';
+import { describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
 import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
@@ -90,8 +90,13 @@ import {
 import { WorkshopNotices } from './notices';
 import { ChannelCard, FirstVersionCard, NeedsCard, NothingToVote, hubAlone, hubWorkEmpty, owesVote, YourWorkCard } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
-import { ProjectBand, type ProjectTabKey } from './project-band';
-import { channelPlace, isChannelPlace, isPlaceKey, placeHandle, placeHref, type PlaceKey } from './places';
+import {
+  channelPlace, findChannel, isChannelPlace, isPlaceKey, placeHandle, placeHref, unreadTotal, type PlaceKey,
+} from './places';
+import { PlaceBar } from './place-bar';
+import { PlacesTray, useEdgeSwipe } from './places-tray';
+import { ProjectPlaces } from './project-places';
+import { clearPlace, publishPlace, registerPlaceOpener } from './place-store';
 import { SinceSummaryCard } from './since-summary-card';
 import { PlanPage } from './plan-page';
 import { PageBack } from './page-back';
@@ -3300,6 +3305,11 @@ const WIDE_QUERY = '(min-width: 700px)';
  * rather than as the page: room for the list and a 560px panel beside it.
  */
 const SIDE_QUERY = '(min-width: 1180px)';
+/**
+ * #4417: from here the project's places are the section column beside the
+ * strip (../../nav/section-column.tsx); under it, the tray behind the bar.
+ */
+export const PLACES_COLUMN_QUERY = '(min-width: 768px)';
 
 /** `matchMedia` where there is one — the vm the tests render in has none. */
 function matchesQuery(query: string): boolean {
@@ -3753,9 +3763,13 @@ export function DevWorkshop(): ReactNode {
     if (!v.slug) return undefined;
     return registerLevel({
       slug: v.slug,
-      below: () => tabRef.current === 'all' || tabRef.current === 'plan',
+      // #4417: every place but the Hub is a step below it (a channel, Needs
+      // you, the Workshop), and a page under a place (All items, the plan)
+      // goes to that place first (pageParent).
+      below: () => tabRef.current !== 'status',
       up: () => climbRef.current(),
       host: () => hostRef.current,
+      depth: 1,
     });
   }, [v.slug]);
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
@@ -3986,6 +4000,38 @@ export function DevWorkshop(): ReactNode {
     });
   }, [v.slug, v.loading, owedRows.length, owedSig, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // #4417: THE PLACES TRAY (./places-tray.tsx), the list behind the place
+  // bar's button, and a swipe from the left edge on a phone. It shuts when
+  // the place or the project changes under it (a door, Back), and a press on
+  // a place in it shuts it as a navigating close, so the Back claim it took
+  // cannot undo the entry the press pushes.
+  const [trayOpen, setTrayOpen] = useState(false);
+  const trayNav = useRef(false);
+  const placesBtn = useRef<HTMLButtonElement | null>(null);
+  const trayId = useId();
+  const placesInColumn = useMediaFlag(PLACES_COLUMN_QUERY);
+  useEffect(() => { setTrayOpen(false); }, [tab, v.slug, placesInColumn]);
+  useEdgeSwipe(!placesInColumn && !trayOpen && !!v.slug && !v.loading, () => {
+    trayNav.current = false;
+    setTrayOpen(true);
+  });
+  // THE PLACE ON SHOW, for what draws or moves it from outside this page
+  // (./place-store.ts): the section column's list, a merged topic's card.
+  const openTabRef = useRef(openTab);
+  openTabRef.current = openTab;
+  useEffect(() => {
+    if (!v.slug) return undefined;
+    const mine = v.slug;
+    const undo = registerPlaceOpener(mine, (key) => {
+      if (key === tabRef.current) scrollToHead(hostRef.current);
+      else openTabRef.current(key);
+    });
+    return () => { undo(); clearPlace(mine); };
+  }, [v.slug]);
+  useEffect(() => {
+    if (v.slug && !v.loading) publishPlace(v.slug, tab, owed);
+  }, [v.slug, v.loading, tab, owed]);
+
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
@@ -4015,30 +4061,67 @@ export function DevWorkshop(): ReactNode {
     alone, building, startHere, readOnly: !!actions.readOnly, bot: !!(v.mine && v.mine.bot), firstWeek: weekOne,
   });
 
-  /* ── The band, and on All items its back bar ──
-     The four tabs in the community's colour (ProjectBand), leading the
-     markup so focus order and reading order agree; the Workshop tab stays
-     lit over All items. All items is a page of the Workshop, so under the
-     band it leads with its way back there. Both keep the strip's box
-     (`.dev-ws-tabs` > `.dev-ws-tabtrack`).
+  /* ── The place bar, the tray behind it, and on All items its back bar ──
+     #4417: the four tabs are gone; the project's places are one list (Hub,
+     Needs you, Workshop, then its channels: ./project-places.tsx). On a
+     phone it is a tray behind the place bar's button, the bar naming where
+     you are (./place-bar.tsx); on a wide window it is the section column
+     beside the strip (../../nav/section-column.tsx) and the bar is the
+     page's title row. Under the bar, All items leads with its way back to
+     the Workshop it is a page of.
 
-     THE BAND IS THE BAR, ON EVERY PAGE (#3651). It is what pins, and what
-     the pinned pane head and its band are measured against (`setBar`). The
-     back bar was that bar on All items, and so pinned as well, in the very
-     place the band does: scrolled a little, its title rode up across the
-     tabs, and further down its band hid them. It scrolls away under the
-     band now, as it always did on a phone; the lit Workshop tab is the way
-     back from anywhere down the list. */
+     THE BAR IS THE BAND'S BOX, ON EVERY PAGE (#3651). It is what pins, and
+     what the pinned pane head and its band are measured against (`setBar`).
+     The back bar scrolls away under it. */
+  const projectName = app.name || community?.name || slug;
+  const here = isChannelPlace(tab) ? findChannel(community?.places, placeHandle(tab)) : null;
+  // What waits elsewhere: the channel on screen is being read.
+  const unreadElsewhere = Math.max(0, unreadTotal(community?.places)
+    - (here && here.state === 'live' ? Math.max(0, Number(here.unread) || 0) : 0));
+  const choosePlace = (key: TabKey) => {
+    trayNav.current = true;
+    setTrayOpen(false);
+    if (key === tabRef.current) scrollToHead(hostRef.current);
+    else openTab(key);
+  };
   const band = (
-    <ProjectBand
-      tab={isChannelPlace(tab) ? 'discussion' : (tab as ProjectTabKey)}
+    <PlaceBar
+      name={projectName}
+      place={tab}
       owed={owed}
-      // #2915: not while All items is up, where the search box says so.
-      filtered={!!v.meta.filtered && tab !== 'all'}
-      onTab={openTab}
+      unread={unreadElsewhere}
+      open={trayOpen}
+      trayId={trayId}
+      onToggle={() => { trayNav.current = false; setTrayOpen((open) => !open); }}
       barRef={setBar}
+      buttonRef={placesBtn}
     />
   );
+  const tray = trayOpen ? (
+    <PlacesTray
+      id={trayId}
+      label={`${projectName}'s places`}
+      onClose={() => { trayNav.current = false; setTrayOpen(false); }}
+      returnTo={() => placesBtn.current}
+      navigating={() => trayNav.current}
+    >
+      <ProjectPlaces
+        slug={slug}
+        name={projectName}
+        place={tab}
+        owed={owed}
+        places={community?.places}
+        // #2915: not while All items is up, where the search box says so.
+        filtered={!!v.meta.filtered && tab !== 'all'}
+        onPlace={choosePlace}
+        onSwitch={(el) => {
+          trayNav.current = true;
+          setTrayOpen(false);
+          openSwitcher('header', el);
+        }}
+      />
+    </PlacesTray>
+  ) : null;
   const pageBar = tab === 'all' ? (
     <div className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
       <div className="dev-ws-tabtrack">
@@ -4088,6 +4171,7 @@ export function DevWorkshop(): ReactNode {
     >
       {band}
       {pageBar}
+      {tray}
       {/* Everything but the bar lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
           beneath it while you scroll, so the content needs a bar's worth of

@@ -192,6 +192,8 @@ function GeneralChannel({ slug, name, data }: {
     slug,
     below: () => (room ? embeddedThreadOpen(room) : !!threadRef.current),
     up: () => { if (room) closeThread(); else setThread(null); },
+    // #4417: a thread is below the channel, which is below the Hub.
+    depth: 2,
   }), [slug, room]);
 
   // THE DOOR'S TARGET, taken once the page knows which room this is (the

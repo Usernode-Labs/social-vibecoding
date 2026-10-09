@@ -17,7 +17,7 @@
 
 import { createStore } from '../../../lib/plain-store.js';
 import { cachedCommunity, communityInflight, reloadCommunity } from './community-card';
-import { topicHandleMap, type PlaceKey } from './places';
+import { channelPlace, channelsOf, topicHandleMap, type PlaceKey } from './places';
 
 export interface PlaceState {
   /** The project whose page is mounted, or null. */
@@ -57,7 +57,7 @@ type AppApi = { _hubHref?: (slug: string) => string };
  * on its list), else as a door (the place remembered, then the page's
  * address). True when it moved the page in place.
  */
-export function openPlace(slug: string, key: PlaceKey): boolean {
+export function openPlace(slug: string, key: PlaceKey, opts: { replace?: boolean } = {}): boolean {
   if (opener && opener.slug === slug && placeStore.get().slug === slug) {
     opener.open(key);
     return true;
@@ -66,8 +66,30 @@ export function openPlace(slug: string, key: PlaceKey): boolean {
   try { w.AppView?._landOnTab?.(slug, key); } catch { /* the page opens on what it remembers */ }
   let href = '';
   try { href = w.App?._hubHref?.(slug) || ''; } catch { href = ''; }
-  window.location.hash = href || `#app/${encodeURIComponent(slug)}/workshop`;
+  const to = href || `#app/${encodeURIComponent(slug)}/workshop`;
+  // A redirect (an old address the router is turning into this one) takes
+  // its entry's place, so Back does not land on it and redirect again.
+  if (opts.replace) window.location.replace(to.startsWith('#') ? to : `#${to}`);
+  else window.location.hash = to;
   return false;
+}
+
+/**
+ * A topic's channel by its registry row (a notification's address names the
+ * thread, `#messages/app/<slug>/c/<id>/m/<id>`): the channel's place once the
+ * project's record says which topic that is, replacing the address it came
+ * from. A row the record does not know opens #general.
+ */
+export async function openTopicRef(slug: string, ref: number): Promise<void> {
+  if (!slug) return;
+  let record = cachedCommunity(slug);
+  const known = () => channelsOf(record?.places).some((c) => c.kind === 'topic' && Number(c.id) === Number(ref));
+  if (!known()) {
+    try { await reloadCommunity(slug); } catch { /* #general below */ }
+    record = cachedCommunity(slug);
+  }
+  const topic = channelsOf(record?.places).find((c) => c.kind === 'topic' && Number(c.id) === Number(ref)) || null;
+  openPlace(slug, topic ? channelPlace(topic.handle) : 'discussion', { replace: true });
 }
 
 /*
@@ -94,5 +116,5 @@ export function topicHandles(slug: string | null | undefined): Record<string, st
 if (typeof window !== 'undefined') {
   const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
   w.UsernodeReact = w.UsernodeReact || {};
-  w.UsernodeReact.places = { topicHandles, openPlace };
+  w.UsernodeReact.places = { topicHandles, openPlace, openTopicRef };
 }

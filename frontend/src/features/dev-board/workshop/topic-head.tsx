@@ -31,10 +31,11 @@ export function topicLine(topic: Pick<PlaceChannel, 'about' | 'state' | 'request
     return { about: survivor ? `Merged into #${survivor}. Read only.` : 'Merged into another topic. Read only.', link: null };
   }
   if (topic.state === 'archived') return { about: 'Archived. Read only.', link: null };
+  // No requests yet says nothing: a zero is not a door (AGENTS.md).
   const n = Number(topic.requests);
   return {
     about: String(topic.about || '').trim(),
-    link: Number.isFinite(n) ? `${plural(n, 'request', 'requests')} ›` : null,
+    link: Number.isFinite(n) && n > 0 ? `${plural(n, 'request', 'requests')} ›` : null,
   };
 }
 

@@ -1408,7 +1408,7 @@ const AppView = {
       }
       // #3620: `?shot=tab-back` walks the reported flow, which a declared check
       // cannot (the runner loads a route and looks; it has no steps): with the
-      // page on its hub, press the Workshop tab through its own button, wait
+      // page on its hub, press the Workshop place through its own row, wait
       // for the Workshop to show, then go Back (history.back(), which is what
       // the browser's Back and page.goBack() do). Once the traversal has
       // landed it writes what Back showed onto <html> — the tab, or `left`
@@ -1431,9 +1431,12 @@ const AppView = {
           const page = document.querySelector('#dev-workshop .dev-ws[data-ws-tab]');
           return page ? page.getAttribute('data-ws-tab') : null;
         };
+        // #4417: the place's row in the list (the section column), else the
+        // page's own way to a place, which a press on a row takes.
         const press = (tab) => {
-          const btn = document.querySelector(`#dev-workshop [data-ws-tab-btn="${tab}"]`);
-          if (btn) btn.click();
+          const row = document.querySelector(`[data-places="${slug}"] [data-place="${tab}"]`);
+          if (row) row.click();
+          else window.UsernodeReact?.places?.openPlace?.(slug, tab);
         };
         const tick = setInterval(() => {
           if ((tries += 1) > 60) { done(); return; }

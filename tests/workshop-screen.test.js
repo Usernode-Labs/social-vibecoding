@@ -1057,6 +1057,7 @@ test('the Topics dialog: handles from names, and each row says its channel and i
   const t = { kind: 'topic', key: 'onboarding', handle: 'onboarding', state: 'live', requests: 9 };
   assert.equal(topicRowLine(t), '#onboarding · 9 requests');
   assert.equal(topicRowLine({ ...t, requests: 1 }), '#onboarding · 1 request');
+  assert.equal(topicRowLine({ ...t, requests: 0 }), '#onboarding', 'a zero says nothing');
   assert.equal(topicRowLine({ ...t, state: 'archived' }), '#onboarding · archived');
   assert.equal(topicRowLine({ ...t, handle: 'signup', state: 'merged', merged_into: 'onboarding' }, [t]),
     '#signup · merged into #onboarding');

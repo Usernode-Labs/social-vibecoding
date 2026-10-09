@@ -2404,9 +2404,9 @@
       "expectSelector": "#dev-workshop .dev-ws-hero[data-ws-community] .dev-ws-hero-row > .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn"
     },
     {
-      "name": "A project's page opens on its Hub tab, with the votes you owe as a door and a 14-day trend on the hero",
+      "name": "A project's page opens on its Hub, the place bar naming it, with the votes you owe as a door and a 14-day trend on the hero",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(> [data-ws-band] [data-ws-tab-btn=\"status\"][aria-selected=\"true\"]):has([data-ws-members-trend]) > .dev-ws-tabbody > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]",
+      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(> [data-ws-band][data-place-bar=\"status\"]):has([data-ws-members-trend]) > .dev-ws-tabbody > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]",
       "expectText": "to vote"
     },
     {
@@ -2496,15 +2496,16 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
-      "name": "Workshop: the Workshop is a tab, lit, and the All items search leaves its numbers whole, with no 'nothing matches' note (#2915)",
+      "name": "Workshop: the Workshop is the place lit, a dot on its row says All items' search is still on, and the search leaves its numbers whole, with no 'nothing matches' note (#2915, #4417)",
       "path": "/?demo=1&ws=workshop&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-ws-band] [data-ws-tab-btn=\"workshop\"][aria-selected=\"true\"]) .dev-ws-tabbody > [data-ws-dashboard]",
+      "expectSelector": "body:has([data-places] [data-place=\"workshop\"][aria-current=\"page\"] [data-ws-filtered]) #dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"]) .dev-ws-tabbody > [data-ws-dashboard]",
       "expectText": "All items"
     },
     {
-      "name": "Workshop: a dot on the Workshop tab says All items' search is still on (#2915)",
-      "path": "/?demo=1&ws=status&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-band] [data-ws-tab-btn=\"workshop\"] [data-ws-filtered]"
+      "name": "#4417: a topic's channel has an address of its own, which opens its project's page on that place: what the topic is for and its requests above the room",
+      "path": "/?demo=1#app/usernode-2d5619/dev/c/onboarding",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"c:onboarding\"]:has(> [data-place-bar=\"c:onboarding\"]) section.dev-ws-topic-channel[data-ws-topic=\"onboarding\"][data-ws-topic-state=\"live\"] > .dev-ws-topic-head + .dev-ws-discussion-host",
+      "expectText": "requests"
     },
     {
       "name": "Dev board: the search reads issue bodies, not only titles (#2089)",
@@ -2561,9 +2562,9 @@
       "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] section[data-ws-discussion-room=\"general\"] > .messages-layout-embedded > .messages-thread-embedded:not(:has(.messages-thread-header))"
     },
     {
-      "name": "Back from a project's Workshop tab returns to its Hub, not the screen the project was opened from (#3620): ?shot=tab-back presses the Workshop tab, then goes Back",
+      "name": "Back from a project's Workshop returns to its Hub, not the screen the project was opened from (#3620): ?shot=tab-back presses the Workshop's place, then goes Back",
       "path": "/?demo=1&ws=status&shot=tab-back#app/usernode-2d5619/workshop",
-      "expectSelector": "html[data-shot-tab-back=\"status\"] #app-view:not(.hidden) .dev-ws[data-ws-tab=\"status\"] [data-ws-tab-btn=\"status\"][aria-selected=\"true\"]",
+      "expectSelector": "html[data-shot-tab-back=\"status\"] #app-view:not(.hidden) .dev-ws[data-ws-tab=\"status\"] > [data-place-bar=\"status\"] [data-place-title]",
       "expectText": "Hub"
     },
     {
@@ -2596,10 +2597,10 @@
       "expectText": "Staging demo: mostly polish on Messages and Discover"
     },
     {
-      "name": "A project page's tabs are Hub, Discussion, Needs you and Workshop, in the community's colour",
+      "name": "A project page's places are Hub, Needs you and Workshop, a line, then #general under Channels and its topics under Topics, in the column beside the strip (#4417)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "html[data-community-tint] #dev-workshop [data-ws-band] > [role=\"tablist\"] > [data-ws-tab-btn=\"status\"][aria-selected=\"true\"] + [data-ws-tab-btn=\"discussion\"] + [data-ws-tab-btn=\"needs\"] + [data-ws-tab-btn=\"workshop\"]",
-      "expectText": "Discussion"
+      "expectSelector": "[data-places=\"usernode-2d5619\"] > nav > [data-place=\"status\"][aria-current=\"page\"] + [data-place=\"needs\"] + [data-place=\"workshop\"] + [role=\"separator\"] + [data-places-group=\"channels\"] + [data-places-group=\"topics\"] > [data-place=\"c:onboarding\"]",
+      "expectText": "general"
     },
     {
       "name": "The Communities tab wears the community you are in: its tile (in a ring on a phone's bar), but keeps the word (#3709)",

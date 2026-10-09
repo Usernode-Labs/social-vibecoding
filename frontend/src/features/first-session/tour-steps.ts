@@ -263,11 +263,16 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
   return [
     ...sharedSteps(slug, name),
     {
+      // #4417: #general's row in the places list beside the page (a wide
+      // window), or on a phone the place bar's button, which opens the list
+      // in its tray: whichever of the two is on screen is ringed. The press
+      // that opens the tray does not open #general itself, so the tour does.
       screen: 'hub',
-      target: '[data-ws-tab-btn="discussion"]',
-      title: 'Talk in Discussion',
-      text: `Everyone in ${name} reads it.`,
-      tap: 'Tap Discussion',
+      target: '[data-places] [data-place="discussion"], [data-places-btn]',
+      title: 'Talk in #general',
+      text: `Everyone in ${name} reads it. It is with the project's other places.`,
+      tap: 'Open #general',
+      opensNext: true,
     },
     {
       screen: 'discussion',

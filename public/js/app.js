@@ -6253,6 +6253,15 @@ const App = {
   _appChatToHub(rawSlug, rest, from) {
     let slug = rawSlug;
     try { slug = decodeURIComponent(rawSlug); } catch (_) { /* the raw segment */ }
+    // #4417: `…/c/<topic>[/m/<id>]` is a message in one of the project's
+    // topic channels (a notification's address), Homeroom's included: its
+    // channel's place on the project page, once the page's record names it.
+    const topicRef = rest && rest[0] === 'c' ? App._numericSegment(rest[1]) : null;
+    const topics = window.UsernodeReact?.places?.openTopicRef;
+    if (slug && topicRef != null && topicRef <= 2147483647 && topics) {
+      void topics(slug, topicRef);
+      return true;
+    }
     if (!slug || App._appChatIsArchive(slug)) return false;
     // Known not to be the archive: straight to the page, no step between.
     if (App._appChatIsNotArchive(slug)) {
@@ -6294,6 +6303,8 @@ const App = {
     let target = null;
     if (parts[1] === 'app' && parts[2]) {
       try { slug = decodeURIComponent(parts[2]); } catch (_) { return false; }
+      // #4417: a topic channel's message is that channel's, not #general's.
+      if (parts[3] === 'c') return false;
       if (App._appChatIsArchive(slug)) return false;
       target = App._messagesExtras(parts.slice(3));
     } else {

@@ -1951,7 +1951,9 @@ const GroupChat = {
         // A request's page says it in its own "N replies" line instead.
         // A change's page (#4455) as well.
         placeholder: language === 'request' || language === 'change' ? null : st.loaded
-          ? (st.messages.length || chat ? null : 'No messages yet. Start the thread.')
+          ? (st.messages.length || chat ? null
+            // #4417: a topic's channel is a room, not a reply thread.
+            : (a.type === 'category' ? 'Nothing said here yet.' : 'No messages yet. Start the thread.'))
           : (st.failed ? null : 'Loading…'),
         error: !st.loaded && st.failed ? 'Couldn’t load this thread.' : null,
         language,
