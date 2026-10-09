@@ -61,6 +61,17 @@ test('B9: the room hands a mention over after it is stored, and only from the ma
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/x/messages/5/request'), false, 'a person\'s own browser only');
 });
 
+// The room does not await the hand-over, so a rejection there would be
+// unhandled and end the process: a failed read is logged, and resolves null.
+test('B9: a failed read never rejects, and the room catches the hand-over anyway', async () => {
+  const pool = { query: async () => { throw new Error('connection terminated'); } };
+  const out = await botChat.noteChatMessage(pool, null, {
+    appId: 7, userId: 3, messageId: 11, content: '@Homeroom bot add tags',
+  });
+  assert.equal(out, null);
+  assert.match(read('src/services/ws.js'), /noteChatMessage\(pool, null, \{[^}]*\}\)\s*\.catch\(/);
+});
+
 test('B9: the chip and the card', () => {
   const { BotStatusChip, BotRequestCardView, cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
   const chip = (status, extra = {}) => renderToHtml(createElement(BotStatusChip, { chip: { status, issueNumber: 4, sessionId: null, ...extra } }));

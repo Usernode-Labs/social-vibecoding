@@ -1001,18 +1001,21 @@ async function personRow(pool, userId) {
  * a person, it is asked; anything else is nothing here. Never throws.
  */
 async function noteChatMessage(pool, config, { appId, userId, messageId, content, thread = null, postedVia = null, deps = {} }) {
+  // Outside the try, so the catch can name the app: it never throws.
+  let app = null;
   try {
     if (thread || postedVia === 'agent' || !appId || !userId) return null;
     const mentioned = mentionsBot(content);
     // WP-C: an unmentioned message is read only for somebody new (maybeOffer).
     if (!mentioned && (wordCount(content) < OFFER_MIN_WORDS || !await isNewcomer(pool, appId, userId))) return null;
     // The room's socket knows little of either: read what filing needs.
-    const [app, user] = await Promise.all([appRow(pool, appId), personRow(pool, userId)]);
+    let user;
+    [app, user] = await Promise.all([appRow(pool, appId), personRow(pool, userId)]);
     if (!app || !user) return null;
     if (!mentioned) return await maybeOffer(pool, { app, user, messageId, content, deps });
     return await askFromMessage(pool, config, { app, user, messageId, content, deps });
   } catch (err) {
-    log.warn('homeroom-bot-chat', 'Could not hand a chat message to Homeroom bot', { app: app?.slug, messageId, err: err.message });
+    log.warn('homeroom-bot-chat', 'Could not hand a chat message to Homeroom bot', { app: app?.slug || appId, messageId, err: err.message });
     return null;
   }
 }

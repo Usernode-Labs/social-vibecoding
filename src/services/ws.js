@@ -1355,7 +1355,7 @@ async function handleMessage(pool, client, msg) {
       if (!thread) {
         void require('./homeroom-bot-chat').noteChatMessage(pool, null, {
           appId: client.appId, userId: client.user.id, messageId: rows[0].id, content, thread, postedVia,
-        });
+        }).catch((err) => log.warn('ws', 'Homeroom bot hand-over failed', { err: err.message }));
       }
       // WP-E: somebody an invite brought, writing here for the first time:
       // the link's maker hears they said hi (services/invite-activity.js).
