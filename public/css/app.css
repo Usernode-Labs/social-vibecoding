@@ -10893,6 +10893,96 @@ html .un-backdrop.platform-backdrop-dim {
   background-color: var(--dc-sheet-solid);
   box-shadow: 0 -1px 0 var(--app-sheet-line);
 }
+/* THE FEEDBACK FORM AS A PHONE SHEET (#4554). On a phone the centred kit
+   modal is what gets squeezed and cut off once the keyboard is up, so
+   lib/static-modal.ts's `phoneSheet` presentation leaves the card in its
+   root and bottoms it instead, under two runtime attributes a frame apart
+   (`data-dialog-sheet` on the reveal, `data-dialog-sheet-shown` on the next
+   frame, which is the slide-up). The kit's own sheet is not usable for a
+   form: `.un-sheet` takes every vertical drag, so the card could not scroll
+   its fields. Sizing is the `.platform-kb-sheet` arithmetic: with the
+   keyboard up the card sits in the band the reader can actually see, so
+   Cancel and Post request stay just above the keys and the card scrolls
+   inside itself. Escaped on any wider or non-touch screen, where the centred
+   modal stays exactly as it was. */
+.feedback-sheet-grabber { display: none; }
+
+@media (max-width: 767px) and (pointer: coarse) {
+  /* The root does not scroll in sheet mode; the card is the scroller. */
+  [data-dialog-sheet] { overflow: hidden; }
+  [data-dialog-sheet] [data-modal-backdrop] {
+    align-items: flex-end;
+    padding: 0;
+  }
+  [data-dialog-sheet] [data-modal-backdrop] > div {
+    width: 100%;
+    max-width: none;
+    border-radius: 20px 20px 0 0;
+    background-color: var(--dc-sheet-solid);
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+    max-height: 92%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    transform: translateY(100%);
+    transition: transform 200ms ease-out;
+  }
+  [data-dialog-sheet][data-dialog-sheet-shown] [data-modal-backdrop] > div {
+    transform: translateY(0);
+  }
+  html.platform-kb-open [data-dialog-sheet] [data-modal-backdrop] > div {
+    bottom: var(--platform-kb-cover, 0px);
+    max-height: calc(100% - var(--platform-vv-top, 0px) - var(--platform-kb-cover, 0px) - 12px);
+  }
+  [data-dialog-sheet] .feedback-sheet-grabber {
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: -10px auto 12px;
+    border-radius: 2px;
+    background: var(--border);
+    flex: none;
+  }
+  /* Cancel and Post stay at the sheet's foot while the form above scrolls,
+     the same rule the kit modal carries (.un-modal .feedback-actions, #4033)
+     — here the card is the scroller, and its bottom padding is 24px. */
+  [data-dialog-sheet] .feedback-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin-top: 4px;
+    margin-bottom: -24px;
+    padding: 12px 0 24px;
+    background-color: var(--dc-sheet-solid);
+    box-shadow: 0 -1px 0 var(--app-sheet-line);
+  }
+}
+
+@media (max-width: 767px) and (pointer: coarse) and (prefers-reduced-motion: reduce) {
+  [data-dialog-sheet] [data-modal-backdrop] > div { transition: none; }
+}
+
+/* THE COMMENT SHEET (#4554): the comment box on a phone, a slide-up sheet of
+   its own (features/comment-pin/comment-pin.tsx renders it with the same
+   plane fill and hairline as the sign-in sheet's). It slides up once, on
+   mount, by keyframe — its open state is React's, not a class toggle. */
+.comment-sheet-in { animation: comment-sheet-up 200ms ease-out; }
+@keyframes comment-sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .comment-sheet-in { animation: none; }
+}
+/* The sheet's grabber, the same handle the feedback sheet's carries — the
+   component renders it only on a phone, so no media query here. */
+.comment-sheet-grabber {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 10px;
+  border-radius: 2px;
+  background: var(--border);
+  flex: none;
+}
 /* THE PAPERCLIP'S POPOVER (#4127): Photo and Video, in the vote popover's
    frame (.dev-vote-pop / .messages-new-pop: same radius, surface, hairline
    and shadow) and the "+" menu's rows. Absolute under the paperclip rather

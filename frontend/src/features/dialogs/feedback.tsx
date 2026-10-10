@@ -27,7 +27,7 @@
  * the prerendered public/index.html that the hand-written shell never had.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
@@ -39,6 +39,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { HostDropOverlay } from '../attachments/file-drag';
 import { FEEDBACK_DESCRIPTION_MAX } from '../../lib/issue-body-limit';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { returnKeyHandler } from '../../lib/return-to-next';
 import { formOffersComment, openCommentMode } from '../improve/suggest-shortcut';
 import { Feedback, init as initFeedback } from './feedback-controller';
@@ -94,13 +95,19 @@ export function FeedbackDialog() {
   // the device's switch is on (not in the side panel). Read on every open,
   // since the setting lives on the device and can change between opens.
   const [offersComment, setOffersComment] = useState(false);
+  // The card, as a bottom sheet on a phone (#4554): `useKeyboardSurface`
+  // rides the keyboard with it the way the sign-in sheet's does, and the
+  // sheet's slide-up is `useStaticModal`'s `phoneSheet` presentation.
+  const cardRef = useRef<HTMLDivElement>(null);
   const dialog = useDialog<OpenOptions>('feedback', {
+    phoneSheet: true,
     onOpen: (opts) => {
       setOffersComment(formOffersComment());
       Feedback._open(opts || {});
     },
     onClose: () => Feedback._reset(),
   });
+  useKeyboardSurface(cardRef, { ride: true });
   // Comment mode instead, taking the form's draft: the words wait for the
   // first click on the page, and the pictures, title, Kudos and destination
   // go into that comment's box.
@@ -124,7 +131,11 @@ export function FeedbackDialog() {
       ref={dialog.rootRef}
       {...dialog.backdropProps}
     >
-      <DialogCard size="sm">
+      <DialogCard size="sm" ref={cardRef}>
+        {/* The sheet's handle (#4554), shown only in the phone sheet's
+            presentation (app.css's `[data-dialog-sheet]` rules). No id: the
+            prerendered shell gains nothing it has to name. */}
+        <div aria-hidden="true" className="feedback-sheet-grabber" />
         {/* #3907: Return in the title goes on to the description, where it is
             a new line (the iOS keyboard's chevrons are gone). A handler, not
             markup: nothing here is written, so the controller still owns
