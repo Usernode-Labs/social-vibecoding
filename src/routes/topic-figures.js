@@ -1,11 +1,12 @@
 'use strict';
 
-// GET /api/apps/:slug/topics/:key/figures?scope=all|homeroom|others
+// GET /api/apps/:slug/topics/:key/figures
 //
 // The figures a topic's channel shows above its room: the ids its
-// dapp.json entry names, read by services/topic-figures.js. Read access is
-// the app's own view rule, like the channel's; the figures are totals
-// across the platform, so nothing in them is one person's.
+// dapp.json entry names, read by services/topic-figures.js, a split one
+// with Homeroom beside the other projects. Read access is the app's own
+// view rule, like the channel's; the figures are totals across the
+// platform, so nothing in them is one person's.
 //
 // A topic with no figures, or a retired one, answers with an empty list,
 // so the strip draws nothing.
@@ -38,13 +39,12 @@ function topicFiguresRoutes(config) {
       const live = (rows[0].topic_state || 'live') === 'live';
       const ids = live ? topicFigures.knownFigureIds(rows[0].topic_figures) : [];
       if (!ids.length) return res.json({ topic: key, figures: [] });
-      const scope = topicFigures.normalizeScope(String(req.query.scope || ''));
       // Staging starts without the private tables the figures read, so
       // `?demo=1` there answers with fixed ones, marked as a demo.
       if (IS_STAGING && req.query.demo === '1') {
-        return res.json({ topic: key, ...topicFigures.demoFiguresFor(ids, { scope }) });
+        return res.json({ topic: key, ...topicFigures.demoFiguresFor(ids) });
       }
-      return res.json({ topic: key, ...(await topicFigures.figuresFor(pool, ids, { scope })) });
+      return res.json({ topic: key, ...(await topicFigures.figuresFor(pool, ids)) });
     } catch (err) {
       log.error('topic-figures', 'Failed to read a topic\'s figures', { slug: req.params.slug, key: req.params.key, message: err.message });
       return res.status(500).json({ error: 'Failed to load the figures' });

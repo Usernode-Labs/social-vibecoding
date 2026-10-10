@@ -28,7 +28,7 @@
       "name": "Proposal pipeline",
       "icon": "🚦",
       "about": "From request to merge: proposals, checks, votes and merging",
-      "figures": ["pipeline.checks-time", "pipeline.couldnt-tell", "pipeline.shots", "pipeline.vote-to-merged"]
+      "figures": ["pipeline.checks-time", "pipeline.checks-couldnt-run", "pipeline.shots", "pipeline.vote-to-merged"]
     },
     {
       "id": "infra",
@@ -36,7 +36,7 @@
       "name": "Infra",
       "icon": "🛠️",
       "about": "Builds, staging, deploys and the servers the apps run on",
-      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.limits-filled"]
+      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.restarts", "infra.limits-filled"]
     },
     {
       "id": "project-workflows",

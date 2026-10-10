@@ -47,8 +47,8 @@ const FOUR = [
 const HOMEROOM_FIGURES = {
   onboarding: ['onboarding.sign-up', 'onboarding.first-project', 'onboarding.first-change', 'onboarding.found-project'],
   'homeroom-bot': ['bot.answered', 'bot.reply-cost', 'bot.reply-time', 'bot.merged', 'bot.merged-cost', 'bot.request-to-proposal'],
-  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.couldnt-tell', 'pipeline.shots', 'pipeline.vote-to-merged'],
-  infra: ['infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.limits-filled'],
+  'proposal-pipeline': ['pipeline.checks-time', 'pipeline.checks-couldnt-run', 'pipeline.shots', 'pipeline.vote-to-merged'],
+  infra: ['infra.merge-to-live', 'infra.deploys-failed', 'infra.apps-up', 'infra.restarts', 'infra.limits-filled'],
 };
 
 // Homeroom's own topics: the four it started with, each with its figures,

@@ -3140,6 +3140,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_first_artefact_once
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_invite_signed_in_once
   ON events (user_id, (metadata->>'inviteId'))
   WHERE event_type = 'invite_signed_in';
+-- A project's app seen down (services/app-outages.js): one row per app per
+-- minute, for the unavailable page shown to somebody opening it
+-- ('app_unavailable') and for the watchdog starting it again
+-- ('app_restarted', metadata.count times in that minute). The Infra
+-- topic's figures read them (services/topic-figures.js).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_app_down_minute
+  ON events (app_id, event_type, (metadata->>'minute'))
+  WHERE event_type IN ('app_unavailable', 'app_restarted') AND metadata ? 'minute';
+-- When those rows began: an open from before it had no way to be seen
+-- failing, so "App opens that worked" counts only the opens since.
+INSERT INTO platform_settings (key, value) VALUES
+  ('app_outages_tracked_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+ON CONFLICT (key) DO NOTHING;
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
@@ -13397,6 +13410,20 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
         OR OLD.live_at IS DISTINCT FROM NEW.live_at)
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
+
+-- platform_live_at: a merge into Homeroom itself, when a production build
+-- that carries it first started serving. Homeroom ships in a release cut
+-- after the merge, so live_at (the merge, on the legacy paths) cannot say.
+-- Stamped once, by the first production process to boot with it
+-- (services/platform-release.js), and read by the Infra topic's Merge →
+-- live (services/topic-figures.js). Nothing else reads it, so no "going
+-- live" screen moves with it. Merges from before it was tracked stay NULL:
+-- the marker below is when tracking began, so a first boot does not stamp
+-- all of history with that boot's time.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_live_at TIMESTAMPTZ;
+INSERT INTO platform_settings (key, value) VALUES
+  ('platform_live_tracked_since', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+ON CONFLICT (key) DO NOTHING;
 
 -- #4083: every account without access has a spot on the waitlist, however it
 -- was made. Signups now get one as they are made (waitlist.ensureAccountSignup);
