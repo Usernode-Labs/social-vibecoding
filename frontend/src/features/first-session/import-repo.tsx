@@ -259,14 +259,12 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
             autoComplete="off"
             enterKeyHint="go"
             value={name}
-            aria-describedby="make-import-name-hint"
+            aria-describedby={missing === 'name' ? 'make-import-name-hint' : undefined}
             onChange={(e) => { setName(e.target.value); setMissing(null); setError(null); }}
             placeholder="For example, Sunday Run Club"
             className={INPUT}
           />
-          {missing === 'name'
-            ? <p id="make-import-name-hint" role="alert" className={NEEDED}>Give it a name to import it. You can change it later.</p>
-            : <p id="make-import-name-hint" className={HINT}>It's your group's name too. You can change it later.</p>}
+          {missing === 'name' ? <p id="make-import-name-hint" role="alert" className={NEEDED}>Give it a name to import it. You can change it later.</p> : null}
         </div>
       </div>
       {note ? <p data-make-import-note="" className="mt-2 px-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}

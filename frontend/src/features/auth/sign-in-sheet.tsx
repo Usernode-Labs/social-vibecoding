@@ -556,12 +556,11 @@ export function SignInSheet({
   const phoneStepFields = [nameField, phoneField];
   const phoneName = useRef('');
   const phoneCodeField = useRef<HTMLInputElement>(null);
-  const confirmField = useRef<HTMLInputElement>(null);
   const identifierField = useRef<HTMLInputElement>(null);
   const currentPasswordField = useRef<HTMLInputElement>(null);
   // Each multi-field step's fields in order, for Return (`returnWalks`).
   const passwordStepFields = [identifierField, currentPasswordField];
-  const accountStepFields = [usernameField, passwordField, confirmField];
+  const accountStepFields = [usernameField, passwordField];
   // The panel scrolls its fields; with the keyboard up they are revealed in
   // it, with the step's button, and tapped without iOS's pan. It rides the
   // keys up and down as one eased movement.
@@ -919,19 +918,16 @@ export function SignInSheet({
     }
   }, [followInvite, finish]);
 
-  // #4595: the password is optional. "Skip for now" (`skip`), or both
-  // password fields left empty, finishes without one: the account then signs
-  // in with an email code, and can add a password in Settings.
+  // #4595: the password is optional. "Skip for now" (`skip`), or the field
+  // left empty, finishes without one: the account then signs in with an email
+  // code, and can add a password in Settings. It is asked once, with no
+  // "again" field: a mistyped one is reset by email ("Forgot password?").
   const finishAccount = useCallback(async (skip = false) => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
     if (handle === '') { setError('Enter a username.'); usernameField.current?.focus({ preventScroll: true }); return; }
     const password = skip ? '' : passwordField.current?.value || '';
-    const confirm = skip ? '' : confirmField.current?.value || '';
-    if (password || confirm) {
-      if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
-      if (password !== confirm) { setError('Passwords do not match'); return; }
-    }
+    if (password && password.length < 8) { setError('Password must be at least 8 characters'); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
     try {
@@ -940,7 +936,7 @@ export function SignInSheet({
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
-          ...(password ? { password, passwordConfirmation: confirm } : {}),
+          ...(password ? { password } : {}),
           ...(handle ? { username: handle } : {}),
         }),
       });
@@ -1298,11 +1294,7 @@ export function SignInSheet({
               ) : null}
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-password" className={LABEL}>Password (optional)</label>
-                <input ref={passwordField} id="sign-in-sheet-password" type="password" autoComplete="new-password" enterKeyHint="next" onKeyDown={returnWalks(accountStepFields, 1)} className={INPUT} placeholder="At least 8 characters" />
-              </div>
-              <div className={FIELD}>
-                <label htmlFor="sign-in-sheet-confirm" className={LABEL}>Password again</label>
-                <input ref={confirmField} id="sign-in-sheet-confirm" type="password" autoComplete="new-password" enterKeyHint="go" className={INPUT} />
+                <PasswordInput ref={passwordField} id="sign-in-sheet-password" autoComplete="new-password" enterKeyHint="go" box="card" hint="dim" ring="bare" placeholder="At least 8 characters" />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? 'Finishing…' : 'Continue'}</button>

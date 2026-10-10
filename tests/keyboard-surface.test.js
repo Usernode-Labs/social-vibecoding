@@ -430,8 +430,9 @@ test('the password and account steps walk on Return, and each field says what it
   const field = (value) => ({ value, focused: null, focus(opts) { this.focused = opts; } });
   const user = field('');
   const pass = field('');
-  const confirm = field('');
-  const refs = [{ current: user }, { current: pass }, { current: confirm }];
+  // The account step: the username, then the password, asked once (Evan,
+  // 10 Oct 2026: no "Password again"; a mistyped one is reset by email).
+  const refs = [{ current: user }, { current: pass }];
   const press = (target, extra = {}) => {
     const e = { key: 'Enter', shiftKey: false, nativeEvent: { isComposing: false }, currentTarget: target, prevented: false, preventDefault() { this.prevented = true; }, ...extra };
     returnWalks(refs, refs.findIndex((r) => r.current === target))(e);
@@ -440,29 +441,21 @@ test('the password and account steps walk on Return, and each field says what it
   const first = press(user);
   assert.equal(first.prevented, true, 'no submit from the username');
   assert.deepEqual(pass.focused, { preventScroll: true }, 'on to the password, without a scroll');
-  pass.value = 'secret-1';
-  press(pass);
-  assert.deepEqual(confirm.focused, { preventScroll: true });
-  assert.equal(press(confirm).prevented, false, 'the last field\'s Return submits the form');
+  user.value = 'ada';
+  assert.equal(press(user).prevented, true, 'a filled username still goes on to the password');
   assert.equal(press(user, { shiftKey: true }).prevented, false, 'Shift+Return is left alone');
   assert.equal(press(user, { nativeEvent: { isComposing: true } }).prevented, false, 'so is an IME\'s Return');
-  // No username asked for: the step's fields are the two passwords.
-  const two = [{ current: null }, { current: pass }, { current: confirm }];
-  pass.value = '';
-  confirm.focused = null;
-  const e = { key: 'Enter', shiftKey: false, nativeEvent: { isComposing: false }, currentTarget: pass, preventDefault() { this.prevented = true; } };
-  returnWalks(two, 1)(e);
-  assert.deepEqual(confirm.focused, { preventScroll: true });
 
-  // Wired: "next" on every field but each step's last, which says "go".
+  // Wired: "next" on every field but each step's last, which says "go" and
+  // submits the form with no handler of its own.
   assert.match(SHEET, /id="sign-in-sheet-identifier"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(passwordStepFields, 0\)\}/);
   assert.match(SHEET, /id="sign-in-sheet-current-password"[^>]*enterKeyHint="go"/);
   assert.match(SHEET, /id="sign-in-sheet-username"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(accountStepFields, 0\)\}/);
-  assert.match(SHEET, /id="sign-in-sheet-password"[^>]*enterKeyHint="next" onKeyDown=\{returnWalks\(accountStepFields, 1\)\}/);
-  assert.match(SHEET, /id="sign-in-sheet-confirm"[^>]*enterKeyHint="go"/);
+  assert.match(SHEET, /id="sign-in-sheet-password"[^>]*enterKeyHint="go"/);
+  assert.doesNotMatch(SHEET, /sign-in-sheet-confirm|Password again/);
   for (const id of ['sign-in-sheet-email', 'sign-in-sheet-code', 'sign-in-sheet-provider-username']) {
     assert.match(SHEET, new RegExp(`id="${id}"[^>]*enterKeyHint="go"`), `${id}: a one-field step's Return goes`);
   }
   assert.match(SHEET, /const passwordStepFields = \[identifierField, currentPasswordField\];/);
-  assert.match(SHEET, /const accountStepFields = \[usernameField, passwordField, confirmField\];/);
+  assert.match(SHEET, /const accountStepFields = \[usernameField, passwordField\];/);
 });

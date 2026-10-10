@@ -54,8 +54,6 @@ export type Choice = {
   emoji?: string;
   /** A game starter (services/app-templates.js): the project starts from it, and the bot builds their idea on it. */
   starter?: string;
-  /** What the starter is, for the line under the chips: "a dice race". */
-  starts?: string;
 };
 
 export type Template = {
@@ -118,10 +116,10 @@ export const TEMPLATES: readonly Template[] = [
     tail: '',
     finish: true,
     choices: [
-      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'we roll dice and race each other around the board', name: 'Board Game Night', description: 'A board game', starter: 'game-board', starts: 'a dice race' },
-      { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together through storms of sparks and collect stardust', name: 'Space Shooter', description: 'An arcade space shooter', starter: 'game-space', starts: 'a scrolling run dodging storms of sparks' },
-      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build whatever we want together', name: 'Block World', description: 'A 3D block game', starter: 'game-blocks', starts: 'a shared 3D block world' },
-      { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game', starter: 'game-trivia', starts: 'trivia about each other' },
+      { key: 'board', label: 'Board game', fill: 'a board game where', example: 'we roll dice and race each other around the board', name: 'Board Game Night', description: 'A board game', starter: 'game-board' },
+      { key: 'shooter', label: 'Space shooter', fill: 'an arcade space shooter where', example: 'we fly together through storms of sparks and collect stardust', name: 'Space Shooter', description: 'An arcade space shooter', starter: 'game-space' },
+      { key: 'blocks', label: '3D blocks', fill: 'a 3D block game where', example: 'we build whatever we want together', name: 'Block World', description: 'A 3D block game', starter: 'game-blocks' },
+      { key: 'trivia', label: 'Trivia', fill: 'a trivia game where', example: 'every question is about one of us', name: 'Trivia Night', description: 'A trivia game', starter: 'game-trivia' },
     ],
     own: { example: 'a drawing game where one of us draws and everyone guesses', name: '', description: 'A game' },
     note: 'I\'m making us a game. Join and tell me what it needs.',
@@ -204,13 +202,13 @@ export function readyMadeOf(t: Template, key: string): { template: string; emoji
 }
 
 /**
- * The game starter a choice makes its project from, and what it is, or
- * null: for Your own words, or a choice with none. Unlike a ready-made app,
- * Homeroom bot still builds the first version, on it.
+ * The game starter a choice makes its project from, or null: for Your own
+ * words, or a choice with none. Unlike a ready-made app, Homeroom bot still
+ * builds the first version, on it.
  */
-export function starterOf(t: Template, key: string): { template: string; starts: string } | null {
+export function starterOf(t: Template, key: string): { template: string } | null {
   const c = key === OWN ? null : choiceOf(t, key);
-  return c && c.starter ? { template: c.starter, starts: c.starts || 'a working game' } : null;
+  return c && c.starter ? { template: c.starter } : null;
 }
 
 /** The project's one-line description for a choice. */

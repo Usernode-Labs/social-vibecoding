@@ -467,7 +467,15 @@
         // by the old build. The reload lands on the address just restored.
         // It never resolves once it reloads, so the sign-in stays busy until
         // the page goes.
+        //
+        // The session this read just confirmed is kept for that reload first.
+        // The new page then starts from it (App.init's snapshot boot) and
+        // draws its first screen, "What do you want to make?" for a new
+        // account, in the tick it starts. Without it the reload waited on
+        // /api/auth/me and painted Home, then the landing, before the make
+        // screen. enterAuthed writes the same snapshot when nothing reloads.
         if (typeof App !== 'undefined' && typeof App._moveToLiveShell === 'function') {
+          try { App.saveSessionSnapshot?.(user); } catch (_) {}
           await App._moveToLiveShell('signed-in', liveShell);
         }
         fx(() => {
