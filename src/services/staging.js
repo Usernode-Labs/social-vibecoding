@@ -314,7 +314,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
   // persisted how long any of this took, which is why diagnosing the
   // proposal-checks slowdown meant reading a container log tail.
   const buildStartedAt = Date.now();
-  const timings = {};
+  // startedAt: when this build began. The checks run that follows starts its
+  // clock here (visuals.captureForSession), so its time to a verdict counts
+  // the build as well as the checks (#4696).
+  const timings = { startedAt: buildStartedAt };
   reportBuildStep(config, session, 'source_fetch', timings, buildStartedAt);
 
   try {

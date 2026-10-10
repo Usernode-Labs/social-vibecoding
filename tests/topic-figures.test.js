@@ -201,6 +201,17 @@ test('which figures split: the bot\'s cost and speed, the whole pipeline, merge 
   assert.equal(figures.FIGURES['pipeline.checks-time'].target.atMost, 120, 'a checks verdict in 2 minutes');
 });
 
+test('Time to a checks verdict counts the preview build a run followed (#4696)', () => {
+  assert.match(figures.FIGURES['pipeline.checks-time'].tip, /including the build/);
+  // The build records when it began, and the checks run that follows opens
+  // its trace there, so ended_at - started_at spans the build too.
+  assert.match(read('src/services/staging.js'), /const timings = \{ startedAt: buildStartedAt \};/);
+  const capture = read('src/services/visuals.js');
+  assert.match(capture, /const builtFrom = Number\(stagingResult\?\.timings\?\.startedAt\);/);
+  assert.match(capture, /startedAt: Number\.isFinite\(builtFrom\) && builtFrom <= runStartedAt \? new Date\(builtFrom\) : null,/,
+    'a run on a live preview, with no build, starts when it is opened');
+});
+
 test('a daily window ends at the start of today (UTC) and covers the days before it', () => {
   const now = Date.UTC(2026, 9, 10, 15, 30);
   const w = figures.windowFor({ days: 30, daily: true }, now);

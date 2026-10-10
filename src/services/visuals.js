@@ -2306,12 +2306,18 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   // never throw, so tracing can't fail a capture.
   const runStartedAt = Date.now();
   const mergeDebug = require('./merge-debug');
+  // #4696: a run that follows a build starts at the build (staging.js
+  // timings.startedAt), so its time to a verdict (topic-figures.js
+  // 'pipeline.checks-time') counts the build it waited for. A run on a live
+  // preview has no build and starts now.
+  const builtFrom = Number(stagingResult?.timings?.startedAt);
   const debugRunId = await mergeDebug.startRun(pool, {
     appId: app.id, sessionId: session.id, prNumber: session.pr_number || null,
     // Every run used to record trigger='capture' — the name of this function.
     // With the real trigger, the same trace query that measures re-run COUNT
     // can finally attribute it.
     kind: 'checks', trigger: normalizeCheckTrigger(trigger) || 'capture',
+    startedAt: Number.isFinite(builtFrom) && builtFrom <= runStartedAt ? new Date(builtFrom) : null,
   });
   const traceStep = (phase, message, detail) =>
     mergeDebug.step(pool, debugRunId, { phase, message, detail });
