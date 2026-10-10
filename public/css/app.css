@@ -10874,7 +10874,13 @@ html .un-backdrop.platform-backdrop-dim {
 /* Send Feedback wears the plane colour the sheets do, not the neutral white:
    it is the dialog people open from the same menus as those sheets, and it
    read as a different material beside them. */
-.un-modal:has(#feedback-form) { background-color: var(--dc-sheet-solid); }
+.un-modal:has(#feedback-form) {
+  background-color: var(--dc-sheet-solid);
+  /* #4542: focusing a field scrolls it in above the sticky Cancel/Post row,
+     not under it. 76px is the row (12px top padding, a 36px button, 20px
+     foot) and an 8px gap. */
+  scroll-padding-bottom: 76px;
+}
 /* CANCEL AND POST STAY ON SCREEN (#4033). The kit modal is the scroller
    (native.css `.un-modal`: overflow-y auto), so a long description or the
    kudos row pushed the two buttons below its bottom edge and they had to be
@@ -10882,7 +10888,8 @@ html .un-backdrop.platform-backdrop-dim {
    under it, on the same solid plane colour so nothing shows through. It
    reaches down through the modal's 20px bottom padding (negative margin,
    matching padding), so the buttons sit where they always did when the
-   form is short (4px + 12px is the 16px gap `mt-4` gave), and the hairline marks the edge the fields pass under. */
+   form is short (4px + 12px is the 16px gap `mt-4` gave), and the hairline marks the edge the fields pass under.
+   #4542: `scroll-padding-bottom` on the scroller above keeps a focused field clear of the row. */
 .un-modal .feedback-actions {
   position: sticky;
   bottom: 0;
