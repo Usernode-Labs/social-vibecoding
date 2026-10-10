@@ -223,7 +223,16 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
   // code button (Evan, 10 Oct 2026: the first open showed that step first).
   assert.match(src, /setStep\(releaseSignIn \? 'link' : 'email'\);/);
   assert.match(src, /step === 'link' \? t\('auth:signInSheet\.link\.title'\)/);
-  assert.equal(message('auth:signInSheet.link.title'), 'Signing you in\u2026');
+  assert.equal(message('auth:signInSheet.link.title'), 'Signing you in from your email\u2026');
+  // Closed and opened again (Get started again, Evan, 10 Oct 2026): the link
+  // signs in from the email again, not the code step. The sheet forgets the
+  // link it spent when it closes, and the story keeps the link when the
+  // sheet closes; the server takes the same link again while the account
+  // it started is not set up (tests/release-link-postgres.test.js).
+  assert.match(src, /if \(!open\) \{ setShown\(false\); setLeaving\(false\); setClosing\(false\); releaseSeen\.current = null; return undefined; \}/);
+  const landing = read('frontend/src/features/auth/landing.tsx');
+  assert.match(landing, /const closeSheet = useCallback\(\(\) => \{ setSheet\(null\); setResume\(null\); \}, \[\]\);/);
+  assert.doesNotMatch(landing, /setRelease\(null\); \}, \[\]\)/);
   // Refused, the code step says why a code came instead.
   assert.match(src, /linkRefused \? t\('auth:signInSheet\.code\.leadLinkUsed', \{ email \}\) : t\('auth:signInSheet\.code\.lead', \{ email \}\)/);
   assert.equal(message('auth:signInSheet.code.leadLinkUsed', { email: 'ada@example.com' }),

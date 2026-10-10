@@ -308,6 +308,24 @@ const PAD = 6;
 const RING = 3;
 const SHADE = 'pointer-events-auto fixed bg-[rgba(9,9,12,0.6)] transition-all duration-200';
 
+/*
+ * INTO THE MENU, THE RING WAITS FOR THE MENU (Evan, 10 Oct 2026, iPhone).
+ * The step after the Homeroom mark points inside the menu that tap opens,
+ * and on touch that menu is a kit sheet springing up from below (native.js
+ * presentSheet, about 0.45s, with no event when it stops). Measured every
+ * frame, the ring left the mark, then rode up with the sheet from the
+ * screen's foot, and the card hopped from place to place with it. Now, into
+ * a step in the menu from the step before it, the mark's ring stays where it
+ * is and the card is hidden until the target has held still, wholly on
+ * screen, for SETTLE_FRAMES frames (or SETTLE_CAP_MS has passed); then the
+ * ring moves there once, over MOVE's 200ms, the shades with it, and the card
+ * shows. The home tour waits for its sheet the same way
+ * (../home/tour/index.tsx SETTLE_FRAMES).
+ */
+const SETTLE_FRAMES = 2;
+const SETTLE_CAP_MS = 700;
+const MOVE = 'motion-safe:transition-[left,top,width,height] motion-safe:duration-200 motion-safe:ease-out';
+
 /**
  * Pure: a cut-out with its foot taken off by the bars lying across it
  * (TourStep.endsAbove). A bar counts when it is at least half the cut-out's
@@ -521,6 +539,13 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   // screen; the tour itself always starts at its first card.
   const [index, setIndex] = useState(() => Math.max(0, Math.min(start, steps.length - 1)));
   const [measured, setMeasured] = useState<Measured>({ step: -1, box: null });
+  const measuredRef = useRef(measured);
+  measuredRef.current = measured;
+  // Into a step in the menu: waiting for the menu (`settling`, the card
+  // hidden), then the one move there (`moving`). INTO THE MENU, above.
+  const settleRef = useRef<{ at: number; since: number; key: string; still: number } | null>(null);
+  const [settling, setSettling] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   const step = steps[index];
   const stepRef = useRef(step);
@@ -539,10 +564,28 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   }, []);
 
   // A new step measures its own target before it is painted, so its card
-  // never shows beside the last step's cut-out (see Measured).
+  // never shows beside the last step's cut-out (see Measured). Into a step
+  // in the menu from the one before it, that step's ring is kept instead,
+  // for this step, with the card hidden until the menu has settled (INTO
+  // THE MENU, above).
   useLayoutEffect(() => {
+    const before = measuredRef.current;
+    if (step.inMenu && before.step === index - 1 && before.box) {
+      settleRef.current = { at: index, since: performance.now(), key: '', still: 0 };
+      setSettling(true);
+      setMeasured({ ...before, step: index, instead: false });
+      return;
+    }
+    settleRef.current = null;
+    setSettling(false);
     setMeasured(measure(index, step));
   }, [index, step]);
+  // The move lasts its 200ms; following after it is frame by frame again.
+  useEffect(() => {
+    if (!moving) return undefined;
+    const t = window.setTimeout(() => setMoving(false), 260);
+    return () => window.clearTimeout(t);
+  }, [moving]);
 
   // Then follow the target every frame; keep it only when it moved. A frame
   // that throws (a selector the document cannot parse) must not end the
@@ -575,7 +618,20 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
         const m = measure(at, stepRef.current);
         // The words too: the plan coming into the chat moves no box.
         const key = `${at}:${boxKey(m.box)}:${boxKey(m.press)}:${m.instead ? 1 : 0}`;
-        if (key !== last) { last = key; setMeasured(m); }
+        const settle = settleRef.current;
+        if (settle && settle.at === at) {
+          // Into the menu: kept until its target holds still, on screen.
+          const onScreen = !!m.box && m.box.top >= 0 && m.box.top + m.box.height <= window.innerHeight;
+          settle.still = onScreen && key === settle.key ? settle.still + 1 : 0;
+          settle.key = key;
+          if (settle.still >= SETTLE_FRAMES || performance.now() - settle.since > SETTLE_CAP_MS) {
+            settleRef.current = null;
+            last = key;
+            setMoving(true);
+            setSettling(false);
+            setMeasured(m);
+          }
+        } else if (key !== last) { last = key; setMeasured(m); }
         if (window.innerWidth !== viewport.width || window.innerHeight !== viewport.height) {
           setViewport({ width: window.innerWidth, height: window.innerHeight });
         }
@@ -676,7 +732,9 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
           {ring ? (
             <div
               aria-hidden="true"
-              className="pointer-events-none fixed rounded-2xl ring-[3px] ring-[rgba(90,169,255,0.9)] motion-safe:animate-pulse"
+              className={moving
+                ? `pointer-events-none fixed rounded-2xl ring-[3px] ring-[rgba(90,169,255,0.9)] motion-safe:animate-pulse ${MOVE}`
+                : 'pointer-events-none fixed rounded-2xl ring-[3px] ring-[rgba(90,169,255,0.9)] motion-safe:animate-pulse'}
               style={ring}
             />
           ) : null}
@@ -689,7 +747,9 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
         role="dialog"
         aria-labelledby="first-session-tour-title"
         data-tour-says-where-it-opens={step.saysWhereItOpens ? '' : undefined}
-        className="pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100"
+        className={settling
+          ? 'pointer-events-none fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 opacity-0 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100'
+          : 'pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] transition-opacity duration-150 dark:bg-zinc-800 dark:text-zinc-100'}
         style={card}
       >
         <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.counter', { step: index + 1, total: steps.length })}</p>

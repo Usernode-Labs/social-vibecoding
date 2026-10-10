@@ -104,3 +104,19 @@ test('on that phone it stops at step 3, with three examples', () => {
   assert.equal(nextStep(0, 500, 800), null, 'a screen it fits keeps step 0');
   assert.equal(nextStep(0, 800.4, 800), null, 'half a pixel over still fits');
 });
+
+// Evan, 10 Oct 2026: from a "You're in" mail's link the welcome page greets
+// the address, "Welcome to Homeroom" with the email on its own line under it,
+// and the story fits again with that line in it.
+test('a "You\'re in" link\'s address is greeted under the welcome', () => {
+  const plain = renderComponent(STORY, 'Story', { primaryClass: 'pill', onStart() {}, onSignIn() {} });
+  assert.doesNotMatch(plain, /data-landing-story-email/);
+  const html = renderComponent(STORY, 'Story', { primaryClass: 'pill', welcomeEmail: 'ada@example.com', onStart() {}, onSignIn() {} });
+  assert.match(html, />Welcome to Homeroom<\/div><div data-landing-story-email="" class="[^"]*">ada@example\.com<\/div>/);
+  assert.match(SOURCE, /if \(fittedFor\.current !== welcomeEmail\) \{\s+fittedFor\.current = welcomeEmail;\s+fitting\.current = null;\s+if \(fit !== 0\) \{ setFit\(0\); return; \}\s+\}/);
+  // The landing looks the address up from the link's token, as the sheet does.
+  const landing = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/auth/landing.tsx'), 'utf8');
+  assert.match(landing, /const releaseToken = release\?\.route === 'signup' \? release\.token : null;/);
+  assert.match(landing, /void inviteEmailFromToken\(releaseToken\)\.then\(\(email\) => \{ if \(live\) setReleaseEmail\(email\); \}\);/);
+  assert.match(landing, /<Story primaryClass=\{PRIMARY_PILL\} welcomeEmail=\{releaseEmail\}/);
+});
