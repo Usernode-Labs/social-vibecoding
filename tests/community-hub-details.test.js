@@ -158,7 +158,8 @@ test('the hub draws no charts: who is around is faces, a count and names, and no
     assert.throws(() => message(id), undefined, `${id} is gone from the catalog`);
   }
   // The declared check that read the trend reads who is around instead.
-  const declared = JSON.parse(read('dapp.json')).tests[290];
+  // (#4729 removed three checks above it, so its index moved 290 → 288.)
+  const declared = JSON.parse(read('dapp.json')).tests[288];
   assert.match(declared.expectSelector, /:has\(\.dev-ws-hero \[data-ws-active-people\]\) > \.dev-ws-tabbody > \[data-ws-hub-for-you\] > \.dev-ws-foryou > \[data-ws-hub-needs-votes\] > button\[data-ws-hub-needs-open\]$/);
   assert.equal(declared.expectText, 'to vote');
 });

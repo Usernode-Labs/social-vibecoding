@@ -1,6 +1,6 @@
 import { openReport } from '../dialogs/report';
 import {
-  memo, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
+  memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -96,9 +96,11 @@ import {
   loadAgentSessions,
   openAgentSession,
   startAgentSession,
+  useAgentChatsShown,
   useAgentSessionSelector,
   useAgentSessions,
 } from '../agent-session/store';
+import { listArchivedSessions } from '../agent-session/api';
 import type { AgentSession as MayorSession } from '../agent-session/api';
 import { changeRowWords } from '../agent-session/transcript';
 import {
@@ -803,6 +805,30 @@ function ConversationList() {
   const mayorSessions = useAgentSessions();
   useEffect(() => { void loadAgentSessions(); }, []);
   const mayors = useMemo<MayorSession[]>(() => (mounted ? mayorSessions : []), [mounted, mayorSessions]);
+  // #4729: the mark menu's agent rows left for this list, and with them the
+  // only route to an archived agent chat closed — an archived session was in
+  // no list at all. "Show archived" at the foot of the Agents list opens the
+  // group of them, read from the same route the open list reads with
+  // ?status=archived and re-read on each open, so a session archived or
+  // unarchived meanwhile is current. After mount (like the rows above) and
+  // only for somebody who has had an agent session, so a newcomer's list
+  // carries no quiet tail that would always be empty; a query hides it,
+  // because search covers the open chats only.
+  const agentChatsShown = useAgentChatsShown();
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [archived, setArchived] = useState<MayorSession[] | null>(null);
+  const [archivedError, setArchivedError] = useState('');
+  const readArchived = useCallback(() => {
+    setArchivedError('');
+    listArchivedSessions()
+      .then((sessions) => setArchived(sessions))
+      .catch((err) => setArchivedError(
+        err instanceof Error && err.message ? err.message : translate('agent:session.error.listFailed'),
+      ));
+  }, []);
+  useEffect(() => {
+    if (archivedOpen) readArchived();
+  }, [archivedOpen, readArchived]);
   // The side pane open BESIDE an agent session's chat (#2779 follow-up), a
   // spec or a preview, takes this column's width while it is open: at 1280
   // the thread pane alone is too narrow for two readable columns. Closing it
@@ -861,6 +887,7 @@ function ConversationList() {
   // that is open, which stays in view wherever it lives.
   const moreEntries = inbox.filter((entry) => entry.more);
   const openSlug = snap.route.appSlug;
+  const openAgent = snap.route.agent;
   const found = inbox.filter(matches).filter((entry) => !entry.more || !!q || snap.showMoreChannels
     || (entry.kind === 'app' && entry.key === `app:${openSlug}`));
   // B5: search results stay in the order things happened; only the full
@@ -879,6 +906,27 @@ function ConversationList() {
         <ChevronDownIcon className={snap.showMoreChannels ? 'rotate-180' : ''} />
       </span>
       <span>{snap.showMoreChannels ? t('messages:inbox.showLess') : t('messages:inbox.showMore', { count: moreEntries.length })}</span>
+    </button>
+  ) : null;
+  // #4729: the archived agent chats fold behind a toggle at the Agents
+  // list's foot, in the channels' "Show N more" shape. Opening it re-reads
+  // the archived list each time, so a session archived or unarchived since
+  // the last look shows where it now belongs; a query hides the toggle,
+  // because search covers the open chats only.
+  const showArchivedToggle = mounted && !!agentChatsShown && snap.filter === 'agents' && !deferredQuery.trim();
+  const archivedToggle = showArchivedToggle ? (
+    <button
+      key="show-archived"
+      type="button"
+      id="messages-show-archived"
+      className="messages-more-channels"
+      aria-expanded={archivedOpen}
+      onClick={() => setArchivedOpen(!archivedOpen)}
+    >
+      <span className="messages-more-channels-glyph" aria-hidden="true">
+        <ChevronDownIcon className={archivedOpen ? 'rotate-180' : ''} />
+      </span>
+      <span>{archivedOpen ? t('messages:inbox.archived.hide') : t('messages:inbox.archived.show')}</span>
     </button>
   ) : null;
 
@@ -975,6 +1023,32 @@ function ConversationList() {
           ];
         })}
         {moreToggle && !shown.some((entry) => entry.section === 'channels') && (snap.filter === 'all' || snap.filter === 'channels') ? moreToggle : null}
+        {archivedToggle}
+        {archivedOpen && showArchivedToggle ? (
+          <>
+            <h3 className="messages-section-head" data-inbox-section="archived">{t('messages:inbox.archived.heading')}</h3>
+            {archivedError ? (
+              <div className="messages-state messages-state-error">
+                <p>{archivedError}</p>
+                <button type="button" onClick={readArchived}>{t('core:common.tryAgain')}</button>
+              </div>
+            ) : !archived ? (
+              <div className="messages-state"><span className="messages-spinner" aria-hidden="true" /></div>
+            ) : !archived.length ? (
+              <div className="messages-state"><p>{t('messages:inbox.archived.empty')}</p></div>
+            ) : (
+              <div className="messages-section-card" data-inbox-card="archived">
+                {archived.map((session) => (
+                  <MayorSessionRow
+                    key={session.id}
+                    session={session}
+                    active={openAgent?.kind === 'agent' && openAgent.id === session.id}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        ) : null}
       </div>
     </section>
   );

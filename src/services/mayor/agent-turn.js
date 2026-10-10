@@ -162,6 +162,10 @@ function defaults(deps = {}) {
     // The dev chat's own "Session finished" (routes/sessions.js), read at
     // call time: that module requires this one at load.
     notifyDone: deps.notifyDone || ((pool, changeId) => require('../../routes/sessions').notifySessionDone(pool, changeId)),
+    // The bell's "Session stopped before finishing" (#4729), read at call
+    // time like notifyDone: an agent session's turn that ended in an error
+    // bell nobody watching live (they saw it happen) when nobody is watching.
+    notifyStalled: deps.notifyStalled || ((pool, changeId) => require('../../routes/sessions').notifySessionStalled(pool, changeId)),
     // The owner's lists (Recents, the mark's menu, Messages) show a spinner
     // while a turn runs and a dot once it has finished: tell every tab, on
     // every pod, when either happens.
@@ -702,10 +706,12 @@ async function runAgentTurn({
     }
     // A spec drafted or a build done while nobody is looking is the bell's,
     // as a dev chat's finished turn is ("Session finished", one unread per
-    // change). Looking means this turn's own stream is still open, or the
-    // conversation screen is following the conversation's events.
+    // change). A turn that ended in an error is the bell's other line,
+    // "Session stopped before finishing" (#4729), so the notification says
+    // what kind of news waits. Looking means this turn's own stream is still
+    // open, or the conversation screen is following the conversation's events.
     if (outcome.ran && outcome.changeId && !watching()) {
-      await d.notifyDone(pool, outcome.changeId);
+      await (outcome.isError ? d.notifyStalled : d.notifyDone)(pool, outcome.changeId);
     }
   };
 
@@ -785,8 +791,11 @@ async function runAgentTurn({
     return true;
   };
 
+  // Declared here, not inside the try, so the catch's failed turn can reach
+  // the active change it may have left behind and bell it (#4729).
+  let session = null;
   try {
-    const session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
+    session = await d.agentSessions.getAgentSession(pool, { userId: user.id, id: agentSessionId });
     if (!session || session.status !== 'open') throw new Error('agent session is not open');
 
     if (recorded) {
@@ -987,6 +996,14 @@ async function runAgentTurn({
         event: 'turn_failed',
         metadata: { agentTurnId: turnId, retryable: true },
       }).catch(() => {});
+      // The bell's other line (#4729): a turn that died mid-work bell
+      // "Session stopped before finishing" against the change it was on,
+      // when nobody was watching — a stop or an interruption was answered
+      // where it happened, so those stay out of the bell. Off this catch's
+      // critical path: the turn is already recorded as failed.
+      if (session && session.activeChange && !watching()) {
+        d.notifyStalled(pool, session.activeChange.id).catch(() => {});
+      }
     }
   } finally {
     clearInterval(leaseTimer);

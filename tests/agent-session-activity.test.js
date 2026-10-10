@@ -48,7 +48,9 @@ test('the mark\'s Continue rows and Messages both draw it', () => {
   const messages = read('frontend/src/features/messages/index.tsx');
   const mayorRow = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));
   assert.match(mayorRow, /const mark = agentActivity\(session\);/);
-  assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /<AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>/);
+  // The mark menu's rows left with its Agent chats section (#4729); the
+  // mark, the list that remains, is Messages'.
+  assert.doesNotMatch(read('frontend/src/features/app-context/app-context-sheet.tsx'), /AgentActivityIcon/);
 });
 
 test('#3028: while a session works, its spinner replaces the row\'s icon rather than sitting beside it', () => {
@@ -58,12 +60,11 @@ test('#3028: while a session works, its spinner replaces the row\'s icon rather 
   assert.match(icon, /^<svg class="animate-spin text-violet-600 dark:text-violet-400 row-glyph"[^>]*aria-hidden="true" data-agent-activity="working"/,
     'the same spinner, at the slot\'s size, decoration only');
 
-  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /icon=\{row\.activity\s*\? <AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>\s*: <SparklesIcon \/>\}/);
-  assert.match(sheet, /lead=\{row\.activity\s*\? <span className="sr-only">\{t\(ACTIVITY_LABEL\[row\.activity\]\)\}<\/span>\s*: null\}/,
+  const messages = read('frontend/src/features/messages/index.tsx');
+  const mayorRow = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));
+  assert.match(mayorRow, /\{mark\s*\? <AgentActivityIcon activity=\{mark\} className="w-5 h-5" \/>\s*: <SparklesIcon className="w-5 h-5" \/>\}/);
+  assert.match(mayorRow, /\{mark \? <span className="sr-only">\{t\(ACTIVITY_SAID\[mark\]\)\}<\/span> : null\}/,
     'the icon slot is aria-hidden, so the row still says "Working" or "Finished" in words');
-  assert.match(sheet, /<span className="shrink-0 \[&>svg\]:h-5 \[&>svg\]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">/,
-    'the slot sizes the spinner like the icon it replaces');
 });
 
 test('#3076: the finished dot replaces the icon too, in the mark\'s Continue rows and Messages', () => {
@@ -75,12 +76,10 @@ test('#3076: the finished dot replaces the icon too, in the mark\'s Continue row
   assert.match(renderToHtml(createElement(AgentActivityIcon, { activity: 'done' })), /data-agent-activity="done"/);
   assert.equal(renderToHtml(createElement(AgentActivityIcon, { activity: null })), '');
 
-  // The menu's rows: the same, and the state in words.
+  // The menu's rows are gone with the menu's Agent chats (#4729); the tile
+  // in Messages' Agents list is where the state is drawn, and said in words.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.doesNotMatch(sheet, /AgentActivityMark/);
-  const rowBody = sheet.slice(sheet.indexOf('function RowBody('), sheet.indexOf('function followThenDismiss('));
-  assert.ok(rowBody.indexOf('{lead}') > rowBody.indexOf('{icon}') && rowBody.indexOf('{lead}') < rowBody.indexOf('{label}'),
-    'RowBody draws the (sr-only) lead between the icon and the label');
+  assert.doesNotMatch(sheet, /AgentActivityMark|AgentActivityIcon/);
 
   // Messages' Agents list: the tile's sparkle gives way to the spinner or the
   // dot (it kept its icon while working before), and the name says which.

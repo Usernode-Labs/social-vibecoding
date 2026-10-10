@@ -239,9 +239,9 @@ for (const touch of [false, true]) {
 test('Suggest an improvement and Start a new change each exist once, and the read-only gate holds', () => {
   // ONE BUTTON AND ONE ROW (UI overhaul). The menu's well held two buttons,
   // Give feedback and New change, and people found both confusing. The
-  // button is Suggest an improvement now (the same dialog), and New change is
-  // "Build it now" under Agent chats in the menu's list, because
-  // what it opens is an agent session.
+  // button is Suggest an improvement now (the same dialog). New change —
+  // "Build it now" — left the menu with its Agent chats section (#4729) and
+  // is Messages' "+" choice, because what it opens is an agent session.
   //
   // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
   // ONE method, whichever surface it is on.
@@ -254,12 +254,12 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
     'and not in two places — that id is what the outbox dot\'s writer selects');
   assert.ok(!MENU.includes('giveFeedback'),
     'the menu does not keep a second caller of the same method');
-  assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 1);
-  // B8: the row is Build it now, beside Suggest an improvement going to Homeroom bot.
-  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,480}label=\{t\('agent:appContext\.agentChats\.buildNow'\)\}/);
-  assert.equal(message('agent:appContext.agentChats.buildNow'), 'Build it now');
-  // A read-only viewer may not start a change, as the button's gate was.
-  assert.match(MENU, /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
+  assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 0,
+    'and the menu carries no start-a-change row any more (#4729)');
+  // Messages' "+" is Build it now now, opening an agent session.
+  assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
+  assert.match(read('frontend/src/features/messages/index.tsx'),
+    /startAgentSession\(\{ entry: 'messages' \}\)/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and
   // only on a writeable board (it is inside the menu's readOnly gate).
   const ROW = read('frontend/src/features/dev-board/actions-row.tsx');
