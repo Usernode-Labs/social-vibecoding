@@ -372,6 +372,8 @@ export interface ChecksProgress {
   total: number;
   /** True until the run knows its total: a pulsing bar, not a filling one. */
   indeterminate?: boolean;
+  /** The run's real checks position in percent (the slower of its two halves, #4727): the fill follows it when present, the aria counts stay `done`/`total`. */
+  pct?: number;
   text: string;
 }
 

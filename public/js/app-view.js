@@ -6734,8 +6734,30 @@ const AppView = {
     if (f < 0.42) return PlatformI18n.t('changes:page.testing.where.third');
     if (f < 0.58) return PlatformI18n.t('changes:page.testing.where.half');
     if (f < 0.71) return PlatformI18n.t('changes:page.testing.where.twoThirds');
-    if (f < 0.88) return PlatformI18n.t('changes:page.testing.where.threeQuarters');
+    if (f < 0.85) return PlatformI18n.t('changes:page.testing.where.threeQuarters');
     return PlatformI18n.t('changes:page.testing.where.almost');
+  },
+
+  // #4727 — how far the checks really are. Testing runs in two halves side
+  // by side (the declared checks and the unit suite) and the verdict waits
+  // for both, so the run is as far as the half that is behind: the average
+  // let a finished unit suite pull the bar ahead of the half still running.
+  // A half that has started but not said its total yet counts as 0, so the
+  // result never goes backwards once a total is learned. Null when there is
+  // no progress object at all.
+  _checksHalvesFraction(p) {
+    if (!p || typeof p !== 'object') return null;
+    const declared = Number.isInteger(p.expected) && p.expected > 0
+      ? Math.min(1, (Number(p.ran) || 0) / p.expected)
+      : 0;
+    const halves = [declared];
+    const u = p.unit && typeof p.unit === 'object' ? p.unit : null;
+    if (u) {
+      if (u.done) halves.push(1);
+      else if (Number(u.expected) > 0) halves.push(Math.min(1, (Number(u.ran) || 0) / Number(u.expected)));
+      else halves.push(0);
+    }
+    return Math.min(...halves);
   },
 
   // Whole minutes, rounded; 0 reads "under a minute" where it is said.
@@ -6851,15 +6873,7 @@ const AppView = {
     if (b && b.step === 'done') buildFrac = 1;
     else if (b) buildFrac = Math.min(0.95, (doneSteps + 0.5) / BUILD_KEYS.length);
     else buildFrac = phase === 'testing' ? 1 : 0;
-    const fracs = [];
-    if (p && Number.isInteger(p.expected) && p.expected > 0) fracs.push(Math.min(1, (Number(p.ran) || 0) / p.expected));
-    const u = p && p.unit && typeof p.unit === 'object' ? p.unit : null;
-    if (u) {
-      if (u.done) fracs.push(1);
-      else if (Number(u.expected) > 0) fracs.push(Math.min(1, (Number(u.ran) || 0) / Number(u.expected)));
-      else fracs.push(0);
-    }
-    const checksFrac = buildFrac < 1 ? 0 : (fracs.length ? fracs.reduce((t, f) => t + f, 0) / fracs.length : 0);
+    const checksFrac = buildFrac < 1 ? 0 : (AppView._checksHalvesFraction(p) || 0);
     const where = buildFrac < 1
       ? PlatformI18n.t('changes:page.testing.where.building', { step: Math.min(BUILD_KEYS.length, doneSteps + 1), steps: BUILD_KEYS.length })
       : AppView._checksFractionLine(checksFrac);
@@ -22198,11 +22212,21 @@ const AppView = {
   // the start of a run lasts minutes and the chip drew no bar for any of
   // it. `text` is the count in words, for the tooltip and the bar's name:
   // one whole message per case (done of total, done so far, starting).
-  _checksChipProgress(live, inFlight) {
+  // #4727: `progress` is the raw `checks_progress`; `pct` is the run's real
+  // position from `_checksHalvesFraction` (the slower of the two halves), so
+  // the chip's bar fills as far as the Testing card's checks part does while
+  // `done` and `total` stay the declared checks' count.
+  _checksChipProgress(live, inFlight, progress) {
     const bar = live && live.bar;
     if (bar && bar.expected) {
       const done = Math.min(bar.ran, bar.expected);
-      return { done, total: bar.expected, text: PlatformI18n.t('changes:chips.checks.progress.of', { done, count: bar.expected }) };
+      const f = AppView._checksHalvesFraction(progress);
+      return {
+        done,
+        total: bar.expected,
+        ...(Number.isFinite(f) ? { pct: Math.round(f * 100) } : {}),
+        text: PlatformI18n.t('changes:chips.checks.progress.of', { done, count: bar.expected }),
+      };
     }
     if (inFlight) {
       const text = live && live.bar.ran
@@ -22232,7 +22256,10 @@ const AppView = {
       // The ARIA indeterminate form: no valuenow or valuemax, and no fill.
       return `<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="${escapeAttr(progress.text)}"></span>`;
     }
-    const pct = Math.round((progress.done / progress.total) * 100);
+    // #4727: the fill follows the run's real position (`pct`, the slower of
+    // the two halves) when the run knows it; the aria counts stay the
+    // declared checks' done-of-total.
+    const pct = Number.isFinite(progress.pct) ? progress.pct : Math.round((progress.done / progress.total) * 100);
     return `<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.done}" aria-label="${escapeAttr(progress.text)}"><span class="checks-chip-bar-fill" style="width:${pct}%"></span></span>`;
   },
   STATUS_TAG_CLS: {
@@ -22305,7 +22332,7 @@ const AppView = {
       // it and the chip is just "Checks".
       const fresh = p.check_state !== 'pending';
       const live = !fresh ? AppView._checksProgressView(p) : null;
-      const progress = AppView._checksChipProgress(live, true);
+      const progress = AppView._checksChipProgress(live, true, p.checks_progress);
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
         label: fresh ? PlatformI18n.t('changes:badge.tag.checksStarting') : PlatformI18n.t('changes:badge.tag.checks'),
@@ -22868,7 +22895,7 @@ const AppView = {
     // deferred run is nothing in flight, so it keeps its words with no bar.
     const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
     const inFlight = state === 'pending' && pr.check_phase !== 'deferred';
-    const progress = AppView._checksChipProgress(live, inFlight);
+    const progress = AppView._checksChipProgress(live, inFlight, pr.checks_progress);
     // With a bar, the chip is "Checks" and the bar says how far; with none
     // (a deferred run), its words, and the count of those that ran.
     const label = progress

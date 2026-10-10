@@ -378,8 +378,30 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
     },
   });
   assert.equal(live.figure, 'about 6 min left');
-  assert.deepEqual(live.segments, [{ weight: 180000, pct: 100, state: 'done' }, { weight: 540000, pct: 35, state: 'moving' }]);
+  // #4727: the bar follows the half that is behind (the declared checks,
+  // 34%), not the average of the two halves (35%).
+  assert.deepEqual(live.segments, [{ weight: 180000, pct: 100, state: 'done' }, { weight: 540000, pct: 34, state: 'moving' }]);
   assert.deepEqual(live.note, ['Preview built, checks a third done. Usually about 12 minutes here.']);
+  // #4727: the unit suite done does not pull the bar ahead of the declared
+  // checks still running — the bar reads the slower half, 74%, and the note
+  // and the time left say the same.
+  const unitDone = testing({
+    check_state: 'pending', check_phase: 'testing',
+    checks_estimate: { buildMs: 180000, checksMs: 540000, runs: 12 },
+    checks_progress: {
+      ran: 620, expected: 840, unit: { ran: 19240, expected: 19240, done: true },
+      build: { step: 'done', steps: [{ key: 'source_fetch', ms: 1 }, { key: 'image_build', ms: 1 }, { key: 'clone', ms: 1 }, { key: 'health', ms: 1 }, { key: 'prepare_checks', ms: 1 }] },
+    },
+  });
+  assert.deepEqual(unitDone.segments, [{ weight: 180000, pct: 100, state: 'done' }, { weight: 540000, pct: 74, state: 'moving' }]);
+  assert.deepEqual(unitDone.note, ['Preview built, checks three quarters done. Usually about 12 minutes here.']);
+  assert.equal(unitDone.figure, 'about 2 min left');
+  // "Almost done" now starts at 85% of the checks part (#4727): 86% reads
+  // almost, 84% still reads three quarters.
+  const almost = testing({ check_state: 'pending', check_phase: 'testing', checks_progress: { ran: 86, expected: 100, build: { step: 'done' } } });
+  assert.deepEqual(almost.note, ['Preview built, checks almost done.']);
+  const threeQuarters = testing({ check_state: 'pending', check_phase: 'testing', checks_progress: { ran: 84, expected: 100, build: { step: 'done' } } });
+  assert.deepEqual(threeQuarters.note, ['Preview built, checks three quarters done.']);
   // Still building: the build's step, and no checks yet.
   const building = testing({
     check_state: 'pending', check_phase: 'building', checks_estimate: { buildMs: 180000, checksMs: 540000 },
