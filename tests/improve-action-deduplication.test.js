@@ -369,19 +369,34 @@ function improveHarness(currentApp = 'demo') {
   return { Improve: sandbox.Improve, App: sandbox.App, sandbox, calls, get navigation() { return navigation; } };
 }
 
-test('Give feedback still opens the shared dialog for the current app', () => {
+test('Give feedback still opens the shared dialog for the current app', async () => {
   const { Improve, calls } = improveHarness();
-  Improve.giveFeedback();
+  await Improve.giveFeedback();
   // #4236: `fromDev` with no `target`, so the dialog asks where it goes
   // with neither destination chosen (#2707). Only a button that names the
   // app (`target: 'app'`) preselects it.
   assert.deepEqual(calls, [['close'], ['feedback', true, undefined]]);
 });
 
-test('#21: from another app Give feedback names no target: there is no open app for "This app" to mean', () => {
+test('#21: from another app Give feedback names no target: there is no open app for "This app" to mean', async () => {
   const { Improve, calls } = improveHarness('other');
-  Improve.giveFeedback();
+  await Improve.giveFeedback();
   assert.deepEqual(calls, [['close'], ['feedback', undefined, undefined]]);
+});
+
+// #4730: the dialog's comment shortcut draws the page as it opens, so the
+// menu must be gone from the screen before the open, not merely told to
+// close. The other dialog rows (share, terminal) already wait this way.
+test('#4730: Give feedback waits for the menu to be gone before opening the dialog', async () => {
+  const { Improve, calls } = improveHarness();
+  let release;
+  Improve.close = () => new Promise((resolve) => { release = resolve; });
+  const settled = Improve.giveFeedback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, [], 'the dialog does not open while the menu is still leaving');
+  release();
+  await settled;
+  assert.deepEqual(calls, [['feedback', true, undefined]]);
 });
 
 // #2770 sent New change straight to the app's classic unsent-change screen
