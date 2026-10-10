@@ -1575,7 +1575,9 @@ async function becomeLeader() {
     // proposal checks so PRs left permanently "still running its tests" by a
     // restart mid-capture self-heal on boot. Off the critical path; the
     // re-checked PRs become merge-eligible and the next vote (or the eligible-
-    // merge reconcile on a later boot) merges them.
+    // merge reconcile on a later boot) merges them. Platform faults are made
+    // due first, so it re-runs them too.
+    .then(() => rearmPlatformFaultsAtBoot(config))
     .then(() => reconcileStuckChecks(config))
     // The whole-tree check under direct merges (services/main-watch.js) is
     // fire-and-forget from the process that merged — which, for the
@@ -2227,6 +2229,23 @@ async function checkRunLeftToHarvest(config, pool, session, reason) {
   return !!run;
 }
 
+// A proposal whose checks errored on the platform's own fault (its unit
+// suite's Job refused or lost: chat_sessions.check_error_platform) waits for
+// its scheduled retry, up to 30 minutes, like any error. A boot is when the
+// fix most often arrives, so it makes them due now and the reconcile that
+// follows re-runs them (services/staging-recovery.js rearmPlatformFaults).
+async function rearmPlatformFaultsAtBoot(config) {
+  const { getPool } = require('./src/db/pool');
+  try {
+    const ids = await stagingRecovery.rearmPlatformFaults(getPool(config));
+    if (ids.length) {
+      log.info('server', 'Platform faults made due at boot', { count: ids.length, sessionIds: ids.slice(0, 20) });
+    }
+  } catch (err) {
+    log.warn('server', 'Could not make platform faults due at boot', { err: err.message });
+  }
+}
+
 // #447: reconcile stuck proposal checks. check_state is only ever advanced
 // out of 'pending' by the same captureForSession invocation that set it, so
 // a process restart/crash mid-capture (or a staging rebuild that predated
@@ -2461,8 +2480,13 @@ async function recoverSessions(config) {
        AND cs.user_id NOT IN (SELECT id FROM users WHERE username = 'homeroom_bench' AND is_synthetic = TRUE)`
   );
 
+  let backedOff = 0;
   for (const session of rows) {
     try {
+      // A preview that keeps failing waits out its retry, as the live heal
+      // does: a boot is not a reason to try it again
+      // (stagingRecovery.previewRetryPending).
+      if (stagingRecovery.previewRetryPending(session)) { backedOff += 1; continue; }
       if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
       // Boot is when the old leader's runs are being harvested. A rebuild
       // would replace the preview under one and abort its harvest, so a
@@ -2474,6 +2498,9 @@ async function recoverSessions(config) {
     } catch (err) {
       log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
     }
+  }
+  if (backedOff) {
+    log.info('server', 'Left failing previews to their retry backoff at boot', { count: backedOff });
   }
 }
 
@@ -5560,6 +5587,9 @@ function startSessionAutoPauseSweeper(config) {
         // and this pass would start a second, concurrent build of the same
         // commit. hasInFlightBuild() is the flag that build sets.
         if (stagingSvc.hasInFlightBuild(session.id)) continue;
+        // The retry its last failure scheduled, which outlives a restart as
+        // the cooldown below does not (stagingRecovery.previewRetryPending).
+        if (stagingRecovery.previewRetryPending(session)) continue;
         if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
         const last = stagingHealAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;

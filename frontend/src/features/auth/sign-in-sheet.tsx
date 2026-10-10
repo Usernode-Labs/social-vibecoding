@@ -586,7 +586,10 @@ export function SignInSheet({
   const identifierPrefill = useRef('');
 
   useEffect(() => {
-    if (!open) { setShown(false); setLeaving(false); setClosing(false); return undefined; }
+    // Closed, the link is not "seen" any more: opened again (Get started
+    // again, Evan, 10 Oct 2026), it signs in from the email again rather
+    // than falling back to a code.
+    if (!open) { setShown(false); setLeaving(false); setClosing(false); releaseSeen.current = null; return undefined; }
     const raf = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(raf);
   }, [open]);

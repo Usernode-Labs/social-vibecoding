@@ -163,13 +163,16 @@ test('the other placements, and none can start above the screen or run off its f
 
 test('every tour card, on every desktop and phone size, is whole on the screen', () => {
   const steps = [
-    ...makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 }),
+    ...makerSteps({ slug: 'film', name: 'Friday Film Crew' }),
     ...invitedSteps({ slug: 'film', name: 'Friday Film Crew' }),
     ...privateSteps({ slug: 'film', name: 'Friday Film Crew' }),
     ...lookAroundSteps(),
+    // No tour places a card under an element since the maker's stopped
+    // ending in Homeroom bot's chat (Evan, 10 Oct 2026); the placement
+    // still holds for one.
+    { title: 'a card under a header', place: { below: '#platform-header' } },
   ];
   assert.ok(steps.some((s) => s.place === 'bottom'), 'the hub and app steps sit at the foot');
-  assert.ok(steps.some((s) => s.place && typeof s.place === 'object' && 'below' in s.place), 'the bot step sits under its header');
 
   const sizes = [
     { width: 1280, height: 800 }, { width: 1024, height: 700 }, { width: 768, height: 1024 }, { width: 1440, height: 900 },
@@ -228,7 +231,7 @@ test('the tour measures the foot by footTop, and draws the card where cardPositi
   // The tour's first frame on a 1280x800 laptop, with the rail: no target
   // measured yet, so the card is at the foot of the window.
   const { Tour } = loadTsx(`${DIR}/index.tsx`);
-  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
+  const steps = makerSteps({ slug: 'film', name: 'Friday Film Crew' });
   const railEl = { getBoundingClientRect: () => ({ ...rail, right: rail.left + rail.width, bottom: rail.top + rail.height }) };
   const had = { window: Object.hasOwn(globalThis, 'window'), document: Object.hasOwn(globalThis, 'document') };
   const before = { window: globalThis.window, document: globalThis.document };

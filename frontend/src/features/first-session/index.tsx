@@ -255,58 +255,28 @@ export function targetBox(selectors: string): Box | null {
   return unionBox(visibleBoxes(selectors));
 }
 
-/** How far below the coach card the newest row of a transcript begins. */
-const ROW_INSET = 8;
-
-/**
- * Pure: how far a transcript scrolls so a row whose top is at `rowTop`
- * begins ROW_INSET below the coach card's foot (`cardBottom`): positive on,
- * negative back, 0 when it does already. The browser stops it at either end
- * of the transcript.
- */
-export function scrollToBelow(cardBottom: number, rowTop: number, inset: number = ROW_INSET): number {
-  return Math.round(rowTop - (cardBottom + inset));
-}
-
-type ScrollerLike = { scrollTop: number; getBoundingClientRect(): { top: number; height: number }; querySelectorAll(rows: string): ArrayLike<{ getBoundingClientRect(): { top: number; height: number } }> };
-
-/**
- * A step's transcript (TourStep.newestBelowCard): its newest row begins just
- * under the coach card, which sits under the chat's header. The plan's title
- * and first lines show first, then as much of the rest as the screen holds,
- * its Build it on a phone of ordinary height. Shown down to its foot, the
- * plan had its title and first bullet under the card; at the foot of the
- * screen, the card covered its Build it (the owner, 6 and 7 October 2026).
- * Run every frame while the step is up, so it holds when the rows arrive
- * after the step lands and when the card or a row grows; the step covers its
- * cut-out, so the reader is never scrolled against their own hand. Answers
- * whether it scrolled.
- */
-export function showNewestBelow(
-  spec: { scroller: string; rows: string },
-  cardBottom: number,
-  root: { querySelectorAll(selectors: string): ArrayLike<unknown> } = document,
-): boolean {
-  const scroller = (Array.from(root.querySelectorAll(spec.scroller)) as ScrollerLike[])
-    .find((el) => el.getBoundingClientRect().height > 0);
-  if (!scroller) return false;
-  const rows = scroller.querySelectorAll(spec.rows);
-  const newest = rows.length ? rows[rows.length - 1] : null;
-  if (!newest) return false;
-  const by = scrollToBelow(cardBottom, newest.getBoundingClientRect().top);
-  if (!by) return false;
-  const before = scroller.scrollTop;
-  scroller.scrollTop += by;
-  return scroller.scrollTop !== before;
-}
-
-/** The coach card on screen, for a step that places a transcript under it. */
-const CARD_SELECTOR = '[role="dialog"][aria-labelledby="first-session-tour-title"]';
-
 const PAD = 6;
 /** The ring's width (`ring-[3px]` below), kept on screen around a hole. */
 const RING = 3;
 const SHADE = 'pointer-events-auto fixed bg-[rgba(9,9,12,0.6)] transition-all duration-200';
+
+/*
+ * INTO THE MENU, THE RING WAITS FOR THE MENU (Evan, 10 Oct 2026, iPhone).
+ * The step after the Homeroom mark points inside the menu that tap opens,
+ * and on touch that menu is a kit sheet springing up from below (native.js
+ * presentSheet, about 0.45s, with no event when it stops). Measured every
+ * frame, the ring left the mark, then rode up with the sheet from the
+ * screen's foot, and the card hopped from place to place with it. Now, into
+ * a step in the menu from the step before it, the mark's ring stays where it
+ * is and the card is hidden until the target has held still, wholly on
+ * screen, for SETTLE_FRAMES frames (or SETTLE_CAP_MS has passed); then the
+ * ring moves there once, over MOVE's 200ms, the shades with it, and the card
+ * shows. The home tour waits for its sheet the same way
+ * (../home/tour/index.tsx SETTLE_FRAMES).
+ */
+const SETTLE_FRAMES = 2;
+const SETTLE_CAP_MS = 700;
+const MOVE = 'motion-safe:transition-[left,top,width,height] motion-safe:duration-200 motion-safe:ease-out';
 
 /**
  * Pure: a cut-out with its foot taken off by the bars lying across it
@@ -373,12 +343,10 @@ export function pressTarget(selectors: string, root: PressRoot = document): bool
  * ring anywhere.
  *
  * `press` is the control a tap step rings, measured with it: the cut-out
- * itself, or within it the step's `press` (✕ in the app screen). `instead`
- * is whether what a step's card says instead is on screen (TourStep.instead:
- * the plan in the chat), read with the box, so the card's words change in
- * the frame the plan arrives.
+ * itself, or within it the step's `press` (✕ in the app screen, Open app on
+ * the hub).
  */
-export type Measured = { step: number; box: Box | null; press?: Box | null; instead?: boolean };
+export type Measured = { step: number; box: Box | null; press?: Box | null };
 
 export function boxForStep(measured: Measured, step: number): Box | null {
   return measured.step === step ? measured.box : null;
@@ -391,15 +359,7 @@ export function pressForStep(measured: Measured, step: number): Box | null {
 /** A step's cut-out and the control it rings, measured now, for step `at`. */
 export function measure(at: number, step: TourStep): Measured {
   const box = stepBox(step);
-  const measured: Measured = { step: at, box, press: box && step.press ? targetBox(step.press) : box };
-  if (step.instead) measured.instead = document.querySelectorAll(step.instead.when).length > 0;
-  return measured;
-}
-
-/** The card's words for a step: what it says instead while that is on screen. */
-export function wordsFor(step: TourStep, measured: Measured, at: number): { title: string; text: string } {
-  const shown = step.instead && measured.step === at && measured.instead ? step.instead : step;
-  return { title: shown.title, text: shown.text };
+  return { step: at, box, press: box && step.press ? targetBox(step.press) : box };
 }
 
 /**
@@ -521,6 +481,13 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   // screen; the tour itself always starts at its first card.
   const [index, setIndex] = useState(() => Math.max(0, Math.min(start, steps.length - 1)));
   const [measured, setMeasured] = useState<Measured>({ step: -1, box: null });
+  const measuredRef = useRef(measured);
+  measuredRef.current = measured;
+  // Into a step in the menu: waiting for the menu (`settling`, the card
+  // hidden), then the one move there (`moving`). INTO THE MENU, above.
+  const settleRef = useRef<{ at: number; since: number; key: string; still: number } | null>(null);
+  const [settling, setSettling] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   const step = steps[index];
   const stepRef = useRef(step);
@@ -531,18 +498,36 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   const pressBox = pressForStep(measured, index);
 
   // While it is up, the hub's first-version card and the App tab hold back
-  // their "Review the plan" (./tour-running.ts): only the last card speaks of
-  // the plan.
+  // their "Review the plan" (./tour-running.ts): the tour asks for nothing
+  // but its own cards, and the app the maker opens last offers it after.
   useEffect(() => {
     setTourRunning(true);
     return () => setTourRunning(false);
   }, []);
 
   // A new step measures its own target before it is painted, so its card
-  // never shows beside the last step's cut-out (see Measured).
+  // never shows beside the last step's cut-out (see Measured). Into a step
+  // in the menu from the one before it, that step's ring is kept instead,
+  // for this step, with the card hidden until the menu has settled (INTO
+  // THE MENU, above).
   useLayoutEffect(() => {
+    const before = measuredRef.current;
+    if (step.inMenu && before.step === index - 1 && before.box) {
+      settleRef.current = { at: index, since: performance.now(), key: '', still: 0 };
+      setSettling(true);
+      setMeasured({ ...before, step: index });
+      return;
+    }
+    settleRef.current = null;
+    setSettling(false);
     setMeasured(measure(index, step));
   }, [index, step]);
+  // The move lasts its 200ms; following after it is frame by frame again.
+  useEffect(() => {
+    if (!moving) return undefined;
+    const t = window.setTimeout(() => setMoving(false), 260);
+    return () => window.clearTimeout(t);
+  }, [moving]);
 
   // Then follow the target every frame; keep it only when it moved. A frame
   // that throws (a selector the document cannot parse) must not end the
@@ -569,13 +554,22 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
           tries += 1;
         }
         // Before measuring, so the cut-out is drawn round what it shows.
-        const reveal = stepRef.current.newestBelowCard;
-        const card = reveal ? document.querySelector(CARD_SELECTOR)?.getBoundingClientRect() : null;
-        if (reveal && card && card.height) showNewestBelow(reveal, card.bottom);
         const m = measure(at, stepRef.current);
-        // The words too: the plan coming into the chat moves no box.
-        const key = `${at}:${boxKey(m.box)}:${boxKey(m.press)}:${m.instead ? 1 : 0}`;
-        if (key !== last) { last = key; setMeasured(m); }
+        const key = `${at}:${boxKey(m.box)}:${boxKey(m.press)}`;
+        const settle = settleRef.current;
+        if (settle && settle.at === at) {
+          // Into the menu: kept until its target holds still, on screen.
+          const onScreen = !!m.box && m.box.top >= 0 && m.box.top + m.box.height <= window.innerHeight;
+          settle.still = onScreen && key === settle.key ? settle.still + 1 : 0;
+          settle.key = key;
+          if (settle.still >= SETTLE_FRAMES || performance.now() - settle.since > SETTLE_CAP_MS) {
+            settleRef.current = null;
+            last = key;
+            setMoving(true);
+            setSettling(false);
+            setMeasured(m);
+          }
+        } else if (key !== last) { last = key; setMeasured(m); }
         if (window.innerWidth !== viewport.width || window.innerHeight !== viewport.height) {
           setViewport({ width: window.innerWidth, height: window.innerHeight });
         }
@@ -633,13 +627,16 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
       if (!t) return;
       const hit = Array.from(document.querySelectorAll(pressOf(step))).some((el) => el.contains(t));
       if (!hit) return;
+      // The last card's control ends the tour, and the press goes on to it:
+      // the maker's Open app opens the app.
+      if (step.last) { window.setTimeout(onEnd, 0); return; }
       window.setTimeout(() => setIndex((i) => (i === index ? i + 1 : i)), 0);
       const next = steps[index + 1];
       if (step.opensNext && next) window.setTimeout(() => enterScreen(next.screen, info.slug, info.conversationId), 250);
     };
     document.addEventListener('click', onClick, true);
     return () => document.removeEventListener('click', onClick, true);
-  }, [step, index, steps, info.slug, info.conversationId]);
+  }, [step, index, steps, info.slug, info.conversationId, onEnd]);
 
   const skip = useCallback(() => {
     enterScreen(steps[steps.length - 1].screen, info.slug, info.conversationId);
@@ -658,7 +655,6 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
   // step all of it but the ring.
   const covers = hole ? (ring && step.tap ? aroundBox(hole, ring) : [hole]) : [];
   const card = cardPlacement(box, step, viewport);
-  const words = wordsFor(step, measured, index);
 
   return (
     // The layer itself lets presses through: only the shades, the card and
@@ -676,7 +672,9 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
           {ring ? (
             <div
               aria-hidden="true"
-              className="pointer-events-none fixed rounded-2xl ring-[3px] ring-[rgba(90,169,255,0.9)] motion-safe:animate-pulse"
+              className={moving
+                ? `pointer-events-none fixed rounded-2xl ring-[3px] ring-[rgba(90,169,255,0.9)] motion-safe:animate-pulse ${MOVE}`
+                : 'pointer-events-none fixed rounded-2xl ring-[3px] ring-[rgba(90,169,255,0.9)] motion-safe:animate-pulse'}
               style={ring}
             />
           ) : null}
@@ -689,12 +687,14 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
         role="dialog"
         aria-labelledby="first-session-tour-title"
         data-tour-says-where-it-opens={step.saysWhereItOpens ? '' : undefined}
-        className="pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100"
+        className={settling
+          ? 'pointer-events-none fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 opacity-0 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] dark:bg-zinc-800 dark:text-zinc-100'
+          : 'pointer-events-auto fixed left-4 right-4 mx-auto max-w-md rounded-[20px] bg-white p-4 text-zinc-900 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)] transition-opacity duration-150 dark:bg-zinc-800 dark:text-zinc-100'}
         style={card}
       >
         <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.counter', { step: index + 1, total: steps.length })}</p>
-        <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{words.title}</p>
-        <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{words.text}</p>
+        <p id="first-session-tour-title" className="mt-0.5 text-[17px] font-semibold leading-snug">{step.title}</p>
+        <p className="mt-1 text-[15px] leading-snug text-zinc-600 dark:text-zinc-300">{step.text}</p>
         <div className="mt-3 flex items-center justify-between gap-3">
           {step.last ? <span /> : (
             <button type="button" onClick={skip} className="py-1.5 text-[15px] font-semibold text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.tour.skip')}</button>
@@ -703,7 +703,7 @@ export function Tour({ info, steps, onEnd, start = 0 }: { info: FirstSessionInfo
             {index > 0 ? (
               <button type="button" onClick={() => go(index - 1)} className="rounded-full bg-zinc-100 px-3.5 py-1.5 text-[15px] font-semibold text-zinc-900 dark:bg-zinc-700 dark:text-zinc-100">{t('core:common.back')}</button>
             ) : null}
-            {step.tap && !step.last ? (
+            {step.tap ? (
               // The hint presses the control it names (pressTarget), so it
               // does what a finger on the control does. Still the blue words
               // it was: no fill, no edge, no underline, only a pressed state.
@@ -1399,7 +1399,7 @@ export function FirstSession() {
   const steps = useMemo(() => {
     if (mode.kind !== 'tour') return [];
     if (mode.path === 'look') return lookAroundSteps();
-    const project = { slug: mode.info.slug, name: mode.info.name, conversationId: mode.info.conversationId };
+    const project = { slug: mode.info.slug, name: mode.info.name };
     if (mode.path === 'private') return privateSteps(project);
     return mode.path === 'maker' ? makerSteps(project) : invitedSteps(project);
   }, [mode, t]);

@@ -64,6 +64,7 @@ import {
   zoomFx,
 } from './shared';
 import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, useInvitePreview } from './invite-card';
+import { inviteEmailFromToken } from './login';
 import { SignInSheet, type SignInProvider, type SignInResume } from './sign-in-sheet';
 import { Story } from './story';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
@@ -634,7 +635,21 @@ export function LandingScreen() {
   // A waitlist "you're in" mail's link (AuthScreens.enter): this story with
   // the sheet already open, at the step the link asked for.
   const [release, setRelease] = useState<ReleaseLink | null>(null);
-  const closeSheet = useCallback(() => { setSheet(null); setResume(null); setRelease(null); }, []);
+  // Closing the sheet keeps the link (Evan, 10 Oct 2026): Get started again
+  // signs in from the email again, while the account it started is not set
+  // up yet (src/services/release-links.js), rather than asking for a code.
+  const closeSheet = useCallback(() => { setSheet(null); setResume(null); }, []);
+  // The address a new account's link names, for the story to greet (Evan,
+  // 10 Oct 2026: "Welcome to Homeroom" and the email). The sign-in screen's
+  // own lookup, which the sheet uses for the same token.
+  const [releaseEmail, setReleaseEmail] = useState<string | null>(null);
+  const releaseToken = release?.route === 'signup' ? release.token : null;
+  useEffect(() => {
+    if (!releaseToken) return undefined;
+    let live = true;
+    void inviteEmailFromToken(releaseToken).then((email) => { if (live) setReleaseEmail(email); });
+    return () => { live = false; };
+  }, [releaseToken]);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -1727,7 +1742,7 @@ export function LandingScreen() {
             </div>
           </div>
           {storyOn ? (
-            <Story primaryClass={PRIMARY_PILL} onStart={() => setSheet('start')} onSignIn={() => setSheet('signin')} />
+            <Story primaryClass={PRIMARY_PILL} welcomeEmail={releaseEmail} onStart={() => setSheet('start')} onSignIn={() => setSheet('signin')} />
           ) : null}
         </div>
       </div>

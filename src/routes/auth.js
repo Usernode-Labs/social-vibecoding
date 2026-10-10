@@ -1080,6 +1080,30 @@ function authRoutes(config) {
     }
   });
 
+  // --------------------------------------------------------------
+  // GET /api/me/building-time: Settings' "Homeroom bot building time"
+  // card. The viewer's own week of the bot's building time, as shares of
+  // the week and never money, and the requests that used it
+  // (services/building-time.js). Me-scoped like /api/me/ai-budget, so it
+  // stays out of PUBLIC_PATHS.
+  // --------------------------------------------------------------
+  router.get('/api/me/building-time', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const buildingTime = require('../services/building-time');
+    res.set('Cache-Control', 'private, no-store');
+    // Staging has none of the bot's runs to read: `?demo=1` answers with a
+    // fixed, obviously fake week, marked as a demo.
+    if (IS_STAGING && req.query.demo === '1') {
+      return res.json(buildingTime.demoWeek(require('../services/limits').weeklyResetAt()));
+    }
+    try {
+      res.json(await buildingTime.weekFor(pool, req.user.id));
+    } catch (err) {
+      log.error('homeroom-bot', 'building-time read failed', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/me/api-key', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     const { key } = req.body || {};

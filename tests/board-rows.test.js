@@ -145,6 +145,10 @@ test('a board column draws the board variant: no tile, the line in words, the ca
   assert.match(done, /<span class="dev-ws-wrow-sub">PR #1572 · alice · closed #1500 · 2d ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-row-state dev-ws-row-state-ok dev-ws-wrow-live"[^>]*>✓ Live<\/span>/);
   assert.ok(!done.includes('dev-ws-row-band'), 'no bar across a live row');
   assert.ok(!/data-tone="ok"[^>]*>(?:<svg[^>]*>[\s\S]*?<\/svg>)?Live</.test(done), 'and no second, small Live tag');
+
+  // #4718: the board's rows carry no votes line — the bar and Vote stay on
+  // the band under the row, and live rows keep their one tags line.
+  assert.ok(!html.includes('dev-ws-wrow-votes'), 'no votes line on the board');
 });
 
 test('the row’s parts: its source', () => {

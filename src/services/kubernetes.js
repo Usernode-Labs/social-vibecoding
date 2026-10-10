@@ -2337,7 +2337,13 @@ async function runCheckJob(config, {
   const namespace = cfg.workerNamespace;
   const runName = checkJobRunName(kind, sessionId, previewRunId || Date.now().toString(36), namePrefix);
   const name = nameSuffix ? withSuffix(runName, nameSuffix) : dnsName(runName);
-  const inputSecretName = !unitSuite && stdinPayload == null ? null : withSuffix(name, 'input');
+  // A shard's Secret keeps its shard in its name. Cut from the Job's name,
+  // which is already near the 63-character limit for a run id that is a
+  // UUID, the `-input` suffix pushed the shard's own suffix off the end, and
+  // every shard of a unit suite asked for the same Secret: only the first
+  // could start (10 Oct 2026, every proposal's split unit suite).
+  const inputSecretName = !unitSuite && stdinPayload == null ? null
+    : nameSuffix ? withSuffix(runName, `${nameSuffix}-input`) : withSuffix(name, 'input');
   if (stdinPayload != null && Buffer.byteLength(String(stdinPayload), 'utf8') > 900 * 1024) {
     throw new Error('Capture stdin payload exceeds the Kubernetes Secret transport limit');
   }

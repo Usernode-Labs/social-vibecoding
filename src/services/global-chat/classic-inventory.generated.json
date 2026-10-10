@@ -3602,6 +3602,21 @@
     },
     {
       "source": "src/routes/auth.js",
+      "method": "GET",
+      "path": "/api/me/building-time",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.me.building.time.74275498",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/auth.js",
       "method": "POST",
       "path": "/api/me/api-key",
       "expression": null,

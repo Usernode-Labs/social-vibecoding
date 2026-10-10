@@ -4360,10 +4360,17 @@ export function DevWorkshop(): ReactNode {
     && ((!!r.brief.vote && r.brief.vote.ask) || (r.brief.kind === 'request' && !!r.fresh)));
   const openWeekPage = (key: string) => {
     setOpenWeek(key);
+    // A week further back than the since-list's capped rows draws nothing on
+    // its own: opening one asks AppView to page the merged history back to
+    // the week (openWorkshopWeek) and publish the week's rows as they land
+    // (#4717). The key finds the week whose range is fetched.
+    const week = weeks.find((w) => sinceWeekStateKey(w) === key);
+    if (week) callAppView('openWorkshopWeek', week.startMs, week.endMs);
     scrollToHead(hostRef.current);
   };
   const closeWeekPage = () => {
     setOpenWeek(null);
+    callAppView('closeWorkshopWeek');
     scrollToHead(hostRef.current);
   };
   // New for you's Vote: the item in Needs you, landed on (NeedsFeed
@@ -4580,6 +4587,14 @@ export function DevWorkshop(): ReactNode {
       {tab === 'workshop' && weekUp ? (
         <WeekPage
           week={weekUp}
+          fetched={v.week && v.week.startMs === weekUp.startMs
+            ? {
+                loading: v.week.loading,
+                failed: v.week.failed,
+                fresh: v.week.fresh.filter((r): r is WorkCardRow => r.t === 'card'),
+                seen: v.week.seen.filter((r): r is WorkCardRow => r.t === 'card'),
+              }
+            : null}
           slug={slug}
           openKey={sideKey}
           onOpen={openItem}

@@ -271,6 +271,99 @@ test('a TAP line before the setup sentinel still means the suite is running', ()
   assert.equal(t.snapshot().phase, 'running');
 });
 
+// #4701: node:test gives a describe() suite an `ok`/`not ok` line of its own,
+// with `type: 'suite'` in the YAML block right under it, while the final
+// `# tests` leaves suites out. Counting every result line read 23,293 tests
+// against a ~15,009 total. The tracker now takes each suite's own line back
+// off the count, so the running number is the same population as `# tests`.
+test('#4701: describe() suites leave the running count, so it matches the population of # tests', () => {
+  // Two describe() suites, one plain test and one `t.test` parent with a
+  // child: 7 result lines, 2 of them suites, `# tests 5`.
+  const t = unitSuite.makeUnitSuiteTracker(5);
+  for (const l of [
+    'TAP version 13',
+    '# Subtest: suite a',
+    '    ok 1 - a test',
+    '      ---',
+    '      duration_ms: 0.1',
+    "      type: 'test'",
+    '      ...',
+    'ok 1 - suite a',
+    '  ---',
+    '  duration_ms: 0.2',
+    "  type: 'suite'",
+    '  ...',
+    '# Subtest: suite b',
+    '    ok 1 - b test',
+    '      ---',
+    "      type: 'test'",
+    '      ...',
+    'ok 2 - suite b',
+    '  ---',
+    "  type: 'suite'",
+    '  ...',
+    '# Subtest: plain',
+    'ok 3 - plain',
+    '  ---',
+    "  type: 'test'",
+    '  ...',
+    '# Subtest: parent',
+    '    # Subtest: child',
+    '    ok 1 - child',
+    '      ---',
+    "      type: 'test'",
+    '      ...',
+    'ok 4 - parent',
+    '  ---',
+    "  type: 'test'",
+    '  ...',
+    '1..4',
+  ]) t.feed(l);
+  let snap = t.snapshot();
+  assert.deepEqual(
+    { ran: snap.ran, passed: snap.passed, failed: snap.failed, skipped: snap.skipped, expected: snap.expected },
+    { ran: 5, passed: 5, failed: 0, skipped: 0, expected: 5 },
+    'the two suite lines were taken back; the parent test stays counted'
+  );
+  for (const l of ['# tests 5', '# suites 2', '# pass 5', '# fail 0', '# cancelled 0', '# skipped 0', '# todo 0']) t.feed(l);
+  snap = t.snapshot();
+  assert.deepEqual({ ran: snap.ran, expected: snap.expected }, { ran: 5, expected: 5 }, 'the summary agrees with the running count');
+
+  // A failing suite takes its own line back off `failed`; its children stay.
+  const red = unitSuite.makeUnitSuiteTracker(null);
+  red.feed('    not ok 1 - child fails');
+  red.feed('not ok 2 - the suite');
+  red.feed("  type: 'suite'");
+  let s = red.snapshot();
+  assert.deepEqual({ ran: s.ran, failed: s.failed }, { ran: 1, failed: 1 });
+
+  // A skipped suite comes off `skipped` the same way.
+  const skip = unitSuite.makeUnitSuiteTracker(null);
+  skip.feed('ok 1 - the suite # SKIP');
+  skip.feed("  type: 'suite'");
+  s = skip.snapshot();
+  assert.deepEqual({ ran: s.ran, skipped: s.skipped }, { ran: 0, skipped: 0 });
+
+  // A `type: 'suite'` with no result line before it has nothing to take back.
+  const lone = unitSuite.makeUnitSuiteTracker(null);
+  assert.equal(lone.feed("type: 'suite'"), false);
+  assert.equal(lone.snapshot().ran, 0);
+});
+
+test('#4701: the expected total is a floor that grows with the running count', () => {
+  const t = unitSuite.makeUnitSuiteTracker(3);
+  for (let i = 0; i < 5; i += 1) t.feed(`ok ${i + 1} - extra test`);
+  let s = t.snapshot();
+  assert.deepEqual({ ran: s.ran, expected: s.expected }, { ran: 5, expected: 5 },
+    'a suite bigger than the last run raises the "~" total instead of reading past 100%');
+  t.feed('# tests 5');
+  s = t.snapshot();
+  assert.deepEqual({ ran: s.ran, expected: s.expected }, { ran: 5, expected: 5 }, 'the summary replaces both');
+  const noTotal = unitSuite.makeUnitSuiteTracker(null);
+  noTotal.feed('ok 1 - something');
+  assert.equal(noTotal.snapshot().expected, null, 'no stored figure stays "unknown"');
+});
+
 test('the suite size is remembered on the apps row and read back as the next denominator', async () => {
   const calls = [];
   const pool = { query: async (sql, params) => { calls.push([sql, params]); return { rows: [{ unit_suite_last_tests: 10863 }] }; } };

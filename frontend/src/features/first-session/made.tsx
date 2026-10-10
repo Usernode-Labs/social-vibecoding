@@ -707,6 +707,31 @@ export function continueLabel(entry: MakeEntry, sent: boolean, name: string): st
   return entry === 'create' ? translate('onboarding:firstSession.made.goTo', { community: name }) : translate('onboarding:firstSession.made.startTour');
 }
 
+/*
+ * A READY-MADE APP IS RUNNING BEFORE THE WAY ON GOES (Evan, 10 Oct 2026,
+ * iPhone). Home showed the new project as a grey letter, "Spinning up...",
+ * that the tour's first card asked them to tap and that a tap did nothing
+ * on: the made screen let them on while the app was still being set up.
+ * A ready-made app is set up, not built, so its status is all there is to
+ * wait for, and "running" comes after its icon is on the record
+ * (app-creator.js reconciles dapp.json's icon before it deploys). So while
+ * it is being set up the screen reads it every READY_POLL_MS, and a press
+ * of the way on waits for it, saying so on the button, and goes on by
+ * itself once it runs. A setup that stopped goes on at once (its card says
+ * what happened), and so does any press once READY_WAIT_MS has passed since
+ * the screen opened: the tile then catches up on Home.
+ */
+export const READY_POLL_MS = 2000;
+export const READY_WAIT_MS = 45000;
+
+/** Whether a press of the way on waits: a ready-made app still being set up, until the wait is up. */
+export function holdsContinue(readyMade: boolean, appStatus: string | null, waitedOut: boolean): boolean {
+  return readyMade && !waitedOut && appStatus !== 'running' && !stalledOf(appStatus);
+}
+
+/** The way on's label once pressed, while it waits (holdsContinue). */
+export const GETTING_READY = 'onboarding:firstSession.made.gettingReady';
+
 type Community = { member_count?: number; members?: (Person & { source?: string })[] } | null;
 
 const COMMUNITY_POLL_MS = 10000;
@@ -743,7 +768,7 @@ const SECONDARY = 'flex h-11 w-full items-center justify-center rounded-full bg-
 export const MADE_ROOT = 'fixed inset-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100';
 export const MADE_ROOT_UNDER_HEADER = 'platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100';
 
-export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-session', onSetSecrets, underHeader = false }: {
+export function MadeScreen({ made, me, onContinue: goOn, onOpenChat, entry = 'first-session', onSetSecrets, underHeader = false }: {
   made: Made;
   me: string;
   /** "Invite people later" / "Start the tour" / "Go to …" (continueLabel): `skipped` when nothing went out. */
@@ -771,6 +796,8 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // without one means it is live (or came to something else), and the
   // project is no longer "being made" (makerLine).
   const [building, setBuilding] = useState(false);
+  // A ready-made app still being set up (READY-MADE, above): read more often.
+  const settingUp = holdsContinue(readyMade, appStatus, false);
 
   useEffect(() => {
     let live = true;
@@ -786,9 +813,34 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
       })
       .catch(() => {});
     read();
-    const t = window.setInterval(read, 10000);
+    const t = window.setInterval(read, settingUp ? READY_POLL_MS : 10000);
     return () => { live = false; window.clearInterval(t); };
-  }, [made.slug]);
+  }, [made.slug, settingUp]);
+
+  // The way on, pressed: at once, or once a ready-made app runs
+  // (holdsContinue). `waiting` is the press held, as `skipped`.
+  const [waitedOut, setWaitedOut] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setWaitedOut(true), READY_WAIT_MS);
+    return () => window.clearTimeout(t);
+  }, []);
+  const holds = holdsContinue(readyMade, appStatus, waitedOut);
+  const [waiting, setWaiting] = useState<boolean | null>(null);
+  const onContinue = (skipped: boolean) => {
+    if (holds) setWaiting(skipped);
+    else goOn(skipped);
+  };
+  useEffect(() => {
+    if (waiting === null || holds) return;
+    setWaiting(null);
+    goOn(waiting);
+  }, [waiting, holds]);
+  // Home is read again once it runs, so the grid it opens on has the tile
+  // with its icon (Create's own onMade does the same, ./index.tsx).
+  useEffect(() => {
+    if (readyMade && appStatus === 'running') (window as { Home?: { load?: () => void } }).Home?.load?.();
+  }, [readyMade, appStatus]);
+  const onLabel = (sent: boolean) => (waiting !== null ? t(GETTING_READY) : continueLabel(entry, sent, made.name));
 
   // Try again, on a setup that stopped: creation starts over server-side and
   // the next read finds it creating; until then it says so here.
@@ -899,12 +951,12 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
             </Button>
           )}
           {sent ? (
-            <Button type="button" data-first-session-continue="" onClick={() => onContinue(false)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center">
-              {continueLabel(entry, true, made.name)}
+            <Button type="button" data-first-session-continue="" onClick={() => onContinue(false)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center" aria-busy={waiting !== null || undefined}>
+              {onLabel(true)}
             </Button>
           ) : (
-            <button type="button" data-first-session-continue="" onClick={() => onContinue(true)} className={SECONDARY}>
-              {continueLabel(entry, false, made.name)}
+            <button type="button" data-first-session-continue="" onClick={() => onContinue(true)} className={SECONDARY} aria-busy={waiting !== null || undefined}>
+              {onLabel(false)}
             </button>
           )}
         </div>
