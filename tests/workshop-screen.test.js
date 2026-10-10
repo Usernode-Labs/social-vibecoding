@@ -849,8 +849,8 @@ test('#3051: the items query reads the counts\' own five predicates, once each',
     // The owed populations are read a third time, by the Needs you feed
     // (#3270), so the tab's cards and the counts beside it cannot disagree,
     // and a fourth by the same feed counted per project
-    // (OWED_BY_COMMUNITY_SQL), so the Getting started card's Vote step
-    // agrees with that feed about what is waiting and where.
+    // (OWED_BY_COMMUNITY_SQL), so a per-project count agrees with that feed
+    // about what is waiting and where.
     const reads = name.startsWith('OWED_') ? 4 : 2;
     assert.equal((src.match(new RegExp(`\\$\\{${name}\\}`, 'g')) || []).length, reads,
       `${name} is read by COUNTS_SQL and ITEMS_SQL alike${reads === 4 ? ', and by NEEDS_FEED_SQL and OWED_BY_COMMUNITY_SQL' : ''}`);

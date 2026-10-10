@@ -57,7 +57,7 @@ interface OpenOptions {
   intent?: 'issue' | 'feedback';
   /**
    * 'app': open with "This app" chosen, when it can be. For a caller whose
-   * own button named the open app (Getting started's Suggest).
+   * own button named the open app.
    */
   target?: 'app' | 'platform';
   /**

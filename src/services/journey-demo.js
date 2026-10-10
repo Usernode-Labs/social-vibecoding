@@ -21,7 +21,7 @@ const P = Object.freeze({
 });
 
 const step = (key, state, at = null, note = null) => ({ key, state, at, note });
-// Getting started as the first mile's onboard column reads it: the tour and
+// The first-run list as the first mile's onboard column reads it: the tour and
 // four First challenges, `done` of `total`.
 const onboard = (done, total = 5) => ({ shown: true, done, total, complete: done === total });
 const NO_CARD = Object.freeze({ shown: false, done: null, total: null, complete: false });

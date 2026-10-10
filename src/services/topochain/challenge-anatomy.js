@@ -34,7 +34,7 @@ const READS = {
     keyLabel: 'app:<app id>',
     text: () => 'One row per person and app: apps they opened inside the window and spent at least '
       + `${TRY_APPS_MIN_SECONDS} seconds in, added up across days. Apps they made themselves are left out, except on a First `
-      + 'challenge (the one-time Getting started list), where they count.',
+      + 'challenge (the season\'s one-time introduction), where they count.',
   },
   USE_APPS_MINUTES: {
     tables: ['app_activity', 'apps'],
@@ -65,7 +65,7 @@ const READS = {
     text: () => 'Reports sent inside the window that reached GitHub as an issue. One whose issue call '
       + 'failed helped nobody, and is left out. So is a report on a project they made, or on a "Just you" '
       + 'project (the audience rule the Workshop labels them by): there is nobody else to tell. '
-      + 'On a First challenge (the one-time Getting started list) they count.',
+      + 'On a First challenge (the season\'s one-time introduction) they count.',
   },
   CONNECT_ACCOUNTS: {
     tables: ['user_social_identities'],
@@ -112,10 +112,11 @@ const READS = {
     text: () => 'One row per person: their earliest vote inside the window, on a proposal or a request, '
       + 'or their look at the Workshop when nothing was up for a vote, whichever came first. A vote on '
       + 'their own proposal or request is left out, and so are a vote on what the Homeroom bot built '
-      + 'from a request they made and any vote in a "Just you" project. The look is the Getting started '
-      + 'card\'s Vote step: when nothing that would count is waiting for their vote in any community they '
-      + 'are in, its button opens a Workshop, and the server records the visit (users.getting_started_seen, '
-      + 'keyed vote:workshop:<user id>) only if nothing was waiting then. A vote that is cast again is dated by '
+      + 'from a request they made and any vote in a "Just you" project. The look was the Getting started '
+      + 'card\'s Vote step: when nothing that would count was waiting for their vote in any community they '
+      + 'were in, its button opened a Workshop, and the server recorded the visit (users.getting_started_seen, '
+      + 'keyed vote:workshop:<user id>) only if nothing was waiting then. The card is gone and nothing records '
+      + 'a look now; one recorded before still counts. A vote that is cast again is dated by '
       + 'the last time, so a vote from before the window counts once it is cast again inside it.',
   },
   FEEDBACK_SENT: {
@@ -137,8 +138,7 @@ const ON_THE_SPOT_TEXT = {
   join: ' A join also runs it on the spot, so the interval only paces memberships that arrive without '
     + 'one: a queued invite whose person is let in, or the dapp.json reconcile. A Home pin that joins '
       + 'runs it too.',
-  vote: ' Casting a vote, or the Getting started card\'s look at the Workshop, also runs it on the '
-    + 'spot, so the interval only paces what that pass missed.',
+  vote: ' Casting a vote also runs it on the spot, so the interval only paces what that pass missed.',
   feedback: ' Sending a report also runs it on the spot, so the interval only paces what that pass '
     + 'missed.',
   appTime: ` Using an app also runs it on the spot, the moment somebody's time in an app `

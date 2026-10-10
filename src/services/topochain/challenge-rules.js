@@ -277,16 +277,16 @@ const MEASURES = {
   // `first_challenge`). Join and Vote are unchanged.
   //
   // OR A LOOK AT THE WORKSHOP WHEN NOTHING WAS UP FOR A VOTE (evan,
-  // 2026-10-01): a newcomer whose communities have nothing waiting cannot
-  // vote, so the Getting started card's Vote step sends them to the Workshop
-  // instead, and the server records that visit only when nothing was waiting
-  // (services/onboarding.js markWorkshopVisit). It counts like a vote, the
-  // same window and the same one credit, so the First challenge needs no
-  // second rule; a visit while a vote was waiting is never recorded.
+  // 2026-10-01): a newcomer whose communities had nothing waiting could not
+  // vote, so the Getting started card's Vote step sent them to the Workshop
+  // instead, and the server recorded that visit only when nothing was
+  // waiting. It counts like a vote, the same window and the same one credit,
+  // so the First challenge needs no second rule. #4635 retired the card, so
+  // nothing records a visit now; one recorded before still counts.
   VOTE_CAST: {
     label: 'Voted on a change, or looked at the Workshop when nothing was up for a vote',
     phrase: 'votes on somebody else\'s change, or looks at the Workshop when nothing is up for a vote',
-    summary: 'Voted on a proposal or a request inside the window, or, when nothing was up for a vote in any community they are in, opened a Workshop from the Getting started card. Votes on their own proposals and requests do not count, nor do votes on what the Homeroom bot built from their own request or votes in a project only they can see, and neither does a look while a vote was waiting. One is enough, so this needs no target.',
+    summary: 'Voted on a proposal or a request inside the window, or, when nothing was up for a vote in any community they are in, opened a Workshop from the Getting started card (retired since; a look recorded before still counts). Votes on their own proposals and requests do not count, nor do votes on what the Homeroom bot built from their own request or votes in a project only they can see, and neither does a look while a vote was waiting. One is enough, so this needs no target.',
     unit: 'vote',
     targetUnit: null,
     counted: false,

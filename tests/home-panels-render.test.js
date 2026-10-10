@@ -556,42 +556,36 @@ test('challengesView: the finished fill sits last under one Done header, with no
   assert.equal(view.expandable, true, 'the fifth card is behind the toggle');
 });
 
-// The Getting started card is on Home (App.user.showGettingStarted): only
-// then does a closed gate with a count draw the one locked card.
-const WITH_CARD = { id: 1, isAdmin: false, showGettingStarted: true };
-
-test('challengesView: while setup gates the season, its finished card moves under Done', () => {
-  const { HP } = makeHomePanels({ slots: [], user: WITH_CARD });
+// #4635: Home's Getting started card is gone, and with it the dashed locked
+// card the block drew in place of a new account's season. The First
+// challenges are ordinary cards: under their own header, first while any is
+// unfinished, a finished one under Done. A gate summary an older server still
+// sends changes none of it: there is no locked view any more.
+test('challengesView: a new account\'s First challenges are ordinary cards, never one locked card', () => {
   const done = { done: true, current: null, target: null };
-  // With nothing hidden to count (the season holds First challenges only),
-  // a closed gate still draws them, in their groups.
-  const view = HP.challengesView(panel({
-    total: 2,
-    onboarding: { total: 2, completed: 1, unlocked: false, hidden_count: 0 },
-    challenges: [
-      challenge({ id: 1, label: 'ONBOARDING', display_order: 0, progress: done }),
-      challenge({ id: 2, label: 'ONBOARDING', display_order: 1 }),
-    ],
-  }));
-  assert.deepEqual([...view.groups].map((g) => [g.heading, [...g.rows].map((r) => r.id)]),
-    [['First challenges', ['2']], ['Done', ['1']]]);
-  assert.equal(view.locked, undefined);
-  assert.equal(view.lockedCount, 0);
-  // With a count (2026-10-01), the block is the one locked card instead: the
-  // Getting started card on top of Home already lists the First challenges.
-  const locked = HP.challengesView(panel({
-    total: 2,
-    onboarding: { total: 2, completed: 1, unlocked: false, hidden_count: 7, hidden_names: ['A', ' ', 'B'] },
-    challenges: [
-      challenge({ id: 1, label: 'ONBOARDING', display_order: 0, progress: done }),
-      challenge({ id: 2, label: 'ONBOARDING', display_order: 1 }),
-    ],
-  }));
-  assert.equal(locked.locked, true);
-  assert.deepEqual([locked.rows.length, locked.groups.length, locked.season], [0, 0, null]);
-  assert.equal(locked.lockedCount, 7);
-  assert.deepEqual([...locked.lockedNames], ['A', 'B'], 'blank names dropped');
-  assert.equal(locked.expandable, false, 'no footer under the one card');
+  for (const onboarding of [undefined,
+    { total: 2, completed: 1, unlocked: false, hidden_count: 7, hidden_names: ['A', 'B'] }]) {
+    const { HP } = makeHomePanels({ slots: [] });
+    const view = HP.challengesView(panel({
+      total: 3,
+      ...(onboarding ? { onboarding } : {}),
+      challenges: [
+        challenge({ id: 1, label: 'ONBOARDING', display_order: 0, progress: done }),
+        challenge({ id: 2, label: 'ONBOARDING', display_order: 1 }),
+        challenge({ id: 3, label: 'WEEKLY', display_order: 2 }),
+      ],
+    }));
+    const why = onboarding ? 'an older server\'s gate summary' : 'no summary';
+    assert.deepEqual([...view.groups].map((g) => [g.heading, [...g.rows].map((r) => r.id)]),
+      [['First challenges', ['2']], ['This week', ['3']], ['Done', ['1']]], why);
+    for (const gone of ['locked', 'lockedCount', 'lockedNames', 'onboardingNote']) {
+      assert.equal(gone in view, false, `${why}: no ${gone}`);
+    }
+    assert.deepEqual({ ...view.season }, { done: 0, total: 3, scope: 'season', name: 'Season 1' }, why);
+  }
+  for (const gone of ['gettingStartedOnHome', 'lockedOnboarding']) {
+    assert.equal(gone in makeHomePanels({ slots: [] }).HP, false, `HomePanels.${gone} went with the card`);
+  }
 });
 
 // The #2490 report: one member's Pre Season 2 board while it was open. This
@@ -820,13 +814,14 @@ test('QA 2026-09-24 Q17: the season progress counts the whole season, as the pro
   const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15 }));
   assert.deepEqual({ ...older.season }, { done: 2, total: 6, scope: 'season', name: 'Season 1' },
     'no all_done: the open counts, as before');
-  const gated = HP.seasonView(panel({
+  // #4635: nothing gates the season, so an older server's gate summary no
+  // longer narrows Home's progress to "done in First challenges".
+  const summary = HP.seasonView(panel({
     season, total: 6, done: 2, all_total: 15, all_done: 4,
     onboarding: { unlocked: false, total: 3, completed: 1 },
   }));
-  assert.equal(message('leaderboard:progress.firstLabel', { done: 1, count: 3 }), '1 of 3 done in First challenges');
-  assert.deepEqual({ ...gated }, { done: 1, total: 3, scope: 'first' },
-    'setup still gates the scope while it is closed');
+  assert.deepEqual({ ...summary }, { done: 4, total: 15, scope: 'season', name: 'Season 1' },
+    'the whole season, First challenges included');
 });
 
 // POINTS (#4565): the season summary carries the points figures the server
@@ -844,12 +839,12 @@ test('#4565: the season view carries the points figures, or nothing new', () => 
   assert.deepEqual({ ...expanded, points: { ...expanded.points } },
     { done: 4, total: 15, scope: 'season', name: 'Season 1', points: { earned: 1000, total: 2000 } },
     'expanding the block does not change it');
-  const gated = HP.seasonView(panel({
+  const summary = HP.seasonView(panel({
     season, ...figures, onboarding: { unlocked: false, total: 3, completed: 1 },
   }));
-  assert.deepEqual({ ...gated, points: { ...gated.points } }, {
-    done: 1, total: 3, scope: 'first', points: { earned: 1000, total: 2000 },
-  }, 'the points ride the same scope the count does');
+  assert.deepEqual({ ...summary, points: { ...summary.points } }, {
+    done: 4, total: 15, scope: 'season', name: 'Season 1', points: { earned: 1000, total: 2000 },
+  }, 'the points ride the same scope the count does: the season (#4635)');
   const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15, all_done: 4 }));
   assert.deepEqual({ ...older.season }, { done: 4, total: 15, scope: 'season', name: 'Season 1' },
     'an older payload without the figures draws nothing new');
@@ -1464,7 +1459,7 @@ test('render: the heading names its area — the counter is the season progress'
   assert.doesNotMatch(progress, /pts left|stroke-dasharray/);
 });
 
-test('the season progress: nothing filled at zero, and setup is its own scope', () => {
+test('the season progress: nothing filled at zero, and never only First challenges', () => {
   const zero = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 6, done: 0, points_remaining: 3900 })],
   }).html;
@@ -1473,82 +1468,69 @@ test('the season progress: nothing filled at zero, and setup is its own scope', 
   const zeroBar = zero.slice(zero.indexOf('home-panel-season'), zero.indexOf('home-panel-body'));
   assert.doesNotMatch(zeroBar, /bg-violet-700/, 'a season nobody has started draws no fill');
 
-  // While setup gates the rest, the block holds only setup's challenges, so
-  // the progress counts those and the gate line under it stays short.
-  const gated = renderWith({
+  // Setup used to gate the rest, and the progress then counted setup's
+  // challenges alone, with a gate line under the cards. #4635 retired the
+  // gate: an older server's summary draws the season, and no note.
+  const summary = renderWith({
     registry: [], hidden: [],
     panels: [panel({ total: 3, done: 0, onboarding: { total: 3, completed: 1, unlocked: false, event_id: 1 } })],
   }).html;
-  assert.match(gated, />1\/3<\/span><span[^>]*>done in First challenges</);
-  assert.match(gated, />Finish Getting started to unlock the rest of the season\.</);
-  assert.doesNotMatch(gated, /onboarding challenges completed/, 'the count is not said twice');
+  assert.match(summary, />0\/3<\/span><span[^>]*>done in Season 1</);
+  assert.doesNotMatch(summary, /done in First challenges|Getting started|unlock the rest/);
 });
 
-// S8 (owner decision, 2026-09-15): while setup gates the season the server
-// sends how many challenges it holds back (`onboarding.hidden_count`), and the
-// block draws them as ONE dashed placeholder. 2026-10-01 (evan's "one list"):
-// the gate is a new account's Getting started list, which the card on top of
-// Home draws in full, so while it is closed the block draws the placeholder
-// ALONE, in place of the First challenges, and names the first two it hides
-// (`hidden_names`). Without a count the cards and the note still show, the
-// note UNDER the challenges.
-test('locked setup: one dashed placeholder alone, in place of the First challenges', () => {
-  const onboarding = (over) => ({ total: 4, completed: 1, unlocked: false, event_id: 1, ...over });
-  const locked = panel({
-    total: 2, done: 0,
-    onboarding: onboarding({ hidden_count: 6, hidden_names: ['Make your first proposal', 'Invite a friend'] }),
-    challenges: [challenge({ id: 1, label: 'ONBOARDING' }), challenge({ id: 2, label: 'ONBOARDING' })],
+// #4635 (evan): "get rid of the getting started onboarding that sticks to the
+// top of the homescreen, and just have the first challenges, that sits in the
+// normal part of the homescreen challenges area". A new account's panel draws
+// its First challenges as `.home-challenge-card`s under the "First
+// challenges" header, first while any is unfinished, with the rest of the
+// season after them. The dashed `.home-challenge-locked` placeholder (S8,
+// 2026-09-15; alone in place of the cards since 2026-10-01) is gone, and so
+// is the unlock note.
+test('a new account\'s First challenges are .home-challenge-card under the First challenges header, never locked', () => {
+  const done = { done: true, current: null, target: null };
+  const first = (id, over = {}) => challenge({ id, label: 'ONBOARDING', display_order: id, goal: `First ${id}`, ...over });
+  const p = panel({
+    total: 6, done: 1, all_total: 6, all_done: 1,
+    // What a server before #4635 sent a new account. It changes nothing now.
+    onboarding: { total: 4, completed: 1, unlocked: false, event_id: 1, hidden_count: 2,
+      hidden_names: ['Make your first proposal', 'Invite a friend'] },
+    challenges: [
+      first(1, { progress: done }), first(2), first(3), first(4),
+      challenge({ id: 5, label: 'WEEKLY', display_order: 5 }),
+      challenge({ id: 6, label: 'PERSISTENT', display_order: 6 }),
+    ],
   });
-  const { HP } = makeHomePanels({ slots: [], user: WITH_CARD });
-  assert.equal(HP.challengesView(locked).lockedCount, 6);
+  const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
+  assert.doesNotMatch(html, /home-challenge-locked/, 'no locked placeholder');
+  assert.doesNotMatch(html, /Getting started/, 'the words are gone from Home');
+  assert.doesNotMatch(html, /unlock/i, 'nothing is locked, so nothing unlocks');
+  // The collapsed block's four slots go to what is left to do: the three
+  // unfinished First challenges under their header, first, then This week.
+  const rows = html.slice(html.indexOf('home-panel-rows'));
+  const header = rows.indexOf('>First challenges<');
+  assert.ok(header > 0, 'the First challenges header is in the rows list');
+  const ids = [...rows.matchAll(/home-challenge-card[^>]*data-challenge-id="(\d+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids, ['2', '3', '4', '5'], 'First challenges first, in the admin\'s order');
+  assert.ok(rows.indexOf('data-challenge-id="2"') > header, 'under their header');
+  assert.ok(rows.indexOf('>This week<') > rows.indexOf('data-challenge-id="4"'), 'the season follows');
+  assert.match(html, /data-rows="4"/, 'real cards, counted as such');
+  assert.match(html, /home-panel-season/, 'the season progress over them');
+  assert.match(html, />1\/6<\/span><span[^>]*>done in Season 1</);
+  assert.match(html, /home-panel-footer/, 'and the way to the rest of the season');
+  // Tapping one opens it on the Challenges tab like any other card.
+  assert.match(challengesSrc(), /onClick=\{\(\) => panels\(\)\?\.goToChallenge\?\.\(row\.eventId, row\.id\)\}/);
+  assert.doesNotMatch(challengesSrc(), /LockedChallengesCard|onboardingNote|view\.locked/);
 
-  const { html } = renderWith({ registry: [], hidden: [], panels: [locked] }, { user: WITH_CARD });
-  // No cards, no season progress over it, no footer under it.
-  assert.doesNotMatch(html, /home-panel-footer/);
-  assert.doesNotMatch(html, /home-panel-season/, 'the card above counts the list');
-  assert.equal((html.match(/home-challenge-card/g) || []).length, 0, 'the First challenges are not drawn twice');
-  assert.equal((html.match(/home-challenge-locked/g) || []).length, 1, 'one placeholder');
-  const rows = html.slice(html.indexOf('home-panel-rows'), html.indexOf('</article>'));
-  assert.ok(rows.indexOf('home-challenge-locked') > 0, 'inside the rows list, where the cards would be');
-  assert.match(html, /data-rows="0"/, 'and not counted as a card');
-  assert.match(html, /home-challenge-locked [^"]*rounded-3xl[^"]*border-dashed/);
-  assert.match(html, />6 challenges unlock after Getting started</);
-  assert.match(html, />Make your first proposal, Invite a friend and 4 more</);
-  assert.doesNotMatch(html, /unlock the rest of the season/,
-    'the placeholder already says what unlocks them');
-
-  const one = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({ onboarding: onboarding({ hidden_count: 1 }) })],
-  }, { user: WITH_CARD }).html;
-  assert.match(one, />1 challenge unlocks after Getting started</);
-  assert.match(one, />Finish Getting started on Home to see them</, 'no names: what to do');
-
-  // Locked, but a payload with no count (an older server) or a zero count:
-  // no placeholder, the cards, and the note under them, last in the block
-  // (before the footer when the block draws one; a short list draws none).
-  for (const hidden of [undefined, 0, 'wat']) {
-    const p = panel({ onboarding: onboarding({ hidden_count: hidden }) });
-    assert.equal(HP.challengesView(p).lockedCount, 0, `hidden_count ${hidden}`);
-    const out = renderWith({ registry: [], hidden: [], panels: [p] }, { user: WITH_CARD }).html;
-    assert.doesNotMatch(out, /home-challenge-locked/, `hidden_count ${hidden}: no placeholder`);
-    const note = out.indexOf('Finish Getting started to unlock the rest of the season.');
-    assert.ok(note > out.lastIndexOf('home-challenge-card'), `hidden_count ${hidden}: the note follows the cards`);
-    const footer = out.indexOf('home-panel-footer');
-    assert.ok(note < (footer > -1 ? footer : out.indexOf('</article>', note)),
-      `hidden_count ${hidden}: and closes the block, before any footer`);
-    assert.match(out, /<p class="pt-2 pb-1\.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">Finish Getting started/);
-    assert.match(out, /home-panel-season[\s\S]*?<\/div><div class="home-panel-body/,
-      'the season progress and the body stay adjacent');
-  }
-
-  // Unlocked: a stray count draws nothing, and there is no note at all (S10).
-  const open = panel({ onboarding: onboarding({ unlocked: true, hidden_count: 6 }) });
-  assert.equal(HP.challengesView(open).lockedCount, 0);
-  assert.equal(HP.challengesView(open).onboardingNote, null, 'nothing to say once unlocked');
-  const unlocked = renderWith({ registry: [], hidden: [], panels: [open] }, { user: WITH_CARD }).html;
-  assert.doesNotMatch(unlocked, /home-challenge-locked|unlock after Getting started/);
-  assert.doesNotMatch(unlocked, /are unlocked|unlock the rest/, 'no unlock note');
+  // Every First challenge done: the group moves to the end, as for everyone.
+  const allDone = panel({
+    total: 6, done: 4,
+    challenges: [first(1, { progress: done }), first(2, { progress: done }), first(3, { progress: done }),
+      first(4, { progress: done }), challenge({ id: 5, label: 'WEEKLY', display_order: 5 }),
+      challenge({ id: 6, label: 'PERSISTENT', display_order: 6 })],
+  });
+  const { HP } = makeHomePanels({ slots: [] });
+  assert.deepEqual([...HP.orderRows(allDone.challenges)].map((c) => c.id), [5, 6, 1, 2, 3, 4]);
 });
 
 // The area LABEL is the section's own, not the block's (see SectionHeading in
@@ -1644,11 +1626,10 @@ test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () 
 //
 // #3847 hid this block for an account's first seven days (`firstWeek` on
 // GET /api/auth/me). Evan reversed it after his own first session: a
-// brand-new account expected Challenges on Home, with its Getting started
-// challenges. An account its first session brought in has no Getting started
-// card (first-session.js leaves communities_onboarded_at unset), so the
-// block draws those challenges itself rather than a locked card pointing at
-// a list that is not there.
+// brand-new account expected Challenges on Home, with its First challenges.
+// Since #4635 there is no Getting started card for any account, so the block
+// draws those challenges itself for every one of them, and never a locked
+// card in their place.
 
 const NEW_ACCOUNT_DATA = () => ({
   registry: [{ key: 'challenges', title: 'Challenges' }, { key: 'discover', title: 'Discover' }],
@@ -1663,32 +1644,32 @@ const NEW_ACCOUNT_DATA = () => ({
   })],
 });
 
-test('a brand-new account sees Challenges, whatever its age, with its Getting started challenges', () => {
-  for (const user of [{ id: 7, isAdmin: false, firstWeek: true }, { id: 7, isAdmin: false }, { id: 7, showGettingStarted: false }]) {
+test('a brand-new account sees Challenges, whatever its age, with its First challenges', () => {
+  // A cached session that still says `showGettingStarted: true` (from before
+  // #4635) changes nothing: there is no card to defer to.
+  for (const user of [{ id: 7, isAdmin: false, firstWeek: true }, { id: 7, isAdmin: false },
+    { id: 7, showGettingStarted: false }, { id: 7, showGettingStarted: true }]) {
     const out = renderWith(NEW_ACCOUNT_DATA(), { user });
     const host = out.host('challenges');
     assert.ok(!host._classes.has('hidden'), `shown for ${JSON.stringify(user)}`);
     assert.match(host.innerHTML, /home-challenge-card[\s\S]*Try an app/, 'the First challenges, drawn in the block');
     assert.match(host.innerHTML, /Join a community/, 'done ones under Done');
-    assert.doesNotMatch(host.innerHTML, /home-challenge-locked/, 'no card pointing at a list that is not on Home');
-    assert.match(host.innerHTML, />Finish Getting started to unlock the rest of the season\.</);
+    assert.doesNotMatch(host.innerHTML, /home-challenge-locked/, `no locked card for ${JSON.stringify(user)}`);
+    assert.doesNotMatch(host.innerHTML, /Getting started/, 'and no gate line under them');
   }
-  // With the Getting started card on Home, the block is its one locked card,
-  // as before: the card lists the First challenges.
-  const withCard = renderWith(NEW_ACCOUNT_DATA(), { user: { id: 7, showGettingStarted: true } });
-  assert.match(withCard.host('challenges').innerHTML, /home-challenge-locked/);
-  assert.doesNotMatch(withCard.host('challenges').innerHTML, /home-challenge-card/);
 });
 
 test('nothing about an account\'s age hides the block, and /api/auth/me says nothing about it', () => {
   assert.doesNotMatch(PANELS_RAW, /inFirstWeek|firstWeek ===/);
   assert.match(PANELS_RAW, /challenges: viewFor\('challenges', HomePanels\.challengesView\),/);
-  assert.match(PANELS_RAW, /const locked = HomePanels\.gettingStartedOnHome\(\) \? HomePanels\.lockedOnboarding\(panel\) : null;/);
-  assert.match(PANELS_RAW, /gettingStartedOnHome\(\) \{\s+return !!\(typeof window !== 'undefined' && window\.App && App\.user && App\.user\.showGettingStarted === true\);/);
+  // Nor does the session: the block no longer asks whether a Getting started
+  // card is on Home (#4635), so it has no repaint to wait for when the
+  // verified session lands.
+  assert.doesNotMatch(PANELS_RAW, /showGettingStarted|gettingStartedOnHome|lockedOnboarding/);
+  assert.doesNotMatch(PANELS_RAW, /addEventListener\('sv:session'/);
   const auth = read('src/routes/auth.js');
   assert.doesNotMatch(auth, /first_week|firstWeek/);
-  // A boot paints from the snapshot; the verified user repaints, once loaded.
-  assert.match(PANELS_RAW, /document\.addEventListener\('sv:session', \(\) => \{\s+if \(HomePanels\._data\) HomePanels\.render\(\);\s+\}\);/);
+  assert.doesNotMatch(auth, /showGettingStarted|show_getting_started/);
 });
 
 // ── Container shape: one bordered block PER SECTION ───────────────

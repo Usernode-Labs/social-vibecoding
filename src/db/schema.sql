@@ -12044,8 +12044,12 @@ END $$;
 -- ── Communities, stage 5: the first run ─────────────────────────────────
 --
 -- A new account picks the communities it wants to join (Homeroom first)
--- after its username and the terms, then a "Getting started" card on Home:
--- the tour, then the season's First challenges (src/services/onboarding.js).
+-- after its username and the terms (src/services/onboarding.js). Home then
+-- showed it a "Getting started" card, the tour and the season's First
+-- challenges, until #4635 retired the card: the First challenges are ordinary
+-- cards in Home's Challenges area now. The card's columns below stay, unread
+-- by Home: Admin › Journey reads them (src/services/journey.js), and this
+-- file is replayed on every boot, where a DROP cannot be taken back.
 --
 -- users.needs_communities_choice — this account has not been asked yet.
 -- Set TRUE by every path a person signs up through (email, an activation
@@ -12058,20 +12062,17 @@ END $$;
 -- NULL-means-new rule would have put behind a blocking step on every
 -- replay. No backfill, so nothing to guard with a marker row.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_communities_choice BOOLEAN NOT NULL DEFAULT FALSE;
--- When the join screen was answered. Its one other reader is the Getting
--- started card, which is for people who came through that screen: it shows
--- while this is set and getting_started_closed_at is not.
+-- When the join screen was answered.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS communities_onboarded_at TIMESTAMPTZ;
--- The card's close button. Server state, like the join screen's answer, so
--- a card closed on the phone is closed on the laptop too.
+-- The retired card's close button (#4635: nothing writes it now).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_closed_at TIMESTAMPTZ;
 -- Visits the card asks for that leave no row behind of their own. The old
 -- card wrote { "workshop": "<iso>", "discover": "<iso>" } on any visit; since
 -- its steps became the season's First challenges (2026-10-01) nothing reads
 -- those two keys. One key is read: "vote_workshop", the last time the Vote
 -- step's Workshop opened while NOTHING was up for a vote in any community
--- the account is in (services/onboarding.js markWorkshopVisit), which the
--- scorer's VOTE_CAST counts like a vote. A new key rather than "workshop",
+-- the account is in (the retired card's markWorkshopVisit; nothing writes it
+-- since #4635), which the scorer's VOTE_CAST still counts like a vote. A new key rather than "workshop",
 -- because those old visits were recorded whether or not a vote was waiting.
 -- Reset first run clears the whole column. Kept rather than dropped: this
 -- file is replayed on every boot, and a DROP is the one statement here that
@@ -12085,12 +12086,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- counts, and a browser that has it copies it here once. Reset first run
 -- clears it, so the tour follows the join screen again on every device.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
--- The Getting started list that IS the First challenges (evan, 2026-10-01):
--- the card on Home is the tour plus the season's ONBOARDING challenges, and
--- until all of them are done the rest of the season is hidden
--- (src/services/topochain/challenge-onboarding.js). Both only for accounts
--- made after that shipped; everyone who was already here, and every
--- signed-out visitor, sees the whole season and no card.
+-- The Getting started list that WAS the First challenges (evan, 2026-10-01):
+-- the card on Home was the tour plus the season's ONBOARDING challenges, and
+-- until all of them were done the rest of the season was hidden. #4635
+-- retired the card and the gate: every account sees the whole season, and
+-- nothing reads these two to decide what is shown. Admin › Journey still
+-- reads the flag to tell a newcomer from an older account. Both only for
+-- accounts made after the list shipped.
 --
 -- getting_started_gate — this account starts on that list. Set TRUE at
 -- sign-up by the same three INSERTs that set needs_communities_choice
@@ -12105,11 +12107,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
 -- younger than it.
 --
 -- getting_started_unlocked_at — when this account's gate first opened (the
--- tour done and every First challenge done, read anywhere: Home, the
--- Challenges tab, the phone app). Once set the gate never closes again, so
--- an ONBOARDING challenge an admin adds to the season later is one more
--- challenge to do, not a wall that comes back down over a season the person
--- has already been let into. Reset first run clears it with the rest.
+-- tour done and every First challenge done). Nothing writes it since #4635,
+-- which retired the gate. Reset first run clears it with the rest.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_gate BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_unlocked_at TIMESTAMPTZ;
 

@@ -450,11 +450,11 @@ test('Me counts the SAME completions, through the one totals query', () => {
   assert.match(client, /\/api\/me\/summary/);
 });
 
-// 2026-10-01: a First challenge counts done on Me the way it does on Home and
-// on the Getting started card: from every credit on its TEMPLATE, an earlier
-// season's included (loadOnboarding's lifetime answer), not only from credits
-// on this season's row. Both statements splice the same rule, with the gate's
-// ids and the done ones as their last two parameters.
+// 2026-10-01: a First challenge counts done on Me the way it does on Home:
+// from every credit on its TEMPLATE, an earlier season's included
+// (loadOnboarding's lifetime answer), not only from credits on this season's
+// row. Both statements splice the same rule, with the First challenges' ids
+// and the done ones as their last two parameters.
 test('a First challenge done from an earlier season counts on Me as it does on Home', async () => {
   const first = (id, activityCount) => ({
     id, season_event_id: 100, challenge_template_id: id + 100, display_order: id,

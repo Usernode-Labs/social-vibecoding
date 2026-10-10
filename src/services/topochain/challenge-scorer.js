@@ -87,7 +87,7 @@ let inFlight = null;
 // created; an operator who wants one instance only binds to the challenge.
 //
 // `first_challenge` (#4602, #4603): whether the challenge is one of its
-// season's First challenges, the one-time list Getting started draws (the
+// season's First challenges, the one-time introduction (the
 // first ONBOARDING_LIMIT ONBOARDING templates in display order, the rule
 // ./challenge-onboarding.js buildOnboarding applies; $1 is that limit). On
 // those, and only those, time in an app you made counts for "Try an app"
@@ -351,17 +351,19 @@ const INVITES_JOINED_SQL = `
 //
 // OR A LOOK AT THE WORKSHOP WHEN NOTHING WAS UP FOR A VOTE (evan,
 // 2026-10-01). A newcomer whose communities have nothing waiting cannot do
-// "Vote on an app" by voting, so the Getting started card sends them to the
-// Workshop instead, and the server records that visit only when nothing was
-// waiting for their vote (services/onboarding.js markWorkshopVisit, as
-// `users.getting_started_seen.vote_workshop`, the last such visit). It is the
+// "Vote on an app" by voting, so the Getting started card sent them to the
+// Workshop instead, and the server recorded that visit only when nothing was
+// waiting for their vote (the card's markWorkshopVisit, as
+// `users.getting_started_seen.vote_workshop`, the last such visit). #4635
+// retired the card and nothing records a visit now, but one recorded before
+// still counts inside a challenge window that holds it. It is the
 // third kind of row here, keyed `vote:workshop:<user id>`, with the same
 // window and the same one credit a person: whichever came first inside the
 // window, the vote or the look, is the credit. The CASE guards the cast, so
 // a value that is not a timestamp is no row rather than a failed pass.
 //
-// TWO MORE VOTES THAT ARE NOT ON SOMEBODY ELSE'S CHANGE (Getting started,
-// first-session test, 2026-10-03). The Homeroom bot writes the proposal for
+// TWO MORE VOTES THAT ARE NOT ON SOMEBODY ELSE'S CHANGE (first-session
+// test, 2026-10-03). The Homeroom bot writes the proposal for
 // a request it builds, so the session's author is the bot, and "not their
 // own" let a person's vote on the build of THEIR OWN request through: the
 // tester asked the bot for an app, voted on its first version, and was paid
@@ -372,7 +374,7 @@ const INVITES_JOINED_SQL = `
 // a vote there. The look has no project, and is not affected. The filters
 // run before DISTINCT ON, so the credit is their earliest vote that counts.
 // routes/workshop-overview.js OWED_BY_COMMUNITY_SQL (`paying`) is the same
-// test, so the card's Vote step only points at a vote that pays.
+// test.
 const VOTE_CAST_SQL = `
   SELECT DISTINCT ON (v.user_id) v.user_id, v.kind, v.ref_id, v.created_at, a.name AS app_name
     FROM (
@@ -1187,9 +1189,7 @@ async function tick(pool, config, { now = Date.now() } = {}) {
 // with the measures that action can complete:
 //
 //   a join              COMMUNITY_JOINED, COMMUNITY_APP_CREATED  scoreOnJoin
-//   a vote              VOTE_CAST       routes/votes.js, routes/issues.js,
-//                                       and the Vote step's Workshop visit
-//                                       (routes/onboarding.js)
+//   a vote              VOTE_CAST       routes/votes.js, routes/issues.js
 //   a report            FEEDBACK_SENT   routes/feedback.js
 //   an app's heartbeat  TRY_APPS, on the crossing only (scoreOnAppTime)
 //

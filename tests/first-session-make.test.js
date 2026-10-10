@@ -61,7 +61,7 @@ test('the options carry the switch, and the admin switches it beside the invite 
   assert.match(screen, /id="admin-topo-wl-story-enabled"/);
 });
 
-test('making something, or looking around, answers the join screen without the Getting started card; starting answers nothing', async () => {
+test('making something, or looking around, answers the join screen; starting answers nothing', async () => {
   const pool = fakePool([[], [], []]);
   await firstSession.answerJoinScreen(pool, 7, 'made');
   assert.match(pool.calls[0].sql, /SET needs_communities_choice = FALSE,/);
