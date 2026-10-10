@@ -2571,13 +2571,16 @@ const GroupChat = {
       // so it doesn't also quote the row.
       if (GroupChat._longPressed) { GroupChat._longPressed = false; return; }
       // #130: PR / issue reference chips reveal the matching row in the
-      // activity drawer (GitHub fallback when it isn't there). Handled
-      // before tap-to-quote so a chip click doesn't also stage a reply.
+      // activity drawer (GitHub fallback when it isn't there); #4668: a chip
+      // with an address is a real link — Ctrl/Cmd/Shift/Alt click and the
+      // middle button are the browser's (a new tab), so stand down without
+      // preventing default and without staging a reply. Handled before
+      // tap-to-quote so a chip click doesn't also stage a reply.
       const ref = e.target.closest('.gc-ref');
       if (ref) {
-        if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
-          AppView.revealInDrawer(ref.dataset.refType, ref.dataset.refNumber);
-        }
+        if (ref.tagName === 'A' && (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) return;
+        e.preventDefault();
+        GroupChat._openRef(ref);
         return;
       }
       // #130: the spec-share card's "PR #N" anchor previously rendered
@@ -2609,17 +2612,49 @@ const GroupChat = {
       if (quote) GroupChat.setQuote(quote, scope);
     });
 
-    // #130: chips are spans with role="link" tabindex="0" — give keyboard
-    // users the same drawer reveal a click gets.
+    // #130: chips are spans with role="link" tabindex="0" (or, since #4668,
+    // real anchors) — give keyboard users the same reveal a click gets.
     container.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       const ref = e.target.closest && e.target.closest('.gc-ref');
       if (!ref) return;
       e.preventDefault();
-      if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
-        AppView.revealInDrawer(ref.dataset.refType, ref.dataset.refNumber);
-      }
+      GroupChat._openRef(ref);
     });
+  },
+
+  // #4668: what a tap (or Enter / Space) on a `.gc-ref` chip does. A plain
+  // span keeps #130's drawer reveal. A chip that names the request whose own
+  // page is open scrolls back up to the request head, where its status and
+  // any open vote are — reopening the page would change nothing on screen,
+  // which is the case the request's screenshot shows. A chip with an address
+  // for a different project than the one the app view has open follows it,
+  // so a chip in a Messages-mounted thread opens the project it names.
+  _openRef(chip) {
+    const type = chip.dataset.refType;
+    const num = chip.dataset.refNumber;
+    const n = parseInt(num, 10);
+    const slug = GroupChat._appSlug();
+    const appSlug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) || null;
+    const sameApp = !!(slug && appSlug && slug === appSlug);
+    if (type === 'issue' && sameApp && typeof AppView !== 'undefined'
+      && AppView._devTopic && AppView._devTopic.kind === 'issue'
+      && Number(AppView._devTopic.id) === n) {
+      GroupChat._threadPinned = false;
+      const scroll = GroupChat._threadScrollEl();
+      if (scroll && typeof scroll.scrollTo === 'function') {
+        scroll.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      return;
+    }
+    if (!chip.getAttribute('href') || sameApp) {
+      if (typeof AppView !== 'undefined' && AppView.revealInDrawer) {
+        AppView.revealInDrawer(type, num);
+      }
+      return;
+    }
+    const href = chip.getAttribute('href');
+    if (href) location.hash = href;
   },
 
   _clearPressTimer() {
@@ -5319,20 +5354,39 @@ function renderChannelChips(html) {
   });
 }
 
+// #4668: a chip's address. Real links when the chat names a project (the
+// #N one opens that project's request, the PR#N one the change's page, the
+// #4367 address the topic route resolves from a pull request number — same
+// shape as frontend/src/lib/change-href.ts); null when it does not (a DM
+// has no project to open), which leaves today's plain span.
+function refChipHref(isPr, num) {
+  const slug = GroupChat._appSlug();
+  if (!slug) return null;
+  return `#app/${encodeURIComponent(slug)}/dev/${isPr ? 'changes' : 'issues'}/${num}`;
+}
+
 // #130: second replacement pass over the (already escaped, mention-marked)
 // content — `PR#N` / `PR #N` render as violet PR chips and bare `#N` as
 // emerald issue chips. One combined regex so `PR#12` is never double-matched
 // by the issue pattern. The `&` exclusion in the boundary keeps escaped
 // entities from chipping; the trailing lookahead keeps `#12abc` plain.
-// Clicking / Enter / Space on a chip routes to AppView.revealInDrawer (see
-// _attachQuoteHandlers) — refs are a pure display convention, so message
-// content stays plain text on the wire and in the DB.
+// Clicking / Enter / Space on a chip routes through GroupChat._openRef (see
+// _attachQuoteHandlers): a plain span goes to AppView.revealInDrawer and an
+// anchor carries its own address. Refs are a pure display convention, so
+// message content stays plain text on the wire and in the DB. The href holds
+// no `#<digit>` or `#<letter>` after a permitted boundary (`"#app/…` sits
+// after `"`, which renderChannelChips excludes), so the later passes never
+// match inside it.
 function renderRefChips(html) {
   return html.replace(/(^|[^\w&])(pr ?#|#)(\d{1,7})(?!\w)/gi, (_m, pre, prefix, num) => {
     const isPr = prefix.length > 1; // `PR#` / `PR #` vs bare `#`
     const cls = isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
     const type = isPr ? 'pr' : 'issue';
     const label = isPr ? `PR#${num}` : `#${num}`;
+    const href = refChipHref(isPr, num);
+    if (href) {
+      return `${pre}<a class="${cls}" href="${href}" data-ref-type="${type}" data-ref-number="${num}">${label}</a>`;
+    }
     return `${pre}<span class="${cls}" data-ref-type="${type}" data-ref-number="${num}" role="link" tabindex="0">${label}</span>`;
   });
 }
@@ -5440,14 +5494,22 @@ function replaceTextWithSegments(textNode, segs) {
       link.textContent = `#${seg.handle}`;
       frag.appendChild(link);
     } else { // ref
-      const span = document.createElement('span');
-      span.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
-      span.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
-      span.setAttribute('data-ref-number', seg.num);
-      span.setAttribute('role', 'link');
-      span.setAttribute('tabindex', '0');
-      span.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
-      frag.appendChild(span);
+      // #4668: an anchor when the chat names a project — a link one can open
+      // in a new tab. No role or tabindex: an anchor is focusable and a link
+      // already. No slug (a DM, the test sandbox): today's span.
+      const href = refChipHref(seg.isPr, seg.num);
+      const el = document.createElement(href ? 'a' : 'span');
+      el.className = seg.isPr ? 'gc-ref gc-ref-pr' : 'gc-ref gc-ref-issue';
+      el.setAttribute('data-ref-type', seg.isPr ? 'pr' : 'issue');
+      el.setAttribute('data-ref-number', seg.num);
+      if (href) {
+        el.setAttribute('href', href);
+      } else {
+        el.setAttribute('role', 'link');
+        el.setAttribute('tabindex', '0');
+      }
+      el.textContent = seg.isPr ? `PR#${seg.num}` : `#${seg.num}`;
+      frag.appendChild(el);
     }
   }
   parent.replaceChild(frag, textNode);
