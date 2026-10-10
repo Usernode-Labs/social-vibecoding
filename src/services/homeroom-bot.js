@@ -4911,7 +4911,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
   pendingLive.delete(Number(sessionId));
   try {
     const { rows: [session] } = await pool.query(
-      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md, cs.spec_html, cs.agent_model,
+      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md, cs.agent_model, cs.spec_html,
               (SELECT MAX(version) FROM chat_session_specs WHERE session_id = cs.id) AS spec_version
          FROM chat_sessions cs WHERE cs.id = $1`,
       [sessionId],
