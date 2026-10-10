@@ -216,9 +216,17 @@ test('a shard runs the pretest, then test:shard; without TEST_SHARD, npm test as
   try {
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'x', 'test:shard': 'y' } }));
     const tail = unitSuite.RUN_SCRIPT.slice(unitSuite.RUN_SCRIPT.indexOf('TEST_CMD='));
-    const run = (shard) => spawnSync('bash', ['-c',
-      `set -eu\nWS="${dir}"\ncd "${dir}"\nnpm() { echo "npm $*"; }\n${tail}`],
-    { encoding: 'utf8', env: { ...process.env, ...(shard ? { TEST_SHARD: shard } : {}) } });
+    // The environment this test runs in may be a shard's own: a split suite
+    // sets TEST_SHARD on every Job, and the "whole suite" case below must
+    // not inherit it (10 Oct 2026: main went red on exactly that).
+    const run = (shard) => {
+      const env = { ...process.env };
+      delete env.TEST_SHARD;
+      if (shard) env.TEST_SHARD = shard;
+      return spawnSync('bash', ['-c',
+        `set -eu\nWS="${dir}"\ncd "${dir}"\nnpm() { echo "npm $*"; }\n${tail}`],
+      { encoding: 'utf8', env });
+    };
     const sharded = run('2/3');
     assert.equal(sharded.status, 0);
     assert.deepEqual(sharded.stdout.trim().split('\n'), ['npm run pretest --if-present', 'npm run test:shard']);

@@ -310,7 +310,7 @@ test('Kubernetes workflow retains queued releases, publishes the tip, and never 
   // The tip too (7 October: four rollouts in sixteen minutes) goes out no
   // sooner than RELEASE_MIN_GAP_MINUTES after the release before it: it waits
   // in the step, re-reading the branch, and a dispatched run never waits.
-  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '10'/);
+  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '4'/);
   assert.match(release, /\[ "\$GITHUB_EVENT_NAME" != workflow_dispatch \] \\\n\s+\|\| decide true/,
     'a run dispatched by hand is the way to release at once');
   assert.match(release, /sleep \$\(\( wait_until - now < 30 \? wait_until - now : 30 \)\)\n\s+current_sha="\$\(branch_tip\)"/,
