@@ -2247,9 +2247,25 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
   assert.match(lane, /Dark mode toggle/);
   assert.match(lane, /<span class="dev-ws-wrow-sub">PR #212 · Homeroom bot · for #208 · [^<]+ ago<\/span>/);
   assert.ok(!lane.includes('yours'), 'the bot made it, so the line does not say yours');
+
+  // #4728: the row's first tag says the bot built it from the viewer's
+  // request — plain, with the sparkle — and the rendered lane draws it.
+  const botRow = plain(v.mine.rows)[0];
+  assert.deepEqual(botRow.brief.tags[0],
+    { label: message('changes:workshop.row.tag.homeroomBot'), tone: 'plain', glyph: 'bot' });
+  assert.match(lane, /<span class="dev-ws-tag" data-tone="plain"><svg[^]*?Homeroom bot<\/span>/,
+    'the row wears the Homeroom bot tag, beside the sparkle');
+  // The tag is Your work's: the board builds its own brief from the same
+  // card model, and that one has none.
+  const boardBrief = AppView._workshopBrief('proposal', AppView._proposals[0],
+    AppView._proposalCardModel(AppView._proposals[0]));
+  assert.ok(!plain(boardBrief.tags).some((t) => t.glyph === 'bot'),
+    'the board\'s brief for the same bot change has no bot tag');
   // The other bot change keeps working as somebody's owed vote.
   assert.match(workshopHtml(AppView, 'needs'), /Theirs by the bot/,
     'a bot change from somebody else\'s request is still owed this viewer\'s vote');
+  assert.ok(!workshopHtml(AppView, 'needs').match(/<span class="dev-ws-tag" data-tone="plain"><svg[^]*?Homeroom bot<\/span>/),
+    'the bot\'s other change, in Needs you, wears no bot tag');
 
   // And the de-dup holds: your vote on it still counts, but it is not
   // listed a second time among the votes the project needs from you.
@@ -2305,6 +2321,16 @@ test('#4715: a merged change of yours that is still going live stays in Your wor
   const tag = plain(row.brief.tags)[0];
   assert.equal(tag.label, message('changes:badge.pill.goingLive'));
   assert.equal(tag.tone, 'run');
+
+  // #4728: the bot's going-live row from the viewer's request wears the bot
+  // tag, after the "Going live…" pill so the pill keeps the tags' start;
+  // the viewer's own merged row has none.
+  const botTags = plain(v.mine.rows[1].brief.tags);
+  assert.equal(botTags[0].label, message('changes:badge.pill.goingLive'), 'the pill still leads');
+  assert.deepEqual(botTags[1],
+    { label: message('changes:workshop.row.tag.homeroomBot'), tone: 'plain', glyph: 'bot' });
+  assert.ok(!plain(row.brief.tags).some((t) => t.glyph === 'bot'),
+    'the viewer\'s own merged row has no bot tag');
 
   // Rendered, keyed apart from the same card elsewhere in the pane — This
   // week keeps every merged row it ever showed; nothing moves.

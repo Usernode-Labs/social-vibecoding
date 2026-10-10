@@ -10242,6 +10242,12 @@ const AppView = {
   _specDraftTag() {
     return { label: PlatformI18n.t('changes:workshop.row.tag.specDraft'), tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
   },
+  // #4728: the tag on a Your work row for a change Homeroom bot built from
+  // a request the viewer made — the row is theirs through the bot, and the
+  // tag says so at a glance, beside the sparkle Messages draws for an agent.
+  _botForYouTag() {
+    return { label: PlatformI18n.t('changes:workshop.row.tag.homeroomBot'), tone: 'plain', glyph: 'bot' };
+  },
   // The request a private session of the viewer's is for, when that request
   // is one of `numbers` (the requests drawn beside it), else null.
   _privateDraftFor(session, numbers) {
@@ -11698,8 +11704,25 @@ const AppView = {
                 ? AppView._mergedRowModel(item)
                 : AppView._proposalCardModel(item);
         if (!card) return null;
+        const brief = AppView._workshopBrief(kind, item, card);
+        // #4728: a change the bot built from the viewer's own request wears
+        // the bot tag in Your work, so the row says it was taken up at a
+        // glance and not only in its maker line. First among a proposal's
+        // tags; after a merged row's settled pill, so "Going live…" keeps
+        // the tags line's start. The brief is copied, not mutated: the
+        // board and the week pages build their own from the same models.
+        if ((kind === 'proposal' || kind === 'merged')
+          && item.requested_by_me === true && AppView._botBuilt(item)) {
+          const tag = AppView._botForYouTag();
+          const tags = brief.tags.slice();
+          if (kind === 'proposal') tags.unshift(tag);
+          else tags.splice(1, 0, tag);
+          return AppView._attachRowConversation(
+            { t: 'card', key: `mine:${card.key}`, card, brief: { ...brief, tags } }, kind, item,
+          );
+        }
         return AppView._attachRowConversation(
-          { t: 'card', key: `mine:${card.key}`, card, brief: AppView._workshopBrief(kind, item, card) }, kind, item,
+          { t: 'card', key: `mine:${card.key}`, card, brief }, kind, item,
         );
       }).filter(Boolean),
     };
