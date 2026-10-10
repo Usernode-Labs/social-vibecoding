@@ -53,6 +53,7 @@
 // build (sideBuildStage, laterSideBuildStage). Any other is abandoned and run
 // again from the start (services/bench/lane.js).
 
+const sessionActivity = require('../session-activity');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const log = require('../logger');
@@ -250,12 +251,18 @@ async function runTurn({
   } catch (err) {
     return { routed: { error: `worker: ${err.message}` }, result: {}, stopped: false, infra: true, costUsd: null, usage: {} };
   }
+  // One activity on the session (services/session-activity.js): with the
+  // session-activity machine on, it is refused while another process uses it.
+  const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bench turn' });
+  if (gate.refused) return { routed: { error: `worker: ${gate.refused.message}` }, result: {}, stopped: false, infra: true, costUsd: null, usage: {} };
   await pool.query(
     "UPDATE chat_sessions SET status = 'active', agent_thread_id = NULL, agent_model = $2, last_activity_at = NOW() WHERE id = $1",
     [session.id, model],
-  );
+  ).catch((err) => { gate.activity?.end(); throw err; });
   session.agent_thread_id = null;
   session.agent_model = model;
+  const sessionUse = gate.activity;
+  sessionUse?.enter();
   activeWorkers.add(session.id);
   let stopped = false;
   let stopping = null;
@@ -304,6 +311,7 @@ async function runTurn({
     clearTimeout(timer);
     if (stopping) await stopping;
     activeWorkers.delete(session.id);
+    sessionUse?.end();
     await pool.query(
       "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
       [session.id],

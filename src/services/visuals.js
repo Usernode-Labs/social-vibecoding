@@ -1995,6 +1995,11 @@ function startShotsIfIdle(config, pool, sessionId, commitHash) {
     const { rows } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [sessionId]);
     if (!rows[0] || rows[0].active_turn) return;
     if (await require('./worker').isInFlight(sessionId)) return;
+    // A turn another process runs (session-activity.js), its own tail's
+    // included: not the session's operations, since a hand-off pipeline is
+    // what starts these.
+    const live = (await require('./session-activity').read([Number(sessionId)])).get(Number(sessionId)) || [];
+    if (live.some((a) => a.kind === 'turn')) return;
     scheduleShots(config, pool, sessionId, commitHash, 'preview-ready');
   }).catch((err) => {
     log.warn('visuals', 'Could not start before & after shots beside the checks', {

@@ -60,6 +60,7 @@
 // constructs nothing but routes, and dispatches the request into it. There
 // stays exactly one implementation of "put a change up for a vote".
 
+const sessionActivity = require('./session-activity');
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure, finalAnswerText } = require('./agent-result-text');
@@ -2180,6 +2181,12 @@ async function draftSpec({
   starter = null,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
+  // One activity on the session (services/session-activity.js): with the
+  // session-activity machine on, it is refused while another process uses it.
+  const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bot spec draft' });
+  if (gate.refused) return { ok: false, costUsd: null, error: `the spec turn did not run (${gate.refused.message})` };
+  const sessionUse = gate.activity;
+  sessionUse?.enter();
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
   const progress = lastActivity();
   let stopped = false;
@@ -2233,6 +2240,7 @@ async function draftSpec({
     clearTimeout(timer);
     if (stopping) await stopping;
     activeWorkers.delete(session.id);
+    sessionUse?.end();
   }
   const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
   // The turn's ledger rows, for its tokens in a cost breakdown (stage-costs.js).
@@ -2508,6 +2516,12 @@ function buildTurnRunner({
     freshPrompt = null, telemetry: turnTelemetry = null,
   }) => {
     // A turn may go on the ledger under a name of its own (the nudge).
+    // One activity on the session (services/session-activity.js): with the
+    // session-activity machine on, it is refused while another process uses it.
+    const gate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'bot build turn' });
+    if (gate.refused) return { routed: { error: `dispatch: ${gate.refused.message}` }, stopped: false };
+    const sessionUse = gate.activity;
+    sessionUse?.enter();
     const telemetry = turnTelemetry || runnerTelemetry;
     // #4575: before & after shots on this session hold it from their first
     // build until their agent finishes, but write no turn record until they
@@ -2578,6 +2592,7 @@ function buildTurnRunner({
       clearTimeout(timer);
       if (stopping) await stopping;
       activeWorkers.delete(session.id);
+      sessionUse?.end();
       await pool.query(
         "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
         [session.id],

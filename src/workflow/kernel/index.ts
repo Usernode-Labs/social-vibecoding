@@ -116,6 +116,9 @@ export function createRuntime(opts: RuntimeOptions) {
   }
 
   const runtime = {
+    // Whether this runtime runs the machine.
+    has: (machine: string) => machines.has(machine),
+
     append(machine: Machine<any, any> | string, key: string, event: { type: string; payload?: unknown }, o: AppendOptions) {
       return append(o.db || opts.pool, machineFor(machine), key, event, o);
     },

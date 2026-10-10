@@ -8,9 +8,19 @@ import { legacy } from '../legacy.ts';
 import { backoff, closeAndComment, gone, permanent } from '../github-work.ts';
 import { WORK } from './machine.ts';
 
-interface Deps { config: any; pool: Pool }
+interface Deps {
+  config: any;
+  pool: Pool;
+  // With the session-activity machine running here (platform.ts): its
+  // retirement, which waits for whatever still uses the session in any
+  // process, and which sessions another process uses. Null without it.
+  sessions?: {
+    retire: (sessionId: number) => Promise<void>;
+    busy: (sessionIds: number[]) => Promise<Set<number>>;
+  } | null;
+}
 
-export function mergeFollowupsServices({ config, pool }: Deps): Record<string, WorkHandler> {
+export function mergeFollowupsServices({ config, pool, sessions = null }: Deps): Record<string, WorkHandler> {
   const github = () => legacy('services/github');
   const session = async (id: number) => (await pool.query(
     `SELECT cs.*, a.slug AS app_slug, a.repo_url FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
@@ -92,6 +102,10 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
       maxAttempts: 5,
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
+        if (sessions) {
+          await sessions.retire(input.sessionId);
+          return { deferred: 'session-activity' };
+        }
         const result = await legacy('services/worker').retireWorker(input.sessionId);
         return { deferred: !!result?.deferred };
       },
@@ -108,7 +122,8 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
         const changes = legacy('services/included-changes');
         const { rows } = await pool.query(changes.CANDIDATES_SQL, [input.appId, input.sessionId]);
         const busy = legacy('services/active-workers').isSessionBusy;
-        const idle = rows.filter((c: { id: number }) => !busy(Number(c.id)));
+        const elsewhere = sessions ? await sessions.busy(rows.map((c: { id: number }) => Number(c.id))) : new Set<number>();
+        const idle = rows.filter((c: { id: number }) => !busy(Number(c.id)) && !elsewhere.has(Number(c.id)));
         if (!idle.length) return { ids: [] };
         const listed = await gh.listPullRequestCommitShas(input.owner, input.repo, input.prNumber);
         return { ids: changes.containedIn(idle, listed?.shas).map((c: { id: number }) => Number(c.id)) };

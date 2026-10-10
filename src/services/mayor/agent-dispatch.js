@@ -91,6 +91,7 @@ function defaults(deps = {}) {
     turnDeps: deps.turnDeps || null,
     worker: deps.worker || require('../worker'),
     activeWorkers: deps.activeWorkers || require('../active-workers'),
+    sessionActivity: deps.sessionActivity || require('../session-activity'),
     stopRegistry: deps.stopRegistry || require('../stop-registry'),
     sessionBus: deps.sessionBus || require('../session-bus'),
     broadcastGlobal: deps.broadcastGlobal || ((payload) => require('../ws').broadcastGlobal(payload)),
@@ -290,27 +291,47 @@ async function runDispatch({
     }
   }
 
-  const turnDeps = turnDepsOf(d);
-  // The conversation's model choice applies from the next build: switch the
-  // change to it now, before the operation guard is claimed (the switch
-  // refuses a busy change). If the switch fails, report it rather than
-  // silently starting another build with the model the user replaced.
-  const choice = await d.agentSessions.getAgentChoice(pool, agentSessionId);
-  if (needsAgentSwitch(change, choice)) {
-    const switched = await turnDeps.switchSessionAgent(pool, {
-      sessionId: changeId, userId: user.id, pref: agentPrefFor(choice),
-    }).catch((err) => ({ ok: false, error: err.message }));
-    if (switched.ok) {
-      change = (await loadActiveChange(pool, { agentSessionId, userId: user.id })) || change;
-    } else {
-      log.warn('agent-mayor', 'Could not switch the change to the conversation\'s model', {
-        agentSessionId, changeId, err: switched.error,
-      });
-      return refusal('model_switch_failed: Could not switch to the selected model. No new coding run was started. Try again.');
+  // The build is one activity on the change (services/session-activity.js):
+  // with the session-activity machine on, it is claimed here, atomically
+  // across processes, and the model switch and the coding turn below run
+  // inside it rather than asking again.
+  const gate = await d.sessionActivity.tryBegin(changeId, 'turn', { label: 'agent build', stoppable: true });
+  if (gate.refused) return refusal(gate.refused.blockedBy === 'hold' ? SHOTS_BUSY_TEXT : BUSY_TEXT);
+  gate.activity?.enter();
+  const endGate = () => gate.activity?.end();
+
+  // Anything that throws before the build holds the operation ends the
+  // activity too, so a failed lookup never leaves the change claimed.
+  let turnDeps;
+  let choice;
+  try {
+    turnDeps = turnDepsOf(d);
+    // The conversation's model choice applies from the next build: switch the
+    // change to it now, before the operation guard is claimed (the switch
+    // refuses a busy change). If the switch fails, report it rather than
+    // silently starting another build with the model the user replaced.
+    choice = await d.agentSessions.getAgentChoice(pool, agentSessionId);
+    if (needsAgentSwitch(change, choice)) {
+      const switched = await turnDeps.switchSessionAgent(pool, {
+        sessionId: changeId, userId: user.id, pref: agentPrefFor(choice),
+      }).catch((err) => ({ ok: false, error: err.message }));
+      if (switched.ok) {
+        change = (await loadActiveChange(pool, { agentSessionId, userId: user.id })) || change;
+      } else {
+        log.warn('agent-mayor', 'Could not switch the change to the conversation\'s model', {
+          agentSessionId, changeId, err: switched.error,
+        });
+        endGate();
+        return refusal('model_switch_failed: Could not switch to the selected model. No new coding run was started. Try again.');
+      }
     }
+    if (await shouldStop()) { endGate(); return stoppedBeforeStart(); }
+  } catch (err) {
+    endGate();
+    throw err;
   }
-  if (await shouldStop()) return stoppedBeforeStart();
-  const release = d.activeWorkers.beginSessionOperation(changeId);
+  const releaseOperation = d.activeWorkers.beginSessionOperation(changeId);
+  const release = () => { releaseOperation(); endGate(); };
   // #937: a new dispatch is the boundary that retires the previous turn's
   // pending stop, exactly as a new classic turn is.
   d.worker.clearPendingStop(changeId);

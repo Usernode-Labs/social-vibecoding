@@ -13367,6 +13367,49 @@ CREATE TRIGGER chat_sessions_wf_merge_owned
   EXECUTE FUNCTION wf_guard_owned_columns('@enrolled=merge-followups/session:',
     'merged_at', 'merge_commit_sha', 'included_in_session_id', 'live_at');
 
+-- session-activity (src/workflow/session-activity/): who is using a chat
+-- session right now. One row per activity the machine granted (a Mayor chat
+-- turn, a coding turn, an operation on its branch or preview, a screenshot
+-- run's hold on the worker, a pause or teardown), written by its transitions. The holder keeps the row
+-- alive by moving lease_until forward (lease.ts), the way a service renews a
+-- wf_work lease; nothing else may change a row outside the pipeline. A row
+-- whose lease ran out no longer counts, and the machine deletes it the next
+-- time it decides for the session. No foreign key, like the kernel tables:
+-- the pipeline alone deletes these rows.
+CREATE TABLE IF NOT EXISTS wf_session_activities (
+  id                UUID PRIMARY KEY,
+  session_id        INTEGER NOT NULL,
+  kind              TEXT NOT NULL CHECK (kind IN ('chat', 'turn', 'operation', 'hold', 'destroy')),
+  holder            TEXT NOT NULL,
+  label             TEXT,
+  turn_id           TEXT,
+  parent_id         UUID,
+  granted_at        TIMESTAMPTZ NOT NULL,
+  lease_until       TIMESTAMPTZ NOT NULL,
+  stop_requested_at TIMESTAMPTZ,
+  stop              JSONB
+);
+CREATE INDEX IF NOT EXISTS wf_session_activities_session_idx ON wf_session_activities (session_id, lease_until);
+COMMENT ON TABLE wf_session_activities IS 'staging:private';
+
+CREATE OR REPLACE FUNCTION wf_session_activities_writer() RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('app.wf_writer', true) = 'transition' THEN
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+  END IF;
+  -- A holder renewing its lease: only lease_until may move.
+  IF TG_OP = 'UPDATE' AND (to_jsonb(NEW) - 'lease_until') = (to_jsonb(OLD) - 'lease_until') THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'WF_OWNERSHIP_VIOLATION: % on % outside the transition pipeline', TG_OP, TG_TABLE_NAME;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS wf_session_activities_writer ON wf_session_activities;
+CREATE TRIGGER wf_session_activities_writer
+  BEFORE INSERT OR UPDATE OR DELETE ON wf_session_activities
+  FOR EACH ROW EXECUTE FUNCTION wf_session_activities_writer();
+
 -- #4083: every account without access has a spot on the waitlist, however it
 -- was made. Signups now get one as they are made (waitlist.ensureAccountSignup);
 -- this gives the accounts already waiting without one theirs, once, guarded by

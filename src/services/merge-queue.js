@@ -281,8 +281,9 @@ function gaveUpOn(row) {
 // in practice one the process resumed from its journal after a restart, a
 // few seconds before the startup drain asked for the same proposal. That
 // is not a failure and not a reason to back off: the row IS integrating.
+// A session-activity refusal of any kind (session-activity.js) is busy too.
 function isTurnInFlightError(err) {
-  return !!err && (err.code === 'TURN_IN_FLIGHT'
+  return !!err && (err.code === 'TURN_IN_FLIGHT' || err.code === 'session_busy'
     || /a turn is already in flight/.test(String(err.message || '')));
 }
 
@@ -638,6 +639,27 @@ async function resolveOneInner(config, pool, sessionId, admission = { reason: 'a
     return { ok: false, reason: 'over_budget' };
   }
 
+  // The sync is claimed as a turn on the session before anything is spent
+  // (session-activity.js): with the session-activity machine on, another
+  // process's turn, branch move or screenshot run refuses it here, and the
+  // proposal waits its turn exactly as for a turn running in this process.
+  // The sync's own turn joins this claim.
+  const claim = await require('./session-activity').tryBegin(session.id, 'turn', { label: 'merge queue sync' });
+  if (claim.refused) {
+    log.info('merge-queue', 'the session is busy in another process; leaving it to finish', {
+      sessionId, blockedBy: claim.refused.blockedBy,
+    });
+    return { ok: false, reason: 'turn_in_flight' };
+  }
+  claim.activity?.enter();
+  try {
+    return await dispatchSync(config, pool, session, sessionId, measured, admission);
+  } finally {
+    await claim.activity?.end();
+  }
+}
+
+async function dispatchSync(config, pool, session, sessionId, measured, admission) {
   // Rule C's one pre-approval resolution is spent when it is DISPATCHED,
   // not when it lands: a turn that dies half-way must not buy a second.
   if (admission.reason === 'first_conflict') {

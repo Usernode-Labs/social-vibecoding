@@ -9,6 +9,7 @@
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { createRuntime } from './kernel/index.ts';
+import { append } from './kernel/stream.ts';
 import type { EventOutcome, Logger, Pool, Push, Queryable, Runtime } from './kernel/index.ts';
 import { legacy } from './legacy.ts';
 import { GOVERNANCE_KINDS } from './governance-proposal/facts.ts';
@@ -16,6 +17,10 @@ import { MACHINE, governanceProposal, issueKey } from './governance-proposal/mac
 import { governanceNotifiers, governanceServices } from './governance-proposal/services.ts';
 import { MACHINE as MERGE, mergeFollowups, sessionKey } from './merge-followups/machine.ts';
 import { mergeFollowupsNotifiers, mergeFollowupsServices } from './merge-followups/services.ts';
+import { MACHINE as SESSIONS, sessionActivity, sessionKey as activityKey } from './session-activity/machine.ts';
+import type { Kind as ActivityKind } from './session-activity/machine.ts';
+import { sessionActivityServices } from './session-activity/services.ts';
+import { readActivities, renewLease } from './session-activity/lease.ts';
 
 const pg = createRequire(import.meta.url)('pg');
 
@@ -101,7 +106,7 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
   await recordBooted(appPool).catch((err) => log!.warn('workflow', 'Could not record the booted build', { message: err.message }));
   if (runtime) return;
   const withMerges = !!config.wfMergeFollowupsEnabled || await mergesUnfinished(appPool).catch(() => false);
-  if (!config.wfGovernanceEnabled && !withMerges) return;
+  if (!config.wfGovernanceEnabled && !withMerges && !config.wfSessionActivityEnabled) return;
   const workflowPool = new pg.Pool({
     connectionString: config.databaseUrl, max: config.wfPoolMax, idleTimeoutMillis: 30000, application_name: 'homeroom-workflow',
   });
@@ -122,7 +127,16 @@ export async function startWorkflow(config: any, opts: { loops: boolean }): Prom
     merges = mergeFollowups({ dataKey: config.dataEncryptionKey, notifiers: mergeFollowupsNotifiers(deps) });
     mergesAdmitted = !!config.wfMergeFollowupsEnabled;
     machines.push(merges);
-    services = { ...services, ...mergeFollowupsServices(deps) };
+    services = { ...services, ...mergeFollowupsServices({
+      ...deps,
+      // The worker's retirement and the busy check ask the session-activity
+      // machine when it runs here, so they see every process.
+      sessions: config.wfSessionActivityEnabled ? { retire: (id: number) => retireSession(id, 'merge'), busy: busySessions } : null,
+    }) };
+  }
+  if (config.wfSessionActivityEnabled) {
+    machines.push(sessionActivity());
+    services = { ...services, ...sessionActivityServices() };
   }
   const started = createRuntime({
     pool: kernelPool!, machines, services, slots: config.wfSlots, log: log!, publish: publishPushes,
@@ -370,6 +384,67 @@ async function releaseBooted(pool: Pool): Promise<void> {
   const { rows } = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE');
   for (const a of rows) await productionDeployed(a.id, sha);
 }
+
+// ── Session activity ────────────────────────────────────────────────────
+
+// Whether the session-activity machine runs in this process
+// (WF_SESSION_ACTIVITY_ENABLED; services/session-activity.js asks it).
+export function sessionActivityEnabled(): boolean {
+  return runtime !== null && runtime.has(SESSIONS);
+}
+
+const ACTIVITY_SOURCE = { kind: 'system' as const, name: 'session-activity' };
+
+// Ask for an activity and wait for the answer. 'pending' (the pipeline did
+// not answer in time) is for the caller to cancel with endActivity.
+export async function requestActivity(a: {
+  sessionId: number; activityId: string; kind: ActivityKind; holder: string;
+  label?: string | null; turnId?: string | null; parent?: string | null; stoppable?: boolean; waitMs?: number;
+}): Promise<EventOutcome> {
+  return runtime!.appendAndWait(SESSIONS, activityKey(a.sessionId), { type: 'Requested', payload: {
+    sessionId: a.sessionId, activityId: a.activityId, kind: a.kind, holder: a.holder,
+    label: a.label ?? null, turnId: a.turnId ?? null, parent: a.parent ?? null, stoppable: !!a.stoppable,
+  } }, { requestKey: `activity:${a.activityId}`, source: ACTIVITY_SOURCE, waitMs: a.waitMs ?? 5000 });
+}
+
+// An append is one insert, so an activity still ends after the runtime
+// stopped (a process shutting down ends what it holds after its drain): any
+// process running the machine applies it.
+export async function endActivity(sessionId: number, activityId: string, outcome = 'done'): Promise<void> {
+  const event = { type: 'Ended', payload: { sessionId, activityId, outcome } };
+  const o = { requestKey: `ended:${activityId}`, source: ACTIVITY_SOURCE };
+  if (runtime) await runtime.append(SESSIONS, activityKey(sessionId), event, o);
+  else await append(legacy('db/pool').getPool(), SESSIONS, activityKey(sessionId), event, o);
+}
+
+// A Stop for a session's turn that this process does not run: the machine
+// tells the process holding it. Rejected 'no_turn' when no live turn holds it.
+export async function stopSessionTurn(sessionId: number, stop: {
+  by: { id: number; username: string; canAdminWrite: boolean }; force: boolean; immediate: boolean; expectedTurnId: string | null;
+}): Promise<EventOutcome> {
+  return runtime!.appendAndWait(SESSIONS, activityKey(sessionId), { type: 'StopRequested', payload: { sessionId, ...stop } },
+    { requestKey: `stop:${randomUUID()}`, source: { kind: 'route', name: 'stop' }, actor: `user:${stop.by.id}` });
+}
+
+// The session's worker can go: now, or once nothing uses the session.
+export async function retireSession(sessionId: number, by: string): Promise<void> {
+  await runtime!.append(SESSIONS, activityKey(sessionId), { type: 'RetireRequested', payload: { sessionId, by } },
+    { requestKey: `retire:${randomUUID()}`, source: ACTIVITY_SOURCE });
+}
+
+// Which of these sessions another process's activity uses (a Mayor chat turn
+// alone does not count), as the session-activity machine records it.
+async function busySessions(sessionIds: number[]): Promise<Set<number>> {
+  const busy = new Set<number>();
+  for (const [id, list] of await readActivities(legacy('db/pool').getPool(), sessionIds)) {
+    if (list.some((a) => a.kind !== 'chat')) busy.add(id);
+  }
+  return busy;
+}
+
+// Through the app's pool, not the workflow runtime's small one.
+export const renewActivity = (activityId: string) => renewLease(legacy('db/pool').getPool(), activityId);
+export const readSessionActivities = (sessionIds: number[]) => readActivities(legacy('db/pool').getPool(), sessionIds);
 
 // ── The admin console ───────────────────────────────────────────────────
 

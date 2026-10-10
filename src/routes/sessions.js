@@ -239,6 +239,7 @@ const {
   isSessionBusy,
 } = require('../services/active-workers');
 const sessionState = require('../services/session-state');
+const sessionActivity = require('../services/session-activity');
 const turnWatchdog = require('../services/turn-watchdog');
 const recoveryRetry = require('../services/recovery-retry');
 const turnLifecycle = require('../services/turn-lifecycle');
@@ -1819,7 +1820,21 @@ async function resolveExplicitAgentPreference(client, userId, config, {
 // agent-dispatch.js). Under a row lock: refuses a closed or busy change,
 // switches the backend, model and effort, drops both resume ids, records the
 // reset in the change's transcript, then evicts the warm worker.
-async function switchSessionAgent(pool, { sessionId, userId, pref }) {
+// Switching the agent must not overlap a turn or an operation anywhere: it
+// is claimed as a turn on the session (session-activity.js) before the row
+// lock below, which only ever waits for this process's memory and the
+// journal (B10). An agent build that switches first is already inside its
+// own turn, and joins it.
+async function switchSessionAgent(pool, args) {
+  try {
+    return await sessionActivity.run(args.sessionId, 'turn', { label: 'agent switch' }, () => switchSessionAgentHeld(pool, args));
+  } catch (err) {
+    if (!(err instanceof sessionActivity.SessionBusyError)) throw err;
+    return { ok: false, status: 409, error: 'Session is busy; stop the current turn first.' };
+  }
+}
+
+async function switchSessionAgentHeld(pool, { sessionId, userId, pref }) {
   const resolved = pref.backend;
   const isCodex = resolved === 'codex_openrouter';
   // ── Phase 2: one checked-out client + explicit transaction ──
@@ -2044,6 +2059,19 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // goes to. It has no config of its own, so hand it the one this router
   // already built.
   sessionState.setPool(pool);
+
+  // A Stop for a turn this process runs, received by another process and
+  // sent here by the session-activity machine: the same stop as one clicked
+  // here. It never forwards again. Resolves false only when there was no
+  // turn here to stop yet (one that has not registered its stop handle),
+  // which the next lease renewal delivers again.
+  sessionActivity.setStopHandler(async (sessionId, stop) => {
+    const result = await requestSessionStop({
+      pool, sessionId, user: { ...stop.by }, force: stop.force, immediate: stop.immediate,
+      expectedTurnId: stop.expectedTurnId, scheduleInteractiveRecovery, forwarded: true,
+    });
+    return result.body?.reason !== NO_ACTIVE_TURN;
+  });
 
   // Per-app visibility gate for every session-id-addressed route below
   // (/api/sessions/:id/...): resolves the session's app and requires
@@ -2431,6 +2459,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const viewerLogin = rows.some((s) => s.source === 'imported')
         ? (await require('../services/github-link').linkStatus(pool, req.user.id)).login || null
         : null;
+      // Busy in another process too (session-activity.js), read once for the list.
+      const busyElsewhere = await sessionActivity.busyIds(rows.map((s) => s.id));
       let sessions = rows.map((s) => {
         const live = workerProgress.get(s.id);
         // #1959: the three columns selected for sessionAwaitsInput stop here.
@@ -2443,7 +2473,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return {
           ...row,
           ...(s.source === 'imported' ? { viewer_github_login: viewerLogin } : {}),
-          busy: isSessionBusy(s.id),
+          busy: isSessionBusy(s.id) || busyElsewhere.has(Number(s.id)),
           awaiting_input: sessionAwaitsInput({
             lastTurnRole, lastTurnAsks, prNumber: s.pr_number, specMd,
           }),
@@ -2626,10 +2656,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       }
 
       const byId = new Map();
+      const elsewhere = await sessionActivity.liveStates([...mine, ...visible].map((row) => row.id));
       for (const row of [...mine, ...visible]) {
         if (byId.has(row.id)) continue;
         const payload = sessionState.buildPayload(
-          row.id, row, sessionState.liveState(row.id)
+          row.id, row, sessionState.withElsewhere(sessionState.liveState(row.id), elsewhere.get(Number(row.id)))
         );
         if (sessionState.isIdleState(payload)) continue;
         byId.set(row.id, {
@@ -2903,9 +2934,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          ORDER BY cs.shared_at ASC`,
         [app.id]
       );
+      const busyElsewhere = await sessionActivity.busyIds(rows.map((s) => s.id));
       let sessions = rows.map((s) => ({
         ...s,
-        busy: isSessionBusy(s.id),
+        busy: isSessionBusy(s.id) || busyElsewhere.has(Number(s.id)),
       }));
       sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user?.id || null);
 
@@ -3380,7 +3412,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         user: { id: req.user.id, username: req.user.username },
         selectedModel, repoOwner, repoName, userApiKey,
         issueNumber, issue, comments, botUsername,
-      }).catch((err) => {
+      }).catch(async (err) => {
+        // Refused before it started (session-activity.js): nothing in the
+        // runner ran, so nothing else would end the row.
+        if (err instanceof sessionActivity.SessionBusyError) {
+          await failHeadlessRun(pool, session, `Auto session could not start: ${err.message}`).catch(() => {});
+          return;
+        }
         log.error('sessions', 'Headless session runner crashed', { sessionId: session.id, err: err.message, stack: err.stack });
       });
 
@@ -3736,7 +3774,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         ? (await enrichImportedUnderwaySessions(pool, [session], req.user.id, { all: true }))[0]
         : session;
       if (req.path.endsWith('/details')) {
-        detail.busy = isSessionBusy(Number(session.id));
+        detail.busy = isSessionBusy(Number(session.id)) || await sessionActivity.isBusy(session.id);
         // #2371: the author reviews a change before submitting it, and before
         // then its only description is the spec. Read separately and only for
         // the owner of an underway change, so the shared projection above
@@ -4362,9 +4400,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!Number.isInteger(sessionId) || sessionId <= 0) {
         return res.status(400).json({ error: 'Bad session id' });
       }
-      const result = await sessionLifecycle.unpromoteSession({
-        pool, sessionId, userId: req.user.id, actorUsername: req.user.username,
-      });
+      // Moving it back is an operation on the proposal (session-activity.js):
+      // a turn or branch move in another process makes it busy too.
+      const gate = await sessionActivity.tryBegin(sessionId, 'operation', { label: 'unpromote' });
+      let result;
+      try {
+        result = await sessionLifecycle.unpromoteSession({
+          pool, sessionId, userId: req.user.id, actorUsername: req.user.username, busyElsewhere: !!gate.refused,
+        });
+      } finally {
+        gate.activity?.end();
+      }
       if (result.ok) {
         return res.json({ ok: true, status: result.status, ...(result.already ? { alreadyUnderway: true } : {}) });
       }
@@ -4973,7 +5019,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // instead. When the in-flight turn IS a sync, fall through:
       // runSyncMain coalesces and this caller joins the running sync.
       if (!syncMainSvc.getSyncState(sessionId)
-          && isSessionBusy(sessionId)) {
+          && (isSessionBusy(sessionId) || await sessionActivity.isBusy(sessionId))) {
         return res.status(409).json({
           error: 'Claude is still working in this session. Wait for the turn to finish before syncing.',
           busy: true,
@@ -4983,6 +5029,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const result = await syncMainSvc.runSyncMain(config, pool, sessionId, { sessionRow: session });
       res.json(result);
     } catch (err) {
+      // Refused by what another process runs on the session
+      // (session-activity.js): the same answer as one running here.
+      if (err instanceof sessionActivity.SessionBusyError) {
+        return res.status(409).json({
+          error: 'Claude is still working in this session. Wait for the turn to finish before syncing.',
+          busy: true,
+        });
+      }
       log.error('sessions', 'sync-main failed', { sessionId, err: err.message });
       res.status(500).json({ error: err.message || 'Internal server error' });
     }
@@ -5806,6 +5860,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // safety net for adopted workers and the brief period between
     // adding to activeWorkers and registering with the warm registry.
     let busy = isSessionBusy(sessionId);
+    // A turn or operation in another process, and whether a Stop is on its
+    // way to it: what this process's memory cannot see (session-activity.js,
+    // B4). A Mayor chat turn there is not busy but can be stopped.
+    const elsewhere = (await sessionActivity.read([sessionId])).get(sessionId) || [];
+    if (elsewhere.some((a) => a.kind !== 'chat')) busy = true;
     // #906 staging fixtures — see stagingCohortFixtureSessions above.
     let fixtureStoppable = null;
     if (!busy) {
@@ -5883,7 +5942,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     const durableRecoverable = !!durableTurn
       && turnLifecycle.RECOVERABLE_PHASES.has(turnLifecycle.phaseOf(durableTurn));
     const stoppable = fixtureStoppable === null
-      ? (!!stopHandleNow || durableRecoverable)
+      ? (!!stopHandleNow || durableRecoverable || elsewhere.some((a) => a.kind === 'turn' || a.kind === 'chat'))
       : fixtureStoppable;
 
     // #889: a stop has been requested for this turn but it hasn't unwound
@@ -5896,7 +5955,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // without the fallback the client repaints a calm red Stop for a turn
     // that is already ending.
     const durableStop = turnLifecycle.stopRequestOf(durableTurn);
-    const stopping = stopHandleNow ? !!stopHandleNow.stopped : !!durableStop;
+    const stopping = stopHandleNow ? !!stopHandleNow.stopped : (!!durableStop || elsewhere.some((a) => a.stopping));
 
     // #4533: what the running turn is and since when, off its record, for
     // get_change: a busy change said nothing of what held it (PR #4533's
@@ -6545,6 +6604,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // claim and overlap the next web coding turn. Treat every existing
       // session-owned pipeline as the run the user is trying to request.
       if (isSessionBusy(sessionId)
+          || await sessionActivity.isBusy(sessionId)
           || staging.hasInFlightBuild(sessionId)
           || visuals.hasInFlightCapture(sessionId)) {
         return res.json({ status: 'running' });
@@ -7073,7 +7133,12 @@ async function settleHeadlessMayorUsage({
   return costCents;
 }
 
-async function runHeadlessSession({
+// A headless run, its dispatches and its wrap-up are one activity.
+async function runHeadlessSession(args) {
+  return sessionActivity.run(args.session.id, 'turn', { label: 'headless run' }, () => runHeadlessSessionTurn(args));
+}
+
+async function runHeadlessSessionTurn({
   pool, config, session, user, selectedModel,
   repoOwner, repoName, userApiKey, issueNumber, issue,
   comments = [], botUsername = null,
@@ -8567,7 +8632,15 @@ async function failHeadlessRun(pool, session, message, { activeTurn = null } = {
   });
 }
 
+// The resumed run continues the journal's turn: it names that turn, which
+// the turn's own journal does not keep out (session-activity machine).
 async function resumeOneHeadlessRun(args) {
+  return sessionActivity.run(args.session.id, 'turn', {
+    label: 'resumed headless run', turnId: turnLifecycle.turnIdentity(args.session.active_turn),
+  }, () => resumeOneHeadlessRunHeld(args));
+}
+
+async function resumeOneHeadlessRunHeld(args) {
   // Register the whole resumed run in the shared activeWorkers set so
   // the auto-pause / staging-GC sweepers see the session as busy for the
   // full recovery (journal tail + staging + wrap-up) — mirrors
@@ -9303,7 +9376,12 @@ async function ensureBranchForDispatch(pool, session) {
   return ensured.branchName;
 }
 
-async function runScoutTool({
+// A scout turn is an activity on its session, as runClaudeCodeTool's is.
+async function runScoutTool(args) {
+  return sessionActivity.run(args.session.id, 'turn', { label: 'scout turn' }, () => runScoutToolTurn(args));
+}
+
+async function runScoutToolTurn({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
   // #450: pre-rendered "==== USER-ATTACHED FILES ====" block for the
@@ -10505,7 +10583,11 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 // receives an HTTP-shaped result with common ownership, durable intent and
 // confirmation. Agent conversations request immediate hard cancellation;
 // classic sessions retain their existing stop/force escalation policy.
-async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null }) {
+// What a Stop answers when this process runs no turn to stop. A Stop sent
+// here from another process is delivered again until it is anything else.
+const NO_ACTIVE_TURN = 'no active turn';
+
+async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null, forwarded = false }) {
     // #1378: owner OR an admin who is allowed to WRITE. GET
     // /api/sessions/:id is admin-readable and GET .../status has no
     // ownership guard at all, so an admin could already watch someone
@@ -10556,6 +10638,28 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
       ? (handle?.phase === 'mayor2' ? 'wrap_up_not_stoppable' : handle ? 'force' : 'force_orphan')
       : stopPolicy.classifyStopRequest({ handle, force: forceRequested });
 
+    // No turn here to stop: with the session-activity machine on, the
+    // process that runs it is told, and stops it the way it would stop a
+    // click of its own, as a stop and not as a failure (B3). Only when no
+    // process holds a live turn does this one act on the turn's journal.
+    if (!forwarded && (action === 'no_active_turn' || action === 'force_orphan')) {
+      // Stamped first, as every stop is: if the process running the turn
+      // dies before it acts, recovery still reads that a stop was asked.
+      if (sessionActivity.wanted()) {
+        const durable = await turnLifecycle.loadActiveTurn(pool, sessionId).catch(() => null);
+        if (durable && (durable.turnId || durable.journal)) {
+          await turnLifecycle.markStopRequested(pool, {
+            sessionId, turnId: durable.turnId || null, journal: durable.journal || null, by: user.username,
+          }).catch((err) => log.warn('sessions', 'Durable stop stamp failed', { sessionId, err: err.message }));
+        }
+      }
+      const sent = await sessionActivity.forwardStop(sessionId, {
+        by: { id: user.id, username: user.username, canAdminWrite: user.canAdminWrite === true },
+        force: forceRequested, immediate, expectedTurnId,
+      });
+      if (sent) return { status: 202, body: { ok: true, stopped: true, stopping: true, forwarded: true } };
+    }
+
     if (immediate && action !== 'wrap_up_not_stoppable') {
       const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
       if (expectedTurnId && turnLifecycle.turnIdentity(durable) !== expectedTurnId) {
@@ -10585,7 +10689,11 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
         // A different process may own the journal consumer. The durable
         // request survives its restart; signalling the worker ends the job,
         // and only its normal cleanup/recovery releases the busy record.
-        await worker.stopTurn(sessionId);
+        // A pending stop is recorded only where the turn runs: a bot,
+        // headless or sync turn runs here without a stop handle, and its
+        // next step must see the stop; a process running none must not
+        // refuse its own next dispatch over it (B5).
+        await worker.stopTurn(sessionId, { recordPending: runsTurnHere(sessionId) });
         await scheduleRetainedInteractiveTurn({ pool, sessionId, scheduleInteractiveRecovery });
         return { status: 202, body: { stopped: true, stopping: true } };
       }
@@ -10607,7 +10715,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, immedi
         by: user.username,
       });
       return { status: 200, body: {
-        ok: true, stopped: false, reason: 'no active turn', hasDurableTurn,
+        ok: true, stopped: false, reason: NO_ACTIVE_TURN, hasDurableTurn,
       } };
     }
     if (action === 'force_orphan') {
@@ -10835,6 +10943,12 @@ async function confirmStopLanded(sessionId, handle) {
 // request to do it: that request may be the wedged thing we're rescuing
 // the user from. The duplicate `stopped`/`done` it emits afterwards is
 // harmless — the client's stopping-state helpers are idempotent.
+// Whether this process runs a turn of the session, stop handle or not:
+// its turn registry or its worker registry has it.
+function runsTurnHere(sessionId) {
+  return activeWorkers.has(sessionId) || !!worker.getActiveTurnMode(sessionId) || !!worker.isInFlight(sessionId);
+}
+
 async function forceStopSession(pool, sessionId, username, handle, { immediate = false, expectedTurnId = null } = {}) {
   const containerName = handle?.workerName || worker.workerContainerName(sessionId);
 
@@ -10863,14 +10977,16 @@ async function forceStopSession(pool, sessionId, username, handle, { immediate =
   if (immediate) {
     // No initial probe, TERM grace period, retry timer or second button.
     // The worker confirms its process tree is gone in the same command.
-    const killed = await worker.stopTurn(sessionId, { force: true }).catch(() => false);
+    // A pending stop only where the turn runs (B5): with a handle, or a
+    // turn of this process's without one (a bot's, a headless or sync turn).
+    const killed = await worker.stopTurn(sessionId, { force: true, recordPending: !!handle || runsTurnHere(sessionId) }).catch(() => false);
     // A root-only idle probe cannot rule out a surviving tool child after
     // an incomplete tree kill. Without confirmation, evict the whole worker.
     executing = killed ? false : null;
   } else {
     executing = await worker.isWorkerExecuting(containerName);
     if (executing !== false) {
-      await worker.stopTurn(sessionId).catch(() => {});
+      await worker.stopTurn(sessionId, { recordPending: !!handle || runsTurnHere(sessionId) }).catch(() => {});
       await sleepMs(stopPolicy.STOP_PROBE_INTERVAL_MS);
       executing = await worker.isWorkerExecuting(containerName);
     }
@@ -11428,7 +11544,15 @@ async function canReuseHostedClaudeScoutSpec(pool, sessionId, currentSpec) {
   return rows[0]?.reusable === true;
 }
 
-async function runClaudeCodeTool({
+// A coding turn is an activity on its session (services/session-activity.js):
+// with WF_SESSION_ACTIVITY_ENABLED on, the session-activity machine grants
+// it first, and a dispatch this process already runs on the session (the
+// Mayor's, a headless run's) is joined rather than asked again.
+async function runClaudeCodeTool(args) {
+  return sessionActivity.run(args.session.id, 'turn', { label: 'coding turn' }, () => runClaudeCodeToolTurn(args));
+}
+
+async function runClaudeCodeToolTurn({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
   // #450: current-turn user attachments block — see runScoutTool.

@@ -466,7 +466,9 @@ test('the agent-session first Stop goes straight to a hard kill, including a rec
         immediate: true, force: true, expectedTurnId: 'turn-xyz' });
       assert.equal(answer.status, 200);
       assert.equal(answer.body.stopped, true);
-      assert.deepEqual(calls, [['kill', SESSION_ID, { force: true }]]);
+      // Without a handle the turn is not this process's: the kill records no
+      // pending stop here (B5); with one, it does.
+      assert.deepEqual(calls, [['kill', SESSION_ID, { force: true, recordPending: withHandle }]]);
       assert.ok(capturedQueries.some((q) => /stopRequestedAt/.test(q.sql)));
     } finally {
       workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe;
@@ -486,7 +488,8 @@ test('a failed immediate kill escalates automatically and keeps ownership if ter
   try {
     await assert.rejects(requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
       immediate: true, force: true, expectedTurnId: 'turn-xyz' }), /Could not confirm/);
-    assert.deepEqual(calls, [['kill', { force: true }], ['evict']]);
+    // The turn runs here (activeWorkers), so the stop is pending here too.
+    assert.deepEqual(calls, [['kill', { force: true, recordPending: true }], ['evict']]);
     assert.equal(activeWorkers.has(SESSION_ID), true);
   } finally {
     workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe; workerMod.evictWorker = original.evict;
@@ -510,5 +513,38 @@ test('an unacknowledged hard kill still evicts when a root-only probe would say 
   } finally {
     workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe;
     workerMod.evictWorker = original.evict; workerMod.clearActiveTurn = original.clear;
+  }
+});
+
+// With the session-activity machine on, a Stop with no turn here goes to the
+// process that runs it (services/session-activity.js), after the journal's
+// stop stamp; a Stop that was forwarded is never forwarded again.
+test('a Stop for a turn another process runs is stamped, then sent there; a forwarded one is not sent again', async () => {
+  const sessionActivity = require('../src/services/session-activity');
+  const original = { wanted: sessionActivity.wanted, forward: sessionActivity.forwardStop, stop: workerMod.stopTurn };
+  const forwarded = [];
+  sessionActivity.wanted = () => true;
+  sessionActivity.forwardStop = async (sessionId, stop) => { forwarded.push({ sessionId, by: stop.by.username }); return true; };
+  workerMod.stopTurn = async () => { throw new Error('the turn is not this process\'s to kill'); };
+  stopRegistry._reset();
+  try {
+    routeQueries({ activeTurn: durableTurn() });
+    capturedQueries = [];
+    const sent = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID });
+    assert.equal(sent.status, 202);
+    assert.equal(sent.body.forwarded, true);
+    assert.deepEqual(forwarded, [{ sessionId: SESSION_ID, by: OWNER.username }]);
+    const stamp = capturedQueries.findIndex((q) => /stopRequestedAt/.test(q.sql));
+    assert.ok(stamp >= 0, 'the journal records the stop first, for recovery');
+
+    forwarded.length = 0;
+    routeQueries({ activeTurn: null });
+    const again = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID, forwarded: true });
+    assert.deepEqual(forwarded, [], 'never forwarded twice');
+    assert.equal(again.body.reason, 'no active turn', 'delivered again by the next renewal');
+  } finally {
+    sessionActivity.wanted = original.wanted;
+    sessionActivity.forwardStop = original.forward;
+    workerMod.stopTurn = original.stop;
   }
 });

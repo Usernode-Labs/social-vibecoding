@@ -18,8 +18,11 @@ const { boundary, readBaseline, BASELINE } = require('./lib/workflow-boundary');
 
 // The machines that predate the list. Any other machine may enter it only
 // with the other writers of its own columns (removed by the end of its step,
-// when the legacy paths go); nothing else.
+// when the legacy paths go) and what its work handlers call to do their I/O
+// (a container runtime's client): never in its transitions, its notifiers or
+// its own state.
 const PREDATE = new Set(['governance-proposal', 'merge-followups', 'platform', 'kernel']);
+const NEW_MACHINE_MAY_LIST = /^(ownership|services \| uses) /;
 
 test('the workflow machines cross no new boundary into code not migrated yet', () => {
   const baseline = readBaseline();
@@ -35,7 +38,7 @@ test('the workflow machines cross no new boundary into code not migrated yet', (
     }
     if (!PREDATE.has(name)) {
       for (const entry of listed) {
-        if (!entry.startsWith('ownership | ')) problems.push(`${name}: a new machine may list only other writers of its columns, not "${entry}"`);
+        if (!NEW_MACHINE_MAY_LIST.test(entry)) problems.push(`${name}: a new machine may list only other writers of its columns and its work handlers' I/O, not "${entry}"`);
       }
     }
   }

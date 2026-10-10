@@ -197,7 +197,9 @@ test('/status exposes stopping so a reload repaints the Stopping button', () => 
   // fallback a reload repaints a calm red Stop for a turn already ending.
   assert.match(SRC, /const\s+stopHandleNow\s*=\s*stopRegistry\.get\(sessionId\);/,
     '/status still reads the live stop registry');
-  assert.match(SRC, /const\s+stopping\s*=\s*stopHandleNow\s*\?\s*!!stopHandleNow\.stopped\s*:\s*!!durableStop;/,
+  // With the session-activity machine on, a stop on its way to another
+  // process's turn counts too.
+  assert.match(SRC, /const\s+stopping\s*=\s*stopHandleNow\s*\?\s*!!stopHandleNow\.stopped\s*:\s*\(!!durableStop \|\| elsewhere\.some\(\(a\) => a\.stopping\)\);/,
     '/status derives stopping from the handle, falling back to the durable stop stamp');
   assert.match(SRC, /const\s+durableStop\s*=\s*turnLifecycle\.stopRequestOf\(durableTurn\);/,
     'and the durable half comes from the turn record via stopRequestOf');

@@ -27,6 +27,7 @@ const openRouterMayor = require('../openrouter-mayor');
 const prMetadata = require('../pr-metadata');
 const sessionBus = require('../session-bus');
 const sessionTitles = require('../session-title');
+const sessionActivity = require('../session-activity');
 const stopRegistry = require('../stop-registry');
 const turnEffects = require('../turn-effects');
 const userAgentFiles = require('../user-agent-files');
@@ -376,6 +377,13 @@ async function runMayorTurn(ctx, deps) {
     send,
   });
 
+  // The Mayor's turn is a 'chat' activity on the session
+  // (services/session-activity.js). It keeps nothing out; it is how a Stop
+  // that lands on another process finds this one, from the first phase on.
+  // A turn it cannot record still runs: only that forwarding is lost.
+  const chatActivity = await sessionActivity.begin(session.id, 'chat', { label: 'chat turn', stoppable: true }).catch(() => null);
+  chatActivity?.enter();
+
   try {
     // Parse repo info
     const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -398,6 +406,7 @@ async function runMayorTurn(ctx, deps) {
       send('done', {});
       res.end();
       stopRegistry.deleteIf(session.id, stopHandle);
+      chatActivity?.end();
       setTimeout(() => sessionBus.clearSession(session.id), 30000);
       return;
     }
@@ -436,7 +445,11 @@ async function runMayorTurn(ctx, deps) {
       const directSpec = await loadSessionSpec(pool, session.id);
       turnHasSpec = !!String(directSpec || '').trim();
 
-      if (isSessionBusy(session.id)) {
+      // Claimed atomically across processes by the session-activity
+      // machine when it runs, as well as in this process's memory.
+      const dispatchGate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'coding turn', stoppable: true });
+      if (dispatchGate.refused || isSessionBusy(session.id)) {
+        dispatchGate.activity?.end();
         const live = workerProgress.get(session.id);
         const busyIdentity = live?.backend
           ? {
@@ -456,7 +469,9 @@ async function runMayorTurn(ctx, deps) {
         return;
       }
 
-      releaseDispatchOperation = beginSessionOperation(session.id);
+      dispatchGate.activity?.enter();
+      const releaseOperation = beginSessionOperation(session.id);
+      releaseDispatchOperation = () => { releaseOperation(); dispatchGate.activity?.end(); };
       send('assistant_message_end', {});
 
       let attachmentsBlock = '';
@@ -507,6 +522,7 @@ async function runMayorTurn(ctx, deps) {
         // route's own `finally` re-running them is harmless.
         if (releaseDispatchOperation) releaseDispatchOperation();
         stopRegistry.deleteIf(session.id, stopHandle);
+        chatActivity?.end();
         send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
         send('done', {});
         res.end();
@@ -609,6 +625,7 @@ async function runMayorTurn(ctx, deps) {
       // first; the route's `finally` repeating both is a no-op.
       if (releaseDispatchOperation) releaseDispatchOperation();
       stopRegistry.deleteIf(session.id, stopHandle);
+      chatActivity?.end();
       // #2500: the opening trim gave this session a name before the
       // turn ran; now that the turn has produced something, re-title it
       // from everything known so far, exactly as the Claude paths do.
@@ -729,7 +746,7 @@ async function runMayorTurn(ctx, deps) {
     // alive". Treating warm-idle as busy here would falsely lock
     // the Mayor out of dispatch_scout / dispatch_claude_code for
     // the entire idle-eviction window of a previous turn.
-    const isWorkerBusy = isSessionBusy(session.id);
+    const isWorkerBusy = isSessionBusy(session.id) || await sessionActivity.isBusy(session.id);
     // Inject the live spec_md into the Mayor's system prompt every
     // turn so revisions anchor against real content instead of
     // regenerating from scratch. Re-read before phase-2 below in
@@ -1054,6 +1071,7 @@ async function runMayorTurn(ctx, deps) {
         send('done', {});
         res.end();
         stopRegistry.deleteIf(session.id, stopHandle);
+        chatActivity?.end();
         setTimeout(() => sessionBus.clearSession(session.id), 30000);
         return;
       }
@@ -1236,6 +1254,7 @@ async function runMayorTurn(ctx, deps) {
           send('done', {});
           res.end();
           stopRegistry.deleteIf(session.id, stopHandle);
+          chatActivity?.end();
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
           return;
         }
@@ -1392,7 +1411,9 @@ async function runMayorTurn(ctx, deps) {
     // gating on container-status would reject every scout/build
     // for ~10 min after the first dispatch finishes (warm idle is
     // not busy).
-    if (isSessionBusy(session.id)) {
+    const dispatchGate = await sessionActivity.tryBegin(session.id, 'turn', { label: 'coding turn', stoppable: true });
+    if (dispatchGate.refused || isSessionBusy(session.id)) {
+      dispatchGate.activity?.end();
       const live = workerProgress.get(session.id);
       const busyAgent = live?.backend
         ? {
@@ -1415,8 +1436,12 @@ async function runMayorTurn(ctx, deps) {
     // Claim the session before any async dispatch preparation. Local MCP
     // proposal submissions use the same registry, so neither surface can
     // pass a point-in-time busy check and then mutate the branch while the
-    // other is awaiting DB/GitHub work.
-    releaseDispatchOperation = beginSessionOperation(session.id);
+    // other is awaiting DB/GitHub work. With the session-activity machine
+    // on, the claim above is atomic across processes too, and the dispatch
+    // runs inside it (the coding turn joins it rather than asking again).
+    dispatchGate.activity?.enter();
+    const releaseOperation = beginSessionOperation(session.id);
+    releaseDispatchOperation = () => { releaseOperation(); dispatchGate.activity?.end(); };
 
     // Seal the phase-1 assistant bubble so the phase-2 wrap-up
     // lands in a fresh bubble below the CC status/progress events.
@@ -1559,6 +1584,7 @@ async function runMayorTurn(ctx, deps) {
         send('done', {});
         res.end();
         stopRegistry.deleteIf(session.id, stopHandle);
+        chatActivity?.end();
         setTimeout(() => sessionBus.clearSession(session.id), 30000);
         return;
       }
@@ -1603,6 +1629,7 @@ async function runMayorTurn(ctx, deps) {
         send('done', {});
         res.end();
         stopRegistry.deleteIf(session.id, stopHandle);
+        chatActivity?.end();
         setTimeout(() => sessionBus.clearSession(session.id), 30000);
         return;
       }
@@ -1973,6 +2000,7 @@ async function runMayorTurn(ctx, deps) {
     // one we registered (another turn may have replaced it if the
     // client somehow fired a second POST before this one finished).
     stopRegistry.deleteIf(session.id, stopHandle);
+    chatActivity?.end();
   }
 
   // #249: covers every turn that reached the main exit without a PR

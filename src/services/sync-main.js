@@ -167,7 +167,12 @@ async function runSyncMain(config, pool, sessionId, opts = {}) {
   const releaseOperation = beginSessionOperation(key);
   const entry = { phase: 'starting', startedAt: Date.now(), promise: null };
   _inFlightSyncs.set(key, entry);
-  entry.promise = runSyncMainInner(config, pool, sessionId, opts, entry)
+  // The whole sync, its own turn included, is one activity on the session
+  // (services/session-activity.js): a turn, since it runs one. With the
+  // session-activity machine on, another process's turn or branch move
+  // refuses it before it starts.
+  entry.promise = require('./session-activity').run(key, 'turn', { label: 'sync with main' },
+    () => runSyncMainInner(config, pool, sessionId, opts, entry))
     .finally(() => {
       if (_inFlightSyncs.get(key) === entry) _inFlightSyncs.delete(key);
       releaseOperation();

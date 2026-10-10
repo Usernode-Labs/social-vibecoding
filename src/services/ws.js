@@ -79,6 +79,11 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       void require('./account-deletion-runtime').receive(_pool, r.userId)
         .catch(() => log.warn('ws', 'Account stream cleanup will retry'));
       return;
+    case 'session_stop':
+      // A Stop for a chat session's turn, from the session-activity
+      // machine: only the process holding that turn acts on it.
+      if (!oversize) require('./session-activity').stopArrived(payload);
+      return;
     case 'agent_stop':
       if (!oversize) void require('./mayor/agent-turn').receiveStopRequest(_pool, payload)
         .catch(() => log.warn('ws', 'Agent stop notification will retry from durable state'));
