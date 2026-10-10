@@ -248,12 +248,21 @@
     }());
   </script>
   <script>
-    // No Home before the first screen of a first run: the "You're in"
-    // mail's link, and "What do you want to make?" across a reload.
+    // No Home before a first screen that is not Home: the signed-out
+    // landing, the "You're in" mail's link, and "What do you want to make?"
+    // across a reload.
     //
     // The prerendered markup is Home, and it paints before any script has
-    // run. Two documents are about to show something else, so they hold the
-    // body hidden from before that first paint, and the page ground shows:
+    // run. Three documents are about to show something else, so they hold
+    // the body hidden from before that first paint, and the page ground
+    // shows:
+    //
+    //   - A browser with no saved session (App.SESSION_SNAPSHOT_KEY in
+    //     public/js/app.js, written on sign-in and cleared on sign-out):
+    //     nobody is signed in here, never or not since signing out, so the
+    //     first screen is the landing. Evan, 10 Oct 2026: refreshing the
+    //     signed-out welcome page showed Home's skeleton first. A browser
+    //     that was signed in keeps the skeleton, since Home is what comes.
     //
     //   - A waitlist "You're in" link (`?signup=1` / `?login=1`, the shapes
     //     sendWaitlistReleaseMail writes). It opens signed out, on the
@@ -272,6 +281,7 @@
     (function () {
       var hold = false;
       try { hold = sessionStorage.getItem('usernode:first-session:make') === '1'; } catch (_) {}
+      try { if (!hold) hold = !localStorage.getItem('usernode.session.v1'); } catch (_) {}
       try {
         if (!hold && !location.hash) {
           var query = new URLSearchParams(location.search);

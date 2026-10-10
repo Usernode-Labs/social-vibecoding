@@ -36,6 +36,7 @@ const FIRST_SESSION = read('frontend/src/features/first-session/index.tsx');
 const LANDING = read('frontend/src/features/auth/landing.tsx');
 
 const MAKE_FLAG = /const MAKE_FLAG = '([^']+)';/.exec(FIRST_SESSION)[1];
+const SNAPSHOT_KEY = /SESSION_SNAPSHOT_KEY: '([^']+)',/.exec(APP)[1];
 
 // The head's hold script, the one inline block that reads the make flag.
 function holdScript() {
@@ -45,13 +46,16 @@ function holdScript() {
   return hold[0];
 }
 
-function runHold(flag, { search = '', hash = '' } = {}) {
+// `saved` is the browser's saved session (App.SESSION_SNAPSHOT_KEY): one is
+// there unless a case says otherwise, and `null` stands for none.
+function runHold(flag, { search = '', hash = '', saved = '{"user":{"id":7}}', blocked = false } = {}) {
   const classes = new Set();
   const timers = [];
   const sandbox = {
     URLSearchParams,
     location: { search, hash },
     sessionStorage: { getItem: (k) => (k === MAKE_FLAG ? flag : null) },
+    localStorage: { getItem: (k) => { if (blocked) throw new Error('blocked'); return k === SNAPSHOT_KEY ? saved : null; } },
     document: { documentElement: { classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) } } },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); },
   };
@@ -95,6 +99,25 @@ test('the head holds the body only while the make flag is set, with a floor', ()
   assert.match(style, /html\.first-session-boot body \{ visibility: hidden; \}/);
   // Head-blocking, after the theme block that must run first.
   assert.ok(HEAD.indexOf('window.Theme') < HEAD.indexOf("classList.add('first-session-boot')"));
+});
+
+// Evan, 10 Oct 2026: refreshing the signed-out welcome page showed Home's
+// skeleton before it. A browser with no saved session is signed out (never
+// signed in here, or signed out since, which clears it), so its first screen
+// is the landing: held on the page ground until the shell draws it. One that
+// was signed in keeps the skeleton, since Home is what comes.
+test('no saved session holds the body too: the landing, not Home\'s skeleton, is next', () => {
+  assert.equal(SNAPSHOT_KEY, 'usernode.session.v1');
+  assert.ok(holdScript().includes(`localStorage.getItem('${SNAPSHOT_KEY}')`), 'the head reads the key the shell writes');
+  assert.match(APP, /clearSessionSnapshot\(\) \{\s+try \{ localStorage\.removeItem\(App\.SESSION_SNAPSHOT_KEY\); \}/);
+  const signedOut = runHold(null, { saved: null });
+  assert.deepEqual([...signedOut.classes], ['first-session-boot']);
+  assert.equal(signedOut.timers[0].ms, 8000, 'with the same floor');
+  assert.equal(runHold(null, { saved: null, search: '?shot=dark', hash: '#login' }).classes.size, 1, 'whatever the address');
+  assert.equal(runHold(null).classes.size, 0, 'a browser that was signed in keeps the skeleton');
+  assert.equal(runHold(null, { blocked: true }).classes.size, 0, 'storage blocked: nothing known, nothing held');
+  // The signed-out boot lifts it once the landing is drawn.
+  assert.match(APP, /if \(window\.AuthScreens\) AuthScreens\.enter\(\);\s+App\._liftFirstSessionBoot\(\);/);
 });
 
 test('the shell lifts the hold at every way its boot ends', () => {
