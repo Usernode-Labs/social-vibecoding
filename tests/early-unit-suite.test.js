@@ -46,7 +46,12 @@ function setup(t, { running = 0, unitEnabled = true } = {}) {
   const deleted = [];
   const started = [];
   const resolvers = [];
-  t.mock.method(kubernetes, 'deleteCheckJob', async (cfg, name) => { deleted.push(name); return true; });
+  // Every Job of the run goes, its shards with it; recorded by the run's
+  // base Job name so the assertions read as before.
+  t.mock.method(kubernetes, 'deleteRunCheckJobs', async (cfg, { sessionId, previewRunId }) => {
+    deleted.push(early.jobName(sessionId, previewRunId));
+    return 1;
+  });
   t.mock.method(kubernetes, 'countRunningUnitSuiteJobs', async () => running);
   const unitSuite = {
     isEnabled: () => unitEnabled,
@@ -108,6 +113,14 @@ test('does not start while the cluster already runs as many unit suites as the q
   const { started, deps } = setup(t, { running: 3 });
   assert.ok(await early.maybeStart(config, { session, app, commitHash: SHA, pool: poolFor(), deps }));
   assert.equal(started.length, 1);
+});
+
+test('not for a head whose last checks errored: the preview that does not boot, rebuilt again and again', async (t) => {
+  const { started, deps } = setup(t);
+  assert.equal(await early.maybeStart(config, { session, app, commitHash: SHA, pool: poolFor({ consecutive_check_failures: 860 }), deps }), null);
+  assert.equal(started.length, 0);
+  assert.ok(await early.maybeStart(config, { session, app, commitHash: SHA, pool: poolFor({ consecutive_check_failures: 0 }), deps }),
+    'a head whose checks have not errored starts as before');
 });
 
 test('one per session: the same head joins it, a newer head stops it and starts its own', async (t) => {
@@ -196,6 +209,8 @@ test('the build starts it, detached; the checks run takes it over and records wh
   const staging = read('staging.js');
   const build = staging.slice(staging.indexOf('async function buildAndDeployStaging'), staging.indexOf('function reportBuildStep'));
   assert.match(build, /if \(commitHash && commitHash !== 'latest'\) \{\s+lifecycle\.detach\(\(\) => require\('\.\/early-unit-suite'\)\.maybeStart\(config, \{ session, app, commitHash \}\)\);/);
+  assert.match(build, /promise\.catch\(\(\) => require\('\.\/early-unit-suite'\)\.cancel\(config, session\.id, 'the preview build failed', \{ commitHash \}\)\);/,
+    'a build that fails stops the suite it started');
   assert.ok(build.indexOf('early-unit-suite') < build.indexOf('_stagingBuilds.get(key)'), 'before the build, not after it');
 
   const visuals = read('visuals.js');

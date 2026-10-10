@@ -172,6 +172,12 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
     () => withResourceUse(config, STAGING_BUILD_LOCK, key, () => buildAndDeployStagingInner(config, session, app, commitHash)),
     () => withResourceUse(config, STAGING_BUILD_LOCK, key, () => buildAndDeployStagingInner(config, session, app, commitHash))
   );
+  // A build that failed has no checks run to come: stop the unit suite it
+  // started (services/early-unit-suite.js). Its own branch, so the caller
+  // still gets the build's real error.
+  if (commitHash && commitHash !== 'latest') {
+    promise.catch(() => require('./early-unit-suite').cancel(config, session.id, 'the preview build failed', { commitHash }));
+  }
   // The stored tail never rejects, so waiters always run and no unhandled
   // rejection is parked on the chain; callers still get the real result
   // or the real error via `promise`.
