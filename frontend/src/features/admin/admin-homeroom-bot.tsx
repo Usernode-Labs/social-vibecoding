@@ -77,6 +77,10 @@ interface Settings {
   liveAtOnce: number;
   perPerson: number;
   dmChat: boolean;
+  // Its voice outside the DM (homeroom-bot-voice.js), one switch per place.
+  voiceSession?: boolean;
+  voiceIssue?: boolean;
+  voiceChat?: boolean;
   // Whether reading a request again continues the conversation that read it
   // last, rather than starting from the repository again.
   continueReads?: boolean;
@@ -1031,6 +1035,9 @@ interface Form {
   botCap: string;
   userCap: string;
   dmChat: boolean;
+  voiceSession: boolean;
+  voiceIssue: boolean;
+  voiceChat: boolean;
   continueReads: boolean;
   liveBuildStream: boolean;
   shadowBuildPlatform: boolean;
@@ -1051,6 +1058,9 @@ const FIELD_LABEL: Record<FormKey, string> = {
   botCap: "the bot's weekly budget",
   userCap: 'the budget per person',
   dmChat: 'reading DMs',
+  voiceSession: 'answering on its changes',
+  voiceIssue: 'answering on requests',
+  voiceChat: 'answering in chats',
   continueReads: 'continuing its last read',
   liveBuildStream: 'Live while a first version builds',
   shadowBuildPlatform: 'side builds of Homeroom',
@@ -1075,6 +1085,9 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     botCap: p.bot ? (p.bot.weeklyLimitCents / 100).toFixed(2) : '',
     userCap: ((s.userWeeklyCents ?? 5000) / 100).toFixed(2),
     dmChat: s.dmChat !== false,
+    voiceSession: s.voiceSession !== false,
+    voiceIssue: s.voiceIssue !== false,
+    voiceChat: s.voiceChat !== false,
     continueReads: s.continueReads !== false,
     liveBuildStream: s.liveBuildStream !== false,
     shadowBuildPlatform: !!s.shadowBuildPlatform,
@@ -1124,7 +1137,8 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
   for (const key of dirty) {
     if (key === 'mode') patch.mode = form.mode;
     else if (key === 'pausedApps') patch.pausedApps = [...new Set(form.pausedApps.filter(Boolean))];
-    else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuildPlatform') patch[key] = form[key];
+    else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuildPlatform'
+      || key === 'voiceSession' || key === 'voiceIssue' || key === 'voiceChat') patch[key] = form[key];
     else if (key === 'models') {
       const changed: Record<string, string> = {};
       for (const m of MODEL_STAGES) {
@@ -1863,6 +1877,32 @@ function HomeroomBotSection() {
                   : ''}
                 It brings each of their requests&apos; questions (with answers to tap) and its progress to their DM, can file a
                 new request when they tap File it, and builds a project they create from a description.
+              </p>
+            </div>
+
+            <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-voice">
+              <div className={AdminUI.cardHeader}>
+                <h3 className={AdminUI.cardTitle}>Talking outside DMs</h3>
+                <span className={AdminUI.cardDescription}>It answers in its own words, where it was asked.</span>
+              </div>
+              {([
+                ['voiceSession', 'admin-homeroom-bot-voice-session', 'On its own changes: answer whoever writes there'],
+                ['voiceIssue', 'admin-homeroom-bot-voice-issue', 'On requests: answer a mention or a reply to it'],
+                ['voiceChat', 'admin-homeroom-bot-voice-chat', 'In project chats, topics and #general: answer a mention or a reply to it'],
+              ] as const).map(([key, id, label]) => (
+                <label key={key} className="flex items-center gap-2 mt-3 text-sm" htmlFor={id}>
+                  <input
+                    id={id} type="checkbox"
+                    className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                    checked={form[key]}
+                    disabled={!canWrite}
+                    onChange={(e) => setField(key, e.target.checked)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+              <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-voice-note">
+                Off, a place goes back to the fixed notes it had before. Its coding work is the same either way.
               </p>
             </div>
 

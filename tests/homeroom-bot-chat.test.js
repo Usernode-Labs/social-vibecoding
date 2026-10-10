@@ -157,6 +157,9 @@ test('B9: asking from the chat, against the full PostgreSQL schema', { timeout: 
   const pushed = [];
   const deps = (read) => ({
     readAsk: async () => read,
+    // The chat's own path for a mention, as it is with the bot's voice off
+    // in chats (homeroom-bot-voice.js answers it otherwise).
+    voice: { enabledFor: async () => false, recordAsk: async () => null, dropAsks: async () => {} },
     github: {
       isEnabled: () => true,
       safeMention: (s) => s,

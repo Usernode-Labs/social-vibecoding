@@ -232,7 +232,7 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     assert.equal(card.startedAt, reading.started_at.toISOString(), 'from when the look began, before the card');
 
     assert.deepEqual(await catchUp(asAda), { added: 0 }, 'a second opening adds none');
-    const loop = await activity.startCard(pool, {
+    const loop = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 3, requester: { userId: ada.id, username: ada.username, issueTitle: 'Sort by date', hasPlatformAccess: true },
       bot, jobKey: reading.id, settings,
     });
@@ -272,7 +272,7 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
 
   await t.test('a restart of a look with a card gets no second, and its card follows the restarted look, not the interrupted build', async () => {
     const first = await queued(seeds, 5);
-    const sent = await activity.startCard(pool, {
+    const sent = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 5, requester: { userId: ada.id, username: ada.username, issueTitle: 'Export', hasPlatformAccess: true },
       bot, jobKey: first.id, settings,
     });

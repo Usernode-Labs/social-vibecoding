@@ -13470,3 +13470,108 @@ CREATE TABLE IF NOT EXISTS test_waitlist_releases (
   used_by       INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 COMMENT ON TABLE test_waitlist_releases IS 'staging:private';
+
+-- The Homeroom bot's voice outside its DM (services/homeroom-bot-voice.js):
+-- one conversational agent answers in a change's discussion, a request's
+-- discussion, a project's chat, its topics and reply threads, in its own
+-- words, where it was asked. Code decides when it may speak; coding work
+-- (reads, builds, updates to its changes) runs in sessions that report back
+-- to it and never post.
+--
+-- One row per turn of it in one place, without the words (as
+-- homeroom_bot_dm_turns): where (`place_type` is 'session', 'issue',
+-- 'message', 'category' or 'chat'; `place_ref` its id or number, null for a
+-- project's main chat; `place_key` both, as one claim), what started it
+-- (`trigger` 'message' or 'job'), the newest message it read, how it ended
+-- (`outcome` 'replied', 'quiet', 'fallback' or 'failed') and what it cost.
+-- An unfinished row is the place's claim: one turn at a time per place,
+-- across every process (the partial unique index); a claim left by a process
+-- that died is taken back after a few minutes.
+CREATE TABLE IF NOT EXISTS homeroom_bot_voice_turns (
+  id                 SERIAL PRIMARY KEY,
+  app_id             INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  place_type         TEXT NOT NULL,
+  place_ref          INTEGER,
+  place_key          TEXT NOT NULL,
+  trigger            TEXT NOT NULL DEFAULT 'message',
+  speaker_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  through_message_id INTEGER,
+  reply_message_id   INTEGER,
+  model              TEXT,
+  rounds             INTEGER NOT NULL DEFAULT 0,
+  tools              TEXT[] NOT NULL DEFAULT '{}',
+  input_tokens       INTEGER,
+  output_tokens      INTEGER,
+  cost_usd           NUMERIC(12, 6),
+  outcome            TEXT,
+  error              TEXT,
+  failures           TEXT[] NOT NULL DEFAULT '{}',
+  started_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at        TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS homeroom_bot_voice_turns_running
+  ON homeroom_bot_voice_turns(place_key) WHERE finished_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_voice_turns_place
+  ON homeroom_bot_voice_turns(place_key, id DESC);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_voice_turns_started
+  ON homeroom_bot_voice_turns(started_at DESC);
+COMMENT ON TABLE homeroom_bot_voice_turns IS 'staging:private';
+
+-- What people asked the bot to change on one of its own changes, wherever
+-- they asked (the change's discussion, its request's, a project's chat, the
+-- DM, a No vote's line), waiting for the follow-up that makes it. Talking
+-- never waits for that work: the voice answers at once, and an ask made
+-- while an update is running waits here, behind it, instead of being lost
+-- to a queue row the running update holds. `status`: 'queued' (waiting),
+-- 'taken' (the follow-up running now has it, `run_tag`), 'done', 'failed'
+-- or 'dropped' (the change merged or closed first). `place_*` and
+-- `message_id` are where it was asked, which is where the answer goes.
+CREATE TABLE IF NOT EXISTS homeroom_bot_change_asks (
+  id            SERIAL PRIMARY KEY,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  session_id    INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  issue_number  INTEGER NOT NULL,
+  asker_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  instruction   TEXT NOT NULL,
+  source        TEXT NOT NULL DEFAULT 'thread',
+  place_type    TEXT,
+  place_ref     INTEGER,
+  message_id    INTEGER,
+  status        TEXT NOT NULL DEFAULT 'queued',
+  run_tag       TEXT,
+  tries         INTEGER NOT NULL DEFAULT 0,
+  run_id        INTEGER,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  taken_at      TIMESTAMPTZ,
+  done_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_change_asks_session
+  ON homeroom_bot_change_asks(session_id, status, id);
+-- A message passed on as an ask is not the voice's to answer as well.
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_change_asks_message
+  ON homeroom_bot_change_asks(message_id) WHERE message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_change_asks_run_tag
+  ON homeroom_bot_change_asks(run_tag) WHERE run_tag IS NOT NULL;
+COMMENT ON TABLE homeroom_bot_change_asks IS 'staging:private';
+
+-- Something the voice offered to do in a thread, done only when the right
+-- person taps it under its message (as homeroom_bot_dm_actions in the DM):
+-- file a request ('file_request', for whoever asked), withdraw one of its
+-- changes ('withdraw_change', for its requester or the project's owner), or
+-- open a vote on closing a request ('close_request'). `args` is what the
+-- offer needs; `result` what the tap did.
+CREATE TABLE IF NOT EXISTS homeroom_bot_voice_offers (
+  id            SERIAL PRIMARY KEY,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  message_id    INTEGER UNIQUE,
+  kind          TEXT NOT NULL,
+  args          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  for_user_id   INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  status        TEXT NOT NULL DEFAULT 'open',
+  result        JSONB,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_voice_offers_app
+  ON homeroom_bot_voice_offers(app_id, status, id);
+COMMENT ON TABLE homeroom_bot_voice_offers IS 'staging:private';

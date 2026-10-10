@@ -873,3 +873,14 @@ test('"typing" goes out before the answer starts, bounded', () => {
   assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io\);/);
   assert.match(src, /stop\.ready = entry\.first \|\| Promise\.resolve\(\);/);
 });
+
+test('news the card and the tray show is never a DM message of its own; what needs them still is', () => {
+  for (const kind of ['spec', 'held_proposals_per_app', 'held_proposals_total', 'followup_revise']) {
+    assert.equal(dm.cardOnly(kind, {}), true, kind);
+  }
+  assert.equal(dm.cardOnly('followup_person', { reason: 'its checks are failing: x', checks: true }), true, 'a change\'s red checks');
+  assert.equal(dm.cardOnly('followup_person', { reason: 'a product call' }), false, 'an answer to what they asked');
+  for (const kind of ['question', 'followup_ask', 'plan', 'proposal', 'person', 'empty', 'blocked', 'build_failed', 'followup_failed']) {
+    assert.equal(dm.cardOnly(kind, {}), false, kind);
+  }
+});

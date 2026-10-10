@@ -23,6 +23,12 @@
 //     chat_bot_requests (GET /api/apps/:slug/my-bot-requests), never from
 //     chat_messages, so no reader of the room can see it.
 //
+// 10 October: with the bot's voice on in chats (homeroom-bot.js voiceChat,
+// on unless an admin turns it off), a mention is answered by the voice
+// instead (homeroom-bot-voice.js): a reply in a thread under the message,
+// with File it under it when it asks for a change. What is below is the path
+// with that switch off, and the newcomer's offer, which needs no mention.
+//
 // Only a message a person typed, in the room's main stream, and never an
 // edit or a message a connector posted (E7). Membership is the room's own
 // gate (communities.chatNeedsJoin). The socket has no rate limit, so filings
@@ -1044,6 +1050,9 @@ async function noteChatMessage(pool, config, { appId, userId, messageId, content
     // WP-C: an unmentioned message is read only for somebody new (maybeOffer).
     if (!mentioned && (wordCount(content) < OFFER_MIN_WORDS || !await isNewcomer(pool, appId, userId))) return null;
     // The room's socket knows little of either: read what filing needs.
+    // A mention is the bot's voice's to answer, in a reply thread under the
+    // message (homeroom-bot-voice.js), unless an admin turned that off.
+    if (mentioned && await (deps.voice || require('./homeroom-bot-voice')).enabledFor(pool, 'chat', deps)) return null;
     let user;
     [app, user] = await Promise.all([appRow(pool, appId), personRow(pool, userId)]);
     if (!app || !user) return null;
@@ -1179,6 +1188,9 @@ module.exports = {
   noteRequestStatus,
   noteChatMessage,
   askFromMessage,
+  fileMessage,
+  filedLately,
+  pushCard,
   requestFromMessage,
   myRequests,
   record,
