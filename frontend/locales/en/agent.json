@@ -2072,8 +2072,8 @@
     "description": "Tooltip of the draggable edge of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page). Keep the middle dot between the two hints."
   },
   "sidePanel.title.workshop": {
-    "text": "Workshop",
-    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows a project's Workshop, the board of its changes and requests. The name of that tab, a noun."
+    "text": "Community",
+    "description": "Title in the header of the side panel (the pane docked beside an app on a wide screen) when it shows a project's community page, its board of changes and requests. A noun."
   },
   "sidePanel.title.proposal": {
     "text": "Proposal",
