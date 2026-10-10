@@ -30,7 +30,7 @@ const DSN = process.env.TEST_DATABASE_URL
 const DDL = [
   `CREATE TABLE chat_sessions (
      id INTEGER PRIMARY KEY, app_id INTEGER NOT NULL, status TEXT NOT NULL,
-     source TEXT, merged_at TIMESTAMPTZ, check_state TEXT,
+     source TEXT, merged_at TIMESTAMPTZ, check_state TEXT, checks_checked_at TIMESTAMPTZ,
      checks_commit_sha TEXT, reviewed_head_sha TEXT,
      test_results JSONB NOT NULL DEFAULT '[]')`,
   ...(SCHEMA_SQL.match(/^ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS fixed_check_sync_[^;]*;/gm) || []),

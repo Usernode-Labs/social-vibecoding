@@ -28,6 +28,14 @@
 //     change's). The unit-suite row is one row for thousands of tests, so it
 //     says nothing about which; a failure in it neither counts as fixed nor
 //     stops the sync, whose new run re-tests it on a head containing main;
+//   - or the unit-suite row is all that blocks it, and main watch (the same
+//     suite on main itself) has passed SINCE that proposal's run: main moved
+//     on and is green, so a failure the proposal's older branch carried may
+//     well be main's (10 Oct 2026: five challenge tests failed every weekend
+//     until #4648; two approved Homeroom bot proposals cut before it stayed
+//     red on them, with nobody able to sync them). Once per proposal, as for
+//     any check: if the suite still fails on a head containing main, the
+//     failure is the proposal's own;
 //   - it is behind main and merges with it cleanly (services/integration.js);
 //   - at most once per head, and at most once per check: a check it was
 //     synced for that still fails once it contains main is its own failure
@@ -41,7 +49,7 @@
 // found on its first pass.
 
 const appManifest = require('./app-manifest');
-const { isUnitSuiteRow } = require('./unit-suite-row');
+const { isUnitSuiteRow, UNIT_CHECK_NAME, UNIT_CHECK_PATH } = require('./unit-suite-row');
 const log = require('./logger');
 
 const INTERVAL_MS = 5 * 60 * 1000;
@@ -112,7 +120,7 @@ async function mainPasses(pool, appId) {
 async function openVerdicts(pool, appId) {
   const { rows } = await pool.query(
     `SELECT cs.id, cs.source, cs.check_state, cs.checks_commit_sha, cs.reviewed_head_sha,
-            cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
+            cs.checks_checked_at, cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
             COALESCE((
               SELECT jsonb_agg(jsonb_build_object(
                        'name', t->>'name', 'path', t->>'path', 'index', t->'index',
@@ -129,14 +137,39 @@ async function openVerdicts(pool, appId) {
   return rows;
 }
 
+// Main watch's latest verdict for the app (services/main-watch.js): whether
+// the unit suite last passed on main, and when. { passing, at } or null.
+async function mainWatchVerdict(pool, appId) {
+  const { rows } = await pool.query(
+    'SELECT main_check_state, main_check_at FROM apps WHERE id = $1',
+    [appId]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const at = row.main_check_at ? Date.parse(row.main_check_at) : NaN;
+  return { passing: row.main_check_state === 'passing', at: Number.isFinite(at) ? at : null };
+}
+
+// The unit suite's own key, as fixed_check_sync_keys records it.
+const UNIT_KEY = appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH);
+
+// Main watch passed after this proposal's checks ran: main has moved on since
+// the run and is green.
+function mainGreenSince(row, mainWatch) {
+  if (!mainWatch || !mainWatch.passing || !mainWatch.at) return false;
+  const ran = row.checks_checked_at ? Date.parse(row.checks_checked_at) : NaN;
+  return Number.isFinite(ran) && mainWatch.at > ran;
+}
+
 /**
  * Which of an app's promoted proposals are stuck on checks main has fixed.
- * Pure: `rows` from openVerdicts, `passes` from mainPasses.
+ * Pure: `rows` from openVerdicts, `passes` from mainPasses, `mainWatch`
+ * from mainWatchVerdict.
  *
  * @returns {{ candidates: Array<{ id: number, head: string, keys: string[] }>,
  *             skipped: Record<number, string> }}
  */
-function select(rows, passes) {
+function select(rows, passes, mainWatch = null) {
   const failingOn = new Map();
   for (const row of rows || []) {
     for (const f of row.failing || []) {
@@ -161,8 +194,15 @@ function select(rows, passes) {
     })();
     if (why) { skipped[id] = why; continue; }
     const blocking = (row.failing || []).filter((f) => !f.advisory && !isUnitSuiteRow(f));
-    if (!blocking.length) { skipped[id] = 'nothing_fixed'; continue; }
     const tried = new Set(row.fixed_check_sync_keys || []);
+    if (!blocking.length) {
+      const unitBlocks = (row.failing || []).some((f) => !f.advisory && isUnitSuiteRow(f));
+      if (!unitBlocks) { skipped[id] = 'nothing_fixed'; continue; }
+      if (tried.has(UNIT_KEY)) { skipped[id] = 'already_tried'; continue; }
+      if (!mainGreenSince(row, mainWatch)) { skipped[id] = 'unit_suite_only'; continue; }
+      candidates.push({ id, head, keys: [UNIT_KEY] });
+      continue;
+    }
     const keys = [];
     let reason = null;
     for (const f of blocking) {
@@ -292,7 +332,8 @@ async function sweep({ config, pool, shouldStop = () => false }, deps = defaultD
     result.apps += 1;
     let picked;
     try {
-      picked = select(await openVerdicts(pool, appId), await mainPasses(pool, appId));
+      picked = select(await openVerdicts(pool, appId), await mainPasses(pool, appId),
+        await mainWatchVerdict(pool, appId));
     } catch (err) {
       log.warn('fixed-check-sync', 'Could not read an app\'s verdicts', { appId, err: err.message });
       continue;
@@ -344,6 +385,8 @@ module.exports = {
   syncOne,
   mainPasses,
   openVerdicts,
+  mainWatchVerdict,
+  UNIT_KEY,
   start,
   stop,
   isEnabled,
