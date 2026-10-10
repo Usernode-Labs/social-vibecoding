@@ -367,15 +367,21 @@ test('the folded-in admin pages fall back to the cached shell', () => {
 });
 
 test('standalone server pages never fall back to the SPA shell', () => {
-  // The two genuine standalone server pages, both pre-auth consent flows
-  // deliberately outside the app shell with their own stylesheets:
+  // The genuine standalone server pages, all pre-auth consent flows or
+  // documents deliberately outside the app shell with their own stylesheets:
   //   /cli/authorize     — the CLI / local coding-agent device flow
   //   /connect/authorize — the hosted MCP connector (Claude.ai, ChatGPT)
-  // Serving either from the cached SPA shell would show a page that looks
-  // signed in but cannot approve anything.
-  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize']);
+  //   /builder.html      — the build group's rooms and items reference
+  // Serving either of the consent pages from the cached SPA shell would show
+  // a page that looks signed in but cannot approve anything. For
+  // /builder.html the failure is the release worker's 200ms navigate
+  // fallback ONLINE: it answers every navigation with the shell document
+  // whatever the path, so a signed-in user clicking the home screen's
+  // Builder login row got the app home feed instead of the builder page.
+  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize', '/builder.html']);
   assert.equal(classify('GET', '/cli/authorize', 'text/html', 'navigate'), 'bypass');
   assert.equal(classify('GET', '/connect/authorize', 'text/html', 'navigate'), 'bypass');
+  assert.equal(classify('GET', '/builder.html', 'text/html', 'navigate'), 'bypass');
 });
 
 // Public report share links (/reports/<token>) are standalone sandboxed

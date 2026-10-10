@@ -60,6 +60,10 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
     // _maybeShot's lookup would throw into its own catch.
     URLSearchParams,
     fetch: () => new Promise(() => {}),
+    // The realm would otherwise get its own intrinsic Date, whose now no
+    // test can freeze; hand it the host's so freezeClock controls the
+    // pane's clock too.
+    Date,
   };
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
@@ -79,6 +83,19 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
 }
 
 const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
+
+// "This week" caps its clock at the next Monday 00:00 UTC, so a fixture built
+// around a 71h end reads "3d left" early in the week and "2d left" (or an
+// hours count) late in it. The tests that pin such a clock run against a
+// FIXED clock instead: Tuesday noon UTC, where Monday sits 5d12h out and
+// every pinned clock is the fixture's own 71h end, whatever the run day.
+const TEST_NOW = Date.parse('2026-10-06T12:00:00Z');
+const freezeClock = (t) => {
+  const realNow = Date.now;
+  Date.now = () => TEST_NOW;
+  t.after(() => { Date.now = realNow; });
+};
+
 // This week's clock is the earlier of a card's end and the end of the week
 // (Monday 00:00 UTC, #3869). A card ending 71 hours out reads "3d left" on a
 // weekday and less from Saturday 00:00 UTC on, so a This week expectation is
@@ -203,7 +220,8 @@ test('a card in a later group opens its own challenge', () => {
 
 // ─── The header's words ─────────────────────────────────────────────────
 
-test('each header counts its group and gives its clock', () => {
+test('each header counts its group and gives its clock', (t) => {
+  freezeClock(t);
   const event = { id: 10, name: 'Season 2', ends_at: inHours(143) };
   const weekCardEnd = inHours(71);
   const { pane, store } = loadPane({
@@ -339,7 +357,8 @@ test('a new visit or another event starts from the defaults; a refresh of the sa
 
 // ─── The clock leaves the cards and the page ────────────────────────────
 
-test('a header with a clock takes the deadline off its cards and the page; First challenges keeps the card’s', () => {
+test('a header with a clock takes the deadline off its cards and the page; First challenges keeps the card’s', (t) => {
+  freezeClock(t);
   const event = { id: 10, name: 'Season 2', ends_at: inHours(71) };
   const challenges = [ch(1, 'ONBOARDING'), ch(2, 'WEEKLY'), ch(3, 'PERSISTENT'), ch(4, 'SPOTLIGHT')];
   const { pane, store } = loadPane({ challenges, event });

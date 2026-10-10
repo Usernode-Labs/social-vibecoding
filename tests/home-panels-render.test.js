@@ -44,6 +44,18 @@ const SETTINGS = read('frontend/src/features/settings/settings.js');
 const ROUTE = read('src/routes/home-panels.js');
 const CSS = read('public/css/app.css');
 
+// "This week" caps its clock at the next Monday 00:00 UTC, so a fixture built
+// around a 71h end reads "3d left" early in the week and "2d left" (or an
+// hours count) late in it. The tests that pin such a clock run against a
+// FIXED clock instead: Tuesday noon UTC, where Monday sits 5d12h out and
+// every pinned clock is the fixture's own 71h end, whatever the run day.
+const TEST_NOW = Date.parse('2026-10-06T12:00:00Z');
+const freezeClock = (t) => {
+  const realNow = Date.now;
+  Date.now = () => TEST_NOW;
+  t.after(() => { Date.now = realNow; });
+};
+
 // A minimal #home-panels element the module can paint into, so render()
 // can be exercised end to end and its output inspected.
 function makeSection() {
@@ -520,7 +532,8 @@ function weekClock(HP, raw) {
   return HP.timeLeft(Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw);
 }
 
-test('challengesView: the finished fill sits last under one Done header, with no clock', () => {
+test('challengesView: the finished fill sits last under one Done header, with no clock', (t) => {
+  freezeClock(t);
   const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
   const { HP } = makeHomePanels({ slots: [] });
   const done = { done: true, current: null, target: null };
@@ -939,7 +952,8 @@ test('cards from one group are still headed, and the header takes the clock', ()
   assert.equal(setup.rows[0].deadline, '3d left');
 });
 
-test('cards from several groups are headed in board order, with clocks and no counts', () => {
+test('cards from several groups are headed in board order, with clocks and no counts', (t) => {
+  freezeClock(t);
   const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
   const { HP } = makeHomePanels({ slots: [] });
   HP._expanded.challenges = true;
@@ -997,7 +1011,8 @@ test('cards from several groups are headed in board order, with clocks and no co
   assert.deepEqual([...finished.groups].map((g) => g.key), ['week', 'other', 'setup']);
 });
 
-test('render: the group headers sit inside the rows list, before their cards, with no toggle', () => {
+test('render: the group headers sit inside the rows list, before their cards, with no toggle', (t) => {
+  freezeClock(t);
   const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
   const seasonEnd = inHours(71);
   const { html } = renderWith({

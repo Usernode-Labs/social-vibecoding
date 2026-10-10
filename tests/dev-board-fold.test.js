@@ -1612,9 +1612,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // the next release (about 8 minutes)"), on the ?demo=1 mock 9100035, a
   // state no other check's route reaches. 733 leaves 147 slots.
   //
+  // 733 → 735: +2: the builder reference (the build group's rooms and items
+  // sheets for both games, on the standalone /builder.html page): one check
+  // for the page's login gate and its Suggest a change link, one for the
+  // home screen's Builders entry that opens it. 735 leaves 145 slots.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  checkCap.assertPinned(DAPP.tests.length, 735);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

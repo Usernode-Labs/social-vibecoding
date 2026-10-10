@@ -4975,6 +4975,18 @@
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
+    },
+    {
+      "name": "Builder login: the standalone builder reference page opens on its login gate, with the builder password field and the Suggest a change link to the request flow",
+      "path": "/builder.html",
+      "expectSelector": "#builder-login-form",
+      "expectText": "Suggest a change"
+    },
+    {
+      "name": "Builder login: the home screen carries the Builders entry that opens the builder reference page",
+      "path": "/",
+      "expectSelector": "#home-builder-login",
+      "expectText": "Builder login"
     }
   ],
   "governance": {

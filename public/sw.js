@@ -406,6 +406,15 @@ const NO_FALLBACK_PAGES = [
   // app shell. Serving the cached SPA shell for it offline would show a
   // page that looks signed in but cannot approve anything.
   '/connect/authorize',
+  // The build group's rooms and items reference (public/builder.html). Not
+  // offline-critical — but the release worker's navigate tier races EVERY
+  // navigation against a 200ms cached-shell fallback and answers with the
+  // shell document regardless of the path, so a signed-in platform user
+  // clicking the home screen's Builder login row got the app home feed
+  // instead of the builder page (the same shape #3381 fixed for file
+  // navigations). The page holds no session state to lose, so bypass: let
+  // it load or fail like any plain document.
+  '/builder.html',
 ];
 
 // Prefix-matched counterpart of NO_FALLBACK_PAGES, for standalone pages

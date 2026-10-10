@@ -1031,6 +1031,9 @@ const ADDED_IDS = {
   'feedback-video-btn': '#3940: the Video row of the paperclip popover (#4127; label becomes Replace video once a clip is attached). dapp.json\'s feedback check selects on it.',
   'feedback-video-input': '#3940: the hidden video file input behind the button (MP4, WebM and MOV).',
   'feedback-video-preview': '#3940: the clip preview row (first-frame thumbnail, progress bar, status, remove), empty and hidden until a clip is chosen.',
+  // ── Builder login: the build group's reference page ────────────────
+  'home-builder-section': 'The Builders section at the foot of Home, below Challenges: the build group\'s own door to the rooms and items reference the games\' builders edit.',
+  'home-builder-login': 'That section\'s one row, an anchor to /builder.html (a standalone static page, served by express.static, with no React half): "Builder login" over a line naming both games.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {
