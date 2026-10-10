@@ -7861,13 +7861,25 @@ const AppView = {
       return AppView._devTopicInPanel && !!document.getElementById('dev-topic-thread')
         && !!t && t.kind === kind && t.id === id;
     };
+    // #4640: a request's and a governance discussion are reply threads on the
+    // ref alone, as _renderTopicSubView mounts them (`threadMounted =
+    // ref.kind === 'issue' || ref.kind === 'gov'`): mount the thread as soon
+    // as this panel holds, so its discussion starts loading straight away —
+    // as it does on the item's full page — instead of waiting behind the
+    // item fetch. A change's thread still waits for its item: its "Only you
+    // can see this change" notice reads the row's status.
+    let threadMounted = false;
+    if ((kind === 'issue' || kind === 'gov') && current()) {
+      threadMounted = true;
+      AppView._mountTopicThread();
+    }
     if (!AppView._findTopicItem()) {
       if (kind === 'gov') await AppView._fetchGovProposalById(id);
       else if (kind === 'issue') await AppView._fetchIssueByNumber(id);
       else await AppView._fetchProposalById(id);
     }
     if (!current() || !AppView._findTopicItem()) return;
-    AppView._mountTopicThread();
+    if (!threadMounted) AppView._mountTopicThread();
     AppView._renderTopicHead();
     // The change page's head host is rendered by its own portal, which may
     // land a frame after the mount; on the full page later repaints cover

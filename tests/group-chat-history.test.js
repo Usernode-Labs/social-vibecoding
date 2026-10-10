@@ -8,8 +8,18 @@ function setup(scope) {
   const requests = [];
   const sandbox = {
     window: {}, URLSearchParams, location: { search: '' },
+    setTimeout, clearTimeout, AbortController,
     document: { getElementById: () => null },
-    fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
+    fetch: (url, init) => new Promise((resolve, reject) => {
+      const req = { url, resolve, reject };
+      // #4640: a first page's fetch carries an abort signal, so a request
+      // that never answers is given up on. The stub honours it the way the
+      // browser's own fetch would.
+      if (init && init.signal && typeof init.signal.addEventListener === 'function') {
+        init.signal.addEventListener('abort', () => reject(new Error('The operation was aborted')));
+      }
+      requests.push(req);
+    }),
   };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/js/group-chat.js'), 'utf8'), sandbox);
@@ -243,3 +253,78 @@ for (const scope of ['general', 'thread']) {
     assert.equal(h.host.scrollTop, 30 * ROW_PX, 'offset by exactly the height the new rows added');
   });
 }
+
+// #4640: the side panel's discussion never loaded when its first history
+// request was either dropped by a cache swap (connect / refreshAfterBlock) or
+// left on the wire forever.
+const DRAIN = async () => { for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r)); };
+
+test('thread: a load whose cache was swapped mid-flight re-runs for the open thread', async () => {
+  const h = setup('thread');
+  h.gc.activeThread = { type: 'issue', ref: 1868 };
+  const first = h.load();
+  assert.equal(h.requests.length, 1);
+  // The refreshAfterBlock-style swap: every per-thread cache is dropped while
+  // the fetch is on the wire.
+  h.gc.threads = new Map();
+  h.reply(0, [{ id: 1 }]);
+  await first;
+  assert.equal(h.requests.length, 2, 'a second load runs for the state the open thread reads');
+  h.reply(1, [{ id: 2 }]);
+  await DRAIN();
+  assert.equal(h.gc._threadState('issue', 1868).loaded, true);
+  assert.deepEqual(h.ids(), [2]);
+});
+
+test('thread: a load whose cache was swapped mid-flight does not re-run for a thread nobody is reading', async () => {
+  const h = setup('thread');
+  const first = h.load();
+  h.gc.threads = new Map();
+  h.reply(0, [{ id: 1 }]);
+  await first;
+  await DRAIN();
+  assert.equal(h.requests.length, 1, 'no load runs for a thread that is not open');
+});
+
+test('thread: a first page that never answers gives up after the timeout and offers Try again', async () => {
+  const h = setup('thread');
+  h.gc.activeThread = { type: 'issue', ref: 1868 };
+  // Shorten the 20 s first-page timer the way the spec's test row describes.
+  h.gc.THREAD_FIRST_PAGE_TIMEOUT_MS = 20;
+  const load = h.load(); // the fetch stub never answers on its own
+  await new Promise((r) => setTimeout(r, 80));
+  await load;
+  const st = h.gc._threadState('issue', 1868);
+  assert.equal(st.failed, true, 'the state records the failure');
+  assert.equal(st.loading, false);
+  assert.equal(st.loaded, false);
+  // "Try again" is the same entry point the transcript's button calls.
+  const retry = h.gc.loadThreadHistoryForOpen();
+  assert.equal(h.requests.length, 2);
+  h.reply(1, [{ id: 1 }]);
+  await retry;
+  await DRAIN();
+  assert.equal(st.loaded, true);
+  assert.deepEqual(h.ids(), [1]);
+});
+
+test('thread: resyncLoaded re-reads an open thread that is neither loaded nor loading', async () => {
+  const h = setup('thread');
+  h.gc.activeThread = { type: 'issue', ref: 1868 };
+  // An idle state: mounted, its first page neither in hand nor on the wire
+  // (a failed one reads the same to _resyncThread). resyncLoaded is what a
+  // reconnect runs.
+  const st = h.gc._threadState('issue', 1868);
+  assert.equal(st.loaded, false);
+  assert.equal(st.loading, false);
+  h.gc.resyncLoaded();
+  const threadReq = h.requests.find((r) => r.url.includes('thread_type=issue'));
+  assert.ok(threadReq, 'the open thread is re-read on the resync');
+  // The resync's own general-stream read rides along; answer it too.
+  h.requests.find((r) => !r.url.includes('thread_type='))
+    .resolve({ ok: true, json: async () => ({ messages: [] }) });
+  threadReq.resolve({ ok: true, json: async () => ({ messages: [{ id: 1 }] }) });
+  await DRAIN();
+  assert.equal(st.loaded, true);
+  assert.deepEqual(h.ids(), [1]);
+});
