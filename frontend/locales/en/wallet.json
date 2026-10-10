@@ -1,0 +1,406 @@
+{
+  "row.label": {
+    "text": "Wallet",
+    "description": "Label of the row in the Profile screen's account group that opens the wallet sheet. Noun: the person's wallet of network tokens; the balance is shown beside it."
+  },
+  "sheet.title": {
+    "text": "Wallet",
+    "description": "Title at the top of the wallet sheet, which shows the token balance, the address, Send and Receive, block production and recent transactions. Noun."
+  },
+  "sheet.send": {
+    "text": "Send",
+    "description": "Button in the wallet sheet, beside Receive: opens the form for sending tokens to another address. Verb."
+  },
+  "sheet.receive": {
+    "text": "Receive",
+    "description": "Button in the wallet sheet, beside Send: shows the person's own address and its QR code so someone else can send them tokens. Verb."
+  },
+  "sheet.walletUnavailable": {
+    "text": "Wallet state is unavailable in this app version.",
+    "description": "Note in the wallet sheet when the installed mobile app is too old to report the wallet's balance and address."
+  },
+  "sheet.submissionUnavailable": {
+    "text": "Transaction submission is unavailable in this app version.",
+    "description": "Note in the wallet sheet when the installed mobile app is too old to send tokens; the Send button is disabled."
+  },
+  "sheet.recent": {
+    "text": "Recent",
+    "description": "Heading over the list of the person's most recent token transactions at the bottom of the wallet sheet."
+  },
+  "sheet.noTransactions": {
+    "text": "No recent transactions yet.",
+    "description": "Shown under the Recent heading in the wallet sheet when the person has not sent any tokens yet."
+  },
+  "toast.addressCopied": {
+    "text": "Address copied",
+    "description": "Brief confirmation after the Copy button in the wallet sheet put the person's wallet address on the clipboard."
+  },
+  "toast.addressCopyFailed": {
+    "text": "Could not copy address",
+    "description": "Brief message when the Copy button in the wallet sheet could not put the wallet address on the clipboard."
+  },
+  "toast.sendUnavailable": {
+    "text": "Sending is unavailable in this app version",
+    "description": "Brief message when the person tries to send tokens from the wallet sheet but the installed mobile app is too old to do it."
+  },
+  "toast.submitted": {
+    "text": "Transaction submitted",
+    "description": "Brief confirmation after tokens were sent from the wallet sheet: the transaction was handed to the network and is not confirmed yet."
+  },
+  "toast.sendFailed": {
+    "text": "Send failed: {{reason}}",
+    "description": "Brief message when sending tokens from the wallet sheet failed. {{reason}} is the error sentence the mobile app or the network gave, shown as it arrived."
+  },
+  "toast.sendFailedUnknown": {
+    "text": "Send failed: unknown error",
+    "description": "Brief message when sending tokens from the wallet sheet failed and no reason was given."
+  },
+  "toast.previewOnly": {
+    "text": "Preview only. Nothing was changed.",
+    "description": "Brief message when a button is pressed in the read-only preview of the wallet sheet shown in a browser, where nothing can be sent or changed."
+  },
+  "error.refreshState": {
+    "text": "Could not refresh wallet state.",
+    "description": "Error line in the wallet sheet when the balance and delegation could not be read again and no more specific reason was given. The last known values stay on screen."
+  },
+  "error.openDelegation": {
+    "text": "Could not open delegation management.",
+    "description": "Error line in the wallet sheet when pressing Manage delegation failed to open the mobile app's delegation screen and no more specific reason was given."
+  },
+  "send.confirmTitle": {
+    "text": "Send from wallet",
+    "description": "Title of the mobile app's confirmation sheet shown before tokens are sent from the wallet. Send is a verb."
+  },
+  "send.confirmSubtitle": {
+    "text": "Sending {{amount}} {{symbol}} to {{address}}",
+    "description": "Line under the title of the confirmation sheet shown before tokens are sent. {{amount}} is the number of tokens, {{symbol}} the token's symbol (UT), {{address}} the shortened recipient address."
+  },
+  "send.invalidAddress": {
+    "text": "Enter a valid ut1… address",
+    "description": "Brief message when the Send form in the wallet sheet is submitted without a recipient address in the network's format. Keep 'ut1…' as written: every address starts with those characters."
+  },
+  "send.invalidAmount": {
+    "text": "Enter a positive amount",
+    "description": "Brief message when the Send form in the wallet sheet is submitted without a whole number of tokens greater than zero."
+  },
+  "send.recipientPlaceholder": {
+    "text": "Recipient address (ut1…)",
+    "description": "Placeholder in the first field of the wallet sheet's Send form, where the address to send tokens to is typed. Keep 'ut1…' as written: every address starts with those characters."
+  },
+  "send.recipientLabel": {
+    "text": "Recipient address",
+    "description": "Accessible name of the first field of the wallet sheet's Send form: the address the tokens are sent to."
+  },
+  "send.amountPlaceholder": {
+    "text": "Amount",
+    "description": "Placeholder in the second field of the wallet sheet's Send form: how many tokens to send."
+  },
+  "send.amountLabel": {
+    "text": "Amount",
+    "description": "Accessible name of the second field of the wallet sheet's Send form: how many tokens to send."
+  },
+  "send.submit": {
+    "text": "Send",
+    "description": "Button at the bottom of the wallet sheet's Send form: sends the typed amount of tokens to the typed address, after a confirmation screen. Verb."
+  },
+  "send.confirmNote": {
+    "text": "You will confirm this transaction on the next screen.",
+    "description": "Small note under the Send button of the wallet sheet's Send form: pressing it does not send at once, a confirmation screen comes first."
+  },
+  "receipt.sent": {
+    "text": "Sent {{amount}} {{symbol}} to {{address}}",
+    "description": "First line of a row in the wallet sheet's Recent list: one transaction the person sent. {{amount}} is the number of tokens, {{symbol}} the token's symbol (UT), {{address}} the shortened recipient address."
+  },
+  "receipt.confirmedInBlock": {
+    "text": "{{when}} · confirmed · block {{block}}",
+    "description": "Second line of a transaction row in the wallet sheet's Recent list, for a transaction the network has confirmed. {{when}} is the date and time it was sent, already formatted; {{block}} is the number of the block that holds it. Keep the middle dots."
+  },
+  "receipt.confirmed": {
+    "text": "{{when}} · confirmed",
+    "description": "Second line of a transaction row in the wallet sheet's Recent list, for a transaction the network has confirmed when the block number is not known. {{when}} is the date and time it was sent, already formatted. Keep the middle dot."
+  },
+  "receipt.pending": {
+    "text": "{{when}} · pending",
+    "description": "Second line of a transaction row in the wallet sheet's Recent list, for a transaction that was sent and is still waiting to be confirmed by the network. {{when}} is the date and time it was sent, already formatted. Keep the middle dot."
+  },
+  "receipt.unknown": {
+    "text": "{{when}} · unknown",
+    "description": "Second line of a transaction row in the wallet sheet's Recent list, when the transaction's status is not known. {{when}} is the date and time it was sent, already formatted. Keep the middle dot."
+  },
+  "receipt.otherStatus": {
+    "text": "{{when}} · {{status}}",
+    "description": "Second line of a transaction row in the wallet sheet's Recent list, for a status this screen has no words for. {{when}} is the date and time it was sent, already formatted; {{status}} is the mobile app's own status word, shown as it arrived. Keep the middle dot."
+  },
+  "staking.heading": {
+    "text": "Block production",
+    "description": "Heading of the section of the wallet sheet about whether this phone produces blocks for the network itself or has delegated that to another node."
+  },
+  "staking.setupPending": {
+    "text": "Wallet setup is still in progress",
+    "description": "Status in the Block production card of the wallet sheet while the mobile app has not finished setting the wallet up, so it is not yet known whether block production is delegated. A Retry button follows."
+  },
+  "staking.delegated": {
+    "text": "Delegated",
+    "description": "Status in the Block production card of the wallet sheet: the person has handed block production to another node instead of running it on this phone. Describes the current state."
+  },
+  "staking.local": {
+    "text": "Producing blocks on this phone",
+    "description": "Status in the Block production card of the wallet sheet: this phone produces blocks for the network itself, nothing is delegated."
+  },
+  "staking.delegatedNote": {
+    "text": "Block production on this phone is disabled.",
+    "description": "Line under the 'Delegated' status in the wallet sheet's Block production card: because production is delegated, this phone does not produce blocks."
+  },
+  "staking.localNote": {
+    "text": "Producing blocks directly on this phone earns full points.",
+    "description": "Line under the 'Producing blocks on this phone' status in the wallet sheet's Block production card. Points are the reward programme's score."
+  },
+  "staking.delegatedSince": {
+    "text": "Delegated since {{when}}",
+    "description": "Line in the wallet sheet's Block production card, under the address block production is delegated to. {{when}} is the date and time the delegation began, already formatted."
+  },
+  "staking.disclosure": {
+    "text": "When delegated, you receive half the points you would earn by producing blocks directly from your phone.",
+    "description": "Disclosure at the bottom of the status card in the wallet sheet's Block production section, shown whatever the current state. Points are the reward programme's score."
+  },
+  "staking.selfHosted": {
+    "text": "Want to run a node on your own laptop or server and monitor it from your phone? Start the node there using the same account you use on this phone.",
+    "description": "Card in the wallet sheet's Block production section for people who want to run the network node on their own computer. A node is the program that takes part in the network."
+  },
+  "staking.backgroundActive": {
+    "text": "A background service keeps running so this phone can keep producing blocks and stay in sync with the network while you are not using the app. A notification stays visible while it is active.",
+    "description": "Warning box in the wallet sheet's Block production section, on Android only, while this phone produces blocks. Do not use the Android permission's technical name."
+  },
+  "staking.backgroundInactive": {
+    "text": "The background service is not active. This phone is not producing blocks, so nothing keeps running while you are not using the app.",
+    "description": "Warning box in the wallet sheet's Block production section, on Android only, while this phone does not produce blocks (production is delegated or setup is unfinished). Do not use the Android permission's technical name."
+  },
+  "staking.retry": {
+    "text": "Retry",
+    "description": "Button under the wallet sheet's Block production section while wallet setup is still in progress: reads the wallet's state again to see whether setup has finished."
+  },
+  "staking.retrying": {
+    "text": "Retrying…",
+    "description": "Label of the Retry button in the wallet sheet's Block production section while the wallet's state is being read again; the button is disabled meanwhile."
+  },
+  "staking.opening": {
+    "text": "Opening…",
+    "description": "Label of the Manage delegation button in the wallet sheet while the mobile app's delegation screen is being opened; the button is disabled meanwhile."
+  },
+  "staking.manage": {
+    "text": "Manage delegation",
+    "description": "Button under the wallet sheet's Block production section: opens the mobile app's screen for delegating block production to another node or taking it back."
+  },
+  "node.row.label": {
+    "text": "Node",
+    "description": "Label of the row in the Profile screen's account group that opens the node status sheet. The node is the network program running inside the mobile app; its status is shown beside the label."
+  },
+  "node.sheet.title": {
+    "text": "Node",
+    "description": "Title at the top of the node status sheet, which shows whether the phone's network node is in sync, its block heights and its peers."
+  },
+  "node.status.synced": {
+    "text": "Synced",
+    "description": "Status of the phone's network node, shown on the Node row and at the top of the node sheet: it has caught up with the network."
+  },
+  "node.status.syncing": {
+    "text": "Syncing",
+    "description": "Status of the phone's network node, shown on the Node row and at the top of the node sheet: it is still catching up with the network."
+  },
+  "node.status.connecting": {
+    "text": "Connecting",
+    "description": "Status of the phone's network node, shown on the Node row and at the top of the node sheet: it is starting and looking for other nodes."
+  },
+  "node.status.offline": {
+    "text": "Offline",
+    "description": "Status of the phone's network node, shown on the Node row and at the top of the node sheet: it has no connection to the network."
+  },
+  "node.status.unavailable": {
+    "text": "Unavailable",
+    "description": "Status of the phone's network node, shown on the Node row and at the top of the node sheet: the mobile app has not reported any status."
+  },
+  "node.sheet.chain": {
+    "text": "Chain",
+    "description": "Label of a row in the node sheet: the name of the blockchain network the node is connected to. Noun."
+  },
+  "node.sheet.yourHeight": {
+    "text": "Your block height",
+    "description": "Label of a row in the node sheet: the number of the newest block this phone's node has, with how long ago that block was made."
+  },
+  "node.sheet.networkHeight": {
+    "text": "Network block height",
+    "description": "Label of a row in the node sheet: the number of the newest block the network as a whole has reached."
+  },
+  "node.sheet.peers": {
+    "text": "Peers",
+    "description": "Label of a row in the node sheet: how many other nodes this phone's node is connected to."
+  },
+  "node.sheet.heightWithAge": {
+    "text": "{{height}} · {{age}}",
+    "description": "Value of the 'Your block height' row in the node sheet: two facts side by side. {{height}} is the block number, already formatted; {{age}} is a complete phrase for how long ago that block was made (for example '4 minutes ago'), already in the reader's language. Keep the middle dot or use the language's own separator."
+  },
+  "node.sheet.peersReady_one": {
+    "text": "{{ready}} ready",
+    "description": "Value of the Peers row in the node sheet when only the ready count is known: {{ready}} other node is connected and ready to exchange blocks. {{ready}} is the number, already formatted."
+  },
+  "node.sheet.peersReady_other": {
+    "text": "{{ready}} ready",
+    "description": "Value of the Peers row in the node sheet when only the ready count is known: {{ready}} other nodes are connected and ready to exchange blocks. {{ready}} is the number, already formatted."
+  },
+  "node.sheet.peersReadyOfKnown_one": {
+    "text": "{{ready}} ready / {{known}} known",
+    "description": "Value of the Peers row in the node sheet: {{ready}} other node is connected and ready, out of {{known}} nodes this node knows of. Both are numbers, already formatted; the form follows {{ready}}."
+  },
+  "node.sheet.peersReadyOfKnown_other": {
+    "text": "{{ready}} ready / {{known}} known",
+    "description": "Value of the Peers row in the node sheet: {{ready}} other nodes are connected and ready, out of {{known}} nodes this node knows of. Both are numbers, already formatted; the form follows {{ready}}."
+  },
+  "node.tipAge.justNow": {
+    "text": "just now",
+    "description": "How long ago the node's newest block was made, when that is under five seconds. Shown after the block number in the node sheet, so it starts lower case."
+  },
+  "node.tipAge.seconds_one": {
+    "text": "{{count}} second ago",
+    "description": "How long ago the node's newest block was made, in seconds. Shown after the block number in the node sheet."
+  },
+  "node.tipAge.seconds_other": {
+    "text": "{{count}} seconds ago",
+    "description": "How long ago the node's newest block was made, in seconds (5 to 59). Shown after the block number in the node sheet."
+  },
+  "node.tipAge.minutes_one": {
+    "text": "{{count}} minute ago",
+    "description": "How long ago the node's newest block was made, in minutes. Shown after the block number in the node sheet."
+  },
+  "node.tipAge.minutes_other": {
+    "text": "{{count}} minutes ago",
+    "description": "How long ago the node's newest block was made, in minutes. Shown after the block number in the node sheet."
+  },
+  "node.tipAge.hours_one": {
+    "text": "{{count}} hour ago",
+    "description": "How long ago the node's newest block was made, in hours. Shown after the block number in the node sheet."
+  },
+  "node.tipAge.hours_other": {
+    "text": "{{count}} hours ago",
+    "description": "How long ago the node's newest block was made, in hours. Shown after the block number in the node sheet."
+  },
+  "node.tipAge.days_one": {
+    "text": "{{count}} day ago",
+    "description": "How long ago the node's newest block was made, in days. Shown after the block number in the node sheet."
+  },
+  "node.tipAge.days_other": {
+    "text": "{{count}} days ago",
+    "description": "How long ago the node's newest block was made, in days. Shown after the block number in the node sheet."
+  },
+  "node.warning.noPeers": {
+    "text": "No connected peers.",
+    "description": "Health notice in the node sheet: the phone's node is not connected to any other node."
+  },
+  "node.warning.syncStalled": {
+    "text": "Sync appears stalled.",
+    "description": "Health notice in the node sheet: the node has stopped making progress catching up with the network."
+  },
+  "node.warning.clockDrift": {
+    "text": "Node clock is out of sync.",
+    "description": "Health notice in the node sheet: the phone's clock differs from the network's by more than a few seconds."
+  },
+  "node.warning.hydrating": {
+    "text": "Wallet-data hydration is still running.",
+    "description": "Health notice in the node sheet: the node is still loading the wallet's data, so balances may be incomplete."
+  },
+  "credit.row.label": {
+    "text": "AI credit",
+    "description": "Label of the row in Settings, Anthropic API key, that shows how much of the person's free AI allowance is spent. Credit is money to spend on AI, not a loan or an attribution."
+  },
+  "credit.meter.spend": {
+    "text": "<0>limit </0><1>{{spent}}</1><0>/{{limit}}</0>",
+    "description": "The AI credit meter in Settings: what was spent against the allowance, as in 'limit $13.60/$20.00'. {{spent}} and {{limit}} are dollar amounts. The numbered tags only set colours: keep every character inside a tag, with <1> around the amount spent."
+  },
+  "credit.meter.left": {
+    "text": "<0>· </0><1>{{remaining}} left</1>",
+    "description": "Second part of the AI credit meter in Settings: how much of the allowance remains, as in '· $6.40 left'. {{remaining}} is a dollar amount. The tags only set colours: keep <0> around the separator dot and its space, and <1> around the words."
+  },
+  "credit.meter.noneLeft": {
+    "text": "<0>· </0><1>none left</1>",
+    "description": "Second part of the AI credit meter in Settings when the whole allowance is spent and the person has no API key of their own. The tags only set colours: keep <0> around the separator dot and its space, and <1> around the words."
+  },
+  "credit.meter.ownKey": {
+    "text": "<0>· </0><1>your key {{amount}}</1>",
+    "description": "Last part of the AI credit meter in Settings: what was billed today to the person's own Anthropic API key, as in '· your key $4.50'. {{amount}} is a dollar amount. The tags only set colours: keep <0> around the separator dot and its space, and <1> around the words."
+  },
+  "credit.meter.locked": {
+    "text": "verify account · unlock $10/day",
+    "description": "The AI credit meter in Settings for an account with no free allowance yet: connecting GitHub or X verifies the account and unlocks 10 dollars of AI use per day. Keep the middle dot and the amount."
+  },
+  "credit.meter.lockedKeyAvailable": {
+    "text": "<0>· </0><1>your key available</1>",
+    "description": "Second part of the AI credit meter in Settings for an account with no free allowance that has saved its own Anthropic API key: that key can still be used. The tags only set colours: keep <0> around the separator dot and its space, and <1> around the words."
+  },
+  "credit.meter.unavailable": {
+    "text": "credits temporarily unavailable",
+    "description": "The AI credit meter in Settings when the server could not check whether the account qualifies for free AI credits."
+  },
+  "credit.tip.locked": {
+    "text": "Connect GitHub or X in Settings to unlock $10/day.",
+    "description": "Tooltip of the AI credit meter for an account with no free allowance yet. GitHub and X are product names; $10/day is the daily AI allowance that connecting one unlocks."
+  },
+  "credit.tip.lockedWithKey": {
+    "text": "Connect GitHub or X in Settings to unlock $10/day. Your own Anthropic key remains available.",
+    "description": "Tooltip of the AI credit meter for an account with no free allowance yet that has saved its own Anthropic API key. GitHub, X and Anthropic are product names; $10/day is the daily AI allowance that connecting one unlocks."
+  },
+  "credit.tip.unavailable": {
+    "text": "Credit eligibility could not be verified. Try again shortly.",
+    "description": "Tooltip of the AI credit meter when the server could not check whether the account qualifies for free AI credits."
+  },
+  "credit.tip.keyBilledWeekly": {
+    "text": "Your {{limit}} weekly allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.",
+    "description": "First sentence of the AI credit meter's tooltip when the week's free allowance is spent and the person has their own Anthropic API key. {{limit}} is the allowance in dollars. An AI turn is one request to the AI."
+  },
+  "credit.tip.keyBilledDaily": {
+    "text": "Your {{limit}} daily allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.",
+    "description": "First sentence of the AI credit meter's tooltip when the day's free allowance is spent and the person has their own Anthropic API key. {{limit}} is the allowance in dollars. An AI turn is one request to the AI."
+  },
+  "credit.tip.usedAllWeekly": {
+    "text": "You have used all {{limit}} of this week’s AI allowance.",
+    "description": "First sentence of the AI credit meter's tooltip when the week's free allowance is spent and the person has no API key of their own. {{limit}} is the allowance in dollars."
+  },
+  "credit.tip.usedAllDaily": {
+    "text": "You have used all {{limit}} of today’s AI allowance.",
+    "description": "First sentence of the AI credit meter's tooltip when the day's free allowance is spent and the person has no API key of their own. {{limit}} is the allowance in dollars."
+  },
+  "credit.tip.usedWeekly": {
+    "text": "{{spent}} of your {{limit}} weekly AI allowance used ({{remaining}} left).",
+    "description": "First sentence of the AI credit meter's tooltip while some of the week's free allowance remains. {{spent}}, {{limit}} and {{remaining}} are dollar amounts."
+  },
+  "credit.tip.usedDaily": {
+    "text": "{{spent}} of your {{limit}} daily AI allowance used ({{remaining}} left).",
+    "description": "First sentence of the AI credit meter's tooltip while some of the day's free allowance remains. {{spent}}, {{limit}} and {{remaining}} are dollar amounts."
+  },
+  "credit.tip.ownKeyToday": {
+    "text": "A further {{amount}} today was billed to your own Anthropic key and does not count against the allowance.",
+    "description": "Last sentence of the AI credit meter's tooltip when the person's own Anthropic API key was also charged today. {{amount}} is that charge in dollars."
+  },
+  "credit.tip.resetsDaily": {
+    "text": "Free credits reset at {{time}}.",
+    "description": "Sentence in the AI credit meter's tooltip saying when the daily free allowance comes back. Reset is a verb here. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
+  },
+  "credit.tip.resetsWeekly": {
+    "text": "Free credits reset {{day}} at {{time}}.",
+    "description": "Sentence in the AI credit meter's tooltip saying when the weekly free allowance comes back. Reset is a verb here. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
+  },
+  "credit.tip.resetsWeeklyUtc": {
+    "text": "Free credits reset Monday 00:00 UTC.",
+    "description": "Sentence in the AI credit meter's tooltip saying when the weekly free allowance comes back, used only when the local time cannot be worked out. UTC is the time standard; keep the time as written. Reset is a verb here."
+  },
+  "credit.tip.resetsDailyUtc": {
+    "text": "Free credits reset at midnight UTC.",
+    "description": "Sentence in the AI credit meter's tooltip saying when the daily free allowance comes back, used only when the local time cannot be worked out. UTC is the time standard. Reset is a verb here."
+  },
+  "credit.tip.sentences": {
+    "text": "{{first}} {{second}}",
+    "description": "How two complete sentences of the AI credit meter's tooltip follow one another. {{first}} and {{second}} are whole sentences, each ending in its own full stop. Change only what stands between them (some languages use no space)."
+  },
+  "appVersion.label": {
+    "text": "Mobile app version",
+    "description": "Label of the row in Settings, About, that shows the version number of the installed Homeroom mobile app."
+  }
+}

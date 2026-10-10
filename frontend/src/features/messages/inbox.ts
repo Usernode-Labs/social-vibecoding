@@ -126,9 +126,9 @@ export type InboxFilter = 'all' | 'people' | 'channels' | 'agents';
 
 /** The filter row, in order. Exported so the view and its test share one list. */
 export const INBOX_FILTERS: ReadonlyArray<readonly [InboxFilter, string]> = [
-  ['all', 'All'],
-  ['people', 'People'],
-  ['agents', 'Agents'],
+  ['all', 'messages:inbox.filter.all'],
+  ['people', 'messages:inbox.filter.people'],
+  ['agents', 'messages:inbox.filter.agents'],
 ];
 
 /**
@@ -170,6 +170,11 @@ function byClock(a: InboxEntry, b: InboxEntry): number {
   return Number.isNaN(diff) ? 0 : diff;
 }
 
+/** B5: entries back in the order things happened, the bot's pin undone (search results). */
+export function inClockOrder<T extends InboxEntry>(entries: T[]): T[] {
+  return [...entries].sort(byClock);
+}
+
 /**
  * Merge the lists into one, filtered: the chats newest first, then the
  * channels — #general, then the app channels newest first.
@@ -180,9 +185,14 @@ function byClock(a: InboxEntry, b: InboxEntry): number {
  *
  * A conversation whose kind is `channel` (#general) is a channel, not a
  * person, however it arrived.
+ *
+ * #18 (WP3): the Homeroom bot's DM (`homeroomBot`, set by the server) is an
+ * agent conversation, as a change is: Agents lists it and People does not.
+ * It is still drawn as the DM it is (`kind: 'person'`), so only the filter
+ * reads it differently.
  */
 export function buildInbox(input: {
-  conversations: Array<{ id: number; lastActivityAt: string; kind?: string }>;
+  conversations: Array<{ id: number; lastActivityAt: string; kind?: string; homeroomBot?: boolean }>;
   discussions: AppDiscussion[];
   agents: AgentChat[];
   /** Optional so a caller with no Improve store still merges three kinds. */
@@ -196,7 +206,7 @@ export function buildInbox(input: {
     // #general is the Homeroom community's channel, drawn on its hub; and
     // an app's channel (`input.discussions`) is drawn on its own hub.
     if (item.kind === 'channel') continue;
-    if (admits(input.filter, 'person')) {
+    if (admits(input.filter, item.homeroomBot ? 'agent' : 'person')) {
       chats.push({ key: `person:${item.id}`, kind: 'person', section: 'chats', at: item.lastActivityAt });
     }
   }
@@ -223,5 +233,12 @@ export function buildInbox(input: {
   // Stable within a timestamp: `sort` is stable in every engine this ships
   // to, so two rows that happened in the same second keep the order their
   // own source gave them — which for conversations is the server's.
-  return chats.sort(byClock);
+  chats.sort(byClock);
+  // B5: the Homeroom bot's DM is always the first row, whatever was said
+  // last, on every filter that lists it. Not a general pin: it is the one
+  // conversation everybody has with the platform itself.
+  const bot = input.conversations.find((item) => item.homeroomBot && item.kind !== 'channel');
+  const at = bot ? chats.findIndex((entry) => entry.key === `person:${bot.id}`) : -1;
+  if (at > 0) chats.unshift(...chats.splice(at, 1));
+  return chats;
 }

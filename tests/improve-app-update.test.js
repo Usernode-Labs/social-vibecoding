@@ -13,7 +13,9 @@
 // arrow glyph and a reload row once it has landed. What is pinned here:
 //
 //   1. The broadcast reaches the button for the app IN VIEW only, and a
-//      failed build withdraws the spinner without offering a reload.
+//      failed build withdraws the spinner without offering a reload. A build
+//      that lands lets the app's kept frame go (WP2), the app in view's
+//      included, and a frame let go is not offered a reload as well.
 //   2. The offer is withdrawn as it is taken up, and does not survive a
 //      change of target.
 //   3. The reload loads the frame TWICE, releasing its load handler between,
@@ -24,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -39,12 +42,22 @@ const MANIFEST = JSON.parse(read('dapp.json'));
 
 // ── 1. The broadcast, run for real ────────────────────────────────────
 
-/** App.handleAppRedeployStatus, lifted out of app.js and run against fakes. */
-function redeployHarness({ currentApp = 'demo', homeVisible = false } = {}) {
-  const start = APP_JS.indexOf('  handleAppRedeployStatus(data) {');
-  assert.ok(start > 0, 'the handler exists');
+/** A method of App, lifted out of app.js by its text. */
+function liftAppMethod(name) {
+  const start = APP_JS.indexOf(`  ${name}(data) {`);
+  assert.ok(start > 0, `the handler ${name} exists`);
   const end = APP_JS.indexOf('\n  },\n', start);
-  const method = APP_JS.slice(start, end + 4);
+  return APP_JS.slice(start, end + 4);
+}
+
+/**
+ * App.handleAppRedeployStatus and App.handleAppVersionChanged, lifted out of
+ * app.js and run against fakes. `evicts` adds an AppView whose evictKeptApp
+ * answers it: true when a frame was let go, false when there was none or the
+ * app is on screen (WP2). Without it there is no AppView at all.
+ */
+function redeployHarness({ currentApp = 'demo', homeVisible = false, evicts } = {}) {
+  const methods = ['handleAppRedeployStatus', 'handleAppVersionChanged'].map(liftAppMethod);
   const calls = [];
   const sandbox = {
     console,
@@ -53,9 +66,15 @@ function redeployHarness({ currentApp = 'demo', homeVisible = false } = {}) {
     // so a strict deepEqual compares values.
     Improve: { update: (patch) => calls.push(['improve', JSON.parse(JSON.stringify(patch))]) },
   };
+  if (evicts !== undefined) {
+    sandbox.AppView = {
+      evictKeptApp: (slug) => { calls.push(['evict', slug]); return evicts; },
+      noteBuild: (slug, sha) => { calls.push(['note-build', slug, sha]); return true; },
+    };
+  }
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`App = { currentApp: ${JSON.stringify(currentApp)}, _isScreenVisible: () => ${homeVisible},\n${method} };`, sandbox);
+  vm.runInContext(`App = { currentApp: ${JSON.stringify(currentApp)}, _isScreenVisible: () => ${homeVisible},\n${methods.join(',\n')} };`, sandbox);
   return { calls, App: sandbox.App };
 }
 
@@ -84,6 +103,77 @@ test("another app's build is that app's news: the button is left alone", () => {
   const none = redeployHarness({ currentApp: null });
   none.App.handleAppRedeployStatus({ appSlug: 'demo', deploying: false });
   assert.deepEqual(none.calls, []);
+});
+
+// ── WP2: the frame that is running the build before this one ──────────
+
+test('a build landing lets the app in view\'s kept frame go, and offers no reload on top', () => {
+  // The app's Workshop is where "✓ Live" is watched. Its frame is parked
+  // or kept behind it, and "Open app" used to bring that old build back,
+  // because eviction skipped the app in view. Now it is let go, and the next
+  // open loads the new build, so a reload offer would load it twice more.
+  const { calls, App } = redeployHarness({ currentApp: 'demo', evicts: true });
+  App.handleAppRedeployStatus({ appSlug: 'demo', deploying: false, toSha: 'abc' });
+  assert.deepEqual(calls, [
+    ['evict', 'demo'],
+    ['improve', { deploying: false, appUpdateReady: false }],
+  ]);
+});
+
+test('a build landing under the app on screen keeps the offer (the frame is not let go)', () => {
+  // AppView.evictKeptApp refuses a frame that is on screen (and marks it
+  // stale): the viewer keeps their document, and reloads it when they choose.
+  const { calls, App } = redeployHarness({ currentApp: 'demo', evicts: false });
+  App.handleAppRedeployStatus({ appSlug: 'demo', deploying: false, toSha: 'abc' });
+  assert.deepEqual(calls, [
+    ['evict', 'demo'],
+    ['improve', { deploying: false, appUpdateReady: true }],
+  ]);
+});
+
+test('no frame is let go while a build is still rolling out, or when it failed', () => {
+  const { calls, App } = redeployHarness({ currentApp: 'demo', evicts: true });
+  App.handleAppRedeployStatus({ appSlug: 'demo', deploying: true, startedAt: 't' });
+  App.handleAppRedeployStatus({ appSlug: 'demo', deploying: false, failed: true });
+  App.handleAppRedeployStatus({ appSlug: 'other', deploying: true, startedAt: 't' });
+  App.handleAppRedeployStatus({ appSlug: 'other', deploying: false, failed: true });
+  assert.ok(!calls.some(([kind]) => kind === 'evict'), 'the old build is still the live one');
+  assert.deepEqual(calls, [
+    ['improve', { deploying: true, appUpdateReady: false }],
+    ['improve', { deploying: false, appUpdateReady: false }],
+  ]);
+});
+
+test("another app's landed build lets its kept frame go, and leaves the button alone", () => {
+  const { calls, App } = redeployHarness({ currentApp: 'demo', evicts: true });
+  App.handleAppRedeployStatus({ appSlug: 'other', deploying: false, toSha: 'abc' });
+  assert.deepEqual(calls, [['evict', 'other']]);
+});
+
+test('the version event names the build, lets the old one go again, and withdraws a spent offer', () => {
+  // Sent after the end event, once apps.main_sha is written. Its sha is what
+  // a frame is stamped with and resumed against (AppView.buildFor).
+  const kept = redeployHarness({ currentApp: 'demo', evicts: true });
+  kept.App.handleAppVersionChanged({ appSlug: 'demo', sha: 'abc123', prNumber: 7 });
+  assert.deepEqual(kept.calls, [
+    ['note-build', 'demo', 'abc123'],
+    ['evict', 'demo'],
+    ['improve', { appUpdateReady: false }],
+  ]);
+  // On screen: nothing let go, and the end event's offer stands.
+  const onScreen = redeployHarness({ currentApp: 'demo', evicts: false });
+  onScreen.App.handleAppVersionChanged({ appSlug: 'demo', sha: 'abc123' });
+  assert.deepEqual(onScreen.calls, [['note-build', 'demo', 'abc123'], ['evict', 'demo']]);
+  // Another app's: its frame goes, this app's button is not touched.
+  const other = redeployHarness({ currentApp: 'demo', evicts: true });
+  other.App.handleAppVersionChanged({ appSlug: 'other', sha: 'abc123' });
+  assert.deepEqual(other.calls, [['note-build', 'other', 'abc123'], ['evict', 'other']]);
+  // And the home list still re-reads, while Home is showing.
+  const home = redeployHarness({ currentApp: null, homeVisible: true, evicts: false });
+  home.App.handleAppVersionChanged({ appSlug: 'demo', sha: 'abc123' });
+  assert.deepEqual(home.calls.at(-1), ['home-load']);
+  // The socket case is the handler, not a copy of it.
+  assert.match(APP_JS, /case 'app_version_changed':[\s\S]{0,200}App\.handleAppVersionChanged\(data\);\n\s*break;/);
 });
 
 test('the home tile still gets its pill, on its own visibility', () => {
@@ -127,6 +217,8 @@ function controllerHarness(opts) {
   const sheet = { open: false };
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
+      // The module reads its words through the language runtime: the real one, in English.
+      '../../lib/i18n/runtime': englishPlatformI18n(),
       '../apps/app-card.js': { iconViewFor() {} },
       // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
       // Improve panel's root through lib/kit-surface and swept the other

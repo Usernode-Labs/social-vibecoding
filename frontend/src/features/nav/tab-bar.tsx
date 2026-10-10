@@ -74,19 +74,22 @@ import {
   UserIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
 import { useCommunityColor } from '../../lib/community-color';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  communityScopeStore, goToCommunity, hydrateCommunityScope, toggleSwitcher, warmCommunities,
+  communityScopeStore, hydrateCommunityScope, tabVotes, warmCommunities,
   type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
+import { createSwitcherHold, pressLitTab } from '../workshop/tab-ladder';
 import { navStore } from './nav-store.js';
-import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
-import { RecentsList } from './recents-list';
+import { clearPeekTimer, clearPeekTimerByMouse, enterPeekByMouse, leavePeekByMouse } from './rail-peek';
+import { StripApps } from './strip-apps';
 import { schedulePress, type PendingPress } from './tab-press';
 
 /**
@@ -113,10 +116,12 @@ import { schedulePress, type PendingPress } from './tab-press';
  * same row the app menu spelled `#switcher-row-discover` with a
  * <SearchIcon/>, and moving a destination should not also rename its glyph.
  */
+// `label` is a message id (frontend/locales/en/core.json), read when the bar
+// renders so the words follow the language on screen.
 const TABS = [
   {
     key: 'home' as const,
-    label: 'Home',
+    label: 'core:tabs.home',
     // A REAL PATH, not a fragment, and that is deliberate: Home is the only
     // one of the five that is a document address rather than a hash route,
     // so a cmd-click on it opens the launcher in a new tab the way the app
@@ -125,12 +130,12 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  { key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon },
-  { key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon },
-  { key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon },
+  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: SearchIcon },
+  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
+  { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
   // "Me" is the label only until somebody is signed in: from then on this tab
   // is named after them (#2760) — see tabLabel below.
-  { key: 'me' as const, label: 'Me', href: '#profile', Icon: UserIcon },
+  { key: 'me' as const, label: 'core:tabs.me', href: '#profile', Icon: UserIcon },
 ];
 
 /**
@@ -160,7 +165,7 @@ export function tabLabel(
   label: string,
   viewer: string | null,
 ): { text: string; ariaLabel: string | undefined } {
-  if (key === 'me' && viewer) return { text: viewer, ariaLabel: `${viewer}, your profile` };
+  if (key === 'me' && viewer) return { text: viewer, ariaLabel: translate('core:tabs.meNamed', { username: viewer }) };
   return { text: label, ariaLabel: undefined };
 }
 
@@ -178,7 +183,7 @@ export function tabLabel(
  * the prerender ships it.
  */
 export function communitiesAriaLabel(scoped: { name: string } | null): string | undefined {
-  return scoped ? `Communities, on ${scoped.name}` : undefined;
+  return scoped ? translate('core:tabs.communitiesOn', { community: scoped.name }) : undefined;
 }
 
 /**
@@ -228,9 +233,9 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * either that community's tile, in its colour (features/workshop/
  * community-scope.ts says which; lib/community-color.ts what colour), or, on
  * All communities, the tab's own people glyph. The ring is what says the tab
- * can be switched: press it while it is lit and "Your communities" opens.
- * The desktop rail draws no ring (app.css): there the row goes back to All
- * communities, and the header's name is the switcher.
+ * can be switched: hold it and "Your communities" opens (#3701,
+ * ../workshop/tab-ladder.ts). The desktop rail draws no ring (app.css): the
+ * header's name is the switcher there, as it is on a phone.
  *
  * All communities is THE PRERENDER: the scope arrives from localStorage and
  * app.js after the first paint, so the shipped markup and the first client
@@ -259,14 +264,16 @@ function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
 
 /**
  * The votes the tab's community is waiting on you for (All communities: all
- * of them), in the accent, because it asks for you. Only above zero, and
+ * of them, less an unchosen community's: ../workshop/community-scope.ts
+ * `tabVotes`), in the accent, because it asks for you. Only above zero, and
  * never in the prerender (the store starts empty). While it shows, app.css
  * hides the quiet unread-channels count beside it: one number per glyph.
  */
 function VotesBadge({ count }: { count: number }) {
+  const t = useMessages();
   if (!(count > 0)) return null;
   return (
-    <span className="platform-tab-votes" aria-label={`${count} ${count === 1 ? 'vote' : 'votes'} waiting on you`}>
+    <span className="platform-tab-votes" aria-label={t('core:tabs.votesWaiting', { count })}>
       {count > 99 ? '99+' : String(count)}
     </span>
   );
@@ -287,10 +294,11 @@ function VotesBadge({ count }: { count: number }) {
  * The TEXT is React's, and it is empty at zero, so the prerender and the
  * first client render agree on an empty hidden span.
  */
-function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversations' }: {
+function TabBadge({ count, id = 'platform-tabs-badge', label }: {
   count: number;
   id?: string;
-  label?: string;
+  /** The accessible name, already in the language on screen. */
+  label: string;
 }) {
   const ref = useRef<HTMLSpanElement | null>(null);
   useHiddenClass(ref, count <= 0);
@@ -343,7 +351,7 @@ function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversat
  */
 function useRailPeek(peek: boolean) {
   useEffect(() => clearPeekTimer, []);
-  return { enter: enterPeek, leave: peek ? leavePeek : clearPeekTimer };
+  return { enter: enterPeekByMouse, leave: peek ? leavePeekByMouse : clearPeekTimerByMouse };
 }
 
 /**
@@ -742,6 +750,7 @@ function goToTab(key: string, href: string): void {
 
 export function PlatformTabs() {
   const barRef = useRef<HTMLElement | null>(null);
+  const t = useMessages();
   // `true` is what the prerendered document ships: the bar is present and
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
@@ -755,7 +764,9 @@ export function PlatformTabs() {
   useEffect(() => { hydrateCommunityScope(); }, []);
   useEffect(() => (viewer ? warmCommunities() : undefined), [viewer]);
   const scoped = scope.slug ? scope.info[scope.slug] || null : null;
-  const votes = scope.slug ? Number(scoped?.needs) || 0 : Number(scope.totalNeeds) || 0;
+  // Less an unchosen community's votes: the one every account is put in,
+  // until you have taken part there (tabVotes says why).
+  const votes = tabVotes(scope);
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -786,6 +797,19 @@ export function PlatformTabs() {
   useClassToggle(barRef, 'platform-tabs-folded', !railOpen);
   const { enter, leave } = useRailPeek(peek);
   const { box: marker, lit, markerRef, press } = useTabMarker(barRef, tab);
+  // THE COMMUNITIES TAB, HELD on the phone's bar, opens "Your communities"
+  // (#3701, ../workshop/tab-ladder.ts createHold); a short press is the
+  // ladder below. One per bar, its timer and click guard let go on unmount.
+  // Only handlers ride on the tab, so the markup is the prerender's.
+  const [hold] = useState(createSwitcherHold);
+  useEffect(() => () => hold.dispose(), [hold]);
+  const holdProps = {
+    onPointerDown: hold.onPointerDown,
+    onPointerMove: hold.onPointerMove,
+    onPointerUp: hold.onPointerUp,
+    onPointerCancel: hold.onPointerCancel,
+    onContextMenu: hold.onContextMenu,
+  };
   // A plain press on another tab lights it and slides the pill first, and
   // navigates a frame later (useTabMarker's `press`, #3259). A modified click
   // stays the browser's, a second press on a tab still waiting for its route
@@ -798,24 +822,16 @@ export function PlatformTabs() {
       event.preventDefault();
       return;
     }
-    // THE LIT COMMUNITIES TAB. On a phone it opens "Your communities"
-    // (../workshop/community-switcher.tsx) rather than popping to the list:
-    // the tab is a community now, and pressing it again is how you change
-    // which. On the desktop rail it goes back to All communities, the list,
-    // as a sidebar row does; the header's name is the switcher there.
+    // THE LIT COMMUNITIES TAB GOES UP A LEVEL (#3701), the same on the
+    // phone's bar and the desktop rail: from a page below a community's tabs
+    // back to the community, then to the top, then to All communities, whose
+    // own press only scrolls (../workshop/tab-ladder.ts). It used to open
+    // "Your communities" on a phone and go to All communities on the rail.
+    // The switcher is the header's name, and the phone's tab held (`hold`).
     if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
-      let wide = false;
-      try { wide = window.matchMedia('(min-width: 768px)').matches; } catch { wide = false; }
-      if (!wide) {
-        event.preventDefault();
-        toggleSwitcher('tab', event.currentTarget);
-        return;
-      }
-      if (scope.slug) {
-        event.preventDefault();
-        goToCommunity(null);
-        return;
-      }
+      event.preventDefault();
+      pressLitTab(screen);
+      return;
     }
     if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
       event.preventDefault();
@@ -863,17 +879,17 @@ export function PlatformTabs() {
           id="platform-rail-peek"
           className="platform-rail-peek"
           aria-hidden="true"
-          onMouseEnter={enter}
-          onMouseLeave={leave}
+          onPointerEnter={enter}
+          onPointerLeave={leave}
         />
       ) : null}
       <nav
         ref={barRef}
         id="platform-tabs"
         className="platform-tabs"
-        aria-label="Sections"
-        onMouseEnter={enter}
-        onMouseLeave={leave}
+        aria-label={t('core:tabs.sections')}
+        onPointerEnter={enter}
+        onPointerLeave={leave}
       >
       {/*
           THE LIT TAB'S MARKER (#2824). Before the tabs so it paints behind
@@ -895,11 +911,12 @@ export function PlatformTabs() {
         } : undefined}
       />
       {TABS.flatMap(({ key, label, href, Icon }) => [
-        // RECENTS SIT BETWEEN THE SECTIONS AND YOU (#2802): after the last
-        // section (Communities), before Me at the rail's foot, which is where
-        // the Resume strip it replaces sat, so the four destinations stay one
-        // run. Desktop only; app.css keeps it off the phone's bar.
-        key === 'me' ? <RecentsList key="recents" /> : null,
+        // #4417: THE FIVE RECENT APPS SIT BETWEEN THE SECTIONS AND YOU, on
+        // the desktop strip: after the last section (Communities), before Me
+        // at its foot, where Recents (#2802) sat. The conversations it listed
+        // are Messages' own list. Desktop only; app.css keeps it off the
+        // phone's bar.
+        key === 'me' ? <StripApps key="apps" /> : null,
         <a
           key={key}
           id={`platform-tab-${key}`}
@@ -913,8 +930,9 @@ export function PlatformTabs() {
           // router's tab, except for the moment between a press and its route
           // landing, when it is the tab pressed (useTabMarker, #3259).
           aria-current={lit === key ? 'page' : undefined}
-          aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, label, viewer).ariaLabel}
+          aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, t(label), viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
+          {...(key === 'workshop' ? holdProps : {})}
         >
           <span className="platform-tab-mark">
             {key === 'workshop'
@@ -945,7 +963,7 @@ export function PlatformTabs() {
                 dissolving this wrapper, so the phone keeps its anchor and a
                 declared check keeps finding it inside the Messages tab.
             */}
-            {key === 'messages' ? <TabBadge count={messages} /> : null}
+            {key === 'messages' ? <TabBadge count={messages} label={t('core:tabs.unreadConversations')} /> : null}
             {/*
                 THE CHANNELS' COUNT, on Communities. A project's channel lives
                 on its hub now, not in Messages, so "something was said in a
@@ -954,11 +972,11 @@ export function PlatformTabs() {
                 Homeroom's). The same quiet grey disc, for the same reason.
             */}
             {key === 'workshop' ? (
-              <TabBadge count={communities} id="platform-tabs-badge-communities" label="Channels with unread messages" />
+              <TabBadge count={communities} id="platform-tabs-badge-communities" label={t('core:tabs.unreadChannels')} />
             ) : null}
             {key === 'workshop' ? <VotesBadge count={votes} /> : null}
           </span>
-          <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
+          <span className="platform-tab-label">{tabLabel(key, t(label), viewer).text}</span>
         </a>,
       ])}
       {/*
@@ -982,8 +1000,8 @@ export function PlatformTabs() {
         id="platform-rail-settings"
         className="platform-rail-settings"
         href="#settings"
-        aria-label="Settings"
-        title="Settings"
+        aria-label={t('core:tabs.settings')}
+        title={t('core:tabs.settings')}
         aria-current={screen === 'settings-screen' ? 'page' : undefined}
       >
         <CogIcon className="platform-rail-settings-glyph" aria-hidden="true" />

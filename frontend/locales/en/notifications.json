@@ -1,0 +1,1246 @@
+{
+  "sheet.title": {
+    "text": "Notifications",
+    "description": "Title at the top of the notifications sheet, and the sheet's accessible name."
+  },
+  "sheet.markAllRead": {
+    "text": "Mark all read",
+    "description": "Button at the top of the notifications sheet, on the Unread filter: marks every notification as read."
+  },
+  "sheet.filters": {
+    "text": "Notification filters",
+    "description": "Accessible name of the row of three filter buttons (Unread, Messages, All) at the top of the notifications sheet."
+  },
+  "sheet.tab.unread": {
+    "text": "Unread",
+    "description": "Filter button at the top of the notifications sheet: shows only notifications not yet read. Used when there are none."
+  },
+  "sheet.tab.unreadCount_one": {
+    "text": "Unread ({{count}})",
+    "description": "Filter button at the top of the notifications sheet: shows only notifications not yet read. {{count}} is how many there are."
+  },
+  "sheet.tab.unreadCount_other": {
+    "text": "Unread ({{count}})",
+    "description": "Filter button at the top of the notifications sheet: shows only notifications not yet read. {{count}} is how many there are."
+  },
+  "sheet.tab.messages": {
+    "text": "Messages",
+    "description": "Filter button at the top of the notifications sheet: shows only notifications about conversations and about what coding agents did."
+  },
+  "sheet.tab.all": {
+    "text": "All",
+    "description": "Filter button at the top of the notifications sheet: shows every notification, read ones included."
+  },
+  "sheet.allMessages": {
+    "text": "All messages",
+    "description": "Link row at the top of the notifications sheet's Messages filter: leaves the sheet and goes to the Messages screen."
+  },
+  "sheet.today": {
+    "text": "Today",
+    "description": "Heading over the notifications that arrived today, in the notifications sheet."
+  },
+  "sheet.earlier": {
+    "text": "Earlier",
+    "description": "Heading over the notifications that arrived before today, in the notifications sheet."
+  },
+  "sheet.empty.unread": {
+    "text": "You’re all caught up.",
+    "description": "Shown in the notifications sheet when the Unread filter has nothing in it."
+  },
+  "sheet.empty.other": {
+    "text": "Nothing here yet. You’ll get pinged here.",
+    "description": "Shown in the notifications sheet when the Messages or All filter has nothing in it. \"Pinged\" means notified."
+  },
+  "sheet.older.loading": {
+    "text": "Loading…",
+    "description": "Shown on the button at the foot of the notifications sheet while older notifications are being fetched."
+  },
+  "sheet.older.messages": {
+    "text": "See older message notifications",
+    "description": "Button at the foot of the notifications sheet's Messages filter: fetches older notifications about conversations."
+  },
+  "sheet.older.showAll": {
+    "text": "See older notifications",
+    "description": "Button at the foot of the notifications sheet's Unread and Messages filters: switches to the All filter, where read notifications are listed too."
+  },
+  "sheet.older.load": {
+    "text": "See older notifications",
+    "description": "Button at the foot of the notifications sheet's All filter: fetches the next page of older notifications."
+  },
+  "row.clear": {
+    "text": "Clear",
+    "description": "Action revealed by swiping an unread notification on a phone: marks that notification as read without opening it. A verb."
+  },
+  "row.clearLabel": {
+    "text": "Clear notification",
+    "description": "Accessible name of the small × button on an unread notification: marks that notification as read without opening it."
+  },
+  "row.unreadDot": {
+    "text": "Unread",
+    "description": "Accessible name of the dot at the right of a notification that has not been read."
+  },
+  "row.runCount_one": {
+    "text": "{{count}} notification",
+    "description": "Accessible name of the number at the right of a row that stands for several notifications from one conversation. {{count}} is how many."
+  },
+  "row.runCount_other": {
+    "text": "{{count}} notifications",
+    "description": "Accessible name of the number at the right of a row that stands for several notifications from one conversation. {{count}} is how many."
+  },
+  "row.sending": {
+    "text": "Sending…",
+    "description": "Shown on a notification's \"Still yes\" button while the vote is being sent."
+  },
+  "row.meta.sourceByWhen": {
+    "text": "{{source}} · by @{{username}}<0> · {{when}}</0>",
+    "description": "Small last line of a notification. {{source}} is the project's name or the area it came from (Messages, Account), {{username}} is who did it, and {{when}} is how long ago (\"4m ago\") or a date. Keep the @ before the username."
+  },
+  "row.meta.sourceWhen": {
+    "text": "{{source}}<0> · {{when}}</0>",
+    "description": "Small last line of a notification nobody in particular caused. {{source}} is the project's name or the area it came from (Messages, Account), and {{when}} is how long ago (\"4m ago\") or a date."
+  },
+  "row.meta.byWhen": {
+    "text": "by @{{username}}<0> · {{when}}</0>",
+    "description": "Small last line of a notification that names no project. {{username}} is who did it and {{when}} is how long ago (\"4m ago\") or a date. Keep the @ before the username."
+  },
+  "row.meta.sourceBy": {
+    "text": "{{source}} · by @{{username}}",
+    "description": "Small last line of a notification whose time is not known. {{source}} is the project's name or the area it came from and {{username}} is who did it. Keep the @ before the username."
+  },
+  "row.meta.by": {
+    "text": "by @{{username}}",
+    "description": "Small last line of a notification that names no project and has no known time. {{username}} is who did it. Keep the @ before the username."
+  },
+  "row.factPair": {
+    "text": "{{first}} · {{second}}",
+    "description": "Joins two short facts on one line of a notification (\"2 changes went live · 1 change is waiting for approval\"). {{first}} and {{second}} are each already a complete phrase. Use the separator your language uses between such facts."
+  },
+  "row.unknownPerson": {
+    "text": "someone",
+    "description": "Stands in for a username on a notification when the person is not known. It is shown after an @ sign, as \"@someone\", so keep it one lower-case word."
+  },
+  "row.source.messages": {
+    "text": "Messages",
+    "description": "Where a notification came from, on its small last line: a conversation on the Messages screen."
+  },
+  "row.source.friends": {
+    "text": "Friends",
+    "description": "Where a notification came from, on its small last line: the viewer's friends."
+  },
+  "row.source.account": {
+    "text": "Account",
+    "description": "Where a notification came from, on its small last line: it is about the viewer's own account, not a project."
+  },
+  "row.source.admin": {
+    "text": "Admin",
+    "description": "Where a notification came from, on its small last line: the admin console. Only administrators get these."
+  },
+  "row.source.discussion": {
+    "text": "Discussion",
+    "description": "Where a notification came from, on its small last line: a project's Discussion (its group chat). A noun."
+  },
+  "row.testAlert.label": {
+    "text": "Homeroom test alert",
+    "description": "First line of the notification sent when a person tests push notifications from Settings. Homeroom is the product's name."
+  },
+  "row.testAlert.body": {
+    "text": "You requested a push notification test. Open Alerts settings to try again.",
+    "description": "Second line of the test notification a person sent themselves from Settings. \"Open\" is a verb; \"Alerts\" is the name of that Settings section."
+  },
+  "row.conversation.untitled": {
+    "text": "Messages",
+    "description": "Stands in for a conversation's name on a notification when the conversation has no title of its own."
+  },
+  "row.conversation.invite": {
+    "text": "Invite",
+    "description": "First line of a notification: the viewer was added to a conversation. A noun (an invitation). The conversation's name is on the line below."
+  },
+  "row.conversation.mention": {
+    "text": "Mentioned you",
+    "description": "First line of a notification: somebody named the viewer with @ in a conversation. The conversation's name is on the line below and who did it on the last line."
+  },
+  "row.conversation.reply": {
+    "text": "Replied",
+    "description": "First line of a notification: somebody replied to the viewer's message in a conversation. The conversation's name is on the line below and who did it on the last line."
+  },
+  "row.conversation.threadReply": {
+    "text": "Replied in thread",
+    "description": "First line of a notification: somebody answered in a reply thread the viewer started or took part in, in a conversation. The conversation's name is on the line below."
+  },
+  "row.conversation.reaction": {
+    "text": "Reacted",
+    "description": "First line of a notification: somebody reacted with an emoji to the viewer's message in a conversation. The conversation's name is on the line below and who did it on the last line."
+  },
+  "row.bot.name": {
+    "text": "Homeroom bot",
+    "description": "First line of a notification from Homeroom bot, the built-in assistant that builds changes: its name. Homeroom is the product's name."
+  },
+  "row.bot.build.ready": {
+    "text": "Your change is ready to try",
+    "description": "Second line of a notification from Homeroom bot: the change the viewer asked for is built and can be tried."
+  },
+  "row.bot.build.needsYou": {
+    "text": "I have a question",
+    "description": "Second line of a notification from Homeroom bot, speaking as itself: it needs an answer from the viewer before it can go on."
+  },
+  "row.bot.build.stopped": {
+    "text": "Your change stopped. I said why in our chat",
+    "description": "Second line of a notification from Homeroom bot, speaking as itself: work on the viewer's change stopped, and the reason is in their conversation with the bot."
+  },
+  "row.bot.build.live": {
+    "text": "Your change is live",
+    "description": "Second line of a notification from Homeroom bot: the viewer's change is now part of the running project."
+  },
+  "row.bot.moment.question.named": {
+    "text": "{{project}}: I have a question",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". It needs an answer from the viewer before it can go on. {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.question.unnamed": {
+    "text": "I have a question",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". It needs an answer from the viewer before it can go on."
+  },
+  "row.bot.moment.ready.named": {
+    "text": "{{project}} is ready to try",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's first version of {{project}} (the project's name) is built and can be tried."
+  },
+  "row.bot.moment.ready.unnamed": {
+    "text": "Your change is ready to try",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". What the viewer asked for is built and can be tried; the project's name is not known."
+  },
+  "row.bot.moment.readyGroup.named": {
+    "text": "Your change to {{project}} is ready to try",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's change to a project other people share is built and can be tried. {{project}} is the project's name."
+  },
+  "row.bot.moment.readyGroup.unnamed": {
+    "text": "Your change is ready to try",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's change to a shared project is built and can be tried; the project's name is not known."
+  },
+  "row.bot.moment.readyBroken.named": {
+    "text": "{{project}} is built, but not everything works yet",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The build finished with known faults. {{project}} is the project's name."
+  },
+  "row.bot.moment.readyBroken.unnamed": {
+    "text": "Your change is built, but not everything works yet",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The build finished with known faults; the project's name is not known."
+  },
+  "row.bot.moment.stopped.named": {
+    "text": "{{project}}: your change stopped. I said why in our chat",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". Work on the viewer's change stopped and the reason is in their conversation with the bot. {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.stopped.unnamed": {
+    "text": "Your change stopped. I said why in our chat",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". Work on the viewer's change stopped and the reason is in their conversation with the bot."
+  },
+  "row.bot.moment.stoppedBuild.named": {
+    "text": "{{project}}: I couldn't finish building it. Reply and I'll try again",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The build failed; replying to the bot starts it again. {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.stoppedBuild.unnamed": {
+    "text": "I couldn't finish building it. Reply and I'll try again",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The build failed; replying to the bot starts it again."
+  },
+  "row.bot.moment.stoppedBlocked.named": {
+    "text": "{{project}}: I can't build it as written. Tell me more",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The request cannot be built as it was described, and the bot asks for more detail. {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.stoppedBlocked.unnamed": {
+    "text": "I can't build it as written. Tell me more",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The request cannot be built as it was described, and the bot asks for more detail."
+  },
+  "row.bot.moment.stoppedPerson.named": {
+    "text": "{{project}}: this needs a person to decide",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The bot will not go on by itself: a human has to make the decision. {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.stoppedPerson.unnamed": {
+    "text": "This needs a person to decide",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The bot will not go on by itself: a human has to make the decision."
+  },
+  "row.bot.moment.stoppedEmpty.named": {
+    "text": "{{project}}: I couldn't find anything to build. Tell me more",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The request held nothing it could turn into a change, and the bot asks for more detail. {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.stoppedEmpty.unnamed": {
+    "text": "I couldn't find anything to build. Tell me more",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The request held nothing it could turn into a change, and the bot asks for more detail."
+  },
+  "row.bot.moment.stoppedFirst.named": {
+    "text": "{{project}}: I couldn't start building it. You can still post a request",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The build never started. \"Post a request\" means file a request for a change on the project (post is a verb). {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.stoppedFirst.unnamed": {
+    "text": "I couldn't start building it",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The build never started."
+  },
+  "row.bot.moment.stoppedPreview.named": {
+    "text": "{{project}}: the preview didn't start. I'm trying again",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The trial copy of the project failed to start and the bot is retrying. {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.stoppedPreview.unnamed": {
+    "text": "The preview didn't start. I'm trying again",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The trial copy of the project failed to start and the bot is retrying."
+  },
+  "row.bot.moment.stoppedLook.named": {
+    "text": "{{project}}: it's built, but it needs a look before you can try it",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The build finished but somebody has to check it before it can be tried. {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.stoppedLook.unnamed": {
+    "text": "It's built, but it needs a look before you can try it",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The build finished but somebody has to check it before it can be tried."
+  },
+  "row.bot.moment.held.named": {
+    "text": "{{project}}: I'll start it on Monday",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The work is put off until Monday. {{project}} is the project's name and leads the line."
+  },
+  "row.bot.moment.held.unnamed": {
+    "text": "I've paused until Monday",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The bot has put its work off until Monday."
+  },
+  "row.bot.moment.live.named": {
+    "text": "Your change to {{project}} is live",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's change is now part of the running project. {{project}} is the project's name."
+  },
+  "row.bot.moment.live.unnamed": {
+    "text": "Your change is live",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's change is now part of the running project; the project's name is not known."
+  },
+  "row.bot.moment.liveFirst.named": {
+    "text": "{{project}} is live",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's new project is now running for the first time. {{project}} is the project's name."
+  },
+  "row.bot.moment.liveFirst.unnamed": {
+    "text": "Your project is live",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's new project is now running for the first time; its name is not known."
+  },
+  "row.bot.moment.liveSoon.named": {
+    "text": "Your change to {{project}} is going live",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's change was approved and is being put into the running project. {{project}} is the project's name."
+  },
+  "row.bot.moment.liveSoon.unnamed": {
+    "text": "Your change is going live",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's change was approved and is being put into the running project; the project's name is not known."
+  },
+  "row.bot.moment.liveFirstSoon.named": {
+    "text": "{{project}} is going live",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's new project is being started for the first time. {{project}} is the project's name."
+  },
+  "row.bot.moment.liveFirstSoon.unnamed": {
+    "text": "Your project is going live",
+    "description": "Second line of a notification from Homeroom bot, which speaks as \"I\". The viewer's new project is being started for the first time; its name is not known."
+  },
+  "row.friend.request": {
+    "text": "Friend request",
+    "description": "First line of a notification: somebody asked to be the viewer's friend. Their username is on the line below."
+  },
+  "row.friend.accepted": {
+    "text": "Accepted your friend request",
+    "description": "First line of a notification: somebody accepted the viewer's friend request. Their username is on the line below."
+  },
+  "row.friend.accept": {
+    "text": "Accept",
+    "description": "Button on a friend-request notification: accepts the request, making the two people friends."
+  },
+  "row.friend.decline": {
+    "text": "Decline",
+    "description": "Button on a friend-request notification: turns the request down."
+  },
+  "row.appDeleteAttempted": {
+    "text": "Tried to delete this shared app",
+    "description": "The whole text of a notification: somebody (named on the last line) tried to delete an app the viewer shares, and it was not deleted."
+  },
+  "row.appDeleted.label": {
+    "text": "Deleted a shared app you contributed to",
+    "description": "First line of a notification: somebody (named on the last line) deleted an app the viewer had worked on. The app's name is on the line below."
+  },
+  "row.appDeleted.unnamed": {
+    "text": "an app",
+    "description": "Second line of the \"Deleted a shared app you contributed to\" notification when the deleted app's name is not known. Lower case: it stands where the name would."
+  },
+  "row.moderation.report": {
+    "text": "Report update",
+    "description": "First line of a notification about a report the viewer filed against content or a person: there is news on it. \"Report\" is a noun. The detail is on the line below."
+  },
+  "row.moderation.action": {
+    "text": "Moderation action",
+    "description": "First line of a notification: a moderator acted on the viewer's content or account. The detail is on the line below."
+  },
+  "row.quota.changed.label": {
+    "text": "App allowance changed",
+    "description": "First line of a notification: the number of apps the viewer may create was changed by an administrator."
+  },
+  "row.quota.changed.unknown": {
+    "text": "Your app allowance changed.",
+    "description": "Second line of the \"App allowance changed\" notification when the old and new numbers are not known."
+  },
+  "row.quota.changed.up_one": {
+    "text": "Your app allowance went up from {{before}} to {{count}} app slot.",
+    "description": "Second line of the \"App allowance changed\" notification when the allowance grew. {{before}} is the old number of apps the viewer could create and {{count}} the new one. An \"app slot\" is room for one app."
+  },
+  "row.quota.changed.up_other": {
+    "text": "Your app allowance went up from {{before}} to {{count}} app slots.",
+    "description": "Second line of the \"App allowance changed\" notification when the allowance grew. {{before}} is the old number of apps the viewer could create and {{count}} the new one. An \"app slot\" is room for one app."
+  },
+  "row.quota.changed.down_one": {
+    "text": "Your app allowance went down from {{before}} to {{count}} app slot.",
+    "description": "Second line of the \"App allowance changed\" notification when the allowance shrank. {{before}} is the old number of apps the viewer could create and {{count}} the new one. An \"app slot\" is room for one app."
+  },
+  "row.quota.changed.down_other": {
+    "text": "Your app allowance went down from {{before}} to {{count}} app slots.",
+    "description": "Second line of the \"App allowance changed\" notification when the allowance shrank. {{before}} is the old number of apps the viewer could create and {{count}} the new one. An \"app slot\" is room for one app."
+  },
+  "row.quota.changed.same_one": {
+    "text": "Your app allowance is {{count}} app slot.",
+    "description": "Second line of the \"App allowance changed\" notification when the number did not actually move. {{count}} is how many apps the viewer may create. An \"app slot\" is room for one app."
+  },
+  "row.quota.changed.same_other": {
+    "text": "Your app allowance is {{count}} app slots.",
+    "description": "Second line of the \"App allowance changed\" notification when the number did not actually move. {{count}} is how many apps the viewer may create. An \"app slot\" is room for one app."
+  },
+  "row.quota.requested": {
+    "text": "Requested more app slots",
+    "description": "First line of a notification to an administrator: a person asked to be allowed more apps. Their username is on the line below. A past-tense verb: \"(they) requested\"."
+  },
+  "row.quota.declined.label": {
+    "text": "App allowance request declined",
+    "description": "First line of a notification: the viewer's request to be allowed more apps was turned down."
+  },
+  "row.quota.declined.body": {
+    "text": "Your app allowance is unchanged.",
+    "description": "Second line of the \"App allowance request declined\" notification."
+  },
+  "row.openrouter.review": {
+    "text": "OpenRouter key needs admin review",
+    "description": "First line of a notification to an administrator: a person's OpenRouter API key needs checking. OpenRouter is a company's name. The person's username is on the line below."
+  },
+  "row.openrouter.enabled": {
+    "text": "OpenRouter access enabled",
+    "description": "First line of a notification to an administrator: a person was given access to AI models through OpenRouter. OpenRouter is a company's name. The person's username is on the line below."
+  },
+  "row.limit.unknown.label": {
+    "text": "Platform limit",
+    "description": "First line of a notification to an administrator about a server-wide limit, when its details cannot be read."
+  },
+  "row.limit.unknown.body": {
+    "text": "the server is nearing one of its limits",
+    "description": "Second line of the \"Platform limit\" notification to an administrator, when its details cannot be read. Lower case, as a note under the heading."
+  },
+  "row.limit.githubApp.full.label": {
+    "text": "GitHub App requests used up",
+    "description": "First line of a notification to an administrator: the platform's GitHub App has no requests left for this hour. \"GitHub App\" is GitHub's name for that kind of integration."
+  },
+  "row.limit.githubApp.warn.label": {
+    "text": "GitHub App requests running low",
+    "description": "First line of a notification to an administrator: the platform's GitHub App has few requests left for this hour. \"GitHub App\" is GitHub's name for that kind of integration."
+  },
+  "row.limit.github.full.label": {
+    "text": "GitHub requests used up",
+    "description": "First line of a notification to an administrator: the platform has no requests to GitHub left for this hour."
+  },
+  "row.limit.github.warn.label": {
+    "text": "GitHub requests running low",
+    "description": "First line of a notification to an administrator: the platform has few requests to GitHub left for this hour."
+  },
+  "row.limit.githubApp.body_one": {
+    "text": "<0>{{used}} of {{count}} GitHub App requests used this hour.</0> It resets within the hour.",
+    "description": "Second line of a notification to an administrator about the GitHub App's hourly budget. {{used}} is how many requests were made and {{count}} the hourly limit. The part in <0> is shown bold. \"It\" is the count."
+  },
+  "row.limit.githubApp.body_other": {
+    "text": "<0>{{used}} of {{count}} GitHub App requests used this hour.</0> It resets within the hour.",
+    "description": "Second line of a notification to an administrator about the GitHub App's hourly budget. {{used}} is how many requests were made and {{count}} the hourly limit. The part in <0> is shown bold. \"It\" is the count."
+  },
+  "row.limit.github.full.body_one": {
+    "text": "<0>{{used}} of {{count}} GitHub requests used this hour.</0> Work that needs GitHub fails until the hour resets.",
+    "description": "Second line of a notification to an administrator: the hourly budget of requests to GitHub is spent. {{used}} is how many requests were made and {{count}} the hourly limit. The part in <0> is shown bold."
+  },
+  "row.limit.github.full.body_other": {
+    "text": "<0>{{used}} of {{count}} GitHub requests used this hour.</0> Work that needs GitHub fails until the hour resets.",
+    "description": "Second line of a notification to an administrator: the hourly budget of requests to GitHub is spent. {{used}} is how many requests were made and {{count}} the hourly limit. The part in <0> is shown bold."
+  },
+  "row.limit.github.warn.body_one": {
+    "text": "<0>{{used}} of {{count}} GitHub requests used this hour.</0> Background work waits so people's work keeps the rest.",
+    "description": "Second line of a notification to an administrator: the hourly budget of requests to GitHub is nearly spent, so automatic jobs are held back and what people do by hand gets the remainder. {{used}} is how many requests were made and {{count}} the hourly limit. The part in <0> is shown bold."
+  },
+  "row.limit.github.warn.body_other": {
+    "text": "<0>{{used}} of {{count}} GitHub requests used this hour.</0> Background work waits so people's work keeps the rest.",
+    "description": "Second line of a notification to an administrator: the hourly budget of requests to GitHub is nearly spent, so automatic jobs are held back and what people do by hand gets the remainder. {{used}} is how many requests were made and {{count}} the hourly limit. The part in <0> is shown bold."
+  },
+  "row.limit.apps.full.label": {
+    "text": "App limit reached",
+    "description": "First line of a notification to an administrator: the server holds as many apps as it is allowed to."
+  },
+  "row.limit.apps.warn.label": {
+    "text": "Nearing the app limit",
+    "description": "First line of a notification to an administrator: the server holds almost as many apps as it is allowed to."
+  },
+  "row.limit.sessions.full.label": {
+    "text": "Session limit reached",
+    "description": "First line of a notification to an administrator: as many coding sessions are running as the server allows."
+  },
+  "row.limit.sessions.warn.label": {
+    "text": "Nearing the session limit",
+    "description": "First line of a notification to an administrator: almost as many coding sessions are running as the server allows."
+  },
+  "row.limit.apps.full.body_one": {
+    "text": "<0>{{used}} of {{count}} apps in use.</0> New apps are refused until the app limit is raised in Admin → Limits or an app is removed.",
+    "description": "Second line of the \"App limit reached\" notification to an administrator. {{used}} is how many apps exist and {{count}} the limit. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
+  },
+  "row.limit.apps.full.body_other": {
+    "text": "<0>{{used}} of {{count}} apps in use.</0> New apps are refused until the app limit is raised in Admin → Limits or an app is removed.",
+    "description": "Second line of the \"App limit reached\" notification to an administrator. {{used}} is how many apps exist and {{count}} the limit. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
+  },
+  "row.limit.apps.warn.body_one": {
+    "text": "<0>{{used}} of {{count}} apps in use.</0> Raise the app limit in Admin → Limits before new apps are refused.",
+    "description": "Second line of the \"Nearing the app limit\" notification to an administrator. {{used}} is how many apps exist and {{count}} the limit. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
+  },
+  "row.limit.apps.warn.body_other": {
+    "text": "<0>{{used}} of {{count}} apps in use.</0> Raise the app limit in Admin → Limits before new apps are refused.",
+    "description": "Second line of the \"Nearing the app limit\" notification to an administrator. {{used}} is how many apps exist and {{count}} the limit. The part in <0> is shown bold. \"Admin → Limits\" is the path to a section of the admin console."
+  },
+  "row.limit.sessions.full.body_one": {
+    "text": "<0>{{used}} of {{count}} coding sessions in use.</0> New sessions pause idle ones, or wait, until MAX_GLOBAL_SESSIONS is raised.",
+    "description": "Second line of the \"Session limit reached\" notification to an administrator. {{used}} is how many coding sessions are running and {{count}} the limit. The part in <0> is shown bold. Keep MAX_GLOBAL_SESSIONS as written: it is a setting's name."
+  },
+  "row.limit.sessions.full.body_other": {
+    "text": "<0>{{used}} of {{count}} coding sessions in use.</0> New sessions pause idle ones, or wait, until MAX_GLOBAL_SESSIONS is raised.",
+    "description": "Second line of the \"Session limit reached\" notification to an administrator. {{used}} is how many coding sessions are running and {{count}} the limit. The part in <0> is shown bold. Keep MAX_GLOBAL_SESSIONS as written: it is a setting's name."
+  },
+  "row.limit.sessions.warn.body_one": {
+    "text": "<0>{{used}} of {{count}} coding sessions in use.</0> At the limit, idle sessions are paused to make room.",
+    "description": "Second line of the \"Nearing the session limit\" notification to an administrator. {{used}} is how many coding sessions are running and {{count}} the limit. The part in <0> is shown bold."
+  },
+  "row.limit.sessions.warn.body_other": {
+    "text": "<0>{{used}} of {{count}} coding sessions in use.</0> At the limit, idle sessions are paused to make room.",
+    "description": "Second line of the \"Nearing the session limit\" notification to an administrator. {{used}} is how many coding sessions are running and {{count}} the limit. The part in <0> is shown bold."
+  },
+  "row.incident.hour.label": {
+    "text": "Unexpected events piling up",
+    "description": "First line of a notification to an administrator: many errors of one kind happened within an hour."
+  },
+  "row.incident.hour.body_one": {
+    "text": "<0>{{count}} {{kind}} in the last hour.</0> Admin → Unexpected events has each one.",
+    "description": "Second line of the \"Unexpected events piling up\" notification to an administrator. {{count}} is how many happened and {{kind}} the internal name of that kind of error, in English. The part in <0> is shown bold. \"Admin → Unexpected events\" is the path to a section of the admin console."
+  },
+  "row.incident.hour.body_other": {
+    "text": "<0>{{count}} {{kind}} in the last hour.</0> Admin → Unexpected events has each one.",
+    "description": "Second line of the \"Unexpected events piling up\" notification to an administrator. {{count}} is how many happened and {{kind}} the internal name of that kind of error, in English. The part in <0> is shown bold. \"Admin → Unexpected events\" is the path to a section of the admin console."
+  },
+  "row.incident.digest.label_one": {
+    "text": "{{count}} unexpected event yesterday",
+    "description": "First line of a daily notification to an administrator. {{count}} is how many errors that should not happen were recorded the day before."
+  },
+  "row.incident.digest.label_other": {
+    "text": "{{count}} unexpected events yesterday",
+    "description": "First line of a daily notification to an administrator. {{count}} is how many errors that should not happen were recorded the day before."
+  },
+  "row.incident.digest.kindCount": {
+    "text": "{{kind}} {{count}}",
+    "description": "One item in the list on the second line of an administrator's daily notification about unexpected events: {{kind}} is the internal name of a kind of error, in English, and {{count}} how many of it there were."
+  },
+  "row.incident.digest.otherCount": {
+    "text": "other {{count}}",
+    "description": "Last item in the list on the second line of an administrator's daily notification about unexpected events: {{count}} is how many errors were of kinds not listed before it."
+  },
+  "row.incident.digest.list": {
+    "text": "{{kinds}}.",
+    "description": "Second line of an administrator's daily notification about unexpected events. {{kinds}} is the finished list of kinds with their counts (\"login failed 3, other 2\"); only the closing punctuation is added here."
+  },
+  "row.incident.digest.empty": {
+    "text": "See Admin → Unexpected events.",
+    "description": "Second line of an administrator's daily notification about unexpected events when it carries no breakdown. \"Admin → Unexpected events\" is the path to a section of the admin console."
+  },
+  "row.incident.unknown.label": {
+    "text": "Unexpected events",
+    "description": "First line of a notification to an administrator about errors that should not happen, when its details cannot be read."
+  },
+  "row.incident.unknown.body": {
+    "text": "something that should not happen did",
+    "description": "Second line of the \"Unexpected events\" notification to an administrator, when its details cannot be read. Lower case, as a note under the heading."
+  },
+  "row.kudos.label": {
+    "text": "Kudos",
+    "description": "First line of a notification: another member gave the viewer kudos (a thank-you that counts on a leaderboard) for a change. \"Kudos\" is the feature's name."
+  },
+  "row.kudos.yourChange": {
+    "text": "your change",
+    "description": "Second line of the Kudos notification when the title of the change that was thanked is not known. Lower case: it stands where the title would."
+  },
+  "row.kudos.note": {
+    "text": "A thank-you from another member. Kudos you get don't expire; they count on the Kudos leaderboard. Everyone has {{limit}} a week to give.",
+    "description": "Explanation under a Kudos notification. {{limit}} is how many kudos each member may give per week."
+  },
+  "row.kudos.board": {
+    "text": "Leaderboard",
+    "description": "Button on a Kudos notification: opens the Kudos leaderboard."
+  },
+  "row.reaction.label": {
+    "text": "Reacted",
+    "description": "First line of a notification: somebody reacted with an emoji to the viewer's message in a project's chat. The message is on the line below and who did it on the last line."
+  },
+  "row.stale.label": {
+    "text": "Needs votes",
+    "description": "First line of a notification: the viewer's proposed change has too few votes and will be archived if none come. The change's title is on the line below."
+  },
+  "row.stale.yourChange": {
+    "text": "your change",
+    "description": "Second line of the \"Needs votes\" notification when the change has no title. Lower case: it stands where the title would."
+  },
+  "row.checkFailed.label": {
+    "text": "Testing couldn't run",
+    "description": "First line of a notification: the automatic tests of the viewer's proposed change could not be run at all. The change's title is on the line below."
+  },
+  "row.checkFailed.yourChange": {
+    "text": "your change",
+    "description": "Second line of the \"Testing couldn't run\" notification when the change has no title. Lower case: it stands where the title would."
+  },
+  "row.proposed.label": {
+    "text": "New change",
+    "description": "First line of a notification: somebody proposed a change to a project and the viewer can vote on it. \"Change\" is a noun. The change's title is on the line below."
+  },
+  "row.proposed.aChange": {
+    "text": "a change",
+    "description": "Second line of the \"New change\" notification when the change has no title. Lower case: it stands where the title would."
+  },
+  "row.changeReady.live": {
+    "text": "Live",
+    "description": "First line of a notification about a change the viewer was asked to approve: it has since been approved and is running. An adjective. The change's title is on the line below."
+  },
+  "row.changeReady.goingLive": {
+    "text": "Going live",
+    "description": "First line of a notification about a change the viewer was asked to approve: it was approved and is being put into the running project. The change's title is on the line below."
+  },
+  "row.changeReady.closed": {
+    "text": "Closed",
+    "description": "First line of a notification about a change the viewer was asked to approve: it was since withdrawn or archived without going live. An adjective describing the change. The change's title is on the line below."
+  },
+  "row.changeReady.ready": {
+    "text": "Ready to try",
+    "description": "First line of a notification: a change built for somebody is ready and needs the viewer's approval. The change's title is on the line below."
+  },
+  "row.changeReady.aChange": {
+    "text": "a change",
+    "description": "Second line of a notification about a change the viewer was asked to approve, when the change has no title. Lower case: it stands where the title would."
+  },
+  "row.merged.forced": {
+    "text": "Made live by an admin",
+    "description": "First line of a notification: an administrator put the viewer's change into the running project without waiting for the vote. The change's title is on the line below."
+  },
+  "row.merged.live": {
+    "text": "Live",
+    "description": "First line of a notification: the viewer's proposed change was approved and is now running. An adjective. The change's title is on the line below."
+  },
+  "row.merged.yourChange": {
+    "text": "your change",
+    "description": "Second line of a notification that the viewer's change went live, when the change has no title. Lower case: it stands where the title would."
+  },
+  "row.vote.no": {
+    "text": "Voted no",
+    "description": "First line of a notification: somebody (named on the last line) voted against the viewer's proposed change. The change's title is on the line below."
+  },
+  "row.vote.yes": {
+    "text": "Voted yes",
+    "description": "First line of a notification: somebody (named on the last line) voted for the viewer's proposed change. The change's title is on the line below."
+  },
+  "row.vote.yourChange": {
+    "text": "your change",
+    "description": "Second line of a \"Voted yes\" or \"Voted no\" notification when the change has no title. Lower case: it stands where the title would."
+  },
+  "row.vote.reason": {
+    "text": "“{{reason}}”",
+    "description": "The voter's own comment, quoted after the change's title on a \"Voted yes\" or \"Voted no\" notification. {{reason}} is what they wrote; only the quotation marks are translated."
+  },
+  "row.recheck.label": {
+    "text": "Still good?",
+    "description": "First line of a notification: a change the viewer approved was revised by its author, and the viewer is asked whether their approval still stands. The change's title is on the line below."
+  },
+  "row.recheck.aChange": {
+    "text": "a change you backed",
+    "description": "Second line of the \"Still good?\" notification when the change has no title. \"Backed\" means voted yes on. Lower case: it stands where the title would."
+  },
+  "row.recheck.stillYes": {
+    "text": "Still yes",
+    "description": "Button on the \"Still good?\" notification: casts the viewer's yes vote again on the revised change."
+  },
+  "row.weekly.label": {
+    "text": "This week on {{project}}",
+    "description": "First line of the weekly summary notification for one project. {{project}} is the project's name."
+  },
+  "row.weekly.labelUnnamed": {
+    "text": "This week on the app",
+    "description": "First line of the weekly summary notification when the project's name is not known."
+  },
+  "row.weekly.nothing": {
+    "text": "Nothing landed this week",
+    "description": "In the weekly summary notification: no change went live in the project this week. \"Landed\" means was approved and went live."
+  },
+  "row.weekly.wentLive_one": {
+    "text": "{{count}} change went live",
+    "description": "In the weekly summary notification. {{count}} is how many changes to the project were approved and started running this week."
+  },
+  "row.weekly.wentLive_other": {
+    "text": "{{count}} changes went live",
+    "description": "In the weekly summary notification. {{count}} is how many changes to the project were approved and started running this week."
+  },
+  "row.weekly.waiting_one": {
+    "text": "{{count}} change is waiting for approval",
+    "description": "In the weekly summary notification. {{count}} is how many proposed changes to the project are still being voted on."
+  },
+  "row.weekly.waiting_other": {
+    "text": "{{count}} changes are waiting for approval",
+    "description": "In the weekly summary notification. {{count}} is how many proposed changes to the project are still being voted on."
+  },
+  "row.issueOpened.label": {
+    "text": "New request",
+    "description": "First line of a notification: somebody filed a request (a bug report or an idea) on a project the viewer looks after. \"Request\" is a noun. Its number is on the line below."
+  },
+  "row.issueOpened.filed": {
+    "text": "filed",
+    "description": "Second line of the \"New request\" notification when the request's number is not known: it says only that one was filed. Lower case, past participle."
+  },
+  "row.issueOpened.number": {
+    "text": "#{{number}}",
+    "description": "Second line of the \"New request\" notification: the request's number, with the # that marks it as a reference."
+  },
+  "row.issueMention.label": {
+    "text": "Mentioned you",
+    "description": "First line of a notification: somebody named the viewer with @ in a request they filed on a project. Which request is on the line below."
+  },
+  "row.issueMention.request": {
+    "text": "request #{{number}}",
+    "description": "Second line of the \"Mentioned you\" notification for a request filed on a project. {{number}} is the request's number. \"Request\" is a noun; lower case."
+  },
+  "row.issueMention.aRequest": {
+    "text": "a request",
+    "description": "Second line of the \"Mentioned you\" notification for a request filed on a project, when its number is not known. \"Request\" is a noun; lower case."
+  },
+  "row.health.storage.label": {
+    "text": "App storage",
+    "description": "First line of a notification to the people who look after an app: it is about how much data the app has stored."
+  },
+  "row.health.storage.warn": {
+    "text": "{{app}} has used most of its storage",
+    "description": "Second line of the \"App storage\" notification: the app is close to its storage limit. {{app}} is the app's name."
+  },
+  "row.health.storage.warnUnnamed": {
+    "text": "Your app has used most of its storage",
+    "description": "Second line of the \"App storage\" notification when the app's name is not known: the app is close to its storage limit."
+  },
+  "row.health.storage.full": {
+    "text": "<0>{{app}} is out of storage.</0> New data cannot be saved until an admin raises its limit or allows time to clean up",
+    "description": "Second line of the \"App storage\" notification: the app reached its storage limit. {{app}} is the app's name. The part in <0> is shown bold."
+  },
+  "row.health.storage.fullUnnamed": {
+    "text": "<0>Your app is out of storage.</0> New data cannot be saved until an admin raises its limit or allows time to clean up",
+    "description": "Second line of the \"App storage\" notification when the app's name is not known: the app reached its storage limit. The part in <0> is shown bold."
+  },
+  "row.health.problem.label": {
+    "text": "App problem",
+    "description": "First line of a notification to the people who look after an app: something is wrong with it. What is wrong is on the line below."
+  },
+  "row.health.problem.deployFailed": {
+    "text": "an update did not go live",
+    "description": "Second line of the \"App problem\" notification: an approved update could not be started. Lower case, as a note under the heading."
+  },
+  "row.health.problem.releaseStalled": {
+    "text": "an approved change has not gone live yet",
+    "description": "Second line of the \"App problem\" notification: a change was approved some time ago but is still not running. Lower case, as a note under the heading."
+  },
+  "row.health.problem.other": {
+    "text": "something needs looking at",
+    "description": "Second line of the \"App problem\" notification when the kind of problem is not known. Lower case, as a note under the heading."
+  },
+  "row.voteDigest.none": {
+    "text": "Nothing is waiting for your approval now",
+    "description": "The whole text of a daily reminder notification once every change it was about has been decided."
+  },
+  "row.voteDigest.label": {
+    "text": "Waiting for your approval",
+    "description": "First line of a daily reminder notification: proposed changes the viewer has not voted on. How many is on the line below."
+  },
+  "row.voteDigest.count_one": {
+    "text": "{{count}} change",
+    "description": "Second line of the \"Waiting for your approval\" notification. {{count}} is how many proposed changes still wait for the viewer's vote. \"Change\" is a noun."
+  },
+  "row.voteDigest.count_other": {
+    "text": "{{count}} changes",
+    "description": "Second line of the \"Waiting for your approval\" notification. {{count}} is how many proposed changes still wait for the viewer's vote. \"Change\" is a noun."
+  },
+  "row.connector.shared": {
+    "text": "Shared by your agent",
+    "description": "First line of a notification: the viewer's own AI coding agent put its work where others can see it, without asking for a vote. The work's title is on the line below."
+  },
+  "row.connector.submitted": {
+    "text": "Submitted by your agent",
+    "description": "First line of a notification: the viewer's own AI coding agent put its work up for a vote. The work's title is on the line below."
+  },
+  "row.connector.yourChange": {
+    "text": "your change",
+    "description": "Second line of a \"Submitted by your agent\" or \"Shared by your agent\" notification when the work has no title. Lower case: it stands where the title would."
+  },
+  "row.agentAsked": {
+    "text": "Claude asked you something",
+    "description": "First line of a notification, or its whole text: the AI coding agent asked the viewer a question while working. Claude is the agent's name. Past tense on purpose: it stays true after the viewer has answered."
+  },
+  "row.session.agentFinished": {
+    "text": "The coding agent finished",
+    "description": "First line of a notification: the AI coding agent finished the work it was given in an agent session. The session's title is on the line below."
+  },
+  "row.session.finished": {
+    "text": "Session finished",
+    "description": "First line of a notification: the viewer's coding session finished its turn while they were away. The session's title is on the line below."
+  },
+  "row.session.agentStopped": {
+    "text": "The coding agent stopped before finishing",
+    "description": "First line of a notification: the AI coding agent's work in an agent session ended early, by an error or a timeout. The session's title is on the line below."
+  },
+  "row.session.stopped": {
+    "text": "Session stopped before finishing",
+    "description": "First line of a notification: the viewer's coding session ended early, by an error or a timeout. The session's title is on the line below."
+  },
+  "row.session.yourSession": {
+    "text": "your session",
+    "description": "Second line of a notification about a coding session when the session has no title. Lower case: it stands where the title would."
+  },
+  "row.autoSolve.failed": {
+    "text": "Change failed",
+    "description": "First line of a notification: the automatic attempt to build the change a request asked for failed. \"Change\" is a noun. Which request is on the line below."
+  },
+  "row.autoSolve.question": {
+    "text": "Change has a question",
+    "description": "First line of a notification: the automatic attempt to build the change a request asked for needs an answer from the viewer. \"Change\" is a noun. Which request is on the line below."
+  },
+  "row.autoSolve.ready": {
+    "text": "Change ready to try",
+    "description": "First line of a notification: the change a request asked for was built automatically and can be tried. \"Change\" is a noun. Which request is on the line below."
+  },
+  "row.autoSolve.request": {
+    "text": "request #{{number}}",
+    "description": "Second line of a notification about a change built for a request. {{number}} is the request's number. \"Request\" is a noun; lower case."
+  },
+  "row.autoSolve.aRequest": {
+    "text": "a request",
+    "description": "Second line of a notification about a change built for a request, when the request's number is not known. \"Request\" is a noun; lower case."
+  },
+  "row.spec.label": {
+    "text": "Plan shared",
+    "description": "First line of a notification: somebody (named on the last line) shared a plan, the written description of a planned change, with the viewer. Its title is on the line below."
+  },
+  "row.spec.version": {
+    "text": "v{{version}}",
+    "description": "Second line of the \"Plan shared\" notification when the plan has no title: its version number, \"v\" for version. {{version}} is the number, or \"?\" when unknown."
+  },
+  "spec.panelTitle": {
+    "text": "Plan v{{version}}",
+    "description": "Title of the panel that opens from a \"Plan shared\" notification and shows that plan, the written description of a planned change. {{version}} is the plan's version number; \"v\" is for version."
+  },
+  "row.channel.many_one": {
+    "text": "{{count}} new message in {{project}}",
+    "description": "First line of a notification that stands for several unread messages in a project's group discussion. {{count}} is how many and {{project}} the project's name. The newest message is on the line below."
+  },
+  "row.channel.many_other": {
+    "text": "{{count}} new messages in {{project}}",
+    "description": "First line of a notification that stands for several unread messages in a project's group discussion. {{count}} is how many and {{project}} the project's name. The newest message is on the line below."
+  },
+  "row.channel.manyUnnamed_one": {
+    "text": "{{count}} new message in the discussion",
+    "description": "First line of a notification that stands for several unread messages in a project's group discussion, when the project's name is not known. {{count}} is how many."
+  },
+  "row.channel.manyUnnamed_other": {
+    "text": "{{count}} new messages in the discussion",
+    "description": "First line of a notification that stands for several unread messages in a project's group discussion, when the project's name is not known. {{count}} is how many."
+  },
+  "row.channel.snippet": {
+    "text": "@{{username}}: {{message}}",
+    "description": "Second line of a notification for several new messages in a project's discussion: who wrote the newest one and what it says. Keep the @ before the username."
+  },
+  "row.channel.snippetSomeone": {
+    "text": "Someone: {{message}}",
+    "description": "Second line of a notification for several new messages in a project's discussion, when the newest one's author is not known. {{message}} is what it says."
+  },
+  "row.channel.someone": {
+    "text": "Someone",
+    "description": "Second line of a notification for several new messages in a project's discussion, when neither the newest message's author nor its text is known."
+  },
+  "row.channel.askedIn": {
+    "text": "@{{username}} asked for a change in {{project}}",
+    "description": "First line of a notification: a person's message in a project's discussion was filed as a request for a change. {{project}} is the project's name. Their message is on the line below. Keep the @ before the username."
+  },
+  "row.channel.askedInUnnamed": {
+    "text": "@{{username}} asked for a change in the discussion",
+    "description": "First line of a notification: a person's message in a project's discussion was filed as a request for a change; the project's name is not known. Keep the @ before the username."
+  },
+  "row.channel.someoneAskedIn": {
+    "text": "Someone asked for a change in {{project}}",
+    "description": "First line of a notification: a message from an unknown person in a project's discussion was filed as a request for a change. {{project}} is the project's name."
+  },
+  "row.channel.someoneAskedInUnnamed": {
+    "text": "Someone asked for a change in the discussion",
+    "description": "First line of a notification: a message from an unknown person in a project's discussion was filed as a request for a change; the project's name is not known."
+  },
+  "row.channel.saidIn": {
+    "text": "@{{username}} in {{project}}",
+    "description": "First line of a notification for one new message in a project's group discussion: who wrote it and in which project. {{project}} is the project's name. The message is on the line below. Keep the @ before the username."
+  },
+  "row.channel.saidInUnnamed": {
+    "text": "@{{username}} in the discussion",
+    "description": "First line of a notification for one new message in a project's group discussion, when the project's name is not known. Keep the @ before the username."
+  },
+  "row.channel.someoneIn": {
+    "text": "Someone in {{project}}",
+    "description": "First line of a notification for one new message in a project's group discussion, when its author is not known. {{project}} is the project's name."
+  },
+  "row.channel.someoneInUnnamed": {
+    "text": "Someone in the discussion",
+    "description": "First line of a notification for one new message in a project's group discussion, when neither its author nor the project's name is known."
+  },
+  "row.inviteLink.openedOne": {
+    "text": "Someone opened your invite",
+    "description": "The whole text of a notification to the person who made an invite link: one person opened it."
+  },
+  "row.inviteLink.openedMany_one": {
+    "text": "{{count}} person opened your invite",
+    "description": "The whole text of a notification to the person who made an invite link. {{count}} is how many people opened it; it is always more than one."
+  },
+  "row.inviteLink.openedMany_other": {
+    "text": "{{count}} people opened your invite",
+    "description": "The whole text of a notification to the person who made an invite link. {{count}} is how many people opened it; it is always more than one."
+  },
+  "row.inviteLink.joined": {
+    "text": "Joined through your invite",
+    "description": "The whole text of a notification to the person who made an invite link: the person named on the last line joined the project through it."
+  },
+  "row.inviteLink.joinedWithOthers_one": {
+    "text": "Joined through your invite, with {{count}} other",
+    "description": "The whole text of a notification to the person who made an invite link: the person named on the last line joined the project through it, and so did {{count}} more people."
+  },
+  "row.inviteLink.joinedWithOthers_other": {
+    "text": "Joined through your invite, with {{count}} others",
+    "description": "The whole text of a notification to the person who made an invite link: the person named on the last line joined the project through it, and so did {{count}} more people."
+  },
+  "row.inviteLink.asked": {
+    "text": "Asked for a change",
+    "description": "First line of a notification to the person who made an invite link: the first message of somebody who joined through it was filed as a request for a change. Their message is on the line below and their name on the last line."
+  },
+  "row.inviteLink.saidHi": {
+    "text": "Said hi",
+    "description": "First line of a notification to the person who made an invite link: somebody who joined through it wrote their first message. The message is on the line below and their name on the last line."
+  },
+  "row.inviteLink.saidHiWithOthers_one": {
+    "text": "Said hi, with {{count}} other",
+    "description": "First line of a notification to the person who made an invite link: the person named on the last line wrote their first message, and so did {{count}} more people who joined through it."
+  },
+  "row.inviteLink.saidHiWithOthers_other": {
+    "text": "Said hi, with {{count}} others",
+    "description": "First line of a notification to the person who made an invite link: the person named on the last line wrote their first message, and so did {{count}} more people who joined through it."
+  },
+  "row.collab.invitedJoin": {
+    "text": "Invited you to join",
+    "description": "The whole text of a notification: the person named on the last line invited the viewer into the private project named there."
+  },
+  "row.collab.invitedBuild": {
+    "text": "Invited you to build with them",
+    "description": "The whole text of a notification: the person named on the last line invited the viewer to work on the project named there. \"Build\" is a verb: make the project together."
+  },
+  "row.collab.accepted": {
+    "text": "Joined through your invite",
+    "description": "The whole text of a notification: the person named on the last line accepted the viewer's invitation and joined the project."
+  },
+  "row.collab.approverInvite": {
+    "text": "Asked you to help approve changes",
+    "description": "The whole text of a notification: the person named on the last line asked the viewer to become one of the people whose approval a project's changes need. \"Changes\" is a noun."
+  },
+  "row.collab.approverAccepted": {
+    "text": "Can approve changes now",
+    "description": "The whole text of a notification: the person named on the last line agreed to become an approver of the project's changes. \"Changes\" is a noun."
+  },
+  "row.chat.mention": {
+    "text": "Mentioned you",
+    "description": "First line of a notification: somebody named the viewer with @ in a project's chat. The message is on the line below and who wrote it on the last line."
+  },
+  "row.chat.reply": {
+    "text": "Replied to you",
+    "description": "First line of a notification: somebody replied to the viewer's message in a project's chat. The message is on the line below."
+  },
+  "row.chat.threadReply": {
+    "text": "Replied in thread",
+    "description": "First line of a notification: somebody answered in a reply thread the viewer started or took part in, in a project's chat. The message is on the line below."
+  },
+  "row.chat.posted": {
+    "text": "Posted",
+    "description": "First line of a notification about a chat message of a kind this version does not know. A past-tense verb: \"(they) posted\", wrote a message. The message is on the line below."
+  },
+  "saved.heading": {
+    "text": "Saved",
+    "description": "Heading over the messages the viewer bookmarked, at the top of the notifications sheet."
+  },
+  "saved.unsave": {
+    "text": "Unsave",
+    "description": "Button beside a saved message in the notifications sheet, and the action revealed by swiping it: removes the bookmark from that message."
+  },
+  "saved.system": {
+    "text": "System",
+    "description": "Stands for the author of a saved message that the platform itself wrote. Only its first letter is shown, in the round avatar beside the message."
+  },
+  "saved.line.author": {
+    "text": "<0>@{{username}}</0> in <1>{{place}}</1> · <2>{{when}}</2>",
+    "description": "Line over a saved message in the notifications sheet: who wrote it, where, and when it was saved. {{place}} is the name of the project or conversation, {{when}} is how long ago (\"2h ago\") or a date. Keep the @ before the username."
+  },
+  "saved.line.authorConversation": {
+    "text": "<0>@{{username}}</0> in <1>a conversation</1> · <2>{{when}}</2>",
+    "description": "Line over a saved message in the notifications sheet when it was written in a conversation that has no name. {{when}} is how long ago it was saved (\"2h ago\") or a date. Keep the @ before the username."
+  },
+  "saved.line.authorApp": {
+    "text": "<0>@{{username}}</0> in <1>an app</1> · <2>{{when}}</2>",
+    "description": "Line over a saved message in the notifications sheet when it was written in an app's chat and the app's name is not known. {{when}} is how long ago it was saved (\"2h ago\") or a date. Keep the @ before the username."
+  },
+  "saved.line.system": {
+    "text": "<0>System</0> in <1>{{place}}</1> · <2>{{when}}</2>",
+    "description": "Line over a saved message that the platform itself wrote. {{place}} is the name of the project or conversation it is in, {{when}} is how long ago it was saved (\"2h ago\") or a date."
+  },
+  "saved.line.systemConversation": {
+    "text": "<0>System</0> in <1>a conversation</1> · <2>{{when}}</2>",
+    "description": "Line over a saved message that the platform itself wrote in a conversation that has no name. {{when}} is how long ago it was saved (\"2h ago\") or a date."
+  },
+  "saved.line.systemApp": {
+    "text": "<0>System</0> in <1>an app</1> · <2>{{when}}</2>",
+    "description": "Line over a saved message that the platform itself wrote in an app's chat whose name is not known. {{when}} is how long ago it was saved (\"2h ago\") or a date."
+  },
+  "invite.heading": {
+    "text": "Invites",
+    "description": "Heading over the invitations waiting for the viewer's answer, at the top of the notifications sheet. A plural noun."
+  },
+  "invite.accept": {
+    "text": "Accept",
+    "description": "Button on a pending invitation in the notifications sheet, and the action revealed by swiping it: accepts the invitation to the project."
+  },
+  "invite.decline": {
+    "text": "Decline",
+    "description": "Button on a pending invitation in the notifications sheet, and the action revealed by swiping it: turns the invitation down."
+  },
+  "invite.showMore_one": {
+    "text": "Show {{count}} more invite",
+    "description": "Button under the first pending invitations in the notifications sheet: unfolds the rest. {{count}} is how many are hidden."
+  },
+  "invite.showMore_other": {
+    "text": "Show {{count}} more invites",
+    "description": "Button under the first pending invitations in the notifications sheet: unfolds the rest. {{count}} is how many are hidden."
+  },
+  "invite.note": {
+    "text": "“{{note}}”",
+    "description": "The inviter's own note, quoted under a pending invitation. {{note}} is what they wrote; only the quotation marks are translated."
+  },
+  "invite.someone": {
+    "text": "Someone",
+    "description": "Stands for the inviter on a pending invitation when their name is not known. Only its first letter is shown, in the round avatar beside the invitation."
+  },
+  "invite.members_one": {
+    "text": "{{count}} person is in it",
+    "description": "Under a pending invitation to a private project. {{count}} is how many members the project has. \"It\" is the project."
+  },
+  "invite.members_other": {
+    "text": "{{count}} people are in it",
+    "description": "Under a pending invitation to a private project. {{count}} is how many members the project has. \"It\" is the project."
+  },
+  "invite.meta.membersWhen": {
+    "text": "<0>{{members}} · </0><1>{{when}}</1>",
+    "description": "Small line under a pending invitation. {{members}} is the finished phrase saying how many people are in the project and {{when}} how long ago the invitation was sent. Only the separator between them is translated; keep it inside the first tag."
+  },
+  "invite.line.approve": {
+    "text": "<0>@{{username}}</0> asked you to help approve changes to <1>{{project}}</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. {{username}} asked the viewer to become an approver of changes to {{project}}, the project's name. Keep the @ before the username."
+  },
+  "invite.line.approveUnnamed": {
+    "text": "<0>@{{username}}</0> asked you to help approve changes to <1>an app</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. {{username}} asked the viewer to become an approver of changes to an app whose name is not known. Keep the @ before the username."
+  },
+  "invite.line.someoneApprove": {
+    "text": "<0>Someone</0> asked you to help approve changes to <1>{{project}}</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. A person whose name is not known asked the viewer to become an approver of changes to {{project}}, the project's name."
+  },
+  "invite.line.someoneApproveUnnamed": {
+    "text": "<0>Someone</0> asked you to help approve changes to <1>an app</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. A person whose name is not known asked the viewer to become an approver of changes to an app whose name is not known either."
+  },
+  "invite.line.join": {
+    "text": "<0>@{{username}}</0> invited you to join <1>{{project}}</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. {{username}} invited the viewer into the private project {{project}}. Keep the @ before the username."
+  },
+  "invite.line.joinUnnamed": {
+    "text": "<0>@{{username}}</0> invited you to join <1>an app</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. {{username}} invited the viewer into a private project whose name is not known. Keep the @ before the username."
+  },
+  "invite.line.someoneJoin": {
+    "text": "<0>Someone</0> invited you to join <1>{{project}}</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. A person whose name is not known invited the viewer into the private project {{project}}."
+  },
+  "invite.line.someoneJoinUnnamed": {
+    "text": "<0>Someone</0> invited you to join <1>an app</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. A person whose name is not known invited the viewer into a private project whose name is not known either."
+  },
+  "invite.line.build": {
+    "text": "<0>@{{username}}</0> invited you to build <1>{{project}}</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. {{username}} invited the viewer to work on the project {{project}}. \"Build\" is a verb: make the project together. Keep the @ before the username."
+  },
+  "invite.line.buildUnnamed": {
+    "text": "<0>@{{username}}</0> invited you to build <1>an app</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. {{username}} invited the viewer to work on an app whose name is not known. \"Build\" is a verb: make it together. Keep the @ before the username."
+  },
+  "invite.line.someoneBuild": {
+    "text": "<0>Someone</0> invited you to build <1>{{project}}</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. A person whose name is not known invited the viewer to work on the project {{project}}. \"Build\" is a verb: make the project together."
+  },
+  "invite.line.someoneBuildUnnamed": {
+    "text": "<0>Someone</0> invited you to build <1>an app</1>",
+    "description": "Sentence on a pending invitation in the notifications sheet. The names in <0> and <1> are shown bold. A person whose name is not known invited the viewer to work on an app whose name is not known either. \"Build\" is a verb: make it together."
+  },
+  "invite.acceptFailed": {
+    "text": "Accept failed (HTTP {{status}})",
+    "description": "Brief message shown when accepting an invitation failed and the server gave no reason. {{status}} is the numeric HTTP status code; keep \"HTTP\"."
+  },
+  "toast.markAllFailed": {
+    "text": "Couldn’t mark notifications as read. Try again.",
+    "description": "Brief message shown when \"Mark all read\" failed."
+  },
+  "toast.clearFailed": {
+    "text": "Couldn’t clear this notification. Try again.",
+    "description": "Brief message shown when marking one notification as read (clearing it) failed."
+  },
+  "friend.answerFailed": {
+    "text": "Couldn’t answer this friend request. Try again.",
+    "description": "Brief message shown when accepting or declining a friend request from its notification failed."
+  },
+  "friend.nowFriends": {
+    "text": "You and @{{username}} are friends",
+    "description": "Brief message shown after the viewer accepted a friend request from its notification. Keep the @ before the username."
+  },
+  "friend.nowFriendsUnnamed": {
+    "text": "You and them are friends",
+    "description": "Brief message shown after the viewer accepted a friend request from its notification, when the other person's username is not known."
+  },
+  "friend.withdrawn": {
+    "text": "This request was withdrawn",
+    "description": "Brief message shown when the viewer pressed Accept on a friend request that its sender had already taken back. \"Request\" is the friend request."
+  },
+  "friend.declined": {
+    "text": "Request declined",
+    "description": "Brief message shown after the viewer declined a friend request from its notification. \"Request\" is the friend request."
+  },
+  "alert.change.failed.title": {
+    "text": "Change failed",
+    "description": "Title of the system notification shown when the automatic attempt to build the change a request asked for failed. \"Change\" is a noun."
+  },
+  "alert.change.question.title": {
+    "text": "Change has a question",
+    "description": "Title of the system notification shown when the automatic attempt to build the change a request asked for needs an answer from the viewer. \"Change\" is a noun."
+  },
+  "alert.change.ready.title": {
+    "text": "Change ready to try",
+    "description": "Title of the system notification shown when the change a request asked for was built automatically and can be tried. \"Change\" is a noun."
+  },
+  "alert.change.failed.body": {
+    "text": "The change for request #{{number}} in {{app}} failed. You can retry",
+    "description": "Text of the system notification shown when the automatic attempt to build the change a request asked for failed. {{number}} is the request's number. {{app}} is the app's name."
+  },
+  "alert.change.failed.bodyYourApp": {
+    "text": "The change for request #{{number}} in your app failed. You can retry",
+    "description": "Text of the system notification shown when the automatic attempt to build the change a request asked for failed and the app's name is not known. {{number}} is the request's number."
+  },
+  "alert.change.failed.bodyARequest": {
+    "text": "The change for a request in {{app}} failed. You can retry",
+    "description": "Text of the system notification shown when the automatic attempt to build the change a request asked for failed and the request's number is not known. {{app}} is the app's name."
+  },
+  "alert.change.failed.bodyARequestYourApp": {
+    "text": "The change for a request in your app failed. You can retry",
+    "description": "Text of the system notification shown when the automatic attempt to build the change a request asked for failed, when neither the request's number nor the app's name is known."
+  },
+  "alert.change.question.body": {
+    "text": "The change for request #{{number}} in {{app}} is waiting for your input",
+    "description": "Text of the system notification shown when the automatic attempt to build the change a request asked for needs an answer from the viewer. {{number}} is the request's number. {{app}} is the app's name."
+  },
+  "alert.change.question.bodyYourApp": {
+    "text": "The change for request #{{number}} in your app is waiting for your input",
+    "description": "Text of the system notification shown when the automatic attempt to build the change a request asked for needs an answer from the viewer and the app's name is not known. {{number}} is the request's number."
+  },
+  "alert.change.question.bodyARequest": {
+    "text": "The change for a request in {{app}} is waiting for your input",
+    "description": "Text of the system notification shown when the automatic attempt to build the change a request asked for needs an answer from the viewer and the request's number is not known. {{app}} is the app's name."
+  },
+  "alert.change.question.bodyARequestYourApp": {
+    "text": "The change for a request in your app is waiting for your input",
+    "description": "Text of the system notification shown when the automatic attempt to build the change a request asked for needs an answer from the viewer, when neither the request's number nor the app's name is known."
+  },
+  "alert.change.ready.body": {
+    "text": "The change for request #{{number}} in {{app}} is ready",
+    "description": "Text of the system notification shown when the change a request asked for was built automatically and can be tried. {{number}} is the request's number. {{app}} is the app's name."
+  },
+  "alert.change.ready.bodyYourApp": {
+    "text": "The change for request #{{number}} in your app is ready",
+    "description": "Text of the system notification shown when the change a request asked for was built automatically and the app's name is not known. {{number}} is the request's number."
+  },
+  "alert.change.ready.bodyARequest": {
+    "text": "The change for a request in {{app}} is ready",
+    "description": "Text of the system notification shown when the change a request asked for was built automatically and the request's number is not known. {{app}} is the app's name."
+  },
+  "alert.change.ready.bodyARequestYourApp": {
+    "text": "The change for a request in your app is ready",
+    "description": "Text of the system notification shown when the change a request asked for was built automatically, when neither the request's number nor the app's name is known."
+  },
+  "alert.stalled.title": {
+    "text": "Session stopped before finishing",
+    "description": "Title of the system notification shown when the viewer's coding session ended early, by an error or a timeout."
+  },
+  "alert.stalled.body": {
+    "text": "Your session on {{app}} stopped before finishing. Open it to continue",
+    "description": "Text of the system notification shown when the viewer's coding session ended early. {{app}} is the app's name. \"Open\" is a verb: open the session."
+  },
+  "alert.stalled.bodyYourApp": {
+    "text": "Your session on your app stopped before finishing. Open it to continue",
+    "description": "Text of the system notification shown when the viewer's coding session ended early and the app's name is not known. \"Open\" is a verb: open the session."
+  },
+  "alert.agentDone.title": {
+    "text": "The coding agent finished",
+    "description": "Title of the system notification shown when the AI coding agent finished the work it was given in an agent session."
+  },
+  "alert.agentDone.body": {
+    "text": "The coding agent finished on {{app}}: {{title}}",
+    "description": "Text of the system notification shown when the AI coding agent finished its work. {{app}} is the app's name. {{title}} is the session's title."
+  },
+  "alert.agentDone.bodyYourApp": {
+    "text": "The coding agent finished on your app: {{title}}",
+    "description": "Text of the system notification shown when the AI coding agent finished its work and the app's name is not known. {{title}} is the session's title."
+  },
+  "alert.agentDone.bodyYourSession": {
+    "text": "The coding agent finished on {{app}}: your session",
+    "description": "Text of the system notification shown when the AI coding agent finished its work and the session has no title. {{app}} is the app's name."
+  },
+  "alert.agentDone.bodyYourAppYourSession": {
+    "text": "The coding agent finished on your app: your session",
+    "description": "Text of the system notification shown when the AI coding agent finished its work, when neither the app's name nor the session's title is known."
+  },
+  "alert.sessionDone.title": {
+    "text": "Agent session finished",
+    "description": "Title of the system notification shown when the viewer's coding session finished its turn while they were away."
+  },
+  "alert.sessionDone.body": {
+    "text": "Your agent session in {{app}} finished: {{title}}",
+    "description": "Text of the system notification shown when the viewer's coding session finished its turn. {{app}} is the app's name. {{title}} is the session's title."
+  },
+  "alert.sessionDone.bodyYourApp": {
+    "text": "Your agent session in your app finished: {{title}}",
+    "description": "Text of the system notification shown when the viewer's coding session finished its turn and the app's name is not known. {{title}} is the session's title."
+  },
+  "alert.sessionDone.bodyYourSession": {
+    "text": "Your agent session in {{app}} finished: your session",
+    "description": "Text of the system notification shown when the viewer's coding session finished its turn and the session has no title. {{app}} is the app's name."
+  },
+  "alert.sessionDone.bodyYourAppYourSession": {
+    "text": "Your agent session in your app finished: your session",
+    "description": "Text of the system notification shown when the viewer's coding session finished its turn, when neither the app's name nor the session's title is known."
+  },
+  "row.chat.requestReply": {
+    "text": "Replied on request #{{number}}",
+    "description": "First line of a notification: somebody posted in the discussion of a request the viewer filed or posted in. {{number}} is the request's number. \"Request\" is a noun: something people asked a project for. The message is on the line below."
+  },
+  "row.chat.requestReplyUnnumbered": {
+    "text": "Replied on a request",
+    "description": "First line of a notification: somebody posted in the discussion of a request the viewer filed or posted in, when the request's number is not known. \"Request\" is a noun: something people asked a project for. The message is on the line below."
+  }
+}

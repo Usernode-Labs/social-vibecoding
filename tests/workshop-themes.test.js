@@ -273,6 +273,34 @@ test('buildThemeInput keys every card the way the client does, excludes private 
   resetBoard();
 });
 
+test('buildThemeInput reads only governance proposals, never a request\'s open twin row', async () => {
+  // The `issues` table as the query would see it on an app: a rename up for
+  // a vote, and the `general` twin of request #12, still open although the
+  // request closed (services/governance-kinds.js). The fake applies the
+  // query's own kind filter, so a query without one returns the twin too.
+  const openRows = [
+    { id: 5, kind: 'rename', title: 'x', payload: { newName: 'Demo 2' }, created_by_username: 'dana', created_at: '2026-09-01T00:00:00Z' },
+    { id: 6, kind: 'general', title: 'Dark mode resets', payload: {}, created_by_username: 'alice', created_at: '2026-09-02T00:00:00Z' },
+  ];
+  makeStore(null, []);
+  const base = queryHandler;
+  queryHandler = async (sql, params) => {
+    if (/FROM issues i[\s\S]*status = 'open'/i.test(sql)) {
+      const kinds = (params || []).find(Array.isArray);
+      return { rows: kinds ? openRows.filter((r) => kinds.includes(r.kind)) : openRows };
+    }
+    return base(sql, params);
+  };
+  queries.length = 0;
+  const { input } = await svc.buildThemeInput(pool, APP);
+  const govKeys = input.items.filter((i) => i.kind === 'governance').map((i) => i.key);
+  assert.deepEqual(govKeys, ['gov:5'], 'the twin is not a proposal in review');
+  const govQuery = queries.find((q) => /FROM issues i[\s\S]*status = 'open'/i.test(q.sql));
+  assert.match(govQuery.sql, /i\.kind = ANY\(\$3::text\[\]\)/);
+  assert.deepEqual(govQuery.params[2], [...require('../src/services/governance-kinds').GOVERNANCE_KINDS]);
+  resetBoard();
+});
+
 test('the snapshot is not capped at two hundred issues', async () => {
   boardOf(450);
   makeStore(null);
@@ -1835,4 +1863,119 @@ test('a pass with no standing vocabulary writes nothing to the registry', async 
     assert.deepEqual(registryWrites, []);
     assert.deepEqual(registryRetires, [], 'and nothing is retired');
   } finally { llm._setClientForTests(prev); }
+});
+
+// ── #4417: topics are fixed definitions ──────────────────────────────
+//
+// A project's topics are categories dapp.json owns. Discovery is handed
+// them and drafts around them, and whatever it answers the standing list
+// leads with every live topic, in dapp.json's order, under its own name; a
+// retired topic is in no list. Placement is offered the topics first,
+// marked. A topic added or retired since the draft re-places every card.
+
+const TOPIC_ROWS = [
+  { value: 'onboarding', label: 'Onboarding', custom: true, description: 'Signing up and the first week',
+    icon: '\u{1F6AA}', origin: 'topic', pinned: true, topic: { handle: 'onboarding', order: 0 } },
+  { value: 'infra', label: 'Infra', custom: true, description: 'Builds and deploys',
+    icon: '\u{1F6E0}️', origin: 'topic', pinned: true, topic: { handle: 'infra', order: 1 } },
+];
+
+test('#4417 fixTopics: the topics lead in their order under their own names; the draft\'s saying and anchors stay; a retired key goes', () => {
+  // registryCategories' shape.
+  const reg = [
+    { id: 'infra', name: 'Infra', description: 'Builds', icon: 'X', pinned: true, origin: 'topic', topic: { handle: 'infra', order: 1 } },
+    { id: 'onboarding', name: 'Onboarding', description: 'First week', icon: 'Y', pinned: true, origin: 'topic', topic: { handle: 'onboarding', order: 0 } },
+    { id: 'voting', name: 'Voting', description: 'v', icon: '', pinned: false, origin: 'ai' },
+  ];
+  const drafted = [
+    { id: 'voting', name: 'Voting', description: 'v', saying: 'sv', anchors: ['issue:3'] },
+    { id: 'infra', name: 'Infrastructure (renamed by the model)', description: 'm', saying: 'si', anchors: ['issue:2'] },
+    { id: 'old-things', name: 'Old things', description: 'o', saying: null, anchors: [] },
+  ];
+  const fixed = svc.fixTopics(drafted, reg, ['old-things']);
+  assert.deepEqual(fixed.map((t) => t.id), ['onboarding', 'infra', 'voting'], 'topics first, in order; the retired one gone; the missing one added');
+  assert.equal(fixed[1].name, 'Infra', 'never the model\'s name');
+  assert.equal(fixed[1].description, 'Builds', 'dapp.json\'s about');
+  assert.equal(fixed[1].saying, 'si', 'the model\'s saying is kept');
+  assert.deepEqual(fixed[1].anchors, ['issue:2']);
+  assert.deepEqual(fixed[0].anchors, [], 'a topic the model dropped comes back with none');
+  assert.deepEqual(svc.fixTopics(drafted, [], []).map((t) => t.id), ['voting', 'infra', 'old-things'], 'no topics: the draft as it was');
+});
+
+test('#4417 discovery is handed the topics and the draft keeps them whatever the model says; placement sees them first, marked', async () => {
+  boardOf(3);
+  themeRegistry = TOPIC_ROWS.slice();
+  const st = makeStore(null);
+  let board = null;
+  const m = makeModel({
+    themes: (params) => {
+      board = JSON.parse(params.messages[0].content.split('BOARD (JSON):\n')[1]);
+      // The model renames one topic and drops the other.
+      return [
+        { id: 'onboarding', name: 'Getting in', description: 'm', saying: 's', anchors: ['issue:1'] },
+        { id: '', name: 'Voting', description: 'v', saying: 's', anchors: ['issue:2'] },
+      ];
+    },
+    place: placeAllInto('infra'),
+  });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'get' });
+    assert.equal(out.discovered, true);
+    assert.deepEqual(board.topics, [
+      { id: 'onboarding', name: 'Onboarding', description: 'Signing up and the first week' },
+      { id: 'infra', name: 'Infra', description: 'Builds and deploys' },
+    ], 'the topics ride the snapshot, in order');
+    assert.ok(!board.previousCategories.some((p) => p.id === 'onboarding' || p.id === 'infra'),
+      'and are not offered again as previous categories the model may redraw');
+    assert.deepEqual(st.row.themes_json.map((t) => [t.id, t.name]),
+      [['onboarding', 'Onboarding'], ['infra', 'Infra'], ['voting', 'Voting']]);
+    const placement = m.calls.find((c) => c.kind === 'placement');
+    const offered = JSON.parse(placement.params.system[1].text.replace('CATEGORIES (JSON):\n', ''));
+    assert.deepEqual(offered.map((t) => [t.id, !!t.topic]), [['onboarding', true], ['infra', true], ['voting', false]]);
+  } finally { llm._setClientForTests(prev); themeRegistry = []; resetBoard(); }
+});
+
+test('#4417 a topic added since the draft re-places every card against the standing list, with no new draft', async () => {
+  boardOf(3);
+  themeRegistry = TOPIC_ROWS.slice(0, 1);
+  const st = makeStore(freshRow({
+    themes_json: [{ id: 'voting', name: 'Voting', description: 'v', saying: 's', anchors: ['issue:1'] }],
+    placements_json: { 'issue:1': 'voting', 'issue:2': 'voting', 'issue:3': 'voting' },
+    discovered_at: ago(60 * 1000), discovery_key_count: 3,
+  }));
+  const m = makeModel({ place: placeAllInto('onboarding') });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'change' });
+    assert.equal(out.discovered, false);
+    assert.equal(out.replaced, true);
+    assert.deepEqual(out.outdated, ['topics']);
+    assert.deepEqual(m.calls.map((c) => c.kind), ['placement']);
+    assert.deepEqual(m.calls[0].cards.map((c) => c.key), ['issue:2', 'issue:3'], 'everything but the anchor');
+    assert.deepEqual(st.row.themes_json.map((t) => t.id), ['onboarding', 'voting']);
+    assert.deepEqual(st.row.placements_json, { 'issue:1': 'voting', 'issue:2': 'onboarding', 'issue:3': 'onboarding' });
+  } finally { llm._setClientForTests(prev); themeRegistry = []; resetBoard(); }
+});
+
+test('#4417 the views name each topic and its channel; the no-model grouping draws every topic first, even empty', () => {
+  const reg = TOPIC_ROWS.map((r) => ({
+    id: r.value, name: r.label, description: r.description, icon: r.icon, pinned: true, origin: 'topic', topic: r.topic,
+  }));
+  const row = { themes: [{ id: 'onboarding', name: 'Onboarding', description: 'x' }, { id: 'voting', name: 'Voting' }], placements: { 'issue:1': 'onboarding', 'issue:2': 'voting' } };
+  const themes = svc.themesWithItems(row, ['issue:1', 'issue:2'], row.placements, {}, reg);
+  assert.deepEqual(themes.find((t) => t.id === 'onboarding').topic, { key: 'onboarding', handle: 'onboarding' });
+  assert.equal(themes.find((t) => t.id === 'voting').topic, undefined);
+  assert.deepEqual(themes.find((t) => t.id === 'infra').items, [], 'a topic with nothing in it is still drawn');
+
+  const fallback = svc.fallbackThemes({ items: [
+    { key: 'issue:1', category: 'bug' }, { key: 'issue:2', category: 'bug' }, { key: 'issue:3', category: 'infra' },
+  ] }, reg);
+  assert.deepEqual(fallback.map((t) => [t.id, t.name, t.items.length, t.topic ? t.topic.handle : null]), [
+    ['category-onboarding', 'Onboarding', 0, 'onboarding'],
+    ['category-infra', 'Infra', 1, 'infra'],
+    ['category-bug', 'Bugs', 2, null],
+  ]);
+  const demo = svc.stagingDemoGrouping({ items: [{ key: 'issue:1' }, { key: 'issue:2' }, { key: 'issue:3' }] }, reg);
+  assert.deepEqual(demo.slice(0, 2).map((t) => t.topic && t.topic.handle), ['onboarding', 'infra'], 'a preview leads with the real topics');
 });

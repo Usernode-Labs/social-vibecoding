@@ -14,8 +14,12 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // reply to your message in all but name. #2386: a friend request and its
     // acceptance are one person reaching you directly — this category's
     // promise — so they join it rather than getting a switch of their own.
+    // #3952: being named with @ in a request somebody filed is a mention
+    // like a chat one, so it rides the same switch, beside it.
+    // #4535: a message in a request's discussion you posted in or filed is a
+    // reply in the same sense, so it rides it too, beside `thread_reply`.
     // Kept in lockstep with the seed in db/schema.sql.
-    kinds: Object.freeze(['mention', 'reply', 'thread_reply', 'friend_request', 'friend_accept']),
+    kinds: Object.freeze(['mention', 'issue_mention', 'reply', 'thread_reply', 'issue_thread_reply', 'friend_request', 'friend_accept']),
   }),
   Object.freeze({
     key: 'invitations',
@@ -32,14 +36,14 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'shared_work',
     label: 'Shared work',
-    description: 'Specs that someone privately shares with you.',
+    description: 'Plans that someone privately shares with you.',
     defaultEnabled: true,
     kinds: Object.freeze(['spec_shared']),
   }),
   Object.freeze({
     key: 'developer_sessions',
-    label: 'Developer sessions',
-    description: 'Interactive and unattended coding sessions that finish while you are away.',
+    label: 'Agent sessions',
+    description: 'Agent sessions and unattended runs that finish while you are away.',
     defaultEnabled: true,
     // #1405's two join this category rather than getting one of their own:
     // both are "a coding session did something while you were away", which is
@@ -56,8 +60,8 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     key: 'proposal_alerts',
-    label: 'Proposal alerts',
-    description: 'Proposals needing attention, failed previews, new proposals ready for voting, and votes or merges on your own.',
+    label: 'Change alerts',
+    description: 'Changes needing attention, failed previews, new changes waiting for approval, and votes on yours or yours going live.',
     defaultEnabled: true,
     // #1374 adds three: a vote on your proposal, your proposal merging, and
     // the daily "what needs your vote" summary. All three are proposal
@@ -70,6 +74,8 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     kinds: Object.freeze([
       'stale_pr', 'check_failed', 'pr_proposed', 'proposal_vote', 'pr_merged', 'vote_digest',
       'revision_recheck', 'weekly_digest',
+      // B7: a change you can approve is ready to try.
+      'change_ready',
     ]),
   }),
   Object.freeze({
@@ -91,7 +97,10 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // only: the SERVER is nearing a cap that stops apps being created or
     // sessions starting (services/platform-limit-alerts.js). Only full
     // admins ever receive one, so nobody else's switch is affected.
-    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit']),
+    // 'platform_incident' (#4296) is its sibling: errors that should not
+    // happen, as a daily digest or one kind past its hourly line
+    // (services/platform-incident-alerts.js), for the same admins.
+    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit', 'platform_incident']),
   }),
   Object.freeze({
     key: 'lightweight_activity',
@@ -114,7 +123,34 @@ const CATEGORY_DEFINITIONS = Object.freeze([
       // #2387: a reply in a thread you started or replied in. "Replies" in
       // the description already covers it, so the copy does not change.
       'conversation_thread_reply',
+      // A person's message in a small private group's discussion
+      // (services/group-channel-notify.js): that discussion is the group's
+      // chat, so it is a message like any other, and turning Messages off
+      // silences it on the phone too. Kept in lockstep with the seed in
+      // db/schema.sql.
+      'channel_message',
     ]),
+  }),
+  Object.freeze({
+    // WP-E: what the Homeroom bot says about something you asked it for, at
+    // the four moments its messages ring (homeroom-bot-dm.js MOMENTS). They
+    // used to ride Messages, so turning Messages off silenced "it's ready to
+    // try" too. Its answers to what you wrote stay messages.
+    key: 'builds',
+    label: 'Your builds',
+    description: 'When something you asked Homeroom bot for is ready to try, needs your answer, stops, or goes live.',
+    defaultEnabled: true,
+    kinds: Object.freeze(['build_ready', 'build_needs_you', 'build_stopped', 'build_live']),
+  }),
+  Object.freeze({
+    // WP-E: the people your invite links bring, told to whoever made the
+    // link (services/invite-activity.js). Opens are a count, never a name;
+    // a join or a first hello names a signed-in person who came by your link.
+    key: 'invite_activity',
+    label: 'Your invites',
+    description: 'When someone opens your invite link, joins through it, or says hi for the first time.',
+    defaultEnabled: true,
+    kinds: Object.freeze(['invite_opened', 'member_joined', 'first_message']),
   }),
 ]);
 

@@ -29,6 +29,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { getTemplateFiles } = require('../src/services/template.js');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -53,7 +54,8 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
   // The redirect must live INSIDE the unauthenticated branch, before the
   // landing-page fallback (iframe loads must keep getting the 401 page,
   // never a redirect that would nest the shell inside its own iframe).
-  const unauthBranch = server.indexOf('if (!req.user) {');
+  // P15: a guest (no account, read-only) is served the page too.
+  const unauthBranch = server.indexOf('if (!req.user && !req.guest) {');
   const redirect = server.indexOf("req.get('sec-fetch-dest')");
   const landing = server.indexOf('Open this app inside Homeroom');
   assert.ok(unauthBranch !== -1 && unauthBranch < redirect && redirect < landing,
@@ -199,8 +201,8 @@ test('app-view.js builds the iframe src via the URL API with origin check and to
   // getElementById + assignment, but it must still compose through the
   // builder — and the builder must be the only source of that url.
   assert.ok(
-    src.includes('frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow() });'),
-    'token refresh reuses the shared builder (#2219 added the grant set beside it)');
+    src.includes('frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow(), build });'),
+    'token refresh reuses the shared builder (#2219 added the grant set beside it, WP2 the build it loads)');
   assert.ok(!/\.src\s*=\s*(?!AppView\.buildAppIframeSrc)[^;\n]*token/.test(src),
     'no other code path assigns a token-bearing src to the app iframe');
   assert.ok(!src.includes('?token=${AppView.iframeToken}'),
@@ -258,7 +260,8 @@ test('app.js setChromeless toggles the header and the pill', () => {
   // the prerendered markup and the first hydrating render identical.
   assert.ok(pill.includes('if (!chromeless) return null;'));
   assert.ok(pill.includes("id=\"chromeless-pill\""));
-  assert.ok(pill.includes("aria-label=\"Open this app on Homeroom\""));
+  assert.ok(pill.includes("aria-label={t('core:chromeless.openAppLabel')}"));
+  assert.equal(message('core:chromeless.openAppLabel'), 'Open this app on Homeroom');
   // The pill's exit target is the regular App-tab view, which clears the
   // mode via restoreFromHash. The slug is read at CLICK time, so the pill
   // survives app-to-app navigation without a remount.

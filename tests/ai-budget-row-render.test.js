@@ -40,13 +40,19 @@ const mod = () => (api || (api = loadTsx('tests/fixtures/ai-budget-api.ts')));
  * from the bundle.
  */
 const importOnce = require('./lib/import-once');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 async function loadCredit() {
   const g = globalThis;
   if (!g.window) g.window = g;
+  // ai-credit.js reads its words through the runtime's global, as a classic
+  // script does: Node imports it directly, with no bundler to resolve the
+  // runtime module for it.
+  if (!g.PlatformI18n) g.PlatformI18n = englishPlatformI18n();
   if (!g.CreditOptions) {
     const sandbox = { module: { exports: {} }, window: {}, console };
     sandbox.globalThis = sandbox;
+    sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
     vm.createContext(sandbox);
     vm.runInContext(CREDIT_OPTIONS_SRC, sandbox);
     g.CreditOptions = sandbox.module.exports;
@@ -193,7 +199,8 @@ test('the UNFETCHED row is visible and empty — what the shell prerenders', () 
 });
 
 test('the reset sentence comes from CreditOptions, not a second copy here', () => {
-  assert.match(CREDIT_SRC, /CO\.resetSentence\(state\)/);
+  assert.match(CREDIT_SRC, /CO\.resetSentence\(state, undefined, \{ withUtc: true \}\)/);
+  assert.ok(!/resetText\.replace\(/.test(CREDIT_SRC), 'the UTC instant is part of the sentence, never spliced into it');
   assert.ok(!/Resets at midnight UTC/.test(CREDIT_SRC));
 });
 
@@ -251,14 +258,38 @@ test('the daily row is untouched: still "daily", still local-time-aware', async 
 // The window words live in ONE place each, for the same reason the reset
 // sentence does: a second copy is a second thing to forget.
 test('the window wording is derived from capWindow, never retyped per state', () => {
-  assert.match(CREDIT_SRC, /var windowAdj = weeklyWindow \? 'weekly' : 'daily';/);
-  assert.match(CREDIT_SRC, /var windowWhen = weeklyWindow \? 'this week’s' : 'today’s';/);
+  // Each window has its own whole sentence in the catalog (a word swapped
+  // into a shared sentence cannot be translated), chosen once per state from
+  // the one `weeklyWindow` read.
+  assert.match(CREDIT_SRC, /var weeklyWindow = \(state \? state\.capWindow : s\.capWindow\) === 'weekly';/);
+  for (const [weekly, daily] of [
+    ['keyBilledWeekly', 'keyBilledDaily'], ['usedAllWeekly', 'usedAllDaily'], ['usedWeekly', 'usedDaily'],
+  ]) {
+    assert.ok(CREDIT_SRC.includes(
+      `weeklyWindow ? PlatformI18n.t('wallet:credit.tip.${weekly}', amounts)`), weekly);
+    assert.ok(CREDIT_SRC.includes(`: PlatformI18n.t('wallet:credit.tip.${daily}', amounts)`), daily);
+  }
+  const amounts = { limit: '$20.00', spent: '$1.00', remaining: '$19.00' };
+  assert.equal(message('wallet:credit.tip.keyBilledWeekly', amounts),
+    'Your $20.00 weekly allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.');
+  assert.equal(message('wallet:credit.tip.keyBilledDaily', amounts),
+    'Your $20.00 daily allowance is used up. AI turns are now billed to the Anthropic key you saved in Settings.');
+  assert.equal(message('wallet:credit.tip.usedAllWeekly', amounts), 'You have used all $20.00 of this week’s AI allowance.');
+  assert.equal(message('wallet:credit.tip.usedAllDaily', amounts), 'You have used all $20.00 of today’s AI allowance.');
+  assert.equal(message('wallet:credit.tip.usedWeekly', amounts), '$1.00 of your $20.00 weekly AI allowance used ($19.00 left).');
+  assert.equal(message('wallet:credit.tip.usedDaily', amounts), '$1.00 of your $20.00 daily AI allowance used ($19.00 left).');
   assert.ok(!/weekly allowance is used up|of this week’s AI allowance/.test(
     CREDIT_OPTIONS_SRC), 'the tooltip copy has one home, and it is ai-credit.js');
   // And the reset sentence drops the "at" for a weekday boundary: in the
   // viewer's clock through ResetTime (#3230), or in the server's UTC words
   // where it is absent.
   assert.match(CREDIT_OPTIONS_SRC, /var weekly = s\.capWindow === 'weekly';/);
-  assert.match(CREDIT_OPTIONS_SRC, /RT\.resetWhen\(weekly \? 'weekly' : 'daily'/);
-  assert.match(CREDIT_OPTIONS_SRC, /weekly\s*\n?\s*\? 'Free credits reset ' \+ resetLabel/);
+  assert.match(CREDIT_OPTIONS_SRC, /RT\.resetMoment\(weekly \? 'weekly' : 'daily'/);
+  assert.match(CREDIT_OPTIONS_SRC, /var ids = RESET_SENTENCE_IDS\[weekly \? 'weekly' : 'daily'\];/);
+  assert.equal(message('session:credits.reset.weekly', { day: 'Sunday', time: '8:00 PM' }), 'Free credits reset Sunday at 8:00 PM.');
+  assert.equal(message('session:credits.reset.dailyWithTimeLeftUtc', { time: '9:00 AM', timeLeft: '3h 20m', utc: 'Mon, Oct 5, 00:00 UTC' }),
+    'Free credits reset at 9:00 AM, about 3h 20m from now (Mon, Oct 5, 00:00 UTC).');
+  assert.match(CREDIT_OPTIONS_SRC, /if \(weekly\) \{\s+return left\s+\? t\('session:credits\.reset\.whenWithTimeLeft', \{ when: resetLabel, timeLeft: left \}\)\s+: t\('session:credits\.reset\.when', \{ when: resetLabel \}\);/);
+  assert.equal(message('session:credits.reset.when', { when: 'Monday 00:00 UTC' }), 'Free credits reset Monday 00:00 UTC.');
+  assert.equal(message('session:credits.reset.atBoundary', { boundary: 'midnight UTC' }), 'Free credits reset at midnight UTC.');
 });

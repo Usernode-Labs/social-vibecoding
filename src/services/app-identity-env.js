@@ -74,6 +74,7 @@
 // tests/key-separation-env.test.js asserts that across every builder.
 
 const log = require('./logger');
+const platformJwt = require('./platform-jwt');
 
 // Same normalization platform-jwt.js uses: PEMs ride .env as a single
 // line with literal \n escapes so the deploy workflow's heredoc stays
@@ -128,6 +129,9 @@ function appIdentityEnv(app, config = null) {
   }
 
   const origin = platformOrigin();
+  // The public half guest tokens verify with (P15; platform-jwt.js "App
+  // guest"). Absent where the platform cannot sign guests at all.
+  const guestPem = platformJwt.guestPublicKeyPem();
 
   return {
     USERNODE_JWT_PUBLIC_KEY: publicPem,
@@ -135,6 +139,7 @@ function appIdentityEnv(app, config = null) {
     USERNODE_APP_ID: String(appId),
     IFRAME_JWT_PUBLIC_KEY: publicPem,
     ...(origin ? { USERNODE_PLATFORM_ORIGIN: origin } : {}),
+    ...(guestPem ? { USERNODE_GUEST_JWT_PUBLIC_KEY: guestPem } : {}),
   };
 }
 

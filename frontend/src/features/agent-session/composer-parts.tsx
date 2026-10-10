@@ -14,6 +14,8 @@ import { createPortal } from 'react-dom';
 
 import { CheckIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t } from '../../lib/i18n/runtime';
 import type { AiBudgetFigures } from '../header/ai-budget';
 import { attachmentUrl, type AgentAttachment } from './api';
 import { formatSize } from './attachments';
@@ -59,17 +61,21 @@ export function creditView(figures: AiBudgetFigures | null | undefined): CreditV
   const remainingCents = Math.max(0, Math.min(figures.limitCents, Number(figures.remainingCents) || 0));
   const fraction = remainingCents / figures.limitCents;
   const tone: CreditTone = fraction > 0.4 ? 'green' : fraction > 0.15 ? 'yellow' : 'red';
-  const window = figures.weekly ? 'this week’s' : 'today’s';
-  const label = remainingCents > 0 ? `${dollars(remainingCents)} left` : 'None left';
+  const allowance = dollars(figures.limitCents);
+  const label = remainingCents > 0 ? t('agent:session.credits.left', { amount: dollars(remainingCents) }) : t('agent:session.credits.noneLeft');
   return {
     remainingCents,
     limitCents: figures.limitCents,
     fraction,
     tone,
     label,
-    wideLabel: `${label} / ${dollars(figures.limitCents)}`,
-    allowance: dollars(figures.limitCents),
-    description: `${dollars(remainingCents, true)} of ${window} ${dollars(figures.limitCents, true)} left`,
+    wideLabel: remainingCents > 0
+      ? t('agent:session.credits.wideLeft', { amount: dollars(remainingCents), allowance })
+      : t('agent:session.credits.wideNoneLeft', { allowance }),
+    allowance,
+    description: figures.weekly
+      ? t('agent:session.credits.describeWeek', { remaining: dollars(remainingCents, true), allowance: dollars(figures.limitCents, true) })
+      : t('agent:session.credits.describeDay', { remaining: dollars(remainingCents, true), allowance: dollars(figures.limitCents, true) }),
     weekly: !!figures.weekly,
     byokCents: Number(figures.byokCents) || 0,
   };
@@ -113,6 +119,8 @@ const BAR_INK: Record<CreditTone, string> = {
  * and the model pill — `min-w-0`, truncating — is what gives it up.
  */
 export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () => void }) {
+  const t = useMessages('agent');
+  const exact = { remaining: dollars(credit.remainingCents, true), allowance: dollars(credit.limitCents, true) };
   return (
     <div className="grid flex-1 justify-items-end" data-agent-session-credits-room>
       <span className="invisible col-start-1 row-start-1 h-0 whitespace-nowrap px-3 text-sm font-semibold tabular-nums" aria-hidden="true">{credit.label}</span>
@@ -120,7 +128,7 @@ export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () 
         <button
           type="button"
           className={`relative inline-flex h-8 shrink-0 items-center overflow-hidden rounded-full bg-zinc-100 px-3 text-sm font-semibold tabular-nums dark:bg-zinc-700 ${PILL_INK[credit.tone]}`}
-          aria-label={`Credits: ${credit.description}`}
+          aria-label={credit.weekly ? t('agent:session.credits.pillLabelWeek', exact) : t('agent:session.credits.pillLabelDay', exact)}
           title={credit.description}
           data-agent-session-credits={credit.tone}
           onClick={onOpen}
@@ -129,8 +137,11 @@ export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () 
           {/* What is left in the tone's ink; the allowance after it in the
               muted ink, so the colour reads as "how much is left" alone. */}
           <span className="hidden [@container(min-width:10rem)]:inline" data-agent-session-credits-label="wide">
-            {credit.label}
-            <span className="font-normal text-zinc-500 dark:text-zinc-400">{` / ${credit.allowance}`}</span>
+            <RichMessage
+              id={credit.remainingCents > 0 ? 'agent:session.credits.pillWideLeft' : 'agent:session.credits.pillWideNoneLeft'}
+              values={{ amount: dollars(credit.remainingCents), allowance: credit.allowance }}
+              components={[<span className="font-normal text-zinc-500 dark:text-zinc-400" />]}
+            />
           </span>
           <span className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px]" aria-hidden="true">
             <span
@@ -182,6 +193,7 @@ export function ModelPill({ label, effort = '', disabled, open, onOpen, pillRef 
   onOpen: () => void;
   pillRef: RefObject<HTMLButtonElement | null>;
 }) {
+  const t = useMessages('agent');
   const short = shortModelName(label) || label;
   return (
     <button
@@ -190,7 +202,7 @@ export function ModelPill({ label, effort = '', disabled, open, onOpen, pillRef 
       className="inline-flex h-10 min-w-0 max-w-[14rem] items-center rounded-full bg-zinc-100 px-4 text-[15px] font-medium [@container(max-width:18rem)]:px-3 text-zinc-900 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
       aria-haspopup="dialog"
       aria-expanded={open}
-      aria-label={effort ? `Model: ${label}, thinking ${effort}` : `Model: ${label}`}
+      aria-label={effort ? t('agent:session.model.pillLabelThinking', { model: label, level: effort }) : t('agent:session.model.pillLabel', { model: label })}
       title={short !== label ? label : undefined}
       disabled={disabled}
       data-agent-session-model
@@ -233,15 +245,16 @@ export function ModelSheetBody({ options, value, onPick, effort, credit }: {
   effort: SheetEffort | null;
   credit: CreditView | null;
 }) {
+  const t = useMessages('agent');
   const [effortOpen, setEffortOpen] = useState(false);
   const effortLabel = effort ? (effort.options.find((option) => option.value === effort.value)?.label || effort.value) : '';
   const row = 'flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-700/60';
   return (
     <div className="flex flex-col gap-3" data-agent-session-model-sheet>
-      <p className="px-1 text-sm leading-snug text-zinc-600 dark:text-zinc-300">The Mayor builds it here, on your Homeroom credits.</p>
+      <p className="px-1 text-sm leading-snug text-zinc-600 dark:text-zinc-300">{t('agent:session.buildWith.homeroomIntro')}</p>
       {options.length ? (
         <div className="flex flex-col gap-1">
-          <p className="px-1 text-xs font-semibold text-zinc-500 dark:text-zinc-400">Model</p>
+          <p className="px-1 text-xs font-semibold text-zinc-500 dark:text-zinc-400">{t('agent:session.model.listHeading')}</p>
           <div className="overflow-hidden rounded-2xl bg-white dark:bg-zinc-800">
             {options.map((option, index) => {
               const chosen = option.value === value;
@@ -258,7 +271,7 @@ export function ModelSheetBody({ options, value, onPick, effort, credit }: {
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="text-[15px] font-medium text-zinc-900 dark:text-zinc-100">
                       {option.label}
-                      {option.isDefault ? <span className="ml-1.5 text-xs font-normal text-zinc-500 dark:text-zinc-400">default</span> : null}
+                      {option.isDefault ? <span className="ml-1.5 text-xs font-normal text-zinc-500 dark:text-zinc-400">{t('agent:session.model.defaultTag')}</span> : null}
                     </span>
                     {option.detail ? <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{option.detail}</span> : null}
                   </span>
@@ -278,7 +291,7 @@ export function ModelSheetBody({ options, value, onPick, effort, credit }: {
             data-agent-session-effort
             onClick={() => setEffortOpen((open) => !open)}
           >
-            <span className="flex-1 text-[15px] text-zinc-900 dark:text-zinc-100">Thinking level</span>
+            <span className="flex-1 text-[15px] text-zinc-900 dark:text-zinc-100">{t('agent:session.effort.rowLabel')}</span>
             <span className="text-[15px] text-zinc-500 dark:text-zinc-400">{effortLabel}</span>
             <ChevronRightIcon className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform dark:text-zinc-400 ${effortOpen ? 'rotate-90' : ''}`} aria-hidden="true" />
           </button>
@@ -292,7 +305,7 @@ export function ModelSheetBody({ options, value, onPick, effort, credit }: {
             >
               <span className="flex-1 text-[15px] text-zinc-800 dark:text-zinc-200">
                 {option.label}
-                {option.isDefault ? <span className="ml-1.5 text-xs text-zinc-500 dark:text-zinc-400">default</span> : null}
+                {option.isDefault ? <span className="ml-1.5 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:session.effort.defaultTag')}</span> : null}
               </span>
               {option.value === effort.value ? <CheckIcon className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" /> : null}
             </button>
@@ -301,10 +314,10 @@ export function ModelSheetBody({ options, value, onPick, effort, credit }: {
       ) : null}
       {credit ? (
         <div className="flex flex-col gap-2 rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" data-agent-session-sheet-credits>
-          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{credit.weekly ? 'This week’s credits' : 'Today’s credits'}</p>
+          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{credit.weekly ? t('agent:session.credits.headingWeek') : t('agent:session.credits.headingDay')}</p>
           <div
             role="meter"
-            aria-label="Credits left"
+            aria-label={t('agent:session.credits.meterLabel')}
             aria-valuemin={0}
             aria-valuemax={credit.limitCents / 100}
             aria-valuenow={credit.remainingCents / 100}
@@ -314,7 +327,7 @@ export function ModelSheetBody({ options, value, onPick, effort, credit }: {
           </div>
           <p className="flex flex-wrap gap-x-3 text-[13px] text-zinc-600 dark:text-zinc-300">
             <span className="flex-1">{credit.description}</span>
-            {credit.byokCents > 0 ? <span className="text-zinc-500 dark:text-zinc-400">Your key: {dollars(credit.byokCents, true)} today</span> : null}
+            {credit.byokCents > 0 ? <span className="text-zinc-500 dark:text-zinc-400">{t('agent:session.credits.ownKeyToday', { amount: dollars(credit.byokCents, true) })}</span> : null}
           </p>
         </div>
       ) : null}
@@ -347,6 +360,7 @@ export function BuildSheetBody({ tab, onTab, onClose, heading = true, homeroom, 
   homeroom: ReactNode;
   handoff: ReactNode;
 }) {
+  const t = useMessages('agent');
   const strip = useRef<HTMLDivElement | null>(null);
   const move = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const at = BUILD_TABS.findIndex((item) => item.id === tab);
@@ -366,18 +380,18 @@ export function BuildSheetBody({ tab, onTab, onClose, heading = true, homeroom, 
           <button
             type="button"
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
-            aria-label="Close"
+            aria-label={t('core:common.close')}
             onClick={onClose}
           >
             <XIcon className="h-5 w-5" aria-hidden="true" />
           </button>
-          <h2 className="mr-[52px] flex-1 text-center text-base font-semibold text-zinc-900 dark:text-zinc-100">Build with</h2>
+          <h2 className="mr-[52px] flex-1 text-center text-base font-semibold text-zinc-900 dark:text-zinc-100">{t('agent:session.buildWith.heading')}</h2>
         </div>
       ) : null}
       <div
         ref={strip}
         role="tablist"
-        aria-label="Build with"
+        aria-label={t('agent:session.buildWith.tabsLabel')}
         className="flex gap-1 rounded-full bg-zinc-200/70 p-1 dark:bg-zinc-800"
         onKeyDown={move}
       >
@@ -429,6 +443,7 @@ export function ModelSheet({ anchor, onClose, children }: {
   onClose: () => void;
   children: ReactNode;
 }) {
+  const t = useMessages('agent');
   const panel = useRef<HTMLDivElement | null>(null);
   const [desktop] = useState(wide);
   const [place, setPlace] = useState<{ left: number; bottom: number; maxHeight: number } | null>(null);
@@ -476,7 +491,7 @@ export function ModelSheet({ anchor, onClose, children }: {
         ref={panel}
         role="dialog"
         aria-modal={desktop ? undefined : true}
-        aria-label="Build with"
+        aria-label={t('agent:session.buildWith.dialogLabel')}
         className={desktop
           ? 'fixed z-[71] w-[22rem] overflow-y-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-2 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900'
           : 'fixed inset-x-0 bottom-0 z-[71] max-h-[85vh] overflow-y-auto rounded-t-[28px] bg-zinc-50 px-4 pb-8 pt-2 dark:bg-zinc-900'}

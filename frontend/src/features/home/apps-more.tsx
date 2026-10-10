@@ -8,6 +8,7 @@
  * once, by React, to an element that survives.
  */
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { chromeStore } from './chrome-store';
 
@@ -23,6 +24,7 @@ function controller(): any {
  * through a hook cannot be called as a function to get at its handler.
  */
 export function AppsMoreBody({ moreCount }: { moreCount: number }) {
+  const t = useMessages('home');
   return (
     <div id="home-apps-more" className={moreCount ? 'px-2 pb-1 sm:px-3' : 'hidden px-2 pb-1 sm:px-3'}>
       {moreCount ? (
@@ -37,7 +39,7 @@ export function AppsMoreBody({ moreCount }: { moreCount: number }) {
             home.render();
           }}
         >
-          {`Show all ${moreCount} apps`}
+          {t('home:grid.showAll', { count: moreCount })}
         </button>
       ) : null}
     </div>

@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const SETTINGS_SOURCE = fs.readFileSync(path.join(ROOT, 'frontend/src/features/settings/settings.js'), 'utf8');
@@ -18,28 +19,37 @@ const CATEGORIES = [
   ['direct_interactions', 'Direct interactions', true],
   ['invitations', 'Invitations', true],
   ['shared_work', 'Shared work', true],
-  ['developer_sessions', 'Developer sessions', true],
-  ['proposal_alerts', 'Proposal alerts', true],
+  ['developer_sessions', 'Agent sessions', true],
+  ['proposal_alerts', 'Change alerts', true],
   ['app_alerts', 'App alerts', true],
   ['lightweight_activity', 'Lightweight activity', false],
 ];
 
 test('settings renders clear user-facing category labels and descriptions', () => {
   assert.match(SETTINGS_SOURCE,
-    /\{ key: 'alerts', label: 'Notifications', group: 'Preferences' \}/,
+    /\{ key: 'alerts', label: 'settings:nav\.part\.alerts', group: 'settings:nav\.group\.preferences' \}/,
     'the category controls are discoverable from the Settings navigation');
+  assert.equal(message('settings:nav.part.alerts'), 'Notifications');
+  assert.equal(message('settings:nav.group.preferences'), 'Preferences');
   const block = ALERTS_SOURCE.slice(
     ALERTS_SOURCE.indexOf('id="settings-mobile-push-preferences"')
   );
-  assert.match(block, /Mobile push categories/);
-  assert.match(block, /Activity notifications switch remains the master control/);
+  assert.match(block, /title=\{t\('settings:alerts\.push\.title'\)\}/);
+  assert.equal(message('settings:alerts.push.title'), 'Mobile push categories');
+  assert.match(block, /\{t\('settings:alerts\.push\.intro'\)\}/);
+  assert.match(message('settings:alerts.push.intro'), /Activity notifications switch remains the master control/);
   for (const [key, label] of CATEGORIES) {
+    // The catalog key is the category's own, in camelCase.
+    const id = `settings:alerts.push.${key.replace(/_(\w)/g, (_, c) => c.toUpperCase())}`;
+    const row = block.slice(block.indexOf(`data-mobile-push-category="${key}"`));
     assert.match(block, new RegExp(`data-mobile-push-category="${key}"`));
-    assert.match(block, new RegExp(`>${label}<`));
+    assert.ok(row.slice(0, 600).includes(`>{t('${id}.label')}<`), `${key}: its row shows its label`);
+    assert.ok(row.slice(0, 600).includes(`>{t('${id}.description')}<`), `${key}: and its description`);
+    assert.equal(message(`${id}.label`), label);
   }
-  assert.match(block, /Mentions and replies to your messages/);
-  assert.match(block, /Conversation invitations, messages, mentions, replies, and reactions/);
-  assert.match(block, /Reactions and kudos on your work/);
+  assert.match(message('settings:alerts.push.directInteractions.description'), /Mentions and replies to your messages/);
+  assert.match(message('settings:alerts.push.messages.description'), /Conversation invitations, messages, mentions, replies, and reactions/);
+  assert.match(message('settings:alerts.push.lightweightActivity.description'), /Reactions and kudos on your work/);
   assert.doesNotMatch(block, />\s*(mention|reply|stale_pr|check_failed|pr_proposed|spec_shared)\s*</,
     'internal notification identifiers never become visible labels');
 });
@@ -71,6 +81,7 @@ function harness(saved) {
   });
   let serverState = { ...saved };
   const context = vm.createContext({
+    PlatformI18n: englishPlatformI18n(),
     window: {},
     document: {
       addEventListener() {},

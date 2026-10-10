@@ -6,9 +6,10 @@ const { appPlatformAuth } = require('../middleware/app-llm-auth');
 const { getPool } = require('../db/pool');
 const governance = require('../services/governance');
 const userDirectory = require('../services/user-directory');
+const communities = require('../services/communities');
 const { listPublicApps } = require('../services/public-app-directory');
 const log = require('../services/logger');
-const { currentVotePredicateSql } = require('../services/pr-vote-revision');
+const { countedVotePredicateSql } = require('../services/pr-vote-revision');
 
 // App-facing read-only platform API. `/v1` is the stable contract; every
 // unversioned path remains an alias for apps deployed before issue #1908.
@@ -17,6 +18,7 @@ const { currentVotePredicateSql } = require('../services/pr-vote-revision');
 //   GET /api/app-platform/v1/apps
 //   GET /api/app-platform/v1/governance/feed
 //   GET /api/app-platform/v1/users/{lookup,search}
+//   GET /api/app-platform/v1/members
 //
 // Returns the CALLING app's own recent proposal/vote/merge activity so
 // apps can render live "what's changing" strips and changelogs instead
@@ -233,6 +235,46 @@ function appPlatformApiRoutes(config) {
       }
     });
 
+  // ── Members: who is in this project ───────────────────────────────
+  //
+  //   GET /api/app-platform/members[?limit=]
+  //
+  // "Everyone in the group", for a chore rota, a turn order, a "who's
+  // coming" list. Without it an app guessed from the users it had seen,
+  // plus a staging fixture of fake people, and a preview showed the fixture
+  // and the check runner instead of the group (services/user-directory.js
+  // listAppMembers has the case).
+  //
+  // Same auth as /users/*, user-token-only included, so a staging preview
+  // asks with its reviewer's token and gets the project's REAL members: the
+  // thing a member opening a preview wants to check. That is not preview
+  // code reaching app data the reviewer cannot see. The token names the app
+  // it was minted for, and only a MEMBER of that app gets an answer: people
+  // the project's page already shows them as fellow members (its community
+  // card names them). Anyone else (an admin looking in, the check runner)
+  // gets 403 `not_a_member`, and the app shows its screen without the
+  // roster.
+  router.get(v1Paths('/members'), directoryAuth, directoryLimiter,
+    async (req, res) => {
+      const { appId, userId } = req.appPlatform;
+      try {
+        if (!(await communities.isMember(pool, appId, userId))) {
+          return res.status(403).json({
+            ok: false,
+            code: 'not_a_member',
+            message: 'Only members of this project can see who is in it.',
+          });
+        }
+        const { members, hasMore } = await userDirectory.listAppMembers(
+          pool, appId, req.query.limit
+        );
+        res.json({ members, has_more: hasMore });
+      } catch (err) {
+        log.error('app-platform-api', 'Member list failed', { appId, message: err.message });
+        res.status(500).json({ ok: false, error: 'Internal server error' });
+      }
+    });
+
   router.get(v1Paths('/governance/feed'), auth, feedLimiter, async (req, res) => {
     const { appId } = req.appPlatform;
     try {
@@ -273,10 +315,10 @@ function appPlatformApiRoutes(config) {
                 ${activityExpr} AS activity_at,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count
            FROM chat_sessions cs
            LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.status = ANY($2::text[])

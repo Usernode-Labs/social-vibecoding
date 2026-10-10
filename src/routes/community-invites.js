@@ -9,6 +9,8 @@
  *                                                  who manages the project)
  *   DELETE /api/invite-links/:id                   turn one off
  *   GET    /api/public/invites/:token              the preview, signed out
+ *   GET    /api/public/invites/:token/picture      the project's picture, when
+ *                                                  it is an after-shot
  *   GET    /api/invite-links/by-token/:token       the preview plus where
  *                                                  the viewer stands on it
  *   POST   /api/invite-links/by-token/:token/redeem  follow it
@@ -27,10 +29,15 @@ const fs = require('fs');
 const path = require('path');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
+const inviteActivity = require('../services/invite-activity');
+const journeyEvents = require('../services/journey-events');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const invites = require('../services/community-invites');
+const stagingDemoInvite = require('../services/staging-demo-invite');
+const phoneAuth = require('../services/firebase-phone-auth');
 const challengeScorer = require('../services/topochain/challenge-scorer');
+const testAccounts = require('../services/test-accounts');
 const { drainGuard } = require('../services/lifecycle');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { applyShellDocumentHeaders, shellAssetCacheControl } = require('../services/static-cache');
@@ -49,32 +56,61 @@ function escapeAttr(value) {
 }
 
 /**
+ * The community a live link's project was made for, when it is named apart
+ * from the project, or null. A community and its one project share a name
+ * today, and preview() sends no other. (The page's card had the same rule
+ * until #4203, when it began leading with who invited you instead:
+ * frontend/src/features/auth/invite-card.tsx, inviteLine.)
+ */
+function madeForName(preview, projectName) {
+  const community = String((preview && preview.communityName) || '').trim();
+  const project = String(projectName || '').trim();
+  return community && community.toLowerCase() !== project.toLowerCase() ? community : null;
+}
+
+/**
  * The link-preview tags for an invite page: what iMessage, Slack and the
- * rest show when the link is pasted. A live link names the project, who
- * invited you and its icon; a dead or unknown one says only that it is a
- * Homeroom invite, so a pasted link discloses no more than preview() does.
+ * rest show when the link is pasted. A live link's title is the gift:
+ * "Maya made Run Tracker" when the person who sent it made the project ("Maya
+ * made this for Sunday Run Club" when the community it was made for has a
+ * name of its own; "is making" while its first version is on its way,
+ * `building`), with their note (else the project's line, else who
+ * invited you) and its picture (else its icon). A dead or unknown one says
+ * only that it is a Homeroom invite, so a pasted link discloses no more than
+ * preview() does.
  */
 function previewTags(preview, origin) {
   const live = preview && preview.live;
   const name = live ? preview.project.name : null;
-  const title = live ? `Join ${name} on Homeroom` : 'Homeroom invite';
+  const madeBy = live && preview.inviterMadeIt && preview.inviterName ? preview.inviterName : null;
+  const madeFor = madeBy ? madeForName(preview, name) : null;
+  const made = preview && preview.building ? 'is making' : 'made';
+  const title = !live
+    ? 'Homeroom invite'
+    : madeBy ? (madeFor ? `${madeBy} ${made} this for ${madeFor}` : `${madeBy} ${made} ${name}`) : `Join ${name} on Homeroom`;
   const members = live && preview.memberCount
     ? ` ${preview.memberCount} ${preview.memberCount === 1 ? 'person is' : 'people are'} in it.`
     : '';
-  const description = live
-    ? `${preview.inviter ? `@${preview.inviter} invited you to ${name}.` : `You are invited to ${name}.`}${members}`
-    : 'This invite link is no longer active.';
+  const description = !live
+    ? 'This invite link is no longer active.'
+    : preview.note
+      || preview.project.description
+      || `${preview.inviter ? `@${preview.inviter} invited you to ${name}.` : `You are invited to ${name}.`}${members}`;
+  // A card is words, not an image: the preview shows the icon instead.
+  const picture = live && preview.project.picture && preview.project.picture.kind !== 'sketch'
+    ? preview.project.picture.url : null;
+  const image = picture || (live ? preview.project.iconUrl : null);
   const tags = [
     `<meta property="og:type" content="website">`,
     `<meta property="og:site_name" content="Homeroom">`,
     `<meta property="og:title" content="${escapeAttr(title)}">`,
     `<meta property="og:description" content="${escapeAttr(description)}">`,
-    `<meta name="twitter:card" content="summary">`,
+    `<meta name="twitter:card" content="${picture && origin ? 'summary_large_image' : 'summary'}">`,
     `<meta name="twitter:title" content="${escapeAttr(title)}">`,
     `<meta name="twitter:description" content="${escapeAttr(description)}">`,
   ];
-  if (live && preview.project.iconUrl && origin) {
-    tags.push(`<meta property="og:image" content="${escapeAttr(origin + preview.project.iconUrl)}">`);
+  if (image && origin) {
+    tags.push(`<meta property="og:image" content="${escapeAttr(origin + image)}">`);
   }
   return tags.join('\n');
 }
@@ -98,7 +134,7 @@ function requestOrigin(req) {
 function communityInviteRoutes(config) {
   const router = Router();
   const pool = getPool(config);
-  const appColumns = `${appAccess.ACCESS_COLUMNS}, community_id, name`;
+  const appColumns = `${appAccess.ACCESS_COLUMNS}, community_id, name, locked`;
 
   router.post('/api/apps/:slug/invite-links', drainGuard, inviteLinkCreateLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -106,7 +142,7 @@ function communityInviteRoutes(config) {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appColumns);
       if (!app) return res.status(404).json({ error: 'App not found' });
       const made = await invites.createInvite(pool, {
-        app, user: req.user, days: req.body?.days, maxUses: req.body?.maxUses,
+        app, user: req.user, days: req.body?.days, maxUses: req.body?.maxUses, note: req.body?.note,
       });
       if (!made.ok) return res.status(made.status).json({ error: made.error });
       log.info('invites', 'Invite link made', { slug: app.slug, by: req.user.username, id: made.link.id });
@@ -122,10 +158,10 @@ function communityInviteRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appColumns);
       if (!app) return res.status(404).json({ error: 'App not found' });
-      const [listed, canCreate, skipsLeft] = await Promise.all([
+      const [listed, canCreate, joiningRule] = await Promise.all([
         invites.listInvites(pool, { app, user: req.user }),
         invites.canCreate(pool, app, req.user),
-        invites.skipsLeft(pool, req.user),
+        invites.joiningRule(pool, app),
       ]);
       return res.json({
         links: listed.links,
@@ -134,7 +170,9 @@ function communityInviteRoutes(config) {
         grant: invites.grantFor(app),
         defaults: { days: invites.DEFAULT_DAYS, maxUses: invites.DEFAULT_USES },
         limits: invites.LIMITS,
-        skipsLeft,
+        // WP-D: 0 for days or maxUses asks for no limit (until turned off).
+        noLimit: invites.NO_LIMIT,
+        joiningRule,
       });
     } catch (err) {
       log.error('invites', 'Listing invite links failed', { slug: req.params.slug, err: err.message });
@@ -154,15 +192,61 @@ function communityInviteRoutes(config) {
     }
   });
 
+  // WP-E: a live link opened counts once per PERSON (services/invite-
+  // activity.js), never by name: by account when they are signed in, on any
+  // device, else by browser (an HttpOnly cookie that names nothing). Only a
+  // signed-in open tells the link's maker (#4176): somebody who only clicked
+  // it has not shown up yet. A signed-out one is remembered and recorded for
+  // the admin Journey, and tells nobody. Counted from the page's own reads
+  // below, not from the HTML route a link unfurler fetches.
+  const countOpen = (req, res, token, viewerId = null) => {
+    const seenBefore = inviteActivity.countedBefore(req, token);
+    const browser = inviteActivity.ensureBrowser(req, res);
+    void inviteActivity.noteOpened(pool, { token, viewerId, browser, seenBefore });
+  };
+
   // Anonymous: under /api/public/, so authMiddleware never resolves a user
-  // here, and the answer is the same whoever asks.
+  // here, and the answer is the same whoever asks. Its open is a signed-out
+  // one: recorded, never told.
   router.get('/api/public/invites/:token', invitePreviewLimiter, async (req, res) => {
+    // Staging's demo link (services/staging-demo-invite.js): its pretend
+    // preview, counted as no open. Anywhere else it is an unknown token.
+    if (stagingDemoInvite.isDemoInvite(req.params.token)) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(stagingDemoInvite.demoInvitePreview());
+    }
     try {
       const preview = await invites.preview(pool, req.params.token);
+      if (preview.live) countOpen(req, res, req.params.token);
       res.setHeader('Cache-Control', 'no-store');
       return res.status(preview.reason === 'unknown' ? 404 : 200).json(preview);
     } catch (err) {
       log.error('invites', 'Invite preview failed', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The after-shot a live link's page shows (invites.pictureFor). Anonymous
+  // like the preview, and only while the link is live: turning it off turns
+  // this off too. Whoever holds the link sees the project before joining it.
+  router.get('/api/public/invites/:token/picture', invitePreviewLimiter, async (req, res) => {
+    try {
+      const picture = invites.isToken(req.params.token)
+        ? await invites.pictureBytes(pool, req.params.token)
+        : null;
+      if (!picture) return res.status(404).json({ error: 'No picture' });
+      const data = Buffer.isBuffer(picture.data) ? picture.data : Buffer.from(picture.data || '');
+      res.set({
+        'Content-Type': picture.contentType,
+        'Content-Length': String(data.length),
+        'Cache-Control': 'private, max-age=300',
+        ETag: `"${picture.sha256}"`,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline',
+      });
+      return res.end(data);
+    } catch (err) {
+      log.error('invites', 'Invite picture failed', { err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -179,8 +263,28 @@ function communityInviteRoutes(config) {
 
   router.get('/api/invite-links/by-token/:token', invitePreviewLimiter, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    // Staging's demo link is never followed: signed in, it is a link that
+    // does not work, answered without an error status.
+    if (stagingDemoInvite.isDemoInvite(req.params.token)) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(stagingDemoInvite.demoInviteDead());
+    }
     try {
-      const standing = await invites.standing(pool, req.params.token, req.user);
+      // `page` (the project's page, for somebody who may open it before
+      // joining) follows the community read's own rule for the platform's
+      // own project (routes/apps.js GET /api/apps/:slug/community).
+      const standing = await invites.standing(pool, req.params.token, req.user, {
+        showSelfHosted: !!req.user.isAdmin || !!config.selfAppPublicVoting,
+      });
+      // Somebody signed in who is not in it yet (invite-activity.noteOpened
+      // leaves out the maker and anybody already a member): the open its
+      // maker hears about, and, for the admin Journey's invite funnel, a
+      // person with the link in hand signed in: already signed in, unless
+      // the sign-in that brought them here recorded it first (#4272).
+      if (standing.live && !standing.mine) {
+        countOpen(req, res, req.params.token, req.user.id);
+        void journeyEvents.noteInviteSignedIn(pool, { token: req.params.token, userId: req.user.id });
+      }
       res.setHeader('Cache-Control', 'no-store');
       return res.status(standing.reason === 'unknown' ? 404 : 200).json(standing);
     } catch (err) {
@@ -193,15 +297,39 @@ function communityInviteRoutes(config) {
   // (middleware/same-site-browser.js).
   router.post('/api/invite-links/by-token/:token/redeem', drainGuard, inviteRedeemLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    // Staging's demo link grants nothing (services/staging-demo-invite.js).
+    if (stagingDemoInvite.isDemoInvite(req.params.token)) {
+      return res.status(410).json({ error: 'This invite link is not active.', reason: 'unknown' });
+    }
     try {
-      const result = await invites.redeem(pool, { token: req.params.token, user: req.user });
+      // Signed in with the link in hand, for the admin Journey's invite
+      // funnel (#4272). The standing read above records it first, but the
+      // waiting room follows a link without reading it
+      // (features/auth/waiting.tsx). Before following it, while they are not
+      // in it yet; once per person per link, so a sign-in that carried the
+      // link stays the sign-in it was. Never throws.
+      await journeyEvents.noteInviteSignedIn(pool, { token: req.params.token, userId: req.user.id });
+      const result = await invites.redeem(pool, {
+        token: req.params.token, user: req.user, browser: inviteActivity.browserFrom(req),
+        // A private member signs up with a phone (community-invites.js).
+        requirePhone: phoneAuth.offered(config),
+      });
       // Following a link clears any copy the sign-in carried: it is spent.
       invites.clearInviteCookie(res);
+      if (result.reason === 'username_required') {
+        return res.status(409).json({ ...require('../services/usernames').USERNAME_REQUIRED, reason: result.reason });
+      }
       if (!result.ok) return res.status(result.status).json({ error: 'This invite link is not active.', reason: result.reason });
       // In the community now, so its challenge counts now (#3564). A queued
       // person is not in it yet; the schedule counts them once let in.
       if (result.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
-      return res.json(result);
+      // Whether "You're in" tells them what Homeroom is (App._followInvite).
+      // An account following a link signed in had its account before the
+      // link, except a test account on its first sign-in: made ahead by an
+      // admin, it is as new as the sign-up a link opens (test-accounts.js
+      // onFirstRun). Read only for a join, which is when it is shown.
+      const newAccount = result.status === 'joined' && await testAccounts.onFirstRun(pool, req.user.id);
+      return res.json({ ...result, newAccount });
     } catch (err) {
       log.error('invites', 'Following an invite link failed', { err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -216,11 +344,21 @@ function communityInviteRoutes(config) {
   router.get('/invite/:token', invitePreviewLimiter, async (req, res, next) => {
     if (!req.accepts('html')) return next();
     const token = req.params.token;
+    // Staging's demo link: its pretend preview, and no invite cookie, so a
+    // sign-in from its page follows nothing.
+    const demo = stagingDemoInvite.isDemoInvite(token);
     try {
-      const preview = invites.isToken(token)
-        ? await invites.preview(pool, token)
-        : { live: false, reason: 'unknown' };
-      if (preview.live) invites.setInviteCookie(req, res, token);
+      const preview = demo
+        ? stagingDemoInvite.demoInvitePreview()
+        : invites.isToken(token)
+          ? await invites.preview(pool, token)
+          : { live: false, reason: 'unknown' };
+      if (preview.live && !demo) {
+        invites.setInviteCookie(req, res, token);
+        // The page's two reads (the preview and, signed in, the standing)
+        // may start together: both carry this browser, so it counts once.
+        inviteActivity.ensureBrowser(req, res);
+      }
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
       res.setHeader('Cache-Control', 'no-store');
       applyShellDocumentHeaders(res, INDEX_PATH);

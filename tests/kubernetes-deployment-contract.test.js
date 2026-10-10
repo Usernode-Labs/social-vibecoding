@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 
 const read = (path) => fs.readFileSync(path, 'utf8');
 
@@ -48,6 +49,35 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.doesNotMatch(shellStage, /RUN npm ci/,
     'asset dependencies must stay outside the generated-output snapshot');
 
+  // The commit id sits BELOW the two expensive steps. A build arg above a RUN
+  // is part of that step's cache key, so with GIT_SHA above them every commit
+  // rebuilt the bundle and the stylesheet whatever it had changed: 167 of 167
+  // preview builds in the logs this order was measured against. Nothing above
+  // the id may read it, and everything that does comes after it.
+  const order = (needle) => {
+    const at = shellStage.indexOf(needle);
+    assert.ok(at > -1, `the shell stage must contain \`${needle}\``);
+    assert.equal(shellStage.indexOf(needle, at + 1), -1, `the shell stage must contain \`${needle}\` once`);
+    return at;
+  };
+  const bundle = order('node frontend/scripts/build-shell.mjs --keep-prerender');
+  const css = order('node scripts/build-tailwind.js');
+  const commitArg = order('ARG GIT_SHA=dev');
+  const commitEnv = order('ENV GIT_SHA=$GIT_SHA');
+  const document = order('node frontend/scripts/build-shell.mjs --document');
+  const release = order('RUN node scripts/build-shell-release.js');
+  const precompress = order('RUN node scripts/precompress-static-assets.js');
+  assert.ok(bundle < css && css < commitArg,
+    'the Vite passes and Tailwind run before GIT_SHA is declared, so a commit that left their inputs alone can reuse them');
+  assert.ok(commitArg < commitEnv && commitEnv < document,
+    'the document this build serves is written with the commit id');
+  assert.ok(document < release && release < precompress,
+    'the release file and the precompressed copies describe that final document');
+  assert.equal(shellStage.split('build-shell.mjs').length - 1, 2,
+    'the shell build runs twice in this stage: the bundle, then the document. A plain third run would redo Vite under the commit id');
+  assert.match(shellStage, /from=asset-deps[^\n]+node_modules[^\n]+\\\n\s+node frontend\/scripts\/build-shell\.mjs --document/,
+    'the document step renders with the prerender bundle, which loads react from the dependency stage');
+
   const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
   assert.doesNotMatch(runtime, /^COPY --chown=node:node \. \.$/m,
     'the runtime image must not ship tests, docs, or builder sources');
@@ -56,6 +86,7 @@ test('Kubernetes platform image builds and contains the generated shell assets',
     'COPY --chown=node:node src ./src',
     'COPY --chown=node:node scripts ./scripts',
     'COPY --chown=node:node worker ./worker',
+    'COPY --chown=node:node app-templates ./app-templates',
     'COPY --chown=node:node --from=shell /build/public ./public',
   ]) {
     assert.ok(runtime.includes(source), `${source} must be present in the runtime stage`);
@@ -63,6 +94,55 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   assert.doesNotMatch(runtime, /^COPY .*frontend/m);
   assert.doesNotMatch(runtime, /^COPY .*tests/m);
   assert.doesNotMatch(runtime, /^COPY .*docs/m);
+});
+
+test('Kubernetes platform image ships every directory the server reads beside src/', () => {
+  // The runtime stage copies a list, not the whole tree, so a top-level
+  // directory that src/ reads by path is missing in production unless it is
+  // on that list. app-templates/ was not: every ready-made app and game
+  // starter failed to create with "ENOENT: scandir '/app/app-templates/…'"
+  // while Dockerfile, which copies everything, and every test were fine.
+  const dockerfile = read('Dockerfile.kubernetes');
+  const runtime = dockerfile.slice(dockerfile.lastIndexOf('\nFROM node:22-alpine\n'));
+  const shipped = new Set();
+  for (const [, args] of runtime.matchAll(/^COPY (.+)$/gm)) {
+    const parts = args.split(/\s+/).filter((a) => !a.startsWith('--'));
+    const dest = parts.pop();
+    if (dest === './') for (const p of parts) shipped.add(path.basename(p));
+    else shipped.add(dest.replace(/^\.\//, '').split('/')[0]);
+  }
+
+  const root = path.resolve(__dirname, '..');
+  const reads = [];
+  for (const rel of fs.readdirSync(path.join(root, 'src'), { recursive: true })) {
+    // The CLI runs from a developer's checkout, never in this image.
+    if (!rel.endsWith('.js') || rel.startsWith(`cli${path.sep}`)) continue;
+    const file = path.join(root, 'src', rel);
+    for (const [call] of read(file).matchAll(/path\.(?:join|resolve)\(__dirname(?:,\s*'[^']*')+/g)) {
+      const segments = [...call.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+      const top = path.relative(root, path.resolve(path.dirname(file), ...segments)).split(path.sep)[0];
+      if (top && top !== 'src' && top !== '..') reads.push([top, path.relative(root, file)]);
+    }
+  }
+  assert.ok(reads.some(([top]) => top === 'app-templates'), 'the scan finds services/app-templates.js');
+  for (const [top, from] of reads) {
+    assert.ok(shipped.has(top), `${from} reads ${top}/, which the runtime stage does not copy`);
+  }
+});
+
+test('Kubernetes platform image keeps the npm download cache out of both dependency layers', () => {
+  // `npm ci` keeps a copy of every tarball it fetched. Left in /root/.npm it
+  // was half of each dependency layer (38 MB and 50 MB compressed, 19 MB and
+  // 25 MB without it), restored by every build and pulled by every pod, and
+  // read by nothing.
+  const instructions = read('Dockerfile.kubernetes').replace(/\\\n/g, ' ').split('\n');
+  const installs = instructions.filter((line) => /^RUN .*\bnpm ci\b/.test(line));
+  assert.equal(installs.length, 2, 'the asset-deps install and the runtime install');
+  for (const run of installs) {
+    const cache = (run.match(/\bnpm ci\b[^&;|]* --cache (\/\S+)/) || [])[1];
+    assert.ok(cache, `${run}: must name its cache directory rather than leave it at the default`);
+    assert.ok(run.includes(`&& rm -rf ${cache}`), `${run}: must remove ${cache} in the same layer`);
+  }
 });
 
 test('Docker keeps boot migrations while Kubernetes can delegate them to a Job', () => {
@@ -140,6 +220,17 @@ test('Kubernetes enables before & after shots by default with one explicit kill 
     'Helm default treats boolean false as empty and would defeat the kill switch');
 });
 
+test('Kubernetes passes the workflow flags through, off by default', () => {
+  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(values, /workflowGovernanceEnabled: false/);
+  assert.match(platform,
+    /name: WF_GOVERNANCE_ENABLED, value: \{\{ \.Values\.platform\.workflowGovernanceEnabled \| quote \}\}/);
+  assert.match(values, /workflowMergeFollowupsEnabled: false/);
+  assert.match(platform,
+    /name: WF_MERGE_FOLLOWUPS_ENABLED, value: \{\{ \.Values\.platform\.workflowMergeFollowupsEnabled \| quote \}\}/);
+});
+
 test('Kubernetes workflow resolves all three images before publishing a release', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const workerDockerfile = read('worker/Dockerfile');
@@ -198,7 +289,7 @@ test('every Kubernetes chart release validates its immutable platform image with
   assert.match(validation, /loadShellRelease\('\/app\/public'\)/);
 });
 
-test('Kubernetes workflow retains queued releases and only publishes the current branch tip', () => {
+test('Kubernetes workflow retains queued releases, publishes the tip, and never an older revision over a newer one', () => {
   const workflow = read('.github/workflows/build-kubernetes-images.yml');
   const release = workflow.slice(workflow.indexOf('\n  release:\n'));
   assert.match(workflow,
@@ -206,6 +297,26 @@ test('Kubernetes workflow retains queued releases and only publishes the current
     'a later waiting push must not cancel an earlier merge before it gets a release run');
   assert.match(release, /git ls-remote --exit-code origin "\$GITHUB_REF"/);
   assert.match(release, /if \[ "\$current_sha" = "\$GITHUB_SHA" \]; then/);
+  // Behind the tip (5 October: twelve queued runs in a row skipped, so
+  // nothing deployed for an hour and a half), a stable run publishes only
+  // ahead of an older, lower-numbered release, at most every
+  // RELEASE_EVERY_MINUTES. tests/kubernetes-release-publish-rule.test.js runs
+  // the step against every case.
+  assert.match(release, /helm show chart "\$CHART_REF" --version '0\.1\.\*'/,
+    'the newest release Argo CD would run, read from the registry');
+  assert.match(release, /compare "\$published_sha" "\$GITHUB_SHA"\)" = ahead/, 'only over an older revision');
+  assert.match(release, /compare "\$GITHUB_SHA" "\$current_sha"\)" = ahead/, 'only a revision the branch still contains');
+  assert.match(release, /\[ "\$RELEASE_CHANNEL" = stable \] \|\| decide false/, 'a candidate waits for its tip');
+  // The tip too (7 October: four rollouts in sixteen minutes) goes out no
+  // sooner than RELEASE_MIN_GAP_MINUTES after the release before it: it waits
+  // in the step, re-reading the branch, and a dispatched run never waits.
+  assert.match(release, /RELEASE_MIN_GAP_MINUTES: '10'/);
+  assert.match(release, /\[ "\$GITHUB_EVENT_NAME" != workflow_dispatch \] \\\n\s+\|\| decide true/,
+    'a run dispatched by hand is the way to release at once');
+  assert.match(release, /sleep \$\(\( wait_until - now < 30 \? wait_until - now : 30 \)\)\n\s+current_sha="\$\(branch_tip\)"/,
+    'every wait is followed by a fresh read of the branch tip');
+  assert.match(release, /^    permissions:\n(?:      #.*\n)*      actions: read$/m,
+    'the release age is read from this workflow\'s own runs');
   for (const step of ['Log in to GHCR for Helm', 'Publish OCI Helm release', 'Record atomic release']) {
     assert.match(release, new RegExp(`- name: ${step}\\n        if: steps\\.current_head\\.outputs\\.publish == 'true'`));
   }

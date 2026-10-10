@@ -92,6 +92,7 @@
     openNativeScreen: true,
     setBackNavigationEnabled: true,
     captureScreenshot: true,
+    saveImage: true,
     getSettingsState: true,
     setNodeSleepEnabled: true,
     setDebugMode: true,
@@ -113,6 +114,7 @@
     ackPendingSocialNotification: true,
     setSocialBadgeCount: true,
     manageStaking: true,
+    signInWithProvider: true,
   };
   var _REALM_SESSION_METHODS = {
     getNodeAddress: true,
@@ -642,21 +644,84 @@
   // its own copy of this bridge and is responsible for those decisions
   // in its own origin. The parent only relays raw Usernode.postMessage
   // payloads, which keeps cross-origin behaviour predictable.
+  //
+  // WHO may use it. A relayed call runs with THIS frame's native session,
+  // so the phone treats it as the platform asking. Only the production app
+  // frames the platform shell owns qualify. A staging preview (code nobody
+  // has voted in), the landing viewer, and any page an app nests inside its
+  // own frame do not. This bridge cannot see the shell's frames, so the
+  // shell publishes a lookup, `window.__usernodeAppFrameFor(source)`
+  // (frontend/src/features/app-frame/mount.ts), that answers
+  // `{ slug, name, origin, mounted }` for one of its production app frames
+  // and null for anything else. A top frame without that lookup (any page
+  // that is not the platform shell) relays nothing at all.
+  //
+  //   * `discover` is acked only for such a frame, and the app it belongs
+  //     to is recorded against that frame (`_relayBoundApps`).
+  //   * `request` is forwarded only from a frame bound that way, only while
+  //     the app is the mounted one (a hidden, kept-alive app cannot raise
+  //     the wallet over another screen, the same rule every other shell
+  //     relay applies), and it carries `relayApp: { slug, name }` so native
+  //     can say which app is asking.
+  //   * A frame the shell does not own gets NO reply, to `discover` or to
+  //     `request`. Any reply, an error included, would tell an arbitrary
+  //     page that it is running inside the phone app with a wallet behind
+  //     it. A real bridge never sends `request` without an ack, so the only
+  //     thing dropped silently is a hand-made request; the frame sees what
+  //     it would see in a desktop browser.
+  //
+  // The origin is part of the match. An app frame that has been navigated
+  // to another site keeps its window object but not its origin, and that
+  // other site is not the app.
+  var _RELAY_APP_LOOKUP = "__usernodeAppFrameFor";
+  var _relayBoundApps = typeof WeakMap === "function" ? new WeakMap() : null;
+  var _RELAY_SIGN_REFUSED = "Signing from inside apps isn't available yet";
+  var _RELAY_APP_HIDDEN = "This app is in the background. Open it to continue.";
+  var _RELAY_APP_UNBOUND = "Reload this app to continue.";
+
+  function relayAppFor(source, origin) {
+    var lookup = window[_RELAY_APP_LOOKUP];
+    if (typeof lookup !== "function" || !source) return null;
+    var app = null;
+    try { app = lookup(source); } catch (_) { return null; }
+    if (!app || typeof app !== "object") return null;
+    if (typeof app.slug !== "string" || !app.slug) return null;
+    if (typeof app.origin !== "string" || !app.origin ||
+        typeof origin !== "string" || app.origin !== origin) {
+      return null;
+    }
+    return {
+      slug: app.slug,
+      name: (typeof app.name === "string" && app.name.trim())
+        ? app.name.trim() : app.slug,
+      mounted: app.mounted === true,
+    };
+  }
+
   if (_hasNativeChannel) {
     console.log(_BRIDGE_TAG, "native channel available, relay listener installed");
     window.addEventListener("message", function (e) {
       var data = e.data;
       if (!data || !e.source) return;
-      var origin = e.origin || "*";
+      var kind = data.__usernode_relay;
+      if (kind !== "discover" && kind !== "request") return;
+      var origin = e.origin;
       var source = e.source;
-      if (data.__usernode_relay === "discover") {
-        console.log(_BRIDGE_TAG, "← discover from", origin, "→ acking");
+      var relayApp = relayAppFor(source, origin);
+      if (!relayApp) {
+        console.warn(_BRIDGE_TAG, "ignoring relay", kind,
+          "from a frame that is not an app the shell owns", origin);
+        return;
+      }
+      if (kind === "discover") {
+        if (_relayBoundApps) _relayBoundApps.set(source, relayApp.slug);
+        console.log(_BRIDGE_TAG, "← discover from", relayApp.slug, origin,
+          "→ acking");
         try {
           source.postMessage({ __usernode_relay: "discover-ack" }, origin);
         } catch (_) { /* iframe gone, ignore */ }
         return;
       }
-      if (data.__usernode_relay !== "request") return;
       var origId = data.id;
       function reply(value, error) {
         try {
@@ -665,6 +730,19 @@
             origin
           );
         } catch (_) { /* iframe gone, ignore */ }
+      }
+      // The frame is the app's own, so an error here tells it nothing new.
+      if (_relayBoundApps && _relayBoundApps.get(source) !== relayApp.slug) {
+        console.warn(_BRIDGE_TAG, "refusing relay from an app frame",
+          "that never connected", relayApp.slug, data.method);
+        reply(null, _RELAY_APP_UNBOUND);
+        return;
+      }
+      if (!relayApp.mounted) {
+        console.warn(_BRIDGE_TAG, "refusing relay from a hidden app",
+          relayApp.slug, data.method);
+        reply(null, _RELAY_APP_HIDDEN);
+        return;
       }
       // The native capability is delivered only into this top-frame JS
       // realm. Never let a child bootstrap it or ask the parent to exercise
@@ -676,6 +754,16 @@
           "from child iframe", origin);
         reply(null,
           "Privileged Usernode methods are only available to the top-level page");
+        return;
+      }
+      // The phone's signing sheet names the platform, not the app, so a
+      // signature an app asks for would be one the person thinks they are
+      // giving Homeroom. Refused here until native can name the app; the
+      // message is written for the app to show as it is.
+      if (data.method === "signMessage") {
+        console.warn(_BRIDGE_TAG, "refusing relayed signMessage from",
+          relayApp.slug);
+        reply(null, _RELAY_SIGN_REFUSED);
         return;
       }
       if (isRealmSessionMethod(data.method) && !_realmSession) {
@@ -709,8 +797,8 @@
         ? relayRealmSession.generation : null;
       var nativeId = "relay-" + String(Date.now()) + "-" +
         Math.random().toString(16).slice(2);
-      console.log(_BRIDGE_TAG, "← relay request",
-        data.method, "id", origId, "→ native id", nativeId);
+      console.log(_BRIDGE_TAG, "← relay request", data.method,
+        "from", relayApp.slug, "id", origId, "→ native id", nativeId);
       window.__usernodeBridge.pending[nativeId] = {
         resolve: function (v) {
           console.log(_BRIDGE_TAG, "native resolve →", nativeId);
@@ -751,10 +839,14 @@
         realmSessionGeneration: relayRealmGeneration,
       };
       try {
+        // `relayApp` rides beside `args`, never inside it: native checks
+        // `args` field by field, and a confirm sheet that can name the app
+        // ("<App> wants to send") reads it from here.
         var relayPayload = {
           method: data.method,
           id: nativeId,
           args: nativeArgs,
+          relayApp: { slug: relayApp.slug, name: relayApp.name },
         };
         if (relayRealmSession) {
           relayPayload.privilegedCapability = _privilegedCapability;
@@ -5072,6 +5164,25 @@
     return callNativeChromeAction("captureScreenshot", {}, 15000);
   };
 
+  // saveImage({ base64, contentType, filename }) → true. Saves a picture the
+  // page already holds (a chat attachment it fetched with the session) to
+  // the phone: the photo library on iOS (add-only permission), Pictures on
+  // Android. Privileged and top-frame only, like captureScreenshot: an
+  // embedded dapp cannot write into somebody's photos. Feature-detect the
+  // `saveImage` capability; an old build times out and rejects.
+  window.usernode.saveImage = function (args) {
+    if (!args || typeof args.base64 !== "string" || !args.base64
+        || typeof args.contentType !== "string"
+        || args.contentType.indexOf("image/") !== 0) {
+      return Promise.reject(new Error("saveImage needs base64 image data"));
+    }
+    return callNativeChromeAction("saveImage", {
+      base64: args.base64,
+      contentType: args.contentType,
+      filename: typeof args.filename === "string" ? args.filename : "image",
+    }, 30000);
+  };
+
   // getSettingsState() → { buildInfo: { appVersion, buildNumber,
   //   nodeVersion, commitHash, branch }, nodeSleepEnabled, debugMode,
   //   facematchStrict, authStatus,
@@ -5130,6 +5241,27 @@
   window.usernode.requestPermissions = function () {
     return callNativeChromeAction(
       "requestPermissions", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
+  };
+
+  // signInWithProvider({ provider, nonce }) → { idToken }. The app's own
+  // Sign in with Apple or Google sheet, for the sign-in sheet's buttons
+  // inside the app, whose web view the providers' own pages refuse.
+  // `nonce` is the server's (POST /api/auth/oauth/:provider/native/start);
+  // Apple's sheet carries its SHA-256. Rejects with usernodeCode
+  // "cancelled" when the person closes the sheet. Feature-detect the
+  // capability signInWithApple / signInWithGoogle, never the version.
+  // May pend on the provider's sheet, like a permission dialog.
+  window.usernode.signInWithProvider = function (options) {
+    var provider = options && options.provider;
+    var nonce = options && options.nonce;
+    if ((provider !== "apple" && provider !== "google") ||
+        typeof nonce !== "string" || !nonce) {
+      return Promise.reject(new Error("provider (apple or google) and nonce are required"));
+    }
+    return callNativeChromeAction(
+      "signInWithProvider", { provider: provider, nonce: nonce },
+      _PERMISSION_REQUEST_TIMEOUT_MS
     );
   };
 
@@ -5510,6 +5642,35 @@
     }
     return callNativeChromeAction(
       "setAppearance", args, _APPEARANCE_TIMEOUT_MS
+    );
+  };
+
+  // setStatusBarTone({ tone }) → tells the native shell the tone of the
+  // page ground UNDER the status bar right now, so it can draw the clock and
+  // battery glyphs that read on it (#26). The app's own theme picks them
+  // otherwise, and that theme is the shell's appearance, which is wrong
+  // over a surface with a tone of its own: the always-dark fullscreen
+  // staging preview, or a running app's page colour.
+  //
+  //   tone  "dark" (light glyphs) | "light" (dark glyphs) | null, which
+  //         clears the override and hands the bar back to the app's theme.
+  //         Anything else is sent as null.
+  //
+  // UNPRIVILEGED and NOT PERSISTED, like setAppearance: presentation state
+  // with no account in it, true only for as long as this document says so.
+  // Same short timeout, for the same reason: nothing waits on it, and on a
+  // build that does not know the method the timeout is the answer.
+  //
+  // Additive capability: feature-detect `setStatusBarTone` via
+  // getBridgeInfo().capabilities before calling (NativeChrome does). Older
+  // builds drop the unknown method, the call rejects after the timeout,
+  // and they lose only the improvement; producer requirements live in
+  // NATIVE-BRIDGE.md.
+  window.usernode.setStatusBarTone = function (state) {
+    var tone = state && (state.tone === "dark" || state.tone === "light")
+      ? state.tone : null;
+    return callNativeChromeAction(
+      "setStatusBarTone", { tone: tone }, _APPEARANCE_TIMEOUT_MS
     );
   };
 
@@ -6390,6 +6551,68 @@
   })();
   /* __USERNODE_THEME_END__ */
 
+  // =====================================================================
+  //  Public API: preview clock (usernode.now) - additive within v1
+  // =====================================================================
+  //
+  // A staging preview can be shown as of a chosen moment, so a change that
+  // only shows at certain times (an evening-before reminder, a weekly rota,
+  // a deadline) can be seen before anyone votes on it. When a change
+  // declares a moment, the platform opens its preview with `?un-now=<ISO
+  // instant>` on the frame URL (src/services/preview-clock.js). This block
+  // turns that into:
+  //
+  //   1. `usernode.now()`: a Date. The real time, or on a preview opened at
+  //      a moment, that moment plus the time since the page loaded, so
+  //      clocks on the page still tick.
+  //   2. `usernode.previewNow`: the moment the page was opened at, as an ISO
+  //      string, or null. When it is set, the page sends `usernode.now()`
+  //      to its own server as the `x-usernode-now` header, and the server
+  //      reads it into `req.now` only when USERNODE_ENV is "staging".
+  //
+  // PRODUCTION IGNORES IT. A production app is served over https at one
+  // clean label under the apps domain (`<slug>.<apps domain>`), the same
+  // test the platform link below uses, and on such a page `un-now` is never
+  // read. A preview (`<slug>--s<id>`), the before & after copies and a
+  // local run (plain http) honour it. The platform only ever adds it to a
+  // preview's address. Only a full ISO instant with a zone (Z or +hh:mm) is
+  // taken.
+  /* __USERNODE_CLOCK_BEGIN__ */
+  (function () {
+    var INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+    function productionHost() {
+      try {
+        if (window.location.protocol !== "https:") return false;
+        var host = String(window.location.hostname || "").toLowerCase();
+        var dot = host.indexOf(".");
+        if (dot <= 0) return false;
+        if (host.slice(0, dot).indexOf("--") !== -1) return false;
+        // `<slug>.localhost` and other single-label parents are dev hosts.
+        return host.slice(dot + 1).indexOf(".") !== -1;
+      } catch (_) {
+        return true;
+      }
+    }
+
+    var offset = 0;
+    var seeded = null;
+    try {
+      var raw = new URLSearchParams(window.location.search).get("un-now");
+      var at = raw && INSTANT.test(raw) ? Date.parse(raw) : NaN;
+      if (isFinite(at) && !productionHost()) {
+        seeded = new Date(at).toISOString();
+        offset = at - Date.now();
+      }
+    } catch (_) {}
+
+    window.usernode.previewNow = seeded;
+    window.usernode.now = function () {
+      return new Date(Date.now() + offset);
+    };
+  })();
+  /* __USERNODE_CLOCK_END__ */
+
   // #1581: iOS paints the embedding iframe's background behind a rubber-band
   // scroll, not the child document's html background. Publish the document's
   // solid ground so the host can paint that surface too. This is automatic:
@@ -6528,6 +6751,255 @@
     window.addEventListener("wheel", activity, { capture: true, passive: true });
   })();
   /* __USERNODE_ENGAGEMENT_END__ */
+
+  // ── Guests: "Make an account to continue" (P15) ──────────────────────
+  //
+  // Every public app is open at its own address to people with no Homeroom
+  // account, read-only. Every
+  // write they try is answered with 401 and JSON `{ error:
+  // "account_required" }`: by the platform's app-host gate for a browser
+  // write, or by the app itself (services/edge-gate.js; the conventions). This
+  // block turns that answer into a bottom sheet that asks them to make one:
+  //
+  //   "Make an account to continue" (or "Make an account to <action>" when
+  //   the answer, or the app, names what they were doing), "It takes a
+  //   minute, and you'll come straight back to <App>.", and three buttons:
+  //   "Continue with email", "I have an account", "Keep looking around".
+  //
+  // Both account buttons go to /__usernode_access?account=signup|signin on
+  // the app's own host, which the gate turns into the platform's sign-up or
+  // sign-in, coming back to this same page signed in. And while the gate's
+  // guest hint is set, a slim strip says "You're looking around. Make an
+  // account to join in." with "Sign up".
+  //
+  // NARROW BY DESIGN. Only a top-level page on the app's own address (never
+  // inside the platform's frame, the native WebView or the platform itself).
+  // fetch and XMLHttpRequest are wrapped only to READ the status of the
+  // app's own same-origin requests: nothing is changed, delayed or retried,
+  // and every other response passes through untouched. An app can also ask
+  // for the sheet itself with `usernode.askForAccount({ action })`.
+  //
+  // Drawn in a closed shadow root, like the Homeroom button.
+  /* __USERNODE_GUEST_START__ */
+  (function () {
+    if (_inIframe || _hasNativeChannel) return;
+    if (window.__usernodePlatformShell || window.__usernodeGuestSheet) return;
+    window.__usernodeGuestSheet = true;
+
+    var HOST_ID = "__un-guest";
+    var ACCOUNT_PATH = "/__usernode_access";
+
+    function sameOrigin(url) {
+      try {
+        return new URL(String(url || ""), location.href).origin === location.origin;
+      } catch (_) { return false; }
+    }
+
+    // What the person was doing, from the app: plain text, short, or null.
+    function cleanAction(raw) {
+      if (typeof raw !== "string") return null;
+      var text = raw.replace(/\s+/g, " ").trim();
+      if (!text || text.length > 60) return null;
+      return text;
+    }
+
+    function appName() {
+      var title = "";
+      try { title = String(document.title || ""); } catch (_) { title = ""; }
+      title = title.replace(/\s+/g, " ").trim();
+      if (title.length > 60) title = title.slice(0, 59).trim() + "…";
+      return title || "this app";
+    }
+
+    function accountHref(kind) {
+      var next = location.pathname + location.search;
+      return ACCOUNT_PATH + "?account=" + kind + "&next=" + encodeURIComponent(next);
+    }
+
+    function guestHinted() {
+      try {
+        return /(?:^|;\s*)(?:__Host-usernode_guest|__usernode_guest)=1(?:;|$)/.test(document.cookie || "");
+      } catch (_) { return false; }
+    }
+
+    var CSS = [
+      ":host{all:initial}",
+      "*{box-sizing:border-box}",
+      "[hidden]{display:none!important}",
+      ".scrim{position:fixed;inset:0;z-index:999998;background:rgba(0,0,0,0.32)}",
+      ".sheet{position:fixed;left:0;right:0;bottom:0;z-index:999998;margin:0 auto;max-width:480px;padding:20px calc(20px + env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) calc(20px + env(safe-area-inset-left,0px));border-radius:20px 20px 0 0;background:#fff;color:#18181b;box-shadow:0 -10px 30px rgba(0,0,0,0.2);font:15px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
+      ".title{margin:0 0 6px;font-size:19px;font-weight:700}",
+      ".text{margin:0 0 16px;color:#52525b}",
+      ".btn{display:flex;align-items:center;justify-content:center;width:100%;min-height:48px;margin:0 0 8px;padding:0 16px;border:0;border-radius:999px;font:inherit;font-weight:650;text-decoration:none;cursor:pointer}",
+      ".primary{background:#7C3AED;color:#fff}",
+      ".secondary{background:#f4f4f5;color:#18181b}",
+      ".quiet{background:transparent;color:#52525b;margin-bottom:0}",
+      ".strip{position:fixed;left:calc(12px + env(safe-area-inset-left,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999997;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 76px - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px));padding:6px 6px 6px 14px;border-radius:999px;background:#18181b;color:#f4f4f5;box-shadow:0 2px 10px rgba(0,0,0,0.3);font:13px/1.3 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
+      ".strip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".strip a{flex:none;padding:6px 12px;border-radius:999px;background:#7C3AED;color:#fff;font-weight:650;text-decoration:none}",
+      ".strip button{flex:none;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:transparent;color:#a1a1aa;font:18px/1 system-ui,sans-serif;cursor:pointer}",
+      "@media (prefers-color-scheme: dark){.sheet{background:#18181b;color:#f4f4f5}.text,.quiet{color:#a1a1aa}.secondary{background:#27272a;color:#f4f4f5}}",
+    ].join("\n");
+
+    var ui = null;
+    function el(tag, cls, text) {
+      var node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text) node.textContent = text;
+      return node;
+    }
+
+    function build() {
+      if (ui) return ui;
+      if (!document.body) return null;
+      var host = el("div");
+      host.id = HOST_ID;
+      if (typeof host.attachShadow !== "function") return null;
+      var root;
+      try { root = host.attachShadow({ mode: "closed" }); } catch (_) { return null; }
+      var style = el("style");
+      style.textContent = CSS;
+      root.appendChild(style);
+
+      var scrim = el("div", "scrim");
+      scrim.hidden = true;
+      var sheet = el("div", "sheet");
+      sheet.hidden = true;
+      sheet.setAttribute("role", "dialog");
+      sheet.setAttribute("aria-modal", "true");
+      sheet.setAttribute("aria-labelledby", "un-guest-title");
+      var title = el("h2", "title");
+      title.id = "un-guest-title";
+      var text = el("p", "text");
+      var email = el("a", "btn primary", "Continue with email");
+      email.href = accountHref("signup");
+      var signin = el("a", "btn secondary", "I have an account");
+      signin.href = accountHref("signin");
+      var dismiss = el("button", "btn quiet", "Keep looking around");
+      dismiss.type = "button";
+      sheet.appendChild(title);
+      sheet.appendChild(text);
+      sheet.appendChild(email);
+      sheet.appendChild(signin);
+      sheet.appendChild(dismiss);
+
+      var strip = el("div", "strip");
+      strip.hidden = true;
+      var stripText = el("span", null, "You're looking around. Make an account to join in.");
+      var stripLink = el("a", null, "Sign up");
+      stripLink.href = accountHref("signup");
+      var stripClose = el("button", null, "×");
+      stripClose.type = "button";
+      stripClose.setAttribute("aria-label", "Hide");
+      strip.appendChild(stripText);
+      strip.appendChild(stripLink);
+      strip.appendChild(stripClose);
+
+      root.appendChild(strip);
+      root.appendChild(scrim);
+      root.appendChild(sheet);
+
+      function close() {
+        sheet.hidden = true;
+        scrim.hidden = true;
+      }
+      dismiss.addEventListener("click", close);
+      scrim.addEventListener("click", close);
+      stripClose.addEventListener("click", function () { strip.hidden = true; });
+      document.addEventListener("keydown", function (e) {
+        if (e && e.key === "Escape" && !sheet.hidden) close();
+      });
+
+      document.body.appendChild(host);
+      ui = { host: host, sheet: sheet, scrim: scrim, title: title, text: text,
+        email: email, signin: signin, dismiss: dismiss, strip: strip, stripLink: stripLink, stripClose: stripClose };
+      return ui;
+    }
+
+    function show(action) {
+      var u = build();
+      if (!u) return false;
+      var named = cleanAction(action);
+      u.title.textContent = named ? "Make an account to " + named : "Make an account to continue";
+      u.text.textContent = "It takes a minute, and you'll come straight back to " + appName() + ".";
+      // Links carry the page the person is on NOW, so they come back to it.
+      u.email.href = accountHref("signup");
+      u.signin.href = accountHref("signin");
+      u.scrim.hidden = false;
+      u.sheet.hidden = false;
+      try { u.email.focus(); } catch (_) {}
+      return true;
+    }
+
+    // Read an answer's body without consuming the app's copy.
+    function inspect(status, contentType, readJson, action) {
+      if (status !== 401) return;
+      if (!/json/i.test(String(contentType || ""))) return;
+      Promise.resolve().then(readJson).then(function (body) {
+        if (body && body.error === "account_required") show(body.action || action);
+      }).catch(function () {});
+    }
+
+    if (typeof window.fetch === "function") {
+      var origFetch = window.fetch;
+      window.fetch = function (input, init) {
+        var result = origFetch.apply(this, arguments);
+        try {
+          var url = input && typeof input === "object" && "url" in input ? input.url : input;
+          if (sameOrigin(url) && result && typeof result.then === "function") {
+            result.then(function (res) {
+              if (!res || res.status !== 401) return;
+              inspect(res.status, res.headers && res.headers.get && res.headers.get("content-type"),
+                function () { return res.clone().json(); });
+            }, function () {});
+          }
+        } catch (_) {}
+        return result;
+      };
+    }
+
+    if (typeof window.XMLHttpRequest === "function" && window.XMLHttpRequest.prototype) {
+      var proto = window.XMLHttpRequest.prototype;
+      var origOpen = proto.open;
+      proto.open = function (method, url) {
+        try {
+          if (sameOrigin(url) && !this.__unGuestWatch) {
+            this.__unGuestWatch = true;
+            var xhr = this;
+            xhr.addEventListener("loadend", function () {
+              if (xhr.status !== 401) return;
+              inspect(xhr.status, xhr.getResponseHeader && xhr.getResponseHeader("content-type"), function () {
+                var type = xhr.responseType;
+                if (type === "json") return xhr.response;
+                if (type && type !== "text") return null;
+                return JSON.parse(xhr.responseText);
+              });
+            });
+          }
+        } catch (_) {}
+        return origOpen.apply(this, arguments);
+      };
+    }
+
+    // The app's own way in: `usernode.askForAccount({ action: "post a photo" })`.
+    if (window.usernode && typeof window.usernode === "object") {
+      window.usernode.askForAccount = function (opts) {
+        return show(opts && opts.action);
+      };
+    }
+
+    function showStrip() {
+      if (!guestHinted()) return;
+      var u = build();
+      if (u) u.strip.hidden = false;
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", showStrip);
+    } else {
+      showStrip();
+    }
+  })();
+  /* __USERNODE_GUEST_END__ */
 
   // #2902: the shell keeps the last few apps loaded in hidden frames so that
   // coming back to one shows it exactly as it was left. A hidden app must not
@@ -6867,153 +7339,653 @@
   })();
   /* __USERNODE_OFFLINE_READY_END__ */
 
-  /* __USERNODE_PLATFORM_LINK_START__ */
-  // ── Floating Homeroom mark (chromeless share views) ───────────────────
+  /* __USERNODE_SHORTCUTS_BEGIN__ */
+  // ── The platform's C shortcut, from inside an app (#4289) ─────────────
   //
-  // Apps shared via their bare production subdomain
-  // (<slug>.<platform-host>) render with no platform chrome at all —
-  // nothing on the page says it IS a Homeroom app, and there is no
-  // visible path from it back to the app's in-platform page. The bridge
-  // is the one piece of platform code every dapp loads, so it injects a
-  // small mark in the bottom-left corner that deep-links back to
-  // https://<platform-host>/app/<slug> — the clean, canonical App route
-  // the shell restores on a cold visit.
+  // While a person works in an app, this document has the keyboard: a key
+  // pressed here never reaches the shell around it. The shell's experimental
+  // C shortcut (Suggest an improvement, Settings > Experimental;
+  // frontend/src/features/improve/suggest-shortcut.ts) would then only work
+  // after a click on the shell's own chrome. So the bridge tells the shell
+  // about a C the app left alone, and the shell decides what to do with it.
+  //
+  // WATCH ONLY. The listener never calls preventDefault or stopPropagation
+  // and wraps nothing: the app's handling of every key is exactly what it
+  // was. Nothing is sent while the person is typing (an input, a textarea, a
+  // select, an editable element, read off the event's real target so a
+  // shadow root counts), has text selected, holds Ctrl, Cmd or Alt, holds the
+  // key down, is composing with an input method, or has the pointer locked
+  // (a game).
+  //
+  // AN APP KEEPS A KEY BY CALLING preventDefault, the standard way a page
+  // says it handled one. The check waits a task after the key, so every
+  // handler the app has registered (after this script, which loads in
+  // <head>) has run by then.
+  //
+  // Sent whatever the switch says: the shell owns the switch and every other
+  // condition (a computer, a signed-in viewer, its app frame holding focus),
+  // and one short message per unused C costs nothing.
+  //
+  // WHERE THE POINTER IS goes with it (x, y in this document's viewport), so
+  // the comment the shell opens is pinned where the person was pointing:
+  // while the pointer is over this frame, the shell around it sees no
+  // pointer events at all. Watched passively, like the key.
+  (function () {
+    try {
+      if (!(window.parent && window.parent !== window)) return;
+    } catch (_) { return; }
+
+    var pointer = null;
+    function notePointer(e) {
+      if (e && typeof e.clientX === "number" && typeof e.clientY === "number") {
+        pointer = { x: e.clientX, y: e.clientY };
+      }
+    }
+    window.addEventListener("pointermove", notePointer, { passive: true });
+    window.addEventListener("pointerdown", notePointer, { passive: true });
+
+    var TEXT_ROLES = '[role="textbox"], [role="searchbox"], [role="combobox"]';
+
+    function typingIn(node) {
+      if (!node || typeof node.tagName !== "string") return false;
+      var tag = node.tagName.toUpperCase();
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (node.isContentEditable) return true;
+      try {
+        return typeof node.closest === "function" && !!node.closest(TEXT_ROLES);
+      } catch (_) { return false; }
+    }
+
+    function textSelected() {
+      try {
+        var sel = window.getSelection ? window.getSelection() : null;
+        return !!sel && !sel.isCollapsed && String(sel) !== "";
+      } catch (_) { return false; }
+    }
+
+    window.addEventListener("keydown", function (e) {
+      if (!e || (e.key !== "c" && e.key !== "C")) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.isComposing) return;
+      // The platform's own document, framed as the side panel: its shell
+      // handles its own keys. Read here, not above: the shell sets the flag
+      // in the script after this one.
+      if (window.__usernodePlatformShell) return;
+      var target = e.target;
+      try {
+        var path = typeof e.composedPath === "function" ? e.composedPath() : [];
+        if (path && path.length) target = path[0];
+      } catch (_) { /* keep the retargeted target */ }
+      if (typingIn(target) || typingIn(document.activeElement)) return;
+      if (textSelected()) return;
+      if (document.pointerLockElement) return;
+      var at = pointer;
+      setTimeout(function () {
+        if (e.defaultPrevented) return;
+        var message = { __usernode_shortcut: "suggest" };
+        if (at) { message.x = at.x; message.y = at.y; }
+        try {
+          window.parent.postMessage(message, "*");
+        } catch (_) { /* parent unreachable */ }
+      }, 0);
+    });
+  })();
+  /* __USERNODE_SHORTCUTS_END__ */
+
+  /* __USERNODE_SNAPSHOT_BEGIN__ */
+  // ── This app's picture, for a comment pinned on it (#4289 follow-up) ──
+  //
+  // The shell's experimental C comment attaches a screenshot of the page
+  // with the pin drawn on it, taken without the browser's screen-share
+  // prompt: the shell draws its own page into an image. It cannot draw this
+  // frame, which is another origin, so it asks, and the bridge draws THIS
+  // document (what is on screen now, at its scroll position) and hands the
+  // picture back. Nothing else ever asks; nothing here runs until it does.
+  //
+  // ONLY HOMEROOM MAY ASK. The picture is whatever this person sees in the
+  // app, so a page that frames the app and asks gets nothing back, not even
+  // a refusal. The asking frame must be this window's parent and its origin
+  // must be the platform's, as the platform's own platform.json (served on
+  // this origin, beside this file) names it. The reply is posted to that
+  // origin alone.
+  //
+  // THE DRAWING LIBRARY (SnapDOM, /usernode-bridge/v1/snapdom.js, pinned and
+  // recorded in public/vendor/README.md) is loaded on the first request, from
+  // this origin, and the app's own `window.snapdom`, if it has one, is put
+  // back as it was.
+  //
+  //   parent → { __usernode_snapshot: "render", id, scale, x?, y? }
+  //   frame  → { __usernode_snapshot: "picture", id, blob, width, height,
+  //              at, path }   or   { ..., id, error, at, path }
+  //
+  // `at` names the element under (x, y), for the request's text; `path` is
+  // location.pathname, never the query (the platform's token rides there).
+  (function () {
+    try {
+      if (!(window.parent && window.parent !== window)) return;
+    } catch (_) { return; }
+
+    var LIB_SRC = "/usernode-bridge/v1/snapdom.js";
+    var CONFIG_SRC = "/usernode-bridge/v1/platform.json";
+    var _origin = null;
+    var _lib = null;
+
+    // The platform's origin, or null. A failed read is retried next time.
+    function platformOrigin() {
+      if (_origin) return _origin;
+      var p = Promise.resolve().then(function () {
+        return window.fetch(CONFIG_SRC, { credentials: "omit", cache: "no-cache" });
+      }).then(function (res) {
+        return res && res.ok ? res.json() : null;
+      }).then(function (config) {
+        var u;
+        try { u = new URL(String((config && config.platform_origin) || "")); } catch (_) { return null; }
+        if (u.protocol !== "https:" || u.username || u.password) return null;
+        return u.protocol + "//" + u.host;
+      }, function () { return null; });
+      _origin = p;
+      p.then(function (o) { if (!o && _origin === p) _origin = null; });
+      return p;
+    }
+
+    function library() {
+      if (_lib) return _lib;
+      var p = new Promise(function (resolve, reject) {
+        var had = Object.prototype.hasOwnProperty.call(window, "snapdom");
+        var before = window.snapdom;
+        var s = document.createElement("script");
+        s.src = LIB_SRC;
+        s.async = true;
+        function done() { if (s.parentNode) s.parentNode.removeChild(s); }
+        s.onload = function () {
+          var lib = window.snapdom;
+          if (had) window.snapdom = before;
+          else { try { delete window.snapdom; } catch (_) { window.snapdom = undefined; } }
+          done();
+          if (typeof lib === "function") resolve(lib);
+          else reject(new Error("the drawing library did not load"));
+        };
+        s.onerror = function () { done(); reject(new Error("the drawing library did not load")); };
+        (document.head || document.documentElement).appendChild(s);
+      });
+      _lib = p;
+      p.catch(function () { if (_lib === p) _lib = null; });
+      return p;
+    }
+
+    // The element under a point, in a few words: tag, id, and its label or
+    // text, clamped. Null for the page itself.
+    function describe(x, y) {
+      if (typeof x !== "number" || typeof y !== "number" || !isFinite(x) || !isFinite(y)) return null;
+      var el = null;
+      try { el = document.elementFromPoint(x, y); } catch (_) { el = null; }
+      if (!el || el === document.documentElement || el === document.body) return null;
+      var label = "";
+      try {
+        label = el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("alt")
+          || el.innerText || el.textContent || "";
+      } catch (_) { label = ""; }
+      label = String(label).replace(/\s+/g, " ").trim();
+      if (label.length > 60) label = label.slice(0, 59).trim() + "…";
+      return {
+        tag: String(el.tagName || "").toLowerCase().slice(0, 40),
+        id: el.id ? String(el.id).slice(0, 80) : "",
+        text: label,
+      };
+    }
+
+    // The page's own ground, so a transparent document is not drawn on
+    // nothing.
+    function ground() {
+      var picks = [document.documentElement, document.body];
+      for (var i = 0; i < picks.length; i++) {
+        try {
+          var c = picks[i] && window.getComputedStyle(picks[i]).backgroundColor;
+          if (c && c !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(c)) return c;
+        } catch (_) { /* keep looking */ }
+      }
+      return "#ffffff";
+    }
+
+    function draw(snapdom, scale) {
+      var w = window.innerWidth;
+      var h = window.innerHeight;
+      // What is on screen: the visible rectangle in page coordinates, which
+      // keeps sticky and fixed chrome where the person sees it.
+      // `dpr: 1`: the shell's `scale` already is the screen's pixel ratio,
+      // which SnapDOM would otherwise multiply in again.
+      return snapdom(document.body, {
+        scale: scale,
+        dpr: 1,
+        clip: { x: window.scrollX, y: window.scrollY, width: w, height: h },
+        backgroundColor: ground(),
+        exclude: ["#__un-platform-link"],
+      }).then(function (result) {
+        return result.toCanvas();
+      }).then(function (canvas) {
+        return new Promise(function (resolve, reject) {
+          canvas.toBlob(function (blob) {
+            if (blob) resolve({ blob: blob, width: w, height: h });
+            else reject(new Error("the picture could not be encoded"));
+          }, "image/png");
+        });
+      });
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || data.__usernode_snapshot !== "render") return;
+      var id = data.id;
+      if (typeof id !== "string" || !id || id.length > 100) return;
+      var from = e.origin;
+      platformOrigin().then(function (allowed) {
+        if (!allowed || from !== allowed) return;
+        var scale = Math.min(2, Math.max(0.5, Number(data.scale) || 1));
+        var at = describe(data.x, data.y);
+        var path = String(location.pathname || "/").slice(0, 200);
+        function reply(fields) {
+          fields.__usernode_snapshot = "picture";
+          fields.id = id;
+          fields.at = at;
+          fields.path = path;
+          try { window.parent.postMessage(fields, allowed); } catch (_) { /* parent gone */ }
+        }
+        library().then(function (snapdom) {
+          return draw(snapdom, scale);
+        }).then(function (picture) {
+          reply(picture);
+        }, function (err) {
+          reply({ error: String((err && err.message) || err || "failed").slice(0, 200) });
+        });
+      });
+    });
+  })();
+  /* __USERNODE_SNAPSHOT_END__ */
+
+  /* __USERNODE_PLATFORM_LINK_START__ */
+  // ── The Homeroom button (an app opened at its own address) ────────────
+  //
+  // An app opened at its own address (<slug>.<apps domain>, a link from
+  // Share) renders with no platform chrome at all: nothing on the page says
+  // it IS a Homeroom app, and there is no way back to it inside Homeroom.
+  // The bridge is the one piece of platform code every app loads, so it
+  // draws a small Homeroom button in the bottom-right corner (#3657). Tapping
+  // it opens a small panel: the app's name, one line about Homeroom, and
+  // three rows: "Open in Homeroom" (the app inside the platform), "Show the
+  // Homeroom header" (a slim bar with the wordmark and the app's name) and
+  // "What is Homeroom?" (the site's front door).
   //
   // Shown ONLY when ALL of these hold:
-  //   * top frame         — inside the platform an app renders in an
-  //                         iframe and the shell draws its own affordance
-  //                         (features/header/chromeless-pill.tsx), so a
-  //                         mark here would be the SECOND one on screen;
-  //   * no native channel — the Flutter WebView has its own navigation,
+  //   * top frame         : inside the platform an app renders in an
+  //                         iframe and the shell draws its own chrome, so a
+  //                         button here would be a SECOND one on screen;
+  //   * no native channel : the Flutter WebView has its own navigation,
   //                         a web link to the platform origin is wrong
   //                         there;
-  //   * not the platform's own document — the shell loads this same
-  //                         bridge in the TOP frame from its apex, and
-  //                         says so with window.__usernodePlatformShell
+  //   * not the platform's own document : the shell loads this same
+  //                         bridge in the TOP frame and says so with
+  //                         window.__usernodePlatformShell
   //                         (frontend/src/head.html);
-  //   * location.host is <label>.<registrable-domain> with no "--" in
-  //     the label — i.e. a production app subdomain, which is exactly
-  //     the shape the platform's routing gives an app (the
-  //     `*.{$USERNODE_DOMAIN}` site in the Caddyfile; one Ingress host
-  //     per app in services/kubernetes.js). That excludes staging
-  //     previews (<slug>--s<id>), `<slug>.localhost` and other dev hosts.
+  //   * the host is ONE clean label (no "--", so never a staging preview)
+  //     directly under the deployment's apps domain, as the platform's own
+  //     config file says it is (below).
   //
-  // WHY THE HOSTNAME AND NOT THIS SCRIPT'S SRC. This used to derive the
-  // platform host from `document.currentScript.src` and bail when it
-  // came out equal to location.host. That is only ever unequal for an
-  // app that names the platform's hostname in the tag — and the
-  // conventions tell every app to load the bridge at the RELATIVE path
-  // /usernode-bridge/v1/bridge.js, which the platform serves on the
-  // app's OWN hostname precisely so that no app carries a hostname. So
-  // for every app that follows them the derived host WAS location.host
-  // and the pill returned null: it never rendered on a single shared
-  // link. The src still gets a say where an app does name a host — then
-  // it has to agree with the one the subdomain implies, which is what
-  // keeps a foreign page that embeds this bridge from drawing a mark.
+  // WHERE THE PLATFORM IS. The hostname alone cannot say: a single-domain
+  // deployment serves the platform at <domain> and apps at <slug>.<domain>,
+  // and the hosted one serves the platform at app.<domain> beside apps at
+  // <slug>.<domain>. So the bridge reads /usernode-bridge/v1/platform.json
+  // from its OWN origin: a path under the centrally hosted prefix, which the
+  // platform's edge answers on every app host (Caddy's @platform_assets,
+  // services/kubernetes.js's asset routes) from the deployment's own
+  // settings. Nothing the app supplies is read: not window.usernode, not the
+  // page's markup. The values must also agree with this page's own host, so
+  // a page that is not an app host (a foreign site that embeds the bridge,
+  // or one whose own server answers the path) draws nothing.
   //
-  // NOT DISMISSIBLE, and icon-sized rather than a labelled pill. Both
-  // follow from the same constraint: apps own their corners (a compose
-  // button, a floating control, the kit's own chrome), so an affordance
-  // that cannot be dismissed has to be small enough and far enough out
-  // of the way to be worth its permanence. Bottom-LEFT for that reason
-  // too — bottom-right is where a floating control conventionally goes,
-  // and is where the in-shell pill already sits.
+  // NOT SPOOFABLE FROM INSIDE THE APP, in the sense that can be promised:
+  // the button lives in a CLOSED shadow root, so the app's stylesheets cannot
+  // restyle it and its scripts cannot reach in and rewrite a row or a link;
+  // and nothing the app sets can make the bridge draw it inside the
+  // platform's frame. (A page can always paint pixels of its own; this is
+  // about the button the platform draws.) Without shadow DOM there is no
+  // button at all rather than an unprotected one.
+  //
+  // NOT DISMISSIBLE, and small (36px). Apps own their corners, so an
+  // affordance that stays has to stay out of the way; the panel and the
+  // header only appear when asked for, and nothing is remembered between
+  // loads.
   (function () {
     // document.currentScript is only valid during synchronous script
-    // evaluation — which is exactly when this capture runs.
+    // evaluation, which is exactly when this capture runs.
     var _script = document.currentScript;
 
-    // Served under one of the three centrally hosted asset prefixes, so
-    // this resolves on the app's own origin and carries no hostname —
-    // the same contract as the bridge itself. See mark.svg's header.
+    // Served under the centrally hosted prefix, on the app's own origin.
     var MARK_SRC = "/usernode-bridge/v1/mark.svg";
+    var CONFIG_SRC = "/usernode-bridge/v1/platform.json";
+    var HOST_ID = "__un-platform-link";
 
-    // The platform host as NAMED BY THE TAG, or null when the tag is
-    // relative (the conventional form) and so names nothing at all.
-    function taggedPlatformHost() {
+    var ABOUT_LINE = "A Homeroom app, built and voted on by its community.";
+    var SHOW_HEADER = "Show the Homeroom header";
+    var HIDE_HEADER = "Hide the Homeroom header";
+
+    // The host a tag NAMES, or null when the tag is relative (the
+    // conventional form) and so names nothing at all.
+    function taggedHost() {
       if (!_script || !_script.src) return null;
       var host;
       try {
-        host = new URL(_script.src, location.href).host;
+        host = new URL(_script.src, location.href).hostname.toLowerCase();
       } catch (_) { return null; }
-      return host && host !== location.host ? host : null;
+      return host && host !== String(location.hostname).toLowerCase() ? host : null;
     }
 
-    function platformLinkTarget() {
-      if (_inIframe || _hasNativeChannel || window.Usernode) return null;
-      if (window.__usernodePlatformShell) return null;
+    // Could this page be an app at its own address at all? Inside the
+    // platform's frame, the native shell or the platform's own document,
+    // never.
+    function pageEligible() {
+      if (_inIframe || _hasNativeChannel || window.Usernode) return false;
+      if (window.__usernodePlatformShell) return false;
+      return true;
+    }
 
-      var dot = location.host.indexOf(".");
+    // Gate 1, synchronous: could this page be an app at its own address?
+    // Returns the single label (the app's slug) or null.
+    function candidateSlug() {
+      if (!pageEligible()) return null;
+      var host = String(location.hostname || "").toLowerCase();
+      var dot = host.indexOf(".");
       if (dot <= 0) return null;
-      var label = location.host.slice(0, dot);
-      var platformHost = location.host.slice(dot + 1);
+      var label = host.slice(0, dot);
       // A single clean label only: staging previews (<slug>--s<id>) and
-      // deeper/odd hostnames don't get the mark.
-      if (!/^[a-z0-9-]+$/i.test(label)) return null;
+      // odd hostnames don't get the button.
+      if (!/^[a-z0-9-]+$/.test(label)) return null;
       if (label.indexOf("--") !== -1) return null;
-      // What is left has to be a registrable domain. `<slug>.localhost`
-      // and other single-label hosts are dev, not a shared app link.
-      if (platformHost.indexOf(".") === -1) return null;
-      var tagged = taggedPlatformHost();
+      // `<slug>.localhost` and other single-label parents are dev hosts.
+      if (host.slice(dot + 1).indexOf(".") === -1) return null;
+      return label;
+    }
+
+    function isDomain(value) {
+      return typeof value === "string"
+        && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(value);
+    }
+
+    function under(host, domain) {
+      return host === domain
+        || host.slice(-(domain.length + 1)) === "." + domain;
+    }
+
+    // An https URL, parsed, or null. Credentials in the URL are refused.
+    function httpsUrl(value) {
+      if (typeof value !== "string" || !value) return null;
+      var u;
+      try { u = new URL(value); } catch (_) { return null; }
+      if (u.protocol !== "https:" || u.username || u.password) return null;
+      return u;
+    }
+
+    // Gate 2: the platform's own answer, checked against this page's host.
+    // Returns the targets, or null for "draw nothing".
+    function targetsFrom(config, slug) {
+      if (!config || typeof config !== "object") return null;
+      var apps = typeof config.apps_domain === "string"
+        ? config.apps_domain.toLowerCase() : "";
+      if (!isDomain(apps)) return null;
+      // This page must be <slug>.<apps domain> exactly.
+      if (String(location.hostname).toLowerCase() !== slug + "." + apps) return null;
+      var platform = httpsUrl(config.platform_origin);
+      if (!platform) return null;
+      var platformHost = platform.hostname.toLowerCase();
+      // The platform and its apps belong to one deployment: one is the
+      // other's domain or sits under it.
+      if (!under(platformHost, apps) && !under(apps, platformHost)) return null;
+      // Never this app's own host, and never another single-label app.
+      if (platformHost === String(location.hostname).toLowerCase()) return null;
+      // A tag that names a host must name this deployment's platform.
+      var tagged = taggedHost();
       if (tagged && tagged !== platformHost) return null;
+      var site = httpsUrl(config.site_url);
+      var origin = platform.protocol + "//" + platform.host;
       return {
-        slug: label,
-        href: "https://" + platformHost + "/app/" + label,
+        slug: slug,
+        openHref: origin + "/#app/" + slug,
+        siteHref: site ? site.href : origin + "/",
       };
     }
 
-    function injectPlatformLink() {
-      var target = platformLinkTarget();
-      if (!target) return;
-      if (document.getElementById("__un-platform-link")) return;
+    // A CUSTOM DOMAIN (#4405): an app served at an address its manager owns,
+    // say app.example.com, which is under neither the apps domain nor the
+    // platform's. The hostname says nothing about which app it is, so the
+    // platform is asked: GET <platform_origin>/api/public/app-host?host=<this
+    // host>, anonymous and CORS-open, answers the slug for a LIVE custom
+    // domain and 404 for anything else. Only a host that could be one is
+    // asked about (two or more dots, not under this deployment's domains),
+    // and the same tagged-host rule applies.
+    function customCandidateHost(config) {
+      if (!pageEligible()) return null;
+      if (!config || typeof config !== "object") return null;
+      var apps = typeof config.apps_domain === "string" ? config.apps_domain.toLowerCase() : "";
+      if (!isDomain(apps)) return null;
+      var platform = httpsUrl(config.platform_origin);
+      if (!platform) return null;
+      var host = String(location.hostname || "").toLowerCase();
+      if (!isDomain(host) || host.split(".").length < 3) return null;
+      if (under(host, apps) || under(host, platform.hostname.toLowerCase())) return null;
+      var tagged = taggedHost();
+      if (tagged && tagged !== platform.hostname.toLowerCase()) return null;
+      return host;
+    }
 
-      if (!document.getElementById("__usernode-platform-link-styles")) {
-        var style = document.createElement("style");
-        style.id = "__usernode-platform-link-styles";
-        style.textContent = [
-          // z-index one below the QR overlay (999999) so a transaction
-          // prompt still covers the mark. safe-area insets keep it clear
-          // of iPhone home indicators and the left-edge rounding.
-          ".__un-platform-link{position:fixed;left:calc(12px + env(safe-area-inset-left,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;display:block;width:28px;height:28px;border-radius:7px;line-height:0;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.9}",
-          ".__un-platform-link:hover,.__un-platform-link:focus-visible{opacity:1}",
-          // No radius here: the tile carries its own rounded corners, and a
-          // CSS clip at a different one would shave them.
-          ".__un-platform-link img{display:block;width:28px;height:28px}",
-        ].join("\n");
-        document.head.appendChild(style);
+    function customTargetsFrom(config, slug) {
+      if (typeof slug !== "string" || !/^[a-z0-9-]+$/.test(slug)) return null;
+      var platform = httpsUrl(config.platform_origin);
+      if (!platform) return null;
+      var site = httpsUrl(config.site_url);
+      var origin = platform.protocol + "//" + platform.host;
+      return {
+        slug: slug,
+        openHref: origin + "/#app/" + slug,
+        siteHref: site ? site.href : origin + "/",
+      };
+    }
+
+    // The app's name: what its page calls itself, trimmed and clamped, or a
+    // readable form of the slug (without the 6-character suffix new apps
+    // carry). Always set as TEXT, never markup.
+    function appName(slug) {
+      var title = "";
+      try { title = String(document.title || ""); } catch (_) { title = ""; }
+      title = title.replace(/\s+/g, " ").trim();
+      if (title.length > 60) title = title.slice(0, 59).trim() + "…";
+      if (title) return title;
+      return slug.replace(/-[0-9a-f]{6}$/, "").replace(/-/g, " ");
+    }
+
+    var CSS = [
+      ":host{all:initial}",
+      "*{box-sizing:border-box}",
+      "[hidden]{display:none!important}",
+      // z-index one below the QR overlay (999999) so a transaction prompt
+      // still covers the button. Safe-area insets keep it clear of the
+      // home indicator and rounded corners.
+      ".fab{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;width:36px;height:36px;padding:0;margin:0;border:0;border-radius:9px;background:transparent;line-height:0;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.92;-webkit-tap-highlight-color:transparent}",
+      ".fab:hover,.fab:focus-visible,.fab[aria-expanded=true]{opacity:1}",
+      ".fab:focus-visible{outline:2px solid #7C3AED;outline-offset:2px}",
+      ".fab img{display:block;width:36px;height:36px}",
+      ".panel{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(56px + env(safe-area-inset-bottom,0px));z-index:999998;width:min(280px,calc(100vw - 24px - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px)));padding:14px 6px 6px;border-radius:16px;background:#fff;color:#18181b;box-shadow:0 10px 30px rgba(0,0,0,0.22),0 0 0 1px rgba(0,0,0,0.06);font:14px/1.35 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;text-align:left}",
+      ".name{margin:0 10px 2px;font-size:15px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".about{margin:0 10px 8px;font-size:13px;color:#52525b}",
+      ".row{display:flex;align-items:center;width:100%;min-height:44px;padding:0 10px;margin:0;border:0;border-radius:10px;background:transparent;color:inherit;font:inherit;font-weight:550;text-align:left;text-decoration:none;cursor:pointer}",
+      ".row:hover,.row:focus-visible{background:#f4f4f5;outline:none}",
+      ".bar{position:fixed;left:0;right:0;top:0;z-index:999998;display:flex;align-items:center;gap:8px;min-height:calc(40px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) calc(8px + env(safe-area-inset-right,0px)) 0 calc(12px + env(safe-area-inset-left,0px));background:#fff;color:#18181b;box-shadow:0 1px 0 rgba(0,0,0,0.08);font:14px/1.2 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
+      ".bar img{display:block;width:22px;height:22px}",
+      ".brand{font-weight:700}",
+      ".sep{color:#a1a1aa}",
+      ".title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#52525b}",
+      ".close{width:32px;height:32px;padding:0;margin:0;border:0;border-radius:8px;background:transparent;color:#52525b;font:20px/1 system-ui,sans-serif;cursor:pointer}",
+      ".close:hover,.close:focus-visible{background:#f4f4f5;outline:none}",
+      "@media (prefers-color-scheme: dark){.panel,.bar{background:#18181b;color:#f4f4f5;box-shadow:0 10px 30px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.08)}.about,.title,.close{color:#a1a1aa}.row:hover,.row:focus-visible,.close:hover,.close:focus-visible{background:#27272a}}",
+    ].join("\n");
+
+    function el(tag, cls, text) {
+      var node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text) node.textContent = text;
+      return node;
+    }
+
+    function mark(size) {
+      var img = el("img");
+      img.src = MARK_SRC;
+      // The control around it carries the accessible name.
+      img.alt = "";
+      img.width = size;
+      img.height = size;
+      return img;
+    }
+
+    function draw(t) {
+      if (!document.body || document.getElementById(HOST_ID)) return null;
+      var host = el("div");
+      host.id = HOST_ID;
+      if (typeof host.attachShadow !== "function") return null;
+      var root;
+      try { root = host.attachShadow({ mode: "closed" }); } catch (_) { return null; }
+
+      var style = el("style");
+      style.textContent = CSS;
+      root.appendChild(style);
+
+      // The slim header: the wordmark and the app's name.
+      var bar = el("div", "bar");
+      bar.hidden = true;
+      bar.setAttribute("role", "banner");
+      var brand = el("span", "brand", "Homeroom");
+      var sep = el("span", "sep", "/");
+      sep.setAttribute("aria-hidden", "true");
+      var title = el("span", "title");
+      var close = el("button", "close", "×");
+      close.type = "button";
+      close.setAttribute("aria-label", HIDE_HEADER);
+      bar.appendChild(mark(22));
+      bar.appendChild(brand);
+      bar.appendChild(sep);
+      bar.appendChild(title);
+      bar.appendChild(close);
+
+      // The panel.
+      var panel = el("div", "panel");
+      panel.id = "un-homeroom-panel";
+      panel.hidden = true;
+      panel.setAttribute("role", "dialog");
+      panel.setAttribute("aria-label", "Homeroom");
+      var name = el("p", "name");
+      var about = el("p", "about", ABOUT_LINE);
+      var open = el("a", "row", "Open in Homeroom");
+      open.href = t.openHref;
+      var toggle = el("button", "row", SHOW_HEADER);
+      toggle.type = "button";
+      toggle.setAttribute("aria-pressed", "false");
+      var what = el("a", "row", "What is Homeroom?");
+      what.href = t.siteHref;
+      what.target = "_blank";
+      what.rel = "noopener";
+      panel.appendChild(name);
+      panel.appendChild(about);
+      panel.appendChild(open);
+      panel.appendChild(toggle);
+      panel.appendChild(what);
+
+      // The button.
+      var fab = el("button", "fab");
+      fab.type = "button";
+      fab.title = "Homeroom";
+      fab.setAttribute("aria-label", "Homeroom");
+      fab.setAttribute("aria-haspopup", "dialog");
+      fab.setAttribute("aria-expanded", "false");
+      fab.setAttribute("aria-controls", "un-homeroom-panel");
+      var fabMark = mark(36);
+      // A broken image is worse than no button: an origin that does not
+      // route the platform asset prefixes would otherwise leave a torn-image
+      // box in somebody's corner. Attached BEFORE src starts the load.
+      fabMark.onerror = function () {
+        if (host.parentNode) host.parentNode.removeChild(host);
+      };
+      fab.appendChild(fabMark);
+
+      root.appendChild(bar);
+      root.appendChild(panel);
+      root.appendChild(fab);
+
+      function setPanel(open) {
+        if (open) name.textContent = appName(t.slug);
+        panel.hidden = !open;
+        fab.setAttribute("aria-expanded", open ? "true" : "false");
+      }
+      function setHeader(show) {
+        if (show) title.textContent = appName(t.slug);
+        bar.hidden = !show;
+        toggle.textContent = show ? HIDE_HEADER : SHOW_HEADER;
+        toggle.setAttribute("aria-pressed", show ? "true" : "false");
       }
 
-      var link = document.createElement("a");
-      link.id = "__un-platform-link";
-      link.className = "__un-platform-link";
-      link.href = target.href;
-      link.title = "Open this app on Homeroom";
-      link.setAttribute("aria-label", "Open this app on Homeroom");
+      fab.addEventListener("click", function () { setPanel(panel.hidden); });
+      toggle.addEventListener("click", function () {
+        setHeader(bar.hidden);
+        setPanel(false);
+      });
+      close.addEventListener("click", function () { setHeader(false); });
+      // Escape, or a tap anywhere outside the button and panel, closes the
+      // panel. composedPath() is how a listener outside a closed root tells
+      // whether the event came from inside it.
+      document.addEventListener("keydown", function (e) {
+        if (e && e.key === "Escape" && !panel.hidden) setPanel(false);
+      });
+      document.addEventListener("click", function (e) {
+        if (panel.hidden) return;
+        var path = e && typeof e.composedPath === "function" ? e.composedPath() : [];
+        for (var i = 0; i < path.length; i += 1) if (path[i] === host) return;
+        setPanel(false);
+      }, true);
 
-      var mark = document.createElement("img");
-      // A broken image is worse than no mark: an origin that does not
-      // route the platform asset prefixes — a self-hosted fork part-way
-      // through the migration — would otherwise leave a torn-image box
-      // sitting in the corner of somebody's app. Attached BEFORE src,
-      // which is what starts the load.
-      mark.onerror = function () {
-        if (link.parentNode) link.parentNode.removeChild(link);
-      };
-      mark.src = MARK_SRC;
-      // The anchor carries the accessible name; a second one here would
-      // have a screen reader read the same link twice.
-      mark.alt = "";
-      mark.width = 28;
-      mark.height = 28;
+      document.body.appendChild(host);
+      return { host: host, root: root, fab: fab, panel: panel, bar: bar, toggle: toggle, close: close, name: name, title: title, open: open, what: what };
+    }
 
-      link.appendChild(mark);
-      document.body.appendChild(link);
+    function start() {
+      if (!pageEligible()) return;
+      if (typeof window.fetch !== "function") return;
+      var slug = candidateSlug();
+      var request;
+      try {
+        request = window.fetch(CONFIG_SRC, { credentials: "omit", cache: "no-cache" });
+      } catch (_) { return; }
+      Promise.resolve(request).then(function (res) {
+        if (!res || !res.ok) return null;
+        return res.json();
+      }).then(function (config) {
+        var t = slug ? targetsFrom(config, slug) : null;
+        if (t) { draw(t); return null; }
+        // Not <slug>.<apps domain>: a custom domain, if the platform says so.
+        var host = customCandidateHost(config);
+        if (!host) return null;
+        var platform = httpsUrl(config.platform_origin);
+        var url = platform.protocol + "//" + platform.host + "/api/public/app-host?host=" + encodeURIComponent(host);
+        return Promise.resolve(window.fetch(url, { credentials: "omit", cache: "no-cache" })).then(function (res) {
+          if (!res || !res.ok) return null;
+          return res.json();
+        }).then(function (answer) {
+          var ct = answer && typeof answer === "object" ? customTargetsFrom(config, answer.slug) : null;
+          if (ct) draw(ct);
+          return null;
+        });
+      }).catch(function () { /* no config, no button */ });
     }
 
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", injectPlatformLink);
+      document.addEventListener("DOMContentLoaded", start);
     } else {
-      injectPlatformLink();
+      start();
     }
   })();
   /* __USERNODE_PLATFORM_LINK_END__ */

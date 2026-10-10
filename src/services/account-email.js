@@ -100,6 +100,9 @@ async function verifyCode(pool, userId, rawCode) {
   // A newly confirmed address: project invites waiting on it become this
   // account's (services/email-invites.js). Best-effort; never throws.
   await require('./email-invites').claimEmailInvites(pool, { userId, email: result.email });
+  // And an account still waiting has its spot on the waitlist now that it
+  // has a confirmed address (#4083). Best-effort; never throws.
+  await require('./waitlist').ensureAccountSignup(pool, { userId });
   return result;
 }
 

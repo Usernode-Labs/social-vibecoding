@@ -43,6 +43,7 @@ import {
   kanbanFiltersStore,
   type KanbanFiltersState,
 } from './kanban-filters-store';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 
 function controller(): any {
@@ -77,9 +78,10 @@ const SEARCH_CLS = 'h-8 rounded-full border border-zinc-300 dark:border-zinc-700
  * with aria-pressed saying so — rather than options buried in the dialog,
  * because "what is mine" is the filter people reach for most.
  */
+// `label` is a message id (frontend/locales/en/project.json), read when the strip renders.
 const QUICK_FILTERS: Array<{ key: 'assignedToMe' | 'createdByMe'; label: string }> = [
-  { key: 'assignedToMe', label: 'Assigned to you' },
-  { key: 'createdByMe', label: 'Created by you' },
+  { key: 'assignedToMe', label: 'project:filters.quick.assignedToYou' },
+  { key: 'createdByMe', label: 'project:filters.quick.createdByYou' },
 ];
 
 /**
@@ -149,14 +151,17 @@ function useQuickFiltersFit(
       // The laid-out boxes, which are NOT `row.children`:
       // `#dev-kanban-active-chips` is `display: contents`, so its chips are
       // the row's own flex items and the span itself has no box.
+      // #4486: nor is `#dev-filter-chips`, the chips' own group (All items'
+      // one-row head lays it out as one wrapping item), which holds the
+      // active chips' span in turn.
       const boxes: HTMLElement[] = [];
-      for (const child of Array.from(row.children) as HTMLElement[]) {
-        if (child.id === 'dev-kanban-active-chips') {
-          boxes.push(...(Array.from(child.children) as HTMLElement[]));
-        } else {
-          boxes.push(child);
+      const collect = (parent: Element) => {
+        for (const child of Array.from(parent.children) as HTMLElement[]) {
+          if (child.id === 'dev-kanban-active-chips' || child.id === 'dev-filter-chips') collect(child);
+          else boxes.push(child);
         }
-      }
+      };
+      collect(row);
       if (!boxes.length) return;
 
       let needed = 0;
@@ -199,6 +204,7 @@ function useQuickFiltersFit(
 export function KanbanFiltersView({
   mounted, q, count, chips, seq, quick,
 }: KanbanFiltersState) {
+  const t = useMessages('project');
   const rowRef = useRef<HTMLDivElement | null>(null);
   const fits = useQuickFiltersFit(rowRef, !!quick);
   // The decision is the board's, not this component's: the dialog's payload,
@@ -216,48 +222,53 @@ export function KanbanFiltersView({
         key={`q${seq}`}
         id="dev-kanban-search"
         type="search"
-        placeholder="Search cards, comments, or #"
+        placeholder={t('project:filters.search.placeholder')}
         defaultValue={q}
-        aria-label="Filter cards"
+        aria-label={t('project:filters.search.label')}
         className={SEARCH_CLS}
         onChange={() => controller()?._onKanbanSearchInput?.()}
       />
-      <button
-        id="dev-kanban-filters-btn"
-        type="button"
-        aria-haspopup="dialog"
-        className={chipCls(count > 0)}
-        title="Filter the board"
-        onClick={() => controller()?._openKanbanFiltersDialog?.()}
-      >
-        {count > 0 ? `Filters (${count})` : 'Filters'}
-      </button>
-      {quick ? QUICK_FILTERS.map(({ key, label }) => (
+      {/* #4486: the chips, one group: `display: contents` here, so they are
+          the row's own items as they always were, and one wrapping item in
+          All items' one-row head (app.css `.dev-ws-allbar`). */}
+      <span id="dev-filter-chips" className="contents">
         <button
-          key={key}
+          id="dev-kanban-filters-btn"
           type="button"
-          data-quick-filter={key}
-          aria-pressed={quick[key] ? 'true' : 'false'}
-          className={chipCls(quick[key])}
-          onClick={() => controller()?._toggleKanbanQuickFilter?.(key)}
+          aria-haspopup="dialog"
+          className={chipCls(count > 0)}
+          title={t('project:filters.button.hint')}
+          onClick={() => controller()?._openKanbanFiltersDialog?.()}
         >
-          {label}
+          {count > 0 ? t('project:filters.button.active', { count }) : t('project:filters.button.none')}
         </button>
-      )) : null}
-      <span id="dev-kanban-active-chips" className="contents">
-        {chips.map((chip) => (
+        {quick ? QUICK_FILTERS.map(({ key, label }) => (
           <button
-            key={chip.key}
+            key={key}
             type="button"
-            data-filter-chip={chip.key}
-            className={chipCls(true)}
-            aria-label={`Remove filter: ${chip.label}`}
-            onClick={() => controller()?._dismissKanbanFilter?.(chip.key)}
+            data-quick-filter={key}
+            aria-pressed={quick[key] ? 'true' : 'false'}
+            className={chipCls(quick[key])}
+            onClick={() => controller()?._toggleKanbanQuickFilter?.(key)}
           >
-            {chip.label}
-            <span aria-hidden="true">×</span>
+            {t(label)}
           </button>
-        ))}
+        )) : null}
+        <span id="dev-kanban-active-chips" className="contents">
+          {chips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              data-filter-chip={chip.key}
+              className={chipCls(true)}
+              aria-label={t('project:filters.chip.remove', { filter: chip.label })}
+              onClick={() => controller()?._dismissKanbanFilter?.(chip.key)}
+            >
+              {chip.label}
+              <span aria-hidden="true">×</span>
+            </button>
+          ))}
+        </span>
       </span>
     </div>
   );

@@ -44,10 +44,14 @@ const staging = require('./staging');
 const { broadcastGlobal } = require('./ws');
 const { checkAndResolveConflicts } = require('./conflict-resolver');
 const releaseWatch = require('./release-watch');
+const githubBudget = require('./github-budget');
 
-// 5 minutes default. GitHub's rest API has a 5000 req/hr limit per token,
-// so even with ~100 imported apps polling every minute we'd be at ~6000
-// calls/hr — well over budget. 5min keeps us comfortably under.
+// 5 minutes default. GitHub's rest API has a 5000 req/hr limit per token.
+// A plain read of every running app's main every five minutes is 12 requests
+// an app an hour, which alone spends the whole budget at about 400 apps. Two
+// things keep it from doing that now: the read is conditional (fetchRemoteHead
+// below; an unchanged main answers 304, which GitHub does not count), and a
+// pass is held while the budget is nearly gone (poll below).
 const POLL_INTERVAL_MS = parseInt(process.env.MAIN_DRIFT_POLL_MS, 10) || 5 * 60 * 1000;
 // Run the first poll soon after boot so newly-imported apps with stale
 // SHAs converge quickly, but not instantly (lets the rest of startup
@@ -93,25 +97,69 @@ function noteFailure(appId, sha) {
   return { failures, delayMs };
 }
 
-// main's tip: its sha, and — for the self-hosted row's release watch — when
+// The last answer per repo, for conditional reads: "owner/repo" (lowercased)
+// -> { etag, sha, committedAt, subject }. In memory on purpose, like the
+// backoff above: a restart costs one ordinary read per app.
+const headCache = new Map();
+
+// main's tip: its sha, and (for the self-hosted row's release watch) when
 // it landed and what it says, so a stall can be dated from the merge and
 // name its PR. Both are null when the API shape lacks them.
+//
+// CONDITIONAL. The read sends If-None-Match with the ETag of the last answer
+// for this repo. An unchanged main answers 304 Not Modified, which GitHub
+// does not count against the hourly budget, and the cached sha, committedAt
+// and subject are returned as if read, with `notModified: true`. Octokit
+// reports a 304 as a thrown RequestError, so that is caught here. Every
+// caller sees the same shape either way: { sha, committedAt, subject,
+// octokit }. services/merge-followup-recovery.js reads main through here
+// too, so the two sweeps share one ETag per repo.
+//
+// Why not `git ls-remote`: it would leave the REST budget alone entirely,
+// but it is a subprocess per app per tick, it cannot give the self-hosted
+// row its commit date and subject, and a 304 already costs nothing.
 async function fetchRemoteHead(owner, repo) {
-  const octokit = await github.getOctokit(owner);
+  // A read: through the App installation when GITHUB_READS_VIA_APP says so,
+  // with the bot token behind it (services/github.js getReadOctokit). A 304
+  // is passed through as itself, never retried with the bot token.
+  const octokit = await github.getReadOctokit(owner);
+  const key = `${owner}/${repo}`.toLowerCase();
+  const cached = headCache.get(key);
   // `repos.getBranch` returns the tip commit; cheaper than listing
   // commits and authoritative for "what would `git clone` get right
   // now". The default branch is hardcoded to `main` because every
   // platform-managed repo (template + import flow) uses `main` and
-  // we'd need to read the repo's default_branch otherwise — not
+  // we'd need to read the repo's default_branch otherwise, which is not
   // worth the extra call.
-  const { data } = await octokit.rest.repos.getBranch({ owner, repo, branch: 'main' });
-  const commit = data.commit || {};
-  return {
+  let response;
+  try {
+    response = await octokit.rest.repos.getBranch({
+      owner, repo, branch: 'main',
+      ...(cached ? { headers: { 'if-none-match': cached.etag } } : {}),
+    });
+  } catch (err) {
+    if (cached && err && err.status === 304) {
+      return {
+        sha: cached.sha,
+        committedAt: cached.committedAt,
+        subject: cached.subject,
+        octokit,
+        notModified: true,
+      };
+    }
+    throw err;
+  }
+  const commit = (response && response.data && response.data.commit) || {};
+  const head = {
     sha: commit.sha || null,
     committedAt: commit.commit?.committer?.date || commit.commit?.author?.date || null,
     subject: commit.commit?.message || null,
-    octokit,
   };
+  const headers = (response && response.headers) || {};
+  const etag = headers.etag || headers.ETag || null;
+  if (etag && head.sha) headCache.set(key, { etag: String(etag), ...head });
+  else headCache.delete(key);
+  return { ...head, octokit };
 }
 
 // Returns a structured result so callers (the periodic poll loop, and
@@ -157,6 +205,17 @@ async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   }
   const remoteSha = head.sha;
   if (!remoteSha) return { status: 'fetch_failed', slug: app.slug, error: 'GitHub returned no SHA' };
+
+  // With the merge-followups machine on, main's unit suite runs on every
+  // new main, merge or direct push (services/main-watch.js). Its claim is
+  // per commit, so a merge commit the merge already checks is not run twice.
+  // Fire-and-forget, as from the merge.
+  if (config.wfMergeFollowupsEnabled
+      && (remoteSha !== app.main_check_sha || !app.main_check_state || app.main_check_state === 'error')) {
+    require('./main-watch').afterMerge(config, pool, { app, mergeSha: remoteSha }).catch((err) => {
+      log.warn('drift-poller', 'Main check on a new main failed to start', { slug: app.slug, err: err.message });
+    });
+  }
 
   // First-time backfill: no prior SHA recorded → just save it. This
   // shouldn't happen often (createApp/rebuildProduction both record
@@ -266,11 +325,11 @@ async function poll(config) {
   // Snapshot the candidate set once. Apps whose status changes during
   // the loop are filtered by the per-row claim above, not here.
   const { rows } = await pool.query(
-    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall
+    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall, release_run, main_check_sha, main_check_state
        FROM apps
       WHERE repo_url IS NOT NULL AND status = 'running'`
   );
-  if (rows.length === 0) return;
+  if (rows.length === 0) return { apps: 0, checked: 0, held: false };
 
   log.debug('drift-poller', 'Polling apps for main drift', { count: rows.length });
   // Sequential, not parallel: rebuild kicks docker build / run / health
@@ -278,13 +337,28 @@ async function poll(config) {
   // we'd want a small concurrency cap, not "fire all of them". For
   // typical fleets of < 50 apps this finishes in well under the next
   // poll interval.
+  //
+  // Background work: while GitHub's hourly budget is nearly used up, the
+  // rest of the pass waits for the next tick after the reset, so what
+  // people start keeps the reserve. Asked before every app, because a
+  // first pass after a restart has no ETags yet and costs one read each.
+  // services/github-budget.js logs the hold once per window, not per app.
+  // The admin's "Check for updates" calls checkAndRedeployOne directly and
+  // is never held.
+  let checked = 0;
   for (const app of rows) {
+    if (!githubBudget.budgetAllows('background')) {
+      log.debug('drift-poller', 'Pass held for the GitHub budget', { checked, left: rows.length - checked });
+      return { apps: rows.length, checked, held: true };
+    }
+    checked += 1;
     try {
       await checkAndRedeployOne(config, pool, app);
     } catch (err) {
       log.warn('drift-poller', 'Per-app check threw (continuing)', { slug: app.slug, err: err.message });
     }
   }
+  return { apps: rows.length, checked, held: false };
 }
 
 function start(config) {
@@ -307,8 +381,12 @@ module.exports = {
   // Exposed so the admin "Check for updates" button can run the same
   // single-app code path on demand without waiting for the next tick.
   checkAndRedeployOne,
+  // The conditional read of main's tip, shared with
+  // services/merge-followup-recovery.js.
+  fetchRemoteHead,
   _forTest: {
     resetBackoff: () => failedAttempts.clear(),
+    resetHeadCache: () => headCache.clear(),
     setClock: (fn) => { now = fn || (() => Date.now()); },
     POLL_INTERVAL_MS,
     BACKOFF_MAX_MS,

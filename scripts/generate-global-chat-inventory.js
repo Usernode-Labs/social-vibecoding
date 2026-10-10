@@ -64,6 +64,7 @@ const FILE_EXEMPTIONS = new Map([
   ['src/routes/app-storage.js', 'child-app storage transport authenticated by app grants'],
   ['src/routes/agent-sessions.js', 'the agent-session Mayor\'s own conversation (#2779); one assistant does not drive another'],
   ['src/routes/cli-agent.js', 'local coding-agent protocol, represented by CLI Settings and development capabilities'],
+  ['src/routes/external-agent-patch-upload.js', 'coding-agent patch upload authenticated by a one-time work-order token (#4264), never a signed-in Classic control'],
   ['src/routes/internal.js', 'platform-to-worker/internal service protocol'],
   ['src/routes/public-api.js', 'anonymous public integration and waitlist surface'],
   ['src/routes/topochain/ingest.js', 'authenticated partner ingestion protocol'],
@@ -71,7 +72,7 @@ const FILE_EXEMPTIONS = new Map([
 ]);
 
 const PATH_EXEMPTIONS = [
-  [/^\/(?:app-icons|avatars|illustrations|issue-images|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
+  [/^\/(?:app-icons|avatars|illustrations|issue-images|issue-videos|visuals|challenge-illustrations)\//, 'binary asset delivery rather than an interactive control'],
   [/^\/reports\//, 'public immutable share document'],
   [/^\/\.well-known\//, 'protocol discovery metadata'],
   [/^\/api\/connect\/oauth\/(?:register|token|revoke)$/, 'OAuth protocol endpoint represented by connector Settings'],
@@ -112,8 +113,26 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'legacy or catch-all document route represented by in-app navigation capabilities',
   },
   {
+    matches: (route) => route.source === 'src/routes/mail-tracking.js'
+      && ['/mail/c/:messageId/:linkIndex', '/mail/o/:messageId.gif'].includes(route.path),
+    reason: 'signed sessionless email redirect and image endpoints, never model-visible interactive controls',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/mail-webhooks.js' && route.path === '/api/mail/webhooks/resend',
+    reason: 'provider callback authenticated by a raw-body signature, never a signed-in Classic control',
+  },
+  {
+    matches: (route) => route.source === 'src/routes/activity-mail.js' && route.path === '/mail/unsubscribe',
+    reason: 'the unsubscribe link in activity mail: a sessionless page and its one-click POST, never a model-visible capability',
+  },
+  {
     matches: (route) => route.source === 'src/routes/community-invites.js' && route.path === '/invite/:token',
     reason: 'invite-link document: the shell with a link preview, represented by the invite-link capabilities',
+  },
+  {
+    matches: (route) => route.source === 'server.js'
+      && route.method === 'GET' && route.path === '/usernode-bridge/v1/platform.json',
+    reason: 'bridge asset: where the platform is, read by the app-host Homeroom button, never a model-visible capability',
   },
   {
     matches: (route) => route.path === '/api/iframe-token',
@@ -150,6 +169,12 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
       && route.path === '/api/me/cli-tokens'
       && route[REGISTRATION].shadowsLaterRoute,
     reason: 'staging empty-state middleware represented by the concrete CLI-token list capability',
+  },
+  {
+    // #4313: answers only the ?demo=1 Needs-you cards' negative ids on staging.
+    matches: (route) => route.source === 'src/routes/workshop-overview.js'
+      && ['/api/sessions/:id/vote', '/api/sessions/:id/votes'].includes(route.path),
+    reason: 'staging demo-card middleware represented by the concrete session vote capabilities',
   },
   {
     matches: (route) => route.source === 'src/routes/mcp-remote.js' && !route.path,
@@ -227,10 +252,10 @@ const DOMAIN_RULES = [
   [/^\/api\/(?:sessions|me\/active-sessions|apps\/[^/]+\/(?:sessions|promoted|merged|shared-sessions|dev-flow)|budget)/, 'development'],
   [/^\/api\/(?:issues|apps\/[^/]+\/(?:issues|github-issues|board-order|board-search|topic))/, 'issues'],
   [/^\/api\/me\/proposals(?:\/|$)/, 'governance'],
-  [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|governance)|approver)/, 'governance'],
+  [/^\/api\/(?:votes|apps\/[^/]+\/(?:proposals|changes|governance)|approver)/, 'governance'],
   [/^\/api\/(?:leaderboard|kudos|me\/(?:kudos|history|challenges)|v4\/leaderboard|v4\/season-events)/, 'leaderboards'],
   [/^\/api\/admin/, 'admin'],
-  [/^\/api\/(?:me\/(?:credentials|coding-agent|api-key|llm-grants|permission-grants|agent-files|cli|connectors|dev-flow)|apps\/[^/]+\/(?:permissions|llm-grant|secrets|files))/, 'settings'],
+  [/^\/api\/(?:me\/(?:credentials|coding-agent|api-key|llm-grants|permission-grants|agent-files|cli|connectors)|apps\/[^/]+\/(?:permissions|llm-grant|secrets|files))/, 'settings'],
   [/^\/api\/(?:apps|favorites|gallery|home|workshop|campaigns)/, 'apps'],
 ];
 
@@ -516,6 +541,9 @@ function classicPathFor(domain, routePath) {
     if (inApp && governance) return appRoot + '/dev/governance/:' + governance[1];
     const proposal = value.match(/\/proposals\/:(id|sessionId)(?:\/|$)/);
     if (inApp && proposal) return appRoot + '/dev/proposals/:' + proposal[1];
+    // #4367: a change by its pull request's number.
+    const change = value.match(/\/changes\/:(number)(?:\/|$)/);
+    if (inApp && change) return appRoot + '/dev/changes/:' + change[1];
     return inApp ? appRoot + '/workshop' : '#workshop';
   }
   if (domain === 'apps') {
@@ -615,12 +643,22 @@ function discoverSettings() {
   // One entry per PART (a [data-settings-section] wrapper). `page` groups
   // parts into one nav row; every part's own #settings/<key> still resolves,
   // so each part stays an inspectable settings group of its own.
+  // The registry names each part and its group by message id
+  // (`settings:nav.part.profile`); the inventory records the English.
+  const english = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'frontend', 'locales', 'en', 'settings.json'), 'utf8',
+  ));
+  const said = (id) => {
+    const entry = english[id.replace(/^settings:/, '')];
+    if (!entry) throw new Error(`No English text for ${id}`);
+    return entry.text;
+  };
   return [...sectionBlock[1].matchAll(
     /\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)',\s*group:\s*'([^']+)'(?:,\s*page:\s*'([^']+)')?(?:,\s*gate:\s*'([^']+)')?\s*\}/g,
   )].map((match) => ({
     key: match[1],
-    label: match[2],
-    group: match[3],
+    label: said(match[2]),
+    group: said(match[3]),
     gate: match[5] || null,
     capabilityId: `settings.open.${match[1].replace(/[^a-z0-9]+/g, '_')}`,
     classicPath: `#settings/${match[1]}`,

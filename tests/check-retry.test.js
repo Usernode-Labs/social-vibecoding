@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const visuals = require('../src/services/visuals');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -142,6 +143,7 @@ test('the row keeps its reason when it only passed because of a retry', () => {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
@@ -162,5 +164,44 @@ test('the row keeps its reason when it only passed because of a retry', () => {
   assert.match(v.passes[0].reason, /then passed when re-run/);
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(tsx, /if \(r\.pass && !r\.keepReason\) \{/, 'and the renderer draws it');
-  assert.match(tsx, /'Passed on retry' : 'Why it failed'/, 'behind the same door a failure gets, saying so');
+  assert.match(tsx, /r\.pass \? t\('project:topic\.check\.passedOnRetry'\) : t\('project:topic\.check\.whyItFailed'\)/,
+    'behind the same door a failure gets, saying so');
+  assert.deepEqual([message('project:topic.check.passedOnRetry'), message('project:topic.check.whyItFailed')],
+    ['Passed on retry', 'Why it failed']);
+});
+
+test('the unit suite\'s failure excerpts reach the verdict row and are drawn under it (#3978)', () => {
+  const sandbox = {
+    console, relTime: () => 'just now', App: { user: { id: 1 } },
+    Kudos: { renderButton: () => '' }, DOMPurify: { sanitize: (s) => s },
+    document: {
+      getElementById: () => null, querySelector: () => ({ innerHTML: '' }),
+      querySelectorAll: () => ({ forEach() {} }), addEventListener() {},
+      createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
+      body: { appendChild() {} }, hidden: false,
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }), alert() {},
+    setTimeout, clearTimeout, setInterval, clearInterval, addEventListener() {},
+    localStorage: { getItem: () => null, setItem() {} },
+    location: { search: '', hash: '' }, URLSearchParams,
+  };
+  sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
+    + `${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);
+  const v = sandbox.__AppView._checksVerdictView({
+    check_state: 'failing',
+    test_results: [{
+      index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail',
+      failureReason: 'tests/b.test.js (1): bot hello',
+      failureDetails: [{ file: 'tests/b.test.js', test: 'bot hello', excerpt: 'error: boom' }, { test: 'empty', excerpt: '' }],
+    }],
+  });
+  assert.equal(v.failures[0].details.length, 1);
+  assert.equal(v.failures[0].details[0].excerpt, 'error: boom');
+  const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.match(tsx, /r\.details\.map\(/);
+  assert.match(tsx, /<pre className="dev-ledger-why-excerpt/);
 });

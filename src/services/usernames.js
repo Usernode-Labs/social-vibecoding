@@ -61,7 +61,10 @@ const MAX_USERNAME_LEN = 32;
 // Matched on the lowercased name with the separators stripped, so
 // `usernode_capture` and `UserNodeCapture` are refused alongside the
 // literal seeds.
-const RESERVED_PREFIXES = ['usernode', 'staging'];
+// B9 (E8): and `homeroom`, so "@Homeroom bot" (the platform's bot, mentioned
+// in a project's chat) can never notify a person who took the name. People
+// who already hold such a name keep it; only new names are refused.
+const RESERVED_PREFIXES = ['usernode', 'staging', 'homeroom'];
 
 // Accounts that may never be renamed AT ALL, in either direction. These are
 // the seeded service identities: their username IS the lookup key that
@@ -157,6 +160,124 @@ function validateUsername(raw) {
 function placeholderUsername() {
   return `member_${crypto.randomBytes(9).toString('hex')}`;
 }
+
+/**
+ * Handles to try, in order, for somebody who gave their NAME rather than a
+ * handle: an invite's phone sign-up, whose sheet asks "Your name" and no
+ * username (firebase-phone-auth.js finishWithName). Not the derivation
+ * #3575 removed: that one published the private half of an email address,
+ * and this is the name the person just typed for the group to see. The
+ * first is the name folded to the handle alphabet (accents dropped, every
+ * other run of characters an underscore); the rest add digits, for when it
+ * is taken or reserved. A name with nothing foldable (a script the handle
+ * alphabet lacks) starts from `member`. The handle is PROVISIONAL: seen in
+ * the private groups that invited them, and replaced by one they pick
+ * before anything public shows it (replaceProvisionalUsername).
+ */
+function handlesFromName(rawName, tries = 6) {
+  const folded = String(rawName || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 24)
+    .replace(/_+$/, '');
+  const base = folded.length >= MIN_USERNAME_LEN ? folded : (folded ? `${folded}_member` : 'member');
+  const out = [];
+  if (validateUsername(base).ok) out.push(base);
+  while (out.length < tries) {
+    const next = `${isReserved(base) ? 'member' : base}_${crypto.randomInt(100, 10000)}`;
+    if (validateUsername(next).ok && !out.includes(next)) out.push(next);
+  }
+  return out;
+}
+
+/**
+ * The handle an email sign-up's username field arrives holding (#4596):
+ * the letters and digits before the @, lowercased, with dots and every
+ * other character dropped, cut to the 32 a handle may hold. `Ada.Lovelace+hr@`
+ * is `adalovelace`. Null when what is left is too short or reserved, and
+ * the field then starts empty. #4596 deliberately overturns #3575 for this
+ * flow: the field is prefilled, the person can change it, and set-password
+ * still takes only what the field sends.
+ */
+function usernameFromEmail(rawEmail) {
+  const local = String(rawEmail || '').split('@')[0] || '';
+  const base = local
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toLowerCase()
+    .slice(0, MAX_USERNAME_LEN);
+  return validateUsername(base).ok ? base : null;
+}
+
+/**
+ * `usernameFromEmail`, made free for `userId`: the name itself when nobody
+ * holds it, else the name with the smallest number that is (`alex2`,
+ * `alex3`, …), cut so the number still fits. Free means what
+ * checkAvailability means: case-insensitive, over the live table and the
+ * retired ledger, and a name this account holds or retired is its own. One
+ * query for the first 100 candidates; null when none of them is free, and
+ * the field then starts empty.
+ */
+async function suggestUsernameForEmail(pool, rawEmail, userId, tries = 100) {
+  const base = usernameFromEmail(rawEmail);
+  if (!base) return null;
+  const candidates = [base];
+  for (let n = 2; candidates.length < tries; n += 1) {
+    const suffix = String(n);
+    const name = `${base.slice(0, MAX_USERNAME_LEN - suffix.length)}${suffix}`;
+    if (validateUsername(name).ok) candidates.push(name);
+  }
+  const { rows } = await pool.query(
+    `SELECT LOWER(username) AS name FROM users
+      WHERE LOWER(username) = ANY($1::text[]) AND id IS DISTINCT FROM $2
+     UNION
+     SELECT LOWER(username) AS name FROM username_history
+      WHERE LOWER(username) = ANY($1::text[]) AND user_id IS DISTINCT FROM $2`,
+    [candidates, userId == null ? null : userId]
+  );
+  const taken = new Set(rows.map((r) => r.name));
+  return candidates.find((name) => !taken.has(name)) || null;
+}
+
+/**
+ * Replace a PROVISIONAL handle (users.username_provisional_since: made from
+ * an invite phone sign-up's name, seen only in private groups) with the one
+ * the person picks before going anywhere public. Like chooseFirstUsername,
+ * not a rename: no ledger row and no cooldown, because this is the first
+ * handle they chose. Keeping the provisional one is a choice too (it is
+ * theirs, so checkAvailability lets them). Returns null when the account's
+ * handle is not provisional.
+ */
+async function replaceProvisionalUsername(pool, userId, nextName) {
+  const { rows } = await pool.query(
+    `UPDATE users
+        SET username = $1, username_provisional_since = NULL, updated_at = NOW()
+      WHERE id = $2 AND username_provisional_since IS NOT NULL
+      RETURNING username`,
+    [nextName, userId]
+  );
+  return rows.length ? { username: rows[0].username } : null;
+}
+
+/** Whether `userId` holds a provisional handle (see replaceProvisionalUsername). */
+async function isProvisional(pool, userId) {
+  if (!userId) return false;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM users WHERE id = $1 AND username_provisional_since IS NOT NULL',
+    [userId]
+  );
+  return rows.length > 0;
+}
+
+/** The refusal a public place answers a provisional handle with. */
+const USERNAME_REQUIRED = Object.freeze({
+  error: 'Pick a username first. Public places show your username, not your name.',
+  code: 'username_required',
+});
 
 /**
  * Take the first handle. NOT a rename: this account has never had one.
@@ -407,6 +528,12 @@ module.exports = {
   isReserved,
   isServiceIdentity,
   placeholderUsername,
+  handlesFromName,
+  usernameFromEmail,
+  suggestUsernameForEmail,
+  replaceProvisionalUsername,
+  isProvisional,
+  USERNAME_REQUIRED,
   chooseFirstUsername,
   checkAvailability,
   checkCooldown,

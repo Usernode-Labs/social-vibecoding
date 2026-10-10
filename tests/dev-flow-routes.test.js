@@ -24,6 +24,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -282,7 +286,7 @@ test('an agent session\'s hand-off carries its OWN change\'s spec, and nobody el
   const own = (await (await status('?sessionId=501&proposalId=501&targetKind=session&specFrom=501')).json()).instructions;
   assert.match(own, /THE USER HAS ALREADY TOLD YOU WHAT TO BUILD/);
   assert.match(own, /<untrusted-content>\nChange: Dark mode\n\n# Dark mode\nA toggle in Settings\.\n<\/untrusted-content>/);
-  assert.match(own, /proposalId 501, and that spec as `brief`/);
+  assert.match(own, /proposalId 501, and that plan as `brief`/);
   const read = poolCalls.find((c) => /spec_md/.test(c.sql));
   assert.match(read.sql, /WHERE id = \$1 AND user_id = \$2 AND app_id = \$3/, 'ownership is the query\'s, not the caller\'s');
   assert.deepEqual(read.params, [501, 42, 7]);
@@ -955,16 +959,15 @@ test('the fixture shape survives the round trip from page URL to status route', 
     if (prev === undefined) delete global.location; else global.location = prev;
   }
 
-  // Finally, the declared checks must satisfy BOTH gates: every shape the
-  // route can render is actually shot, and each path carries the ?demo=1 that
-  // selects a fixture at all.
+  // Finally, the declared checks. They used to shoot every shape on the
+  // classic dev chat's walkthrough (/dev/sessions/990404). #3976 made classic
+  // sessions read-only and put their hand-off away, so those checks were
+  // retired with the chat. Any check that shoots a shape again must still
+  // carry the ?demo=1 that selects a fixture at all.
   const dapp = JSON.parse(read('dapp.json'));
   const shaped = dapp.tests.filter((t) => /[?&]order=/.test(t.path));
-  assert.ok(shaped.length >= 2, 'the fixture shapes are covered by declared checks');
-  const shot = new Set(shaped.map((t) => /[?&]order=([a-z-]+)/.exec(t.path)[1]));
-  for (const value of ['connect', 'continue', 'link']) {
-    assert.ok(shot.has(value), `no declared check shoots ?order=${value}`);
-  }
+  assert.ok(!shaped.some((t) => t.path.includes('/dev/sessions/')),
+    'no declared check drives the classic walkthrough');
   for (const t of shaped) {
     assert.ok(/[?&]demo=1(&|#|$)/.test(t.path),
       `${t.name} must carry ?demo=1 as well as the order, or no fixture renders`);
@@ -1152,11 +1155,7 @@ test('?order=link renders the walkthrough at its first step, GitHub unlinked (#2
   assert.match(html, /<a [^>]*href="\/api\/me\/social-identities\/github\/connect\?intent=connect"[^>]*target="_blank"[^>]*data-flow-action="link-github">Link GitHub<\/a>/);
   assert.match(html, /data-flow-step="fork" data-flow-step-state="todo"/);
   assert.match(html, /data-flow-step="handoff" data-flow-step-state="todo"/);
-
-  const dapp = JSON.parse(read('dapp.json'));
-  const check = dapp.tests.find((t) => /[?&]order=link(&|#|$)/.test(t.path));
-  assert.ok(check, 'a declared check shoots this shape');
-  assert.match(check.expectSelector, /a\[data-flow-action="link-github"\]/);
-  assert.match(check.expectSelector, /\[href="\/api\/me\/social-identities\/github\/connect\?intent=connect"\]/,
-    'and it pins the destination, which is the whole point of the change');
+  // The declared check that shot this shape loaded a classic session
+  // (/dev/sessions/990404); #3976 retired it with the classic walkthrough,
+  // so the destination is pinned by the render above.
 });

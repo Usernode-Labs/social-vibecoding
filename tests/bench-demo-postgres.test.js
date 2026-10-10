@@ -79,9 +79,56 @@ test('the benchmark\'s staging fixtures against the full PostgreSQL schema', { t
   assert.equal(rows.length, counts.trials);
   assert.equal(rows[0].length, report.CSV_COLUMNS.length);
 
+  // #3737's taste fixture: a run page shows its arms side by side, app by
+  // app, from the console's report (never the connector's aggregates).
+  assert.equal(await demo.seedStagingTaste(pool), true);
+  const taste = await report.runReport(pool, demo.TASTE_RUN_ID);
+  assert.deepEqual(taste.tasteTrials.map((x) => [x.stage, x.appName, x.status, x.booted]).sort(),
+    [['capture', 'Staging demo bakery', 'ok', true], ['first_version', 'Staging demo bakery', 'ok', true]]);
+  for (const x of taste.tasteTrials) {
+    assert.ok(x.shots.length > 0 && x.shots.length <= 8, 'the screenshots the judge was shown');
+    assert.ok(x.shots.every((sh) => /^[0-9a-f]{32}$/.test(sh.artifactId) && sh.caption));
+    assert.equal(x.criteria.of, 12);
+  }
+  assert.equal(taste.tasteTrials.find((x) => x.stage === 'first_version').criteria.held, 9);
+  assert.equal(taste.tasteTrials.find((x) => x.stage === 'capture').criteria.held, 3);
+  assert.deepEqual(report.tasteTrials([]), []);
+  assert.deepEqual((await report.runReport(pool, demo.RUN_ID)).tasteTrials, [], 'a run with no taste stage lists none');
+  const aggregates = await report.runAggregates(pool, demo.TASTE_RUN_ID);
+  assert.equal(aggregates.tasteTrials, undefined, 'the connector\'s view names no trial');
+  assert.doesNotMatch(JSON.stringify(aggregates), /artifactId|Staging demo bakery/);
+
+  // The declared check: the area opens on its Overview, which reads both
+  // fixtures (the default suite's answer, and the taste suite's scores).
   const dapp = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
-  const check = dapp.tests.find((c) => c.path === '/#admin/homeroom-bot/benchmark');
-  assert.ok(check, 'a declared check looks at the Benchmark area');
-  assert.match(check.expectSelector, /#admin-homeroom-bench-results-table/);
+  // The App bench studio's fixture: two starter briefs, each with three
+  // builds side by side (no pack, the demo pack, a reference), graded, with
+  // screenshots, and no branch a preview could point at.
+  const studio = require('../src/services/bench/studio');
+  assert.equal(await demo.seedStagingStudio(pool), true);
+  assert.equal(await demo.seedStagingStudio(pool), false, 'idempotent');
+  const g = await studio.gallery(pool, {});
+  assert.deepEqual(g.briefs.map((b) => b.ref).sort(), ['bread', 'tier-list']);
+  for (const b of g.briefs) {
+    assert.deepEqual(b.builds.map((x) => x.armLabel).sort(), ['reference ref-v1 + Staging demo theme v1', 'today', 'today + Staging demo theme v1']);
+    assert.ok(b.builds.every((x) => x.shots.length > 0 && x.code === null && x.criteria.of === 12));
+  }
+  const studioRuns = await studio.listStudioRuns(pool);
+  assert.deepEqual(studioRuns.map((x) => [x.id, x.counts.ok]), [[demo.STUDIO_RUN_ID, 6]]);
+  assert.ok(demo.STUDIO_RUN_ID < demo.TASTE_RUN_ID && demo.TASTE_RUN_ID < demo.RUN_ID, 'the console still opens on the core demo');
+  const studioCheck = dapp.tests.find((c) => c.path === '/#admin/homeroom-bot/benchmark/studio');
+  assert.match(studioCheck.expectSelector, /\[data-studio-brief="bread"\]/);
+  assert.equal(studioCheck.expectText, 'Bread Bot');
+
+  // The Studio place has a check of its own, which reads no fixture.
+  const checks = dapp.tests.filter((c) => c.path.startsWith('/#admin/homeroom-bot/benchmark') && !c.path.endsWith('/studio'));
+  assert.equal(checks.length, 1, 'one declared check, as before the area had places of its own');
+  const [check] = checks;
+  assert.equal(check.path, '/#admin/homeroom-bot/benchmark', 'the Overview');
+  assert.match(check.expectSelector, /#admin-homeroom-bench-best-table \[data-bench-stage-row="triage"\]$/);
+  assert.match(check.expectSelector, /\/runs\/936551/, `the latest fixture run, ${demo.RUN_ID}`);
+  assert.equal(demo.RUN_ID, 936551);
+  assert.match(check.expectSelector, /data-bench-taste-score="capture"/);
+  assert.ok(check.expectSelector.length <= 256);
   assert.equal(check.expectText, 'Staging demo core v1');
 });

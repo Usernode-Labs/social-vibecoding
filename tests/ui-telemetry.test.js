@@ -46,6 +46,16 @@ test('collector accepts only the fixed content-free vocabulary', () => {
   ]));
   assert.equal(parsed.events[0].appSlug, 'a', 'one-character valid slugs are accepted');
   assert.equal(parsed.events[1].errorCode, 'not_found');
+  // The first session's ping ask (NativeChrome.askForPing): its answer.
+  const asked = id('attempt');
+  const ping = telemetry.parseBatch(batch([
+    event({ kind: 'action_attempt', action: 'push_permission', screen: 'ping_ask', attemptId: asked }),
+    event({ kind: 'action_outcome', action: 'push_permission', screen: 'ping_ask', attemptId: asked,
+      outcome: 'failure', errorCode: 'access_denied', durationMs: 900, sequence: 2 }),
+  ]));
+  assert.deepEqual(ping.events.map((e) => [e.action, e.screen, e.outcome || null]),
+    [['push_permission', 'ping_ask', null], ['push_permission', 'ping_ask', 'failure']]);
+  assert.equal(telemetry.JOURNEY_SCREENS.has('ping_ask'), true);
 
   for (const forbidden of [
     { rawUrl: 'https://example.test/?token=secret' },
@@ -832,3 +842,128 @@ test('a via mark explains only the navigation right after it', async () => {
   assert.deepEqual(sent.flatMap((b) => b.body.events).map((e) => e.via), ['nudged', 'own'],
     'a stale mark does not mislabel a later step');
 });
+
+// ── Browser languages, for choosing which languages Homeroom ships (#3659) ──
+
+test('the browser language is the most preferred Accept-Language, kept to language, script and region', () => {
+  for (const [header, expected] of [
+    ['es-MX,es;q=0.9,en;q=0.8', 'es-MX'],
+    ['en;q=0.5, fr-CA;q=0.9', 'fr-CA'],
+    ['zh-Hant-TW', 'zh-Hant-TW'],
+    ['EN-us', 'en-US'],
+    ['es-419', 'es-419'],
+    ['de-DE-u-co-phonebk', 'de-DE'],
+    ['fr;q=0, de;q=0.3', 'de'],
+    ['*', null], ['', null], [undefined, null], ['not a language!', null],
+    [`en,${'x'.repeat(600)}`, null],
+  ]) {
+    assert.equal(telemetry.browserLanguage(header), expected, String(header).slice(0, 30));
+  }
+});
+
+test('the collector notes the browser language on a shell start and nowhere else', async (t) => {
+  let express;
+  try { express = require('express'); } catch { return t.skip('express is not installed'); }
+  const stored = [];
+  const fakePool = {
+    connect: async () => ({
+      async query(sql, params) {
+        if (/VALUES \(\$1, \(SELECT id FROM apps/.test(sql)) stored.push(JSON.parse(params[3]));
+        return { rowCount: 1, rows: [{ id: 1 }] };
+      },
+      release() {},
+    }),
+    async query() { throw new Error('the language count must stay behind its gate'); },
+  };
+  const { uiTelemetryRoutes } = require('../src/routes/ui-telemetry');
+  const app = express();
+  app.use((req, _res, next) => {
+    req.user = req.get('x-test-user') === 'capture'
+      ? { id: 2, username: 'usernode-capture-admin', isAdmin: true }
+      : { id: 1, username: 'human-member', isAdmin: false };
+    next();
+  });
+  app.use(uiTelemetryRoutes({}, { pool: fakePool }));
+  const server = await new Promise((resolve) => {
+    const opened = app.listen(0, '127.0.0.1', () => resolve(opened));
+  });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const send = (headers = {}) => fetch(`${base}/api/ui-telemetry/batch`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', ...headers },
+    body: JSON.stringify(batch([
+      event({ screen: 'shell_boot' }),
+      event({ screen: 'home', via: 'own', sequence: 2 }),
+    ], { schemaVersion: 2 })),
+  });
+
+  assert.equal((await send({ 'accept-language': 'es-MX,es;q=0.9,en;q=0.8' })).status, 202);
+  assert.deepEqual(stored.map((metadata) => [metadata.screen, metadata.language]),
+    [['shell_boot', 'es-MX'], ['home', undefined]]);
+  // The client sends no language of its own: the vocabulary is unchanged.
+  assert.throws(() => telemetry.parseBatch(batch([{ ...event({ screen: 'shell_boot' }), language: 'es-MX' }])),
+    /unsupported field: language/);
+
+  stored.length = 0;
+  assert.equal((await send({ 'accept-language': '*' })).status, 202);
+  assert.deepEqual(stored.map((metadata) => 'language' in metadata), [false, false], 'nothing usable, nothing stored');
+
+  stored.length = 0;
+  const synthetic = await send({ 'accept-language': 'es-MX', 'x-test-user': 'capture' });
+  assert.equal((await synthetic.json()).discarded, true);
+  assert.deepEqual(stored, [], 'a service identity is counted under no language');
+
+  assert.equal((await fetch(`${base}/api/admin/analytics/browser-languages`)).status, 403,
+    'the count is for admins');
+});
+
+test('real PostgreSQL counts each person once, under the language of their latest shell start',
+  { skip: !process.env.TEST_DATABASE_URL && 'set TEST_DATABASE_URL for PostgreSQL coverage' }, async (t) => {
+    let Pool;
+    try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+    const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL, connectionTimeoutMillis: 3000 });
+    const table = await pool.query("SELECT to_regclass('public.events') AS name");
+    if (!table.rows[0].name) {
+      await pool.end();
+      return t.skip('schema.sql has not been applied');
+    }
+    await pool.query("DELETE FROM events WHERE event_type IN ('ui_experience','ui_telemetry_delivery')");
+    const suffix = `${process.pid}-${Date.now()}`;
+    const person = async (name, admin = false) => (await pool.query(
+      'INSERT INTO users (username, password, is_admin) VALUES ($1, $2, $3) RETURNING id',
+      [`ui-language-${name}-${suffix}`, 'test', admin]
+    )).rows[0];
+    const ana = await person('ana');
+    const ben = await person('ben');
+    const cho = await person('cho');
+    const admin = await person('admin', true);
+    t.after(async () => {
+      for (const user of [ana, ben, cho, admin]) {
+        await pool.query('DELETE FROM events WHERE user_id = $1', [user.id]);
+        await pool.query('DELETE FROM users WHERE id = $1', [user.id]);
+      }
+      await pool.end();
+    });
+    const start = (minutesAgo) => telemetry.parseBatch(batch([
+      event({ screen: 'shell_boot', occurredAt: new Date(Date.now() - minutesAgo * 60_000).toISOString() }),
+      event({ screen: 'home', via: 'own', sequence: 2 }),
+    ], { schemaVersion: 2 }));
+    await telemetry.insertBatch(pool, ana.id, start(30), { language: 'en-US' });
+    await telemetry.insertBatch(pool, ana.id, start(5), { language: 'es-MX' });
+    await telemetry.insertBatch(pool, ben.id, start(10), { language: 'es-MX' });
+    await telemetry.insertBatch(pool, cho.id, start(10), { language: 'ja' });
+    await telemetry.insertBatch(pool, cho.id, start(2));
+    await telemetry.insertBatch(pool, admin.id, start(1), { language: 'de' });
+    // Older than any window read below.
+    await pool.query(
+      `UPDATE events SET created_at = NOW() - INTERVAL '40 days'
+        WHERE user_id = $1 AND metadata->>'language' = 'ja'`, [cho.id]);
+
+    assert.deepEqual(await telemetry.browserLanguages(pool, { days: 30 }), {
+      days: 30, people: 2, languages: [{ language: 'es-MX', people: 2 }],
+    }, 'Ana counts once, under her latest; Cho’s only language is outside the window; the admin is left out');
+    assert.deepEqual((await telemetry.browserLanguages(pool, { days: 90, includeAdmins: true })).languages, [
+      { language: 'es-MX', people: 2 }, { language: 'de', people: 1 }, { language: 'ja', people: 1 },
+    ]);
+  });

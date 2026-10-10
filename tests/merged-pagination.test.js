@@ -48,7 +48,7 @@ function makeRows(n) {
 }
 
 function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary, legacyCursor,
-  childDeploymentState = 'unknown' }) {
+  childDeploymentState = 'unknown', stallCarried = false, selfRow = null }) {
   const routes = [];
   const ids = {
     express: 'express',
@@ -93,6 +93,16 @@ function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary, legacy
         }
         if (/FROM chat_sessions live/.test(sql)) {
           return { rows: deploymentBoundary ? [deploymentBoundary] : [] };
+        }
+        // release-watch.carriedBy: did the recorded commit merge no later
+        // than the running one?
+        if (/FROM chat_sessions recorded\s+JOIN chat_sessions serving/.test(sql)) {
+          return { rows: stallCarried ? [{ '?column?': 1 }] : [] };
+        }
+        // release-watch.outlook: the self-hosted row the next release's
+        // estimate is made from (unanswered unless a test passes it).
+        if (/FROM apps a\s+LEFT JOIN LATERAL/.test(sql)) {
+          return { rows: selfRow ? [selfRow] : [] };
         }
         // #433: the column-total COUNT (no `cs.` alias) — answer it before
         // the per-row merged SELECT so the two don't collide.
@@ -306,6 +316,46 @@ test('self-hosted apps derive deployed and deploying rows from the live merge bo
   assert.match(boundaryCall.sql, /LOWER\(live\.merge_commit_sha\) = LOWER\(\$2\)/);
 });
 
+test('a self-hosted merge going live carries its next release, and the Done column the newest one\'s', async () => {
+  // #4309 follow-up: "Merged; goes live in the next release (about 8 minutes)".
+  require('../src/services/release-watch')._forTest.resetOutlook();
+  const MIN = 60 * 1000;
+  const now = Date.now();
+  const shas = ['cccccccccccccccccccccccccccccccccccccccc', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'];
+  const rows = makeRows(3).map((row, i) => ({
+    ...row,
+    merge_commit_sha: shas[i],
+    merged_at: new Date(now - (1 + 30 * i) * MIN).toISOString(),
+  }));
+  const { routes, captured } = loadVotes({
+    mergedRows: rows,
+    app: { self_hosted: true, main_sha: shas[1], release_stall: null },
+    deploymentBoundary: { ...rows[1], pending_count: 1 },
+    // The running release went out three minutes ago; the gap holds the next.
+    selfRow: { id: 1, main_sha: shas[1], last_deploy_at: new Date(now - 3 * MIN), release_stall: null, release_run: null,
+      newest_at: new Date(rows[0].merged_at) },
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['deploying', 'deployed', 'deployed']);
+  const release = { state: 'next', etaAt: new Date(now + 8 * MIN).toISOString() };
+  assert.deepEqual(payload.merged[0].release, release);
+  assert.equal(payload.merged[1].release, undefined, 'live already');
+  assert.deepEqual(payload.deployment.release, release);
+  assert.equal(captured.calls.filter((call) => /FROM apps a\s+LEFT JOIN LATERAL/.test(call.sql)).length, 1, 'one read');
+});
+
+test('a child app\'s merges going live carry no release: their own deploy makes them live', async () => {
+  require('../src/services/release-watch')._forTest.resetOutlook();
+  const { routes, captured } = loadVotes({
+    mergedRows: makeRows(2), app: { self_hosted: false, main_sha: null }, childDeploymentState: 'pending',
+    selfRow: { id: 1, main_sha: null, last_deploy_at: new Date(), release_stall: null, release_run: null, newest_at: new Date() },
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.ok(payload.merged.every((row) => row.release === undefined));
+  assert.equal(payload.deployment.release, undefined);
+  assert.ok(!captured.calls.some((call) => /FROM apps a\s+LEFT JOIN LATERAL/.test(call.sql)), 'nothing read for it');
+});
+
 test('self-hosted deployment stalls mark the matching pending proposal', async () => {
   const running = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   const stalled = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -327,6 +377,60 @@ test('self-hosted deployment stalls mark the matching pending proposal', async (
   assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['stalled', 'deployed']);
   assert.equal(payload.deployment.state, 'stalled');
   assert.equal(payload.deployment.stall.sha, stalled);
+  const order = captured.calls.find((call) => /FROM chat_sessions recorded/.test(call.sql));
+  assert.deepEqual(order.params, [1, stalled, running], 'the recorded commit is ordered against the running one');
+});
+
+// Several merges, one release (#3872): newest first, a merge still on its way,
+// the release that is running, and an earlier merge the record names. That
+// one never ran by itself; the running build carries it.
+function carriedRows() {
+  const shas = ['cccccccccccccccccccccccccccccccccccccccc', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'];
+  const rows = makeRows(3).map((row, i) => ({
+    ...row,
+    merge_commit_sha: shas[i],
+    merged_at: new Date(Date.UTC(2026, 9, 5, 8, 46 - 15 * i)).toISOString(),
+  }));
+  return { shas, rows };
+}
+
+test('several merges in one release: a recorded stall the running build carries is resolved', async () => {
+  const { shas, rows } = carriedRows();
+  const { routes, captured } = loadVotes({
+    mergedRows: rows,
+    app: {
+      self_hosted: true,
+      main_sha: shas[1],
+      release_stall: { sha: shas[2], kind: 'workflow_running', detectedAt: '2026-10-05T08:42:00Z' },
+    },
+    deploymentBoundary: { ...rows[1], pending_count: 1 },
+    stallCarried: true,
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  // The recorded commit is live inside the running build, so it says so.
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['deploying', 'deployed', 'deployed']);
+  assert.equal(payload.deployment.state, 'deploying', 'the Done column does not call the release stalled');
+  assert.equal(payload.deployment.stall, undefined);
+});
+
+test('a superseded release: the failed run\'s successor went live and carried it', async () => {
+  // The recorded commit's release did not complete (cancelled); the next
+  // merge's release did, and is what is running.
+  const { shas, rows } = carriedRows();
+  const { routes, captured } = loadVotes({
+    mergedRows: rows,
+    app: {
+      self_hosted: true,
+      main_sha: shas[0],
+      release_stall: { sha: shas[1], kind: 'workflow_failed', detectedAt: '2026-10-05T08:40:00Z' },
+    },
+    deploymentBoundary: { ...rows[0], pending_count: 0 },
+    stallCarried: true,
+  });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.deepEqual(payload.merged.map((row) => row.deployment_state), ['deployed', 'deployed', 'deployed']);
+  assert.equal(payload.deployment.state, 'deployed');
+  assert.equal(payload.deployment.stall, undefined);
 });
 
 test('unmatched self-hosted revisions keep the honest merged fallback', async () => {

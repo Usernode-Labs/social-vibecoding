@@ -30,6 +30,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -91,7 +92,9 @@ test('an agent chat falls back to when it was created', () => {
 test('each filter admits exactly its own kind, and All admits every one', () => {
   // The Channels filter went with the channels (they live on their hubs).
   assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[0]), ['all', 'people', 'agents']);
-  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[1]), ['All', 'People', 'Agents']);
+  assert.equal(message('messages:inbox.filter.all'), 'All');
+  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => message(f[1])), ['All', 'People', 'Agents']);
+  assert.deepEqual(inbox.INBOX_FILTERS.map((f) => f[1]), ['messages:inbox.filter.all', 'messages:inbox.filter.people', 'messages:inbox.filter.agents']);
   for (const kind of ['person', 'agent']) {
     assert.equal(inbox.admits('all', kind), true, `all admits ${kind}`);
   }
@@ -105,6 +108,21 @@ test('each filter admits exactly its own kind, and All admits every one', () => 
     discussions: [{ slug: 'notes', lastAt: null }], agents: [], filter: 'people',
   });
   assert.deepEqual(people.map((e) => e.key), ['person:1'], 'a channel is no one\'s person row');
+});
+
+test('#18 (WP3): the Homeroom bot\'s DM is filed under Agents, not People, and is still drawn as a DM', () => {
+  const conversations = [
+    { id: 1, lastActivityAt: at('2026-01-02T00:00:00Z') },
+    { id: 2, kind: 'direct', homeroomBot: true, lastActivityAt: at('2026-01-03T00:00:00Z') },
+  ];
+  const sessions = [{ key: 's7', lastActivityAt: at('2026-01-01T00:00:00Z') }];
+  const build = (filter) => inbox.buildInbox({ conversations, discussions: [], agents: [], sessions, filter });
+  assert.deepEqual(build('agents').map((e) => e.key), ['person:2', 'session:s7'], 'Agents lists it, on the same clock');
+  assert.deepEqual(build('people').map((e) => e.key), ['person:1'], 'People does not');
+  assert.deepEqual(build('all').map((e) => e.key), ['person:2', 'person:1', 'session:s7'], 'All lists it once');
+  const [bot] = build('agents');
+  assert.deepEqual([bot.kind, bot.section], ['person', 'chats'], 'drawn by the conversation row, as before');
+  assert.match(SCREEN, /conversations: snap\.conversations,/, 'the screen hands the merge the summaries that carry the mark');
 });
 
 test('agent chats are read, not copied', () => {
@@ -150,7 +168,8 @@ test('the "+" is back at the strip\'s trailing end, and opens a choice rather th
   // THE VOTE POPUP'S MECHANICS, shared rather than copied: placement from
   // the button's rect, dismissal on outside click / Escape / scroll / resize.
   assert.match(fn, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/);
-  assert.match(fn, /placeUnderAnchor\(rect, \{ width: 240, height: 164 \}/);
+  // B8: sized to its rows, which are four with Homeroom bot and three without.
+  assert.match(fn, /placeUnderAnchor\(rect, \{ width: 260, height: 54 \* newChoices\(\)\.length \+ 2 \}/);
   assert.match(fn, /createPortal\(/, 'portalled, so the list\'s scroller cannot clip it');
   assert.match(fn, /role="menu"/);
   assert.match(fn, /pu\.actionSheet\(\{/, 'a phone gets the kit\'s action sheet');
@@ -158,12 +177,22 @@ test('the "+" is back at the strip\'s trailing end, and opens a choice rather th
   assert.match(card, /useAnchoredDismiss\(open, \[btnRef, popRef\], shut\);/, 'the vote picker reads the same helper');
   assert.match(card, /placeUnderAnchor\(rect, \{ width: w, height: h \}/);
 
-  assert.match(SCREEN, /\{ key: 'direct', label: 'Direct message'/);
-  assert.match(SCREEN, /\{ key: 'group', label: 'Group chat'/);
-  assert.match(SCREEN, /\{ key: 'agent', label: 'Agent session'/);
+  assert.equal(message('messages:inbox.new.direct.label'), 'Direct message');
+  assert.match(SCREEN, /\{ key: 'direct', label: 'messages:inbox\.new\.direct\.label'/);
+  assert.equal(message('messages:inbox.new.group.label'), 'Group chat');
+  assert.match(SCREEN, /\{ key: 'group', label: 'messages:inbox\.new\.group\.label'/);
+  // B8: building it yourself, beside Homeroom bot, which leads for somebody who has it.
+  assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
+  assert.equal(message('messages:inbox.new.agent.hint'), 'Plan and build a change with a coding agent');
+  assert.match(SCREEN, /\{ key: 'agent', label: 'messages:inbox\.new\.agent\.label', hint: 'messages:inbox\.new\.agent\.hint' \}/);
+  assert.equal(message('messages:inbox.new.bot.label'), 'Homeroom bot');
+  assert.equal(message('messages:inbox.new.bot.hint'), 'Make an app or suggest an improvement');
+  assert.match(SCREEN, /\{ key: 'bot', label: 'messages:inbox\.new\.bot\.label', hint: 'messages:inbox\.new\.bot\.hint' \}/);
+  assert.match(SCREEN, /return NEW_CHOICES\.filter\(\(item\) => item\.key !== 'bot' \|\| hasHomeroomBot\(\)\);/);
   const start = SCREEN.slice(SCREEN.indexOf('function startNew'));
   const starter = start.slice(0, start.indexOf('\n}\n'));
-  assert.match(starter, /if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);/,
+  assert.match(starter, /if \(choice === 'bot'\) void openBot\(\);/, 'Homeroom bot opens the chat with it');
+  assert.match(starter, /else if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);/,
     'Agent opens one new conversation with the Mayor, with no app to pick first (#2779)');
   assert.match(starter, /else openDialog\('messagesCreate', choice\);/,
     'DM and group open the create flow on the matching tab');
@@ -259,7 +288,9 @@ test('one row shape per kind; the channels are headed rather than pilled', () =>
   assert.match(SCREEN, /function AgentChatRow/);
   assert.doesNotMatch(SCREEN, /<KindPill kind="app" \/>/, 'a section heading says it once');
   assert.match(SCREEN, /<KindPill kind="agent" \/>/, 'an agent among the people still says so');
-  assert.match(SCREEN, /chats: 'Chats',\s*channels: 'Channels',/);
+  assert.equal(message('messages:inbox.section.chats'), 'Chats');
+  assert.equal(message('messages:inbox.section.channels'), 'Channels');
+  assert.match(SCREEN, /chats: 'messages:inbox\.section\.chats',\s*channels: 'messages:inbox\.section\.channels',/);
   // ONE LIST, unheaded: the channels moved to their hubs, which leaves the
   // chats alone, and a lone "Chats" heading would label nothing.
   assert.match(SCREEN, /sectionRuns\(shown, false\)/, 'no heading over the one list');
@@ -379,7 +410,11 @@ test('the app chat chips the same channels, as a link and not as a drawer ref', 
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /window\.UsernodeReact\?\.messages\?\.channels\?\.\(\)/, 'it reads the Messages store\'s directory');
   assert.match(gc, /link\.className = 'gc-channel-ref';/);
-  assert.match(gc, /`#messages\/channel\/\$\{seg\.handle\}`/);
+  assert.match(gc, /return \{ href: `#messages\/channel\/\$\{handle\}`, handle, topic: false \};/);
+  // #4417: inside a project, its topics' handles (and the ones they had
+  // before a rename) come first, and link to the topic's channel there.
+  assert.match(gc, /window\.UsernodeReact\?\.places\?\.topicHandles\?\.\(slug\)/);
+  assert.match(gc, /href: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/c\/\$\{topic\}`, handle: topic, topic: true/);
   assert.doesNotMatch(gc, /gc-ref gc-ref-channel/, 'never `.gc-ref`, which the chat sends to the activity drawer');
   const app = read('public/js/app.js');
   assert.match(app, /parts\[1\] === 'channel'[\s\S]{0,160}openChannel\?\.\(parts\[2\] \|\| ''\)/);

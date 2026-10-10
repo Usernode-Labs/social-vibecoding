@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const source = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dialogs/feedback-controller.js'), 'utf8')
   .replace(/^import .*$/gm, '').replace(/^export /gm, '') + '\nglobalThis.Feedback = Feedback;';
 const moment = { userId: 7, appSlug: 'filed-app', issueNumber: 41, canFix: true };
@@ -27,6 +28,8 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
   let id = 0, queueHooks, failedReads = 0;
   const el = id => { if (!els.has(id)) els.set(id, element(id)); return els.get(id); };
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
     console, URLSearchParams, location: { search: '', hash: '', pathname: '/' },
     document: { getElementById: el, querySelector: () => null, querySelectorAll: () => [], createElement: element, addEventListener() {}, body: { appendChild() {} } },
     localStorage: { getItem() { return null; }, setItem() {} }, sessionStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
@@ -142,8 +145,11 @@ test('an ordinary posted request stays on its own confirmation, with the way to 
   assert.ok(sent.focused, 'focus leaves the composer, so the keyboard comes down once');
   assert.ok(h.el('feedback-form').classList.contains('hidden'));
   // The heading names where it went; the notice carries only what else
-  // happened, here the bounty.
-  assert.equal(h.el('feedback-sent-title').textContent, 'Posted to Homeroom');
+  // happened, here the bounty. #3971: "Thanks!" leads it again, as it did
+  // before the UI overhaul (#3400) took it out.
+  assert.equal(h.el('feedback-sent-title').textContent, 'Thanks! Posted to Homeroom');
+  assert.equal(h.el('feedback-sent-line').textContent,
+    'Your idea is on the board now. Find it on your profile, under Your requests.');
   assert.match(h.el('feedback-sent-notice').textContent, /^Pledged 1 kudos.*4 left/);
   assert.equal(h.el('feedback-sent-notice').classList.contains('hidden'), false);
   for (const id of ['feedback-text', 'feedback-title']) assert.equal(h.el(id).readOnly, true);
@@ -161,14 +167,14 @@ test('?shot=feedback-sent poses the sent confirmation without filing anything', 
   const h = harness({ response: {} });
   h.sandbox.App._simulateFeedbackSent();
   assert.equal(h.el('feedback-sent').classList.contains('hidden'), false);
-  assert.equal(h.el('feedback-sent-title').textContent, 'Posted to Homeroom');
+  assert.equal(h.el('feedback-sent-title').textContent, 'Thanks! Posted to Homeroom');
   assert.equal(h.el('feedback-sent-notice').textContent, '');
   assert.ok(h.el('feedback-sent-notice').classList.contains('hidden'), 'nothing else happened, so the notice says nothing');
   assert.equal(h.el('feedback-text').readOnly, true);
   assert.equal(h.el('feedback-submit').disabled, true);
   assert.equal(h.calls.filter((c) => c.url === '/api/feedback').length, 0);
   const app = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
-  assert.match(app, /shot !== 'feedback-sent'\) return;/, 'the shot name is accepted');
+  assert.match(app, /shot !== 'feedback-sent' && shot !== 'feedback-bot'\) return;/, 'the shot names are accepted');
   assert.match(app, /App\._simulateFeedbackSent\?\.\(\);/);
 });
 test('Done closes the sent confirmation and goes nowhere', async () => {
@@ -256,4 +262,92 @@ test('a stale submission does not overwrite a reopened draft', async () => {
   h.el('feedback-cancel').click(); h.sandbox.App.openFeedbackModal(); h.el('feedback-text').value = 'New draft';
   finish({ firstFeedback: moment }); await settle();
   assert.equal(h.shown(), false); assert.equal(h.el('feedback-text').value, 'New draft');
+});
+
+// ── B8: Homeroom bot is on it ────────────────────────────────────────────
+//
+// #3971: B8 answered with "Got it" / "Homeroom bot is on it, usually about N
+// minutes.", which the request called bland next to what it replaced. The
+// answer says the idea is underway and what happens next now, and a first
+// request says so inside it rather than being skipped.
+const BOT = { botWillBuild: true, typicalMinutes: 6, canFix: true, appSlug: 'filed-app', issueNumber: 41 };
+const BOT_TITLE = 'Your idea is underway!';
+const botLine = (n) => `Homeroom bot is building it now, usually about ${n} minutes. You'll get a message when it's ready to try.`;
+test('B8: a request Homeroom bot builds is answered with its idea underway, how long it takes and Open chat', async () => {
+  const opened = [];
+  const h = harness({ response: { homeroomBot: BOT } });
+  h.sandbox.UsernodeReact.messages = { openBot() { opened.push(true); } };
+  await h.submit();
+  assert.equal(h.shown(), false, 'not the first-request moment: the bot is on it');
+  assert.equal(h.el('feedback-sent').classList.contains('hidden'), false);
+  assert.equal(h.el('feedback-sent-title').textContent, BOT_TITLE);
+  assert.equal(h.el('feedback-sent-line').textContent, botLine(6));
+  assert.ok(h.el('feedback-sent-first').classList.contains('hidden'), 'not a first request, so no first-request line');
+  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat leads');
+  assert.ok(h.el('feedback-sent-mine').classList.contains('hidden'), 'the chat is where to find it');
+  assert.equal(h.el('feedback-sent-fix').classList.contains('hidden'), false, 'building it yourself is the small link');
+  h.el('feedback-sent-chat').click();
+  assert.deepEqual(opened, [true]);
+  assert.ok(h.el('feedback-modal').classList.contains('hidden'));
+});
+test('#3971: a first request the bot builds is the bot\'s answer, with the first-request line naming the app', async () => {
+  const h = harness({ response: { firstFeedback: moment, homeroomBot: BOT } });
+  await h.submit();
+  assert.equal(h.shown(), false, 'the moment\'s own next steps would compete with Open chat');
+  assert.equal(h.el('feedback-sent').classList.contains('hidden'), false);
+  assert.equal(h.el('feedback-sent-title').textContent, BOT_TITLE);
+  assert.equal(h.el('feedback-sent-line').textContent, botLine(6));
+  assert.equal(h.el('feedback-sent-first').classList.contains('hidden'), false, 'the first request says so');
+  assert.equal(h.el('feedback-sent-first-line').textContent, 'You just helped shape Other App.');
+  assert.equal(h.el('feedback-sent-chat').classList.contains('hidden'), false, 'Open chat still leads');
+  // Another account's moment is not this person's first request.
+  const other = harness({ response: { firstFeedback: { ...moment, userId: 8 }, homeroomBot: BOT } });
+  await other.submit();
+  assert.ok(other.el('feedback-sent-first').classList.contains('hidden'));
+  // The next confirmation, a second request, does not carry it over.
+  h.el('feedback-sent-done').click();
+  h.sandbox.App.openFeedbackModal();
+  h.sandbox.fetch = async () => ({ ok: true, json: async () => ({ homeroomBot: BOT }) });
+  await h.submit();
+  assert.ok(h.el('feedback-sent-first').classList.contains('hidden'));
+});
+test('#3971: the minutes fall back to 8 when the post does not say', async () => {
+  const h = harness({ response: { homeroomBot: { ...BOT, typicalMinutes: null } } });
+  await h.submit();
+  assert.equal(h.el('feedback-sent-line').textContent, botLine(8));
+});
+test('#3971: the group path is thanked and still says where it went', async () => {
+  const h = harness({ response: { homeroomBot: { botWillBuild: false } } });
+  h.el('feedback-text').value = 'The board jumps.';
+  h.el('feedback-target-app').click();
+  h.el('feedback-submit').click();
+  await settle();
+  assert.equal(h.el('feedback-sent-title').textContent, "Thanks! Sent to Other App's group");
+  assert.equal(h.el('feedback-sent-line').textContent,
+    'Your idea is on the board now. Find it on your profile, under Your requests.');
+  assert.ok(h.el('feedback-sent-first').classList.contains('hidden'));
+});
+test('B8: Build it now opens the request on the board and starts a change from it', async () => {
+  const h = harness({ response: { homeroomBot: BOT } });
+  await h.submit();
+  h.el('feedback-sent-fix').click(); await settle();
+  assert.deepEqual(h.nav, [['filed-app', 'dev', 41, 'issues']]);
+  assert.deepEqual(h.fixes, [41]);
+});
+test('B8: no link for somebody who could not build it, and the ordinary words when the bot is not on it', async () => {
+  const h = harness({ response: { homeroomBot: { ...BOT, canFix: false } } });
+  await h.submit();
+  assert.ok(h.el('feedback-sent-fix').classList.contains('hidden'));
+  const plain = harness({ response: {} });
+  await plain.submit();
+  assert.equal(plain.el('feedback-sent-line').textContent,
+    'Your idea is on the board now. Find it on your profile, under Your requests.');
+  assert.ok(plain.el('feedback-sent-chat').classList.contains('hidden'));
+  assert.equal(plain.el('feedback-sent-mine').classList.contains('hidden'), false);
+  // ?shot=feedback-bot poses it without filing anything.
+  const shot = harness({ response: {} });
+  shot.sandbox.App._simulateFeedbackBot();
+  assert.equal(shot.el('feedback-sent-title').textContent, BOT_TITLE);
+  assert.ok(shot.el('feedback-sent-first').classList.contains('hidden'));
+  assert.equal(shot.calls.filter((c) => c.url === '/api/feedback').length, 0);
 });

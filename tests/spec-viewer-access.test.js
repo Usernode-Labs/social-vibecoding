@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -91,9 +92,10 @@ function makeMockPool(initial = {}) {
     calls.push({ sql: s, params });
 
     // GET /spec: unscoped session lookup.
-    if (/SELECT cs\.id, cs\.user_id, cs\.spec_md\s+FROM chat_sessions cs\s+WHERE cs\.id = \$1/i.test(s)) {
+    // #3699: spec_html rides along (the latest version's HTML document, or null).
+    if (/SELECT cs\.id, cs\.user_id, cs\.spec_md, cs\.spec_html\s+FROM chat_sessions cs\s+WHERE cs\.id = \$1/i.test(s)) {
       const row = state.sessions.get(Number(params[0]));
-      return { rows: row ? [{ id: row.id, user_id: row.user_id, spec_md: row.spec_md }] : [] };
+      return { rows: row ? [{ id: row.id, user_id: row.user_id, spec_md: row.spec_md, spec_html: row.spec_html || null }] : [] };
     }
     // GET /spec, owner arm: unfiltered version list.
     if (/LENGTH\(content\) AS char_count\s+FROM chat_session_specs\s+WHERE session_id = \$1\s+ORDER BY version DESC/i.test(s)) {
@@ -104,7 +106,7 @@ function makeMockPool(initial = {}) {
       return { rows };
     }
     // GET /spec, non-owner arm: shared-visibility filter, content rides along.
-    if (/LENGTH\(content\) AS char_count, content\s+FROM chat_session_specs s[\s\S]*chat_session_spec_user_shares us[\s\S]*chat_session_spec_conversation_shares scs/i.test(s)) {
+    if (/LENGTH\(content\) AS char_count, content, content_html\s+FROM chat_session_specs s[\s\S]*chat_session_spec_user_shares us[\s\S]*chat_session_spec_conversation_shares scs/i.test(s)) {
       const sid = Number(params[0]);
       const viewer = Number(params[1]);
       const rows = state.specs
@@ -113,7 +115,7 @@ function makeMockPool(initial = {}) {
           || state.userShares.some((u) => u.session_id === sid && u.version === x.version && u.recipient_id === viewer)
           || state.convShares.some((c) => c.session_id === sid && c.version === x.version && c.user_id === viewer))
         .sort((a, b) => b.version - a.version)
-        .map((x) => ({ ...specMeta(x), content: x.content }));
+        .map((x) => ({ ...specMeta(x), content: x.content, content_html: x.content_html || null }));
       return { rows };
     }
     return { rows: [], rowCount: 0 };
@@ -181,6 +183,26 @@ test('owner → spec_md + ALL versions, unshared drafts included', async () => {
     assert.equal(status, 200);
     assert.equal(body.spec, '# Live draft, ahead of v2');
     assert.deepEqual(body.versions.map((v) => v.version), [2, 1]);
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('#3699: an HTML spec rides along as `html`, for the owner and for a shared version, never in the version rows', async () => {
+  const state = baseState();
+  state.sessions[0][1].spec_html = '<article data-spec><h1>Live</h1></article>';
+  state.specs[1].content_html = '<article data-spec><h1>v2</h1></article>';
+  const pool = makeMockPool(state);
+  const loaded = loadSessions(pool);
+  try {
+    const owner = await getSpec(loaded, { id: 1, username: 'alice' }, '/api/sessions/10/spec');
+    assert.equal(owner.body.spec, '# Live draft, ahead of v2', 'spec stays the markdown');
+    assert.equal(owner.body.html, '<article data-spec><h1>Live</h1></article>');
+    const other = await getSpec(loaded, { id: 2, username: 'bob' }, '/api/sessions/10/spec');
+    assert.equal(other.body.html, '<article data-spec><h1>v2</h1></article>');
+    assert.ok(!('content_html' in other.body.versions[0]));
+    const plain = await getSpec(loaded, { id: 1, username: 'alice' }, '/api/sessions/11/spec');
+    assert.equal(plain.body.html, null, 'a markdown spec has no html');
   } finally {
     loaded.restore();
   }
@@ -319,13 +341,15 @@ test('both spec read routes consume the ONE shared visibility fragment', () => {
     'the fragment helper exists'
   );
   // One interpolation per route: the version-list route (viewer is $2)
-  // and the single-version route (viewer is $3). If either inlines its
-  // own copy of the predicate again, this count drifts and the gates can
-  // diverge — the exact bug class this refactor removes.
+  // and the single-version route (viewer is $3), plus the change page's
+  // plan card (changePlanFor, #4479), which names the version Read opens.
+  // If any inlines its own copy of the predicate again, this count drifts
+  // and the gates can diverge — the exact bug class this refactor removes.
   const callSites = src.match(/\$\{specVersionSharedVisibilitySql\(/g) || [];
-  assert.equal(callSites.length, 2, 'exactly two interpolation call sites');
+  assert.equal(callSites.length, 3, 'exactly three interpolation call sites');
   assert.ok(src.includes("specVersionSharedVisibilitySql('s', '$2')"), 'list route call site');
   assert.ok(src.includes("specVersionSharedVisibilitySql('s', '$3')"), 'single-version route call site');
+  assert.ok(src.includes("async function changePlanFor("), 'plan card call site');
 });
 
 test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
@@ -340,8 +364,10 @@ test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
   assert.ok(/userShare = !isOwner \? \{ kind: 'absent' \}/.test(render),
     'user-share button is owner-only');
   assert.ok(render.includes('isOwner && isLatest && !isEmpty'), 'build hint is owner-only');
-  assert.ok(render.includes('No spec has been shared for this session yet.'), 'non-owner empty copy');
-  assert.ok(render.includes('No spec yet. Ask the AI to draft one.'), 'owner empty copy kept');
+  assert.ok(render.includes("PlatformI18n.t('devchat:spec.empty.viewer')"), 'non-owner empty copy');
+  assert.equal(message('devchat:spec.empty.viewer'), 'No plan has been shared for this session yet.');
+  assert.ok(render.includes("PlatformI18n.t('devchat:spec.empty.owner')"), 'owner empty copy kept');
+  assert.equal(message('devchat:spec.empty.owner'), 'No plan yet. Ask the AI to draft one.');
   // And the component renders nothing at all for an `absent` action.
   const tsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
   assert.ok((tsx.match(/if \(action\.kind === 'absent'\) return null;/g) || []).length === 2,

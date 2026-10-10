@@ -768,3 +768,115 @@ test('no capture path awaits video.play() without a bound (#3011)', () => {
   assert.doesNotMatch(src, /await\s+video\.play\(\)/);
   assert.equal((src.match(/settleWithin\(video\.play\(\)/g) || []).length, 3);
 });
+
+// ── A share the browser never answers, and a share of the wrong thing ─────
+//
+// Firefox on a Mac hands the choice to the system picker, and a Firefox that
+// has been running a while can take "Share This Window" and never settle
+// getDisplayMedia. The dialog has to be able to give such an attempt up, and
+// a stream that arrives after that must not be left sharing.
+
+test('untilAbandoned: passes the answer through, and without a signal is the same promise', async () => {
+  const { untilAbandoned } = loadScreenshotSelect();
+  const p = Promise.resolve(1);
+  assert.equal(untilAbandoned(p, undefined), p);
+  assert.equal(await untilAbandoned(Promise.resolve(7), new AbortController().signal), 7);
+  await assert.rejects(untilAbandoned(Promise.reject(new Error('nope')), new AbortController().signal), /nope/);
+});
+
+test('untilAbandoned: an abort ends the wait at once and a late answer goes to onLate', async () => {
+  const { untilAbandoned } = loadScreenshotSelect();
+  let answer;
+  const pending = new Promise((resolve) => { answer = resolve; });
+  const late = [];
+  const ctl = new AbortController();
+  const waiting = untilAbandoned(pending, ctl.signal, (v) => late.push(v));
+  ctl.abort();
+  await assert.rejects(waiting, (err) => err.code === 'abandoned');
+  answer('stream');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(late, ['stream']);
+});
+
+test('untilAbandoned: a signal aborted before the call, and a late refusal, are both quiet', async () => {
+  const { untilAbandoned } = loadScreenshotSelect();
+  const ctl = new AbortController();
+  ctl.abort();
+  await assert.rejects(untilAbandoned(new Promise(() => {}), ctl.signal), (err) => err.code === 'abandoned');
+  // A refusal after the attempt was given up has nobody to tell (and must
+  // not surface as an unhandled rejection).
+  let refuse;
+  const ctl2 = new AbortController();
+  const waiting = untilAbandoned(new Promise((_r, reject) => { refuse = reject; }), ctl2.signal);
+  ctl2.abort();
+  await assert.rejects(waiting, (err) => err.code === 'abandoned');
+  refuse(new Error('late refusal'));
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
+test('tooSmallForPage: the sharing indicator is too small; real window and screen shares are not', () => {
+  const { tooSmallForPage } = loadScreenshotSelect();
+  // Firefox's floating indicator, shared from the macOS picker, against the
+  // 960x1120 viewport it was measured with.
+  assert.equal(tooSmallForPage(379, 32, 960, 1120), true);
+  // The page's own window at 1x (Firefox) and 2x (Chromium), and a screen
+  // share downscaled to half.
+  assert.equal(tooSmallForPage(960, 1205, 960, 1120), false);
+  assert.equal(tooSmallForPage(1920, 2410, 960, 1120), false);
+  assert.equal(tooSmallForPage(960, 621, 960, 1120), false);
+  // Nothing known yet is not "too small".
+  assert.equal(tooSmallForPage(0, 0, 960, 1120), false);
+});
+
+function framedVideo(width, height, play = () => Promise.resolve()) {
+  return {
+    style: {}, videoWidth: width, videoHeight: height, muted: false, playsInline: false, srcObject: null,
+    play, addEventListener() {}, remove() {},
+  };
+}
+
+test('start(): a getDisplayMedia the browser never answers can be given up, and a late stream is stopped', async () => {
+  let answer;
+  const { api, stopped, appended } = loadBrowserScreenshotSelect({
+    getDisplayMedia: (_opts, stream) => new Promise((resolve) => { answer = () => resolve(stream); }),
+    video: framedVideo(800, 600),
+  });
+  const ctl = new AbortController();
+  let started = false;
+  const attempt = api.start({ signal: ctl.signal, onCaptureStart: () => { started = true; } });
+  ctl.abort();
+  await assert.rejects(attempt, (err) => err.code === 'abandoned');
+  assert.equal(appended.length, 0, 'nothing was put on the page for an attempt the browser never answered');
+  answer();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(stopped, ['video'], 'the share that turned up late was ended on arrival');
+  assert.equal(started, false);
+});
+
+test('start(): given up while the first frame was on its way, the dialog is not hidden and the share ends', async () => {
+  const ctl = new AbortController();
+  let played;
+  const { api, stopped } = loadBrowserScreenshotSelect({
+    getDisplayMedia: async (_opts, stream) => stream,
+    video: framedVideo(800, 600, () => new Promise((resolve) => { played = resolve; })),
+  });
+  let started = false;
+  const attempt = api.start({ signal: ctl.signal, onCaptureStart: () => { started = true; } });
+  await new Promise((resolve) => setImmediate(resolve));
+  ctl.abort();
+  played();
+  await assert.rejects(attempt, (err) => err.code === 'abandoned');
+  assert.equal(started, false);
+  assert.deepEqual(stopped, ['video']);
+});
+
+test('start(): a share far smaller than the page fails straight away as the wrong surface', async () => {
+  const { api, stopped } = loadBrowserScreenshotSelect({
+    getDisplayMedia: async (_opts, stream) => stream,
+    video: framedVideo(379, 32),
+  });
+  let started = false;
+  await assert.rejects(api.start({ onCaptureStart: () => { started = true; } }), (err) => err.code === 'wrong_surface');
+  assert.equal(started, false, 'the dialog stays up: there is no selection to make');
+  assert.deepEqual(stopped, ['video']);
+});

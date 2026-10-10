@@ -37,6 +37,7 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
@@ -206,6 +207,7 @@ function appRouteUpHref(
 }
 
 export function PlatformHeader() {
+  const t = useMessages();
   // The four elements the centering measurement needs. Passing them as refs
   // replaces the classic script's document.querySelector('header') +
   // previousElementSibling / nextElementSibling walk.
@@ -502,7 +504,7 @@ export function PlatformHeader() {
           <a
             id="back-btn"
             className={BACK_BTN_CLASS + (mode === 'none' ? ' hidden' : '')}
-            aria-label={backArrow ? 'Back' : backClose ? 'Close app' : 'Home'}
+            aria-label={backArrow ? t('core:header.back') : backClose ? t('core:header.closeApp') : t('core:header.home')}
             {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
           >
             {/*
@@ -688,7 +690,7 @@ export function PlatformHeader() {
             id="notifications-btn"
             href="#notifications"
             className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)]"
-            aria-label="Notifications"
+            aria-label={t('core:header.notifications')}
             aria-haspopup="dialog"
             onClick={(event) => {
               if ((window as any).NavLink?.isNativeClick?.(event)) return;
@@ -710,7 +712,7 @@ export function PlatformHeader() {
               */
               data-session-done="0"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
-              aria-label="Unread notifications"
+              aria-label={t('core:header.unreadNotifications')}
             >
             </span>
           </a>

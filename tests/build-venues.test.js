@@ -27,6 +27,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// The scripts under test read their text from the language runtime's
+// global; give them the real English one.
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
+globalThis.PlatformI18n = englishPlatformI18n();
+
 const BV = require('../public/js/build-venues.js');
 
 // Everything on: the maximal deployment, so a row that is absent here is
@@ -318,8 +323,8 @@ test('an active session with no branch is a REACHABLE state, not a stale row (#1
   // read as starting work rather than as continuing a branch that is not there.
   for (const status of ['active', 'paused']) {
     assert.equal(BV.webTargetKind({ sessionStatus: status, hasBranch: false }), 'new', status);
-    assert.equal(BV.webVerb(BV.webTargetKind({ sessionStatus: status, hasBranch: false })),
-      BV.webVerb('new'), 'and it is offered with the start-new-work verb');
+    assert.equal(BV.webRowLabel(BV.webTargetKind({ sessionStatus: status, hasBranch: false }), 'Codex on the web'),
+      BV.webRowLabel('new', 'Codex on the web'), 'and it is offered with the start-new-work verb');
   }
   // Promotion is the one status that outranks the missing branch: a promoted
   // session has a proposal to continue whatever its own branch column says.
@@ -327,10 +332,16 @@ test('an active session with no branch is a REACHABLE state, not a stale row (#1
 });
 
 test('the hand-off verb follows the target kind', () => {
-  assert.equal(BV.webVerb('session'), 'Continue this session with ');
-  assert.equal(BV.webVerb('proposal'), 'Continue this proposal with ');
-  assert.equal(BV.webVerb('new'), 'Start new work with ');
-  assert.equal(BV.webVerb('nonsense'), 'Start new work with ');
+  // The verb and the venue's name are one message now (session.json), so
+  // the whole row label is what a kind decides.
+  const venue = 'Codex on the web';
+  assert.equal(BV.webRowLabel('session', venue), 'Continue this session with Codex on the web');
+  assert.equal(BV.webRowLabel('proposal', venue), 'Continue this proposal with Codex on the web');
+  assert.equal(BV.webRowLabel('new', venue), 'Start new work with Codex on the web');
+  assert.equal(BV.webRowLabel('nonsense', venue), 'Start new work with Codex on the web');
+  assert.equal(message('session:venue.rowLabel.continueSession', { venue }), 'Continue this session with Codex on the web');
+  assert.equal(message('session:venue.rowLabel.continueProposal', { venue }), 'Continue this proposal with Codex on the web');
+  assert.equal(message('session:venue.rowLabel.startNew', { venue }), 'Start new work with Codex on the web');
 });
 
 test('active and paused give byte-identical labels, differing only in the tooltip', () => {

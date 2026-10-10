@@ -23,6 +23,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const FRAME = fs.readFileSync(
@@ -47,14 +48,21 @@ test('the row shell borrows the chip menu’s geometry', () => {
 test('every action row has a glyph, and every glyph is decoration', () => {
   const menu = FRAME.slice(FRAME.indexOf('id="dev-plus-menu"'));
   const rows = menu.match(/<PlusRow\b/g) || [];
-  // Eleven calls for ten rows: the members row is written as two, one per
+  // Twelve calls for eleven rows: the members row is written as two, one per
   // label pair, because tests/dev-plus-menu.test.js reads the two branches
   // separately to prove the self-hosted wording never leaks into the other.
   // "Make it private" (a public community's, on the hub) left the hero for
   // this menu in the UI overhaul's follow-up, and "Start a new change" left
-  // the foot of the hub for its top (#852 review).
-  assert.equal(rows.length, 11,
-    'new-change, issue, import-pr, make-private, app-settings, featured-illustration, members x2, rename, secrets, fork');
+  // the foot of the hub for its top (#852 review). "Suggest this back" is a
+  // remix owner's (./suggest-back-dialog.tsx). #4045: "Make it public" and
+  // Leave left the hero's row for it too (Leave was the Joined pill).
+  // #4045: "Settings & rules" is a row too, the one that opens the settings,
+  // and Remix is written twice: last in the settings sheet, and alone on the
+  // menu of a read-only viewer, who has no settings. #4405: Custom domain,
+  // under App settings, for whoever manages the project. #4417: Topics,
+  // after the display name, the other change that is a proposal to dapp.json.
+  assert.equal(rows.length, 18,
+    'new-change, issue, import-pr, settings, make-public, make-private, leave, app-settings, domain, featured-illustration, members x2, rename, topics, secrets, suggest-back, fork x2');
   const icons = menu.match(/icon=\{<([A-Za-z]+Icon) className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/g) || [];
   assert.equal(icons.length, rows.length, 'one glyph per row, all aria-hidden');
   // No <button data-plus> survives outside the shared shell — a hand-written
@@ -64,18 +72,26 @@ test('every action row has a glyph, and every glyph is decoration', () => {
 
 test('the subtitles survive: this is not the chip menu’s one-line row', () => {
   const menu = FRAME.slice(FRAME.indexOf('id="dev-plus-menu"'));
-  assert.match(menu, /Renames are proposals, applied once voted in/);
-  assert.match(menu, /Report a problem or idea without building it yourself/);
-  assert.match(menu, /Your computer &middot; your own tools\. You have already built it/);
-  assert.match(menu, /Stand up your own independent copy/);
+  // Each subtitle is a catalog entry now: the row wires its id, and the
+  // English catalog holds the words.
+  assert.match(menu, /data-plus="rename"[\s\S]{0,160}sub=\{t\('project:menu\.rename\.sub'\)\}/);
+  assert.equal(message('project:menu.rename.sub'), 'Renames are proposals, applied once voted in');
+  assert.match(menu, /data-plus="issue"[\s\S]{0,240}sub=\{t\('project:menu\.suggest\.sub'\)\}/);
+  assert.equal(message('project:menu.suggest.sub'), 'Report a problem or idea without building it yourself');
+  assert.match(menu, /data-plus="import-pr"[\s\S]{0,240}sub=\{t\('project:menu\.importPr\.sub'\)\}/);
+  assert.match(message('project:menu.importPr.sub'), /^Your computer · your own tools\. You have already built it/);
+  assert.match(menu, /title=\{t\('project:menu\.remix\.title'\)\}\s+sub=\{t\('project:menu\.remix\.sub'\)\}/);
+  assert.deepEqual([message('project:menu.remix.title'), message('project:menu.remix.sub')], ['Remix', 'Make your own copy']);
   assert.match(FRAME, /const PLUS_SUB_CLS = 'block text-xs/);
 });
 
 test('App settings is an access surface for app managers, not only deleters (#2304)', () => {
   const settings = FRAME.slice(FRAME.indexOf('data-plus="app-settings"') - 300);
   assert.match(settings.slice(0, 700), /appData\?\.can_manage && !selfHosted/);
-  assert.match(settings.slice(0, 900), /Manage who can use and build this app/);
-  assert.match(FRAME, /title="Members &amp; approvals"/);
+  assert.match(settings.slice(0, 900), /sub=\{t\('project:menu\.appSettings\.sub'\)\}/);
+  assert.equal(message('project:menu.appSettings.sub'), 'Manage who can use and build this app');
+  assert.match(FRAME, /title=\{t\('project:menu\.members\.title'\)\}/);
+  assert.equal(message('project:menu.members.title'), 'Members & approvals');
   assert.doesNotMatch(FRAME, /title="Members &amp; visibility"/);
 });
 

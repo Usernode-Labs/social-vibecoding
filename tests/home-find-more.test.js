@@ -28,6 +28,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
 const { renderComponent } = require('./lib/render-tsx');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 // The panel RENDERERS moved to frontend/src/features/home/panels/*.tsx when
 // the three sections became React (#1191); home-panels.js keeps the data and
 // the view models. Assertions about markup read the components, assertions
@@ -70,6 +71,7 @@ function makePanels({ canCreate = true, featured = [] } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home-panels.js imports its view-model store; ./helpers/home-modules strips
   // the line so the source runs as classic script text, and this supplies the
@@ -117,6 +119,7 @@ function makeHome({ search = '', canCreateApps = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
   // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
@@ -133,6 +136,9 @@ const app = (over) => ({
   directory: { tier: 'ready', state: 'working', label: 'Reviewed working' },
   is_collaborator: false,
   is_favorited: false,
+  is_member: false,
+  audience: 'open',
+  member_count: 0,
   favorite_order: null,
   featured: false,
   featured_order: null,
@@ -214,8 +220,8 @@ test('featuredApps: a slug in _discoverKeep stays in the rail after it becomes y
 test('popularApps: _discoverKeep holds a card there too, and only that card', () => {
   const Home = makeHome();
   const apps = [
-    app({ slug: 'kept', active_users: 9, is_favorited: true }),
-    app({ slug: 'other', active_users: 8, is_favorited: true }),
+    app({ slug: 'kept', active_users: 9, member_count: 9, is_favorited: true, is_member: true }),
+    app({ slug: 'other', active_users: 8, member_count: 8, is_favorited: true, is_member: true }),
   ];
   assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), []);
   Home._discoverKeep.add('kept');
@@ -356,63 +362,85 @@ test('the create-widget shot paths pin both quota treatments', () => {
     'the locked review path stays deterministic too');
 });
 
-// ── popularApps selection (#949) ──────────────────────────────────
+// ── popularApps selection ─────────────────────────────────────────
 //
-// The desktop widget's second lane: what everyone else is using, from the
-// `active_users` count GET /api/apps already serves. The ranking mirrors
-// Browse.sortApps' non-featured tail so the widget and the directory can't
-// disagree about what is popular.
+// The popular half of the Discover lane: the public communities the viewer
+// has NOT joined, from the `member_count`, `audience` and `is_member` fields
+// GET /api/apps already serves. Popularity is members first, `active_users`
+// as the tie-break.
 
 const pop = (over) => app({ active_users: 3, ...over });
 
-test('popularApps: ranks non-featured apps by active users, most first', () => {
+test('popularApps: ranks public unjoined communities by members, active users breaking ties', () => {
   const Home = makeHome();
   const apps = [
-    pop({ slug: 'few', active_users: 2 }),
-    pop({ slug: 'most', active_users: 11 }),
-    pop({ slug: 'some', active_users: 5 }),
+    pop({ slug: 'few', member_count: 4 }),
+    pop({ slug: 'most', member_count: 40 }),
+    pop({ slug: 'some', member_count: 12 }),
+    pop({ slug: 'tie-hi', member_count: 12, active_users: 9 }),
+    pop({ slug: 'tie-lo', member_count: 12, active_users: 2 }),
   ];
-  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['most', 'some', 'few']);
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug),
+    ['most', 'tie-hi', 'some', 'tie-lo', 'few']);
 });
 
-test('popularApps: the count is coerced — the API sends it as a string', () => {
+test('popularApps: the counts are coerced — the API sends bigints as strings', () => {
   const Home = makeHome();
-  // Postgres COUNT(*) is a bigint, so the serializer hands the client "9",
-  // not 9. A lexicographic sort would rank "9" above "10".
-  const apps = [pop({ slug: 'nine', active_users: '9' }), pop({ slug: 'ten', active_users: '10' })];
+  // Postgres COUNT(*) is a bigint, so a serializer that skips the coercion
+  // hands the client "9", not 9. A lexicographic sort would rank "9" above "10".
+  const apps = [
+    pop({ slug: 'nine', member_count: '9', active_users: '9' }),
+    pop({ slug: 'ten', member_count: '10', active_users: '10' }),
+  ];
   assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['ten', 'nine']);
-  assert.deepEqual(Home.popularApps([pop({ slug: 'n', active_users: 4 })]).map((a) => a.slug),
-    ['n'], 'and a real number works too');
+  assert.deepEqual(Home.popularApps([pop({ slug: 'n', member_count: 4, active_users: 4 })]).map((a) => a.slug),
+    ['n'], 'and real numbers work too');
+  // A missing member_count is zero members, and the active-user tie-break
+  // still orders it.
+  assert.deepEqual(Home.popularApps([
+    pop({ slug: 'no-count', member_count: undefined }),
+    pop({ slug: 'has-count', member_count: 1 }),
+  ]).map((a) => a.slug), ['has-count', 'no-count']);
 });
 
 test('popularApps: ties keep the order the server returned', () => {
   const Home = makeHome();
-  const apps = ['a', 'b', 'c'].map((slug) => pop({ slug, active_users: 4 }));
+  const apps = ['a', 'b', 'c'].map((slug) => pop({ slug, member_count: 4, active_users: 4 }));
   assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['a', 'b', 'c']);
 });
 
-test('popularApps: excludes featured, yours, errored, self-hosted and unused apps', () => {
+test('popularApps: excludes featured, joined, yours, private and errored apps', () => {
   const Home = makeHome();
   const apps = [
-    pop({ slug: 'keep', active_users: 9 }),
-    pop({ slug: 'featured', featured: true, active_users: 20 }),
-    pop({ slug: 'mine', is_favorited: true, active_users: 20 }),
-    pop({ slug: 'broken', status: 'error', active_users: 20 }),
-    pop({ slug: 'platform', self_hosted: true, active_users: 20 }),
-    pop({ slug: 'unused', active_users: 0 }),
-    pop({ slug: 'never-counted', active_users: null }),
+    pop({ slug: 'keep', member_count: 9 }),
+    pop({ slug: 'featured', featured: true, member_count: 20 }),
+    pop({ slug: 'joined', is_member: true, member_count: 20 }),
+    pop({ slug: 'joined-hidden', is_member: true, is_collaborator: true, your_apps_hidden: true, member_count: 20 }),
+    pop({ slug: 'favorited', is_favorited: true, member_count: 20 }),
+    pop({ slug: 'private', audience: 'invited', member_count: 20 }),
+    pop({ slug: 'solo', audience: 'solo', member_count: 20 }),
+    pop({ slug: 'no-audience', audience: null, member_count: 20 }),
+    pop({ slug: 'broken', status: 'error', member_count: 20 }),
+    pop({ slug: 'platform', self_hosted: true, member_count: 20 }),
+    // A public community with members but nobody active this week is now
+    // eligible: popularity is members, so the old one-active-user floor is
+    // gone.
+    pop({ slug: 'quiet', active_users: 0, member_count: 5 }),
+    // A null count coerces to zero members, which the floor used to hide
+    // and the lane now takes at the tail.
+    pop({ slug: 'never-counted', member_count: null }),
   ];
-  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['keep']);
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['keep', 'quiet', 'never-counted']);
 });
 
 test('popularApps: capped at POPULAR_LIMIT; empty / missing input is safe', () => {
   const Home = makeHome();
   assert.equal(Home.POPULAR_LIMIT, 6);
   const many = Array.from({ length: 20 }, (_, i) => pop({
-    slug: `p${i}`, active_users: 100 - i,
+    slug: `p${i}`, member_count: 100 - i, active_users: 100 - i,
   }));
   assert.deepEqual(Home.popularApps(many).map((a) => a.slug),
-    ['p0', 'p1', 'p2', 'p3', 'p4', 'p5'], 'the six most-used');
+    ['p0', 'p1', 'p2', 'p3', 'p4', 'p5'], 'the six most-joined');
   assert.equal(Home.popularApps([]).length, 0);
   assert.equal(Home.popularApps(undefined).length, 0);
 });
@@ -427,7 +455,8 @@ test('the Discover widget swaps its tile row for a note, never an empty box', ()
   // category is empty rather than when the curated half is.
   assert.match(src, /tiles\.length \?/);
   assert.doesNotMatch(src, /view\.featured\.length \?/);
-  assert.match(src, /Nothing to discover right now/);
+  assert.match(src, /\{t\('home:discover\.empty\.title'\)\}/);
+  assert.equal(message('home:discover.empty.title'), 'Nothing to discover right now');
   // The browse control always renders: it is THE discovery path, so it must
   // not depend on curation existing. It lives in the SECTION HEADING now, not
   // in the card at all — see the block test below — so it does not even
@@ -485,7 +514,7 @@ test('renderAppCard: an already-added app renders the ✓ state', () => {
   const added = app({ slug: 'mine', is_favorited: true });
   const html = Home.renderAppCard(added, { mode: 'browse' });
   assert.match(html, /data-added="true"/);
-  assert.match(html, /Remove mine from Shortcuts|Remove Some App from Shortcuts/);
+  assert.match(html, /Remove mine from My apps|Remove Some App from My apps/);
 });
 
 test('renderAppCard: home mode leaves the icon free of menu badges (#1616)', () => {
@@ -539,8 +568,9 @@ test('the apps grid is four columns at every width, two rows by default', () => 
   assert.match(HOME_SRC, /chromeStore\.set\(\{\s*moreCount: count \|\| 0,/);
   assert.match(
     read('frontend/src/features/home/apps-more.tsx'),
-    /`Show all \$\{moreCount\} apps`/
+    /\{t\('home:grid\.showAll', \{ count: moreCount \}\)\}/
   );
+  assert.equal(message('home:grid.showAll', { count: 9 }), 'Show all 9 apps');
   assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
     'the expander has a host outside #app-list');
 });
@@ -708,7 +738,8 @@ test('Create an app is the launcher grid\'s trailing tile, for every account', (
 test('a viewer with no quota can open the dialog to inspect it', () => {
   // The compact locked state carries the shared hint in its tooltip;
   // tapping opens the detailed used-of-limit row.
-  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'View your app allowance or request more slots\.'/);
+  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'home:create\.disabledHint'/);
+  assert.equal(message('home:create.disabledHint'), 'View your app allowance or request more slots.');
   const btn = TILE_SRC.slice(TILE_SRC.indexOf('onClick={'));
   assert.match(btn, /App\?\.showCreateModal\?\.\(\)/,
     'both enabled and locked tiles open the create modal');

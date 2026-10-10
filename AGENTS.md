@@ -70,7 +70,10 @@ before editing it.
   and the platform-managed commit upload. This path needs no personal GitHub
   link and no `prepare_work`. That tool prepares an external fork contribution
   and requires GitHub identity for that different workflow; do not call it
-  merely to discover a native proposal's base.
+  merely to discover a native proposal's base. When only the hosted Homeroom
+  connector is connected, that connector path is the one to take: do not set
+  up the CLI to reach `proposal_start` (see `usernode-api`, which keeps the
+  connector first for every Homeroom call).
 - **Establish the base commit before the first edit.** Use an already supplied
   work order or guided hand-off's `Base commit:` when present. For a new native
   proposal, use the exact canonical revision resolved through Homeroom as
@@ -133,7 +136,7 @@ selects a skill.
 - **The platform runs everything on every submission.** `npm run lint:sql`,
   the full unit suite (`npm test`) and every declared `dapp.json` check run
   against the submitted commit in a clean container, and they gate the merge.
-  A local run of all 13,000+ tests duplicates that, minutes at a time, and
+  A local run of all 19,000+ tests duplicates that, minutes at a time, and
   one hung test once held such a run open for an hour with no failure in it.
   The local run's job is narrower: to know, before you submit, whether the
   files you touched still satisfy the suites that read them.
@@ -150,6 +153,10 @@ selects a skill.
   whole-tree guards that name no file (icons, inks, em dashes, the Global
   Chat route inventory, …). A guard opts in with a
   `// test:changed: always (…)` line; mark a new one only if it is fast.
+  A suite that reaches a file only through a chain of modules declares it
+  with a `// test:changed: when <path> (…)` line, and a change to that file
+  or anything under that directory selects it: the Mayor turn golden
+  declares `src/prompts/`, because the prompts it pins are built from there.
 - **Run `npm test` only when shared code moved and the mapping cannot see
   who depends on it** — a `public/js/**` module other modules reach through
   a global (the mapping runs the suites that name the module, not those of
@@ -222,10 +229,24 @@ is no replay plan to write and nothing to verify locally.
   (`features/workshop/community-switcher.tsx`, scope in
   `community-scope.ts`). A project's page wears its community's colour
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
-  icon) and has four tabs, **Hub** (who is here and who it is for, the
-  actions, a 14-day trend, since your last visit, votes owed, the chat's
-  last lines, your work), **Chat**, **Needs you** and **All items**; the
-  **Workshop** page opens from the hub's since card. The Communities
+  icon) and is navigated by one list of **places**
+  (`features/dev-board/workshop/project-places.tsx`): **Hub** (who is here
+  and who it is for, the actions, a 14-day trend, since your last visit,
+  votes owed, the chat's last lines, your work), **Needs you** and
+  **Workshop**, a line, then **Channels** (**#general**) and **Topics**
+  (each topic's channel), each group under its heading. Place keys are
+  `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
+  (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
+  On a phone the list is a tray behind the place bar that names where you
+  are (`place-bar.tsx`, `places-tray.tsx`); on a wide window it is the
+  section column beside the 76px strip (`features/nav/section-column.tsx`),
+  and the page publishes where it is for it (`place-store.ts`). **All
+  items** is a page under the Workshop (its "See all"), with a way back, and
+  the Workshop stays lit in the list while it is up. A **topic** is a
+  channel and a category at once: an entry of dapp.json's `topics`,
+  reconciled into `app_category_registry` (origin `'topic'`) when a change
+  merges, its channel a `'category'` thread; a new topic, a rename, a merge
+  or an archive is a proposal (Settings & rules › Topics). The Communities
   screen's Needs you is one feed of every decision owed across your projects
   (`GET /api/workshop/needs-feed`). A project's channel lives on its page,
   not in Messages, and #general is the Homeroom community's channel;
@@ -235,15 +256,19 @@ is no replay plan to write and nothing to verify locally.
   or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
   new platform line names the proposal's, request's or decision's own thread
   (`{ type: 'session' | 'issue' | 'governance', ref }`) or is not written.
+  Homeroom bot answering somebody who mentioned it there is conversation,
+  not activity: it replies in a reply thread under their message
+  (`services/homeroom-bot-voice.js`), never unprompted and never in the
+  channel's own stream.
   App-wide state is shown where it lives: merges paused and a stalled release
   are banners on the project page, and settings changed lately and the
-  Friday card are the Workshop tab's notices panel (`services/app-notices.js`,
+  Friday card are the Workshop's notices panel (`services/app-notices.js`,
   read from `events` — record a new kind there, not a chat line).
   `migrate.clearAutomatedChannelLines` clears the lines written before. A
   door to a project's hub (a link that says so) calls
   `AppView._landOnHub(slug)` first, so it opens on the hub rather than the
-  tab the page was last left on. Back and Forward are not doors: the page
-  reopens on the tab last shown, read fresh when it mounts.
+  place the page was last left on. Back and Forward are not doors: the page
+  reopens on the place last shown, read fresh when it mounts.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
@@ -256,15 +281,21 @@ is no replay plan to write and nothing to verify locally.
   should render a separate "community" layer for it. The table is bare on
   purpose; a name and an audience move onto it when a community can own
   more than one project.
-- **A project is created FOR someone.** The create dialog asks who it is for
-  first (Just me, A private community, A public community) and
-  `POST /api/apps` takes `audience`, a private community's `invitees` and
-  the approval rule as dapp.json's own `governance` block
-  (`src/services/create-options.js`). The rule is written
-  into the new repository's dapp.json by the template, so it is votable later
-  like any other line there; an import's own dapp.json decides instead. Every
-  project uses an app slot whatever its audience: each one is a real
-  container and database.
+- **A project is created FOR someone, and on screen that is a private
+  community.** Create opens "What do you want to make?"
+  (`frontend/src/features/first-session/make.tsx`, the first session's own
+  screen), which asks what it should do and what to call it, or imports a
+  GitHub repo in place (`import-repo.tsx`), and makes a private community
+  with nobody invited yet; inviting comes next, on its made screen. The
+  create dialog that asked who it is for and who approves is retired: those
+  are the project's own levers afterwards (Invite, "Make it public", Members
+  & approvals). `POST /api/apps` still takes `audience`, a private
+  community's `invitees` and the approval rule as dapp.json's own
+  `governance` block (`src/services/create-options.js`) for any other
+  caller; the rule is written into the new repository's dapp.json by the
+  template, so it is votable later like any other line there, and an
+  import's own dapp.json decides instead. Every project uses an app slot
+  whatever its audience: each one is a real container and database.
 - **Membership gates taking part, not reading.** Starting a change,
   proposing, filing a request, voting (on proposals and requests) and posting
   in an app's chat answer 403 `join_required` to a non-member
@@ -326,6 +357,22 @@ is no replay plan to write and nothing to verify locally.
   image build enforces the same ordering: its shell builder prerenders the
   current `index.html`, then the CSS builder scans that generated document.
   There is no loop — `tailwind.css` is not a shell input.
+- **In `Dockerfile.kubernetes` the commit id comes after the bundle and the
+  stylesheet, and nothing above it may read it.** A build arg above a `RUN`
+  is part of that step's cache key. With `GIT_SHA` above the Vite step, every
+  commit rebuilt the bundle and the stylesheet whatever it had changed (167
+  of 167 preview builds in the logs that prompted the move). So the shell
+  stage runs `build-shell.mjs --keep-prerender` and the Tailwind compile
+  first, declares `ARG GIT_SHA`, and only then runs
+  `build-shell.mjs --document`, the release file and the precompressed
+  copies. `--document` runs no Vite: it renders again with the prerender
+  bundle the first run kept and rewrites `public/index.html` alone. The id
+  may reach the document and nothing else. Read it in either Vite pass, or
+  move a step that needs it above the `ARG`, and the reuse is gone with no
+  test of the output failing. Tailwind therefore scans a `dev` document;
+  `tests/tailwind-build.test.js` holds that an id adds no class, and
+  `tests/kubernetes-deployment-contract.test.js` pins the order. Run with no
+  flag, as every local flow does, the script still does everything in one go.
 - **`Shell.tsx` is now hand-maintained; resolve conflicts in it directly.** The
   one-time generators that derived it from the hand-written document
   (`html-to-jsx.cjs`, `apply-step1-edits.cjs`) and the pre-migration fixture
@@ -337,8 +384,13 @@ is no replay plan to write and nothing to verify locally.
   original order (`app.js` must stay last), and **converted markup is
   like-for-like** — same ids, class strings, `hidden` semantics and `data-*`
   attributes as the hand-written shell, because `public/js/**` looks those up
-  by `getElementById` and `dapp.json`'s 338 declared tests select on deep
-  chains of them. The structural baseline is
+  by `getElementById` and `dapp.json`'s 800+ declared checks (its `tests`
+  array; count it rather than trusting this line) select on deep chains of
+  them. Their ceiling is `MAX_DECLARED_TESTS` in
+  `src/services/app-manifest.js` (860), and the manifest keeps 20 slots
+  clear of it (`tests/lib/check-cap.js`). In October 2026 it stood exactly
+  at that floor, 840 of 860: fold a new check into an existing one first,
+  as the guards' message in `check-cap.js` says. The structural baseline is
   `tests/baselines/shell-markup.json` (ids, `data-*` names, script order,
   stylesheet order), enforced by `tests/shell-id-inventory.test.js`,
   `tests/dapp-selectors-resolve.test.js` and
@@ -357,7 +409,7 @@ is no replay plan to write and nothing to verify locally.
   and screen visibility must be published through
   `frontend/src/lib/visibility-store.ts` rather than by toggling `.hidden` from
   outside React.
-- **The nine dialogs present themselves through
+- **The shell's dialogs present themselves through
   `frontend/src/lib/static-modal.ts` — nothing outside React lifts their
   cards.** That seam used to be `PlatformUI.adoptStaticModal`, which watched
   each root in `STATIC_MODAL_IDS` and, when `hidden` came off, lifted the card
@@ -365,7 +417,8 @@ is no replay plan to write and nothing to verify locally.
   kit's `presentModal` shell. Two owners wrote to those nodes, so the dialogs
   had to stay markup-only. #1078 chunk I moved the lift inside React
   (`useStaticModal`, driven by `features/dialogs/use-dialog.ts`) and retired the
-  `public/js/**` copy, which is what made all nine stateful. **Drive a dialog
+  `public/js/**` copy, which is what made them all stateful (the create
+  dialog, the first of the nine, has since been retired). **Drive a dialog
   only through `useDialog`** — it owns `hidden`, the kit hand-off, the
   backdrop-dismiss rule and the ghost-click guard, and it publishes the
   controller on `window.UsernodeReact.dialogs.<name>` for the legacy callers.
@@ -398,9 +451,12 @@ between them is about the SURFACE each is drawn for, not about styling.
 - **The admin console** — the `AdminUI` registry in
   `frontend/src/features/admin/admin-console.js`. A frozen object of class
   *recipes* (`AdminUI.card`, `AdminUI.btn.primary`, `AdminUI.cardTitle`, …). It
-  is published on `window.AdminUI` as well as exported, because the section
-  modules (`admin-analytics.js`, `admin-mail.js`, `admin-topochain.js`, …) read
-  it as a bare identifier at call time.
+  is exported, and every module that draws with it imports it
+  (`import { AdminUI } from './admin-console.js'`; `admin-analytics.tsx` and
+  `admin-mail.tsx` among them). `admin-console.js` still publishes it on
+  `window.AdminUI` too, a leftover from when the sections were classic
+  scripts that read it as a bare identifier; nothing in `frontend/src` or
+  `public/js` reads the global now, so a new module imports it.
 
 The console used to be a genuinely separate design system — the topochain
 admin's `gray`/`indigo`, deliberately not the shell's `zinc`/`violet`. The
@@ -455,6 +511,9 @@ carry most of them.
 
   A state that is already done gets no fill. "Joined" is grey with a check;
   a filled green pill made the settled thing the loudest thing on screen.
+  A finished progress bar may be green (`--state-ok`, with a green check and
+  figure, as a change page's Votes and Testing cards are): there the end is
+  the good news, while a bar still moving is drawn in `--lit-ink`.
 - **Say it in words or a very obvious glyph, and let zero say nothing.** A
   count on a row is a phrase ("2 in progress · 3 to vote") or a number
   beside a glyph so obvious that nobody needs a legend to read it, like
@@ -530,6 +589,50 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   hands Season events a pre-set filter. Publish a function from the target
   module and import it — a bare global read broke exactly this way once, and
   a dead button is silent.
+
+## Translatable text is written once, in English — never translate by hand
+
+- **The client's text lives in catalogs, in English, and Homeroom translates
+  it.**
+  `frontend/locales/README.md` describes the language runtime
+  (`frontend/src/lib/i18n/`) and the rules for an entry. Everything the shell
+  shows or announces, in `frontend/src/**` and `public/js/**`, is read from
+  `frontend/locales/en/<namespace>.json`, one namespace per surface. New or
+  changed interface text goes into the surface's catalog in the same change;
+  do not write an English literal into a component or a classic script. What
+  stays in code is listed in the README: the admin console, a server's own
+  error sentences, text a person wrote, developer-only messages, and the
+  standalone pages that load no shell bundle.
+- **A catalog entry is a whole message with a description.**
+  `{ "text": "…", "description": "…" }`: no fragment joined to another, named
+  parameters (`{{email}}`, never `{{value1}}`), a `_one`/`_other` pair for a
+  count, one line saying where it appears, and numbered tags with
+  `RichMessage` (or `PlatformI18n.htmlRich` in a classic script) for a link
+  inside a sentence. The shell build and `tests/language-packs.test.js`
+  reject an entry that breaks the format, because that is a mistake in the
+  change itself.
+- **A message id is one whole literal**, `'namespace:area.element'`, so
+  `node scripts/language-inventory.js --ids` (run by
+  `tests/language-extraction.test.js`) can check that every id the code asks
+  for exists. `--literals` reports English still written in code, less
+  `frontend/locales/literal-allowlist.json`; it is a report, not a gate.
+- **A suite that pinned English in a source file pins the id and the catalog
+  text instead** (`message(id)` from `tests/lib/platform-i18n.js`), and a
+  sandboxed classic script gets `PlatformI18n: englishPlatformI18n()`.
+- **Do not add, edit or hash another language's catalog.** Translations come
+  from the translation step (`src/services/language-sync-runner.js`), which
+  Homeroom runs on main and puts to a vote as a proposal of its own, and a
+  build never waits on one: a missing or out-of-date translation shows
+  English for that one message and appears in
+  `node scripts/language-packs.js --report`. Nothing in a build or a test may
+  fail because a translation is absent. A person correcting a translation
+  edits its text and adds `"locked": true`.
+- **Adding a language is one line in `frontend/locales/config.json`** (and its
+  terms and style note in `glossary.json`). It is offered only once the
+  translation step's proposal covers `minimumCoverage` of the English.
+- `public/locales/` and `frontend/src/lib/i18n/catalogs.generated.json` are
+  generated by `scripts/language-packs.js` on every shell build. Never commit
+  them.
 
 ## Shell CSS is generated by the image build — do not commit it
 

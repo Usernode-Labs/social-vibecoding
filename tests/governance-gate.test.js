@@ -366,8 +366,8 @@ test('getGovernance: cached until invalidateGovernance', async () => {
 
 test('qualifiedCountsBatch: per-id counts restricted to the electorate', async () => {
   const rows = [
-    { id: 1, yes: '2', no: '0' },
-    { id: 3, yes: '0', no: '1' },
+    { id: 1, yes: '2', no: '0', other_yes: '1' },
+    { id: 3, yes: '0', no: '1', other_yes: '0' },
   ];
   const pool = {
     query: async (sql, params) => {
@@ -384,9 +384,136 @@ test('qualifiedCountsBatch: per-id counts restricted to the electorate', async (
     },
   };
   const map = await governance.qualifiedCountsBatch(pool, 'pr', [1, 2, 3], [10, 11]);
-  assert.deepEqual(map.get(1), { yes: 2, no: 0 });
+  assert.deepEqual(map.get(1), { yes: 2, no: 0, otherYes: 1 });
   assert.equal(map.get(2), undefined, 'ids with no electorate votes are absent');
-  assert.deepEqual(map.get(3), { yes: 0, no: 1 });
+  assert.deepEqual(map.get(3), { yes: 0, no: 1, otherYes: 0 });
+});
+
+// ── The member floor's counts ─────────────────────────────────────────
+
+test('qualifiedCountsBatch: other_yes excludes each row\'s own author', async () => {
+  const seen = [];
+  const pool = { query: async (sql) => { seen.push(sql); return { rows: [] }; } };
+  await governance.qualifiedCountsBatch(pool, 'pr', [1], [10]);
+  await governance.qualifiedCountsBatch(pool, 'issue', [2], [10]);
+  assert.match(seen[0], /pv\.user_id IS DISTINCT FROM cs\.user_id\) AS other_yes/);
+  assert.match(seen[1], /iv\.user_id IS DISTINCT FROM i\.created_by\) AS other_yes/);
+  assert.match(seen[1], /JOIN issues i ON i\.id = iv\.issue_id/);
+  assert.match(seen[1], /counts_toward_issue_outcome\(iv\.user_id, iv\.issue_id\)/,
+    'test-account votes stay uncounted on the issue side');
+});
+
+test('qualifiedCounts: otherYes only when an author is asked for, and never the author\'s own', async () => {
+  const votes = [
+    { userId: 7, vote: 'yes' }, // the author
+    { userId: 8, vote: 'yes' },
+    { userId: 9, vote: 'no' },
+  ];
+  const calls = [];
+  const pool = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FILTER/.test(sql)) {
+        const allowed = params[1];
+        const author = params[2];
+        const counted = votes.filter((v) => allowed.includes(v.userId));
+        return {
+          rows: [{
+            yes: String(counted.filter((v) => v.vote === 'yes').length),
+            no: String(counted.filter((v) => v.vote === 'no').length),
+            ...(/other_yes/.test(sql)
+              ? { other_yes: String(counted.filter((v) => v.vote === 'yes' && v.userId !== author).length) }
+              : {}),
+          }],
+        };
+      }
+      const side = /vote = 'yes'/.test(sql) ? 'yes' : 'no';
+      const exclude = /IS DISTINCT FROM \$2::int/.test(sql) ? params[1] : undefined;
+      return {
+        rows: [{ cnt: String(votes.filter((v) => v.vote === side && v.userId !== exclude).length) }],
+      };
+    },
+  };
+
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, null), { yes: 2, no: 1 },
+    'the common path is unchanged');
+  assert.equal(calls.length, 2, 'two COUNT queries, as before');
+
+  calls.length = 0;
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, null, { authorId: 7 }),
+    { yes: 2, no: 1, otherYes: 1 });
+  assert.match(calls[2].sql, /user_id IS DISTINCT FROM \$2::int/);
+  assert.match(calls[2].sql, /approval_epoch = \(SELECT approval_epoch/, 'epoch-scoped like the rest');
+  assert.deepEqual(calls[2].params, [5, 7]);
+
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, [7, 8, 9], { authorId: 7 }),
+    { yes: 2, no: 1, otherYes: 1 });
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, [7, 9], { authorId: 7 }),
+    { yes: 1, no: 1, otherYes: 0 }, 'only the electorate counts, and the author is not someone else');
+
+  // A deleted author: every Yes is someone else's.
+  calls.length = 0;
+  const deleted = await governance.qualifiedCounts(pool, 'pr', 5, null, { authorId: null });
+  assert.equal(deleted.otherYes, 2);
+  assert.deepEqual(calls[2].params, [5, null]);
+
+  // A stray non-object fifth argument (an old caller's revision) is ignored.
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 5, null, 'deadbeef'), { yes: 2, no: 1 });
+});
+
+test('atLeastGate: the member floor holds the merge and lifts the keep-alive', () => {
+  const old = new Date(Date.now() - 400 * DAY);
+  const plain = governance.atLeastGate(1, 1, 3, old, Date.now());
+  assert.equal(plain.mergeable, true);
+  assert.equal(plain.rejectionArmed, false);
+
+  const held = governance.atLeastGate(1, 1, 3, old, Date.now(), { floorMet: false });
+  assert.equal(held.thresholdMet, true, 'the count is still reported as met');
+  assert.equal(held.mergeable, false);
+  assert.equal(held.rejectionArmed, true, 'support the floor does not accept keeps nothing alive');
+  assert.equal(held.rejectable, true);
+
+  const met = governance.atLeastGate(1, 1, 3, old, Date.now(), { floorMet: true });
+  assert.deepEqual(met, plain, 'floorMet: true is exactly the old gate');
+});
+
+test('communityMemberCount and proposalAuthorId read the rows they name', async () => {
+  const seen = [];
+  const pool = {
+    query: async (sql, params) => {
+      seen.push({ sql, params });
+      if (/community_members/.test(sql)) return { rows: params[0] === 1 ? [{ n: 4 }] : [] };
+      if (/FROM issues/.test(sql)) return { rows: [{ author_id: 12 }] };
+      if (/FROM chat_sessions/.test(sql)) return { rows: [{ author_id: null }] };
+      return { rows: [] };
+    },
+  };
+  assert.equal(await governance.communityMemberCount(pool, 1), 4);
+  assert.equal(await governance.communityMemberCount(pool, 2), null, 'a missing app is not evaluated');
+  assert.match(seen[0].sql, /LEFT JOIN community_members m ON m\.community_id = a\.community_id/);
+  assert.equal(await governance.proposalAuthorId(pool, 'issue', 3), 12);
+  assert.equal(await governance.proposalAuthorId(pool, 'pr', 3), null, 'a deleted author is null');
+});
+
+test('explicitApprovalRowFields: what a serializer hangs on a row', () => {
+  const g = governance.computeGate({ approverPolicy: 'anyone', approvalsRequired: null }, 2, 1, 0,
+    new Date(Date.now() - DAY), Date.now(), { explicitApproval: true, memberCount: 3, otherYes: 0 });
+  assert.deepEqual(governance.explicitApprovalRowFields(
+    { requires_explicit_approval: true, explicit_approval_reason: 'visibility' }, g
+  ), {
+    requires_explicit_approval: true,
+    explicit_approval_reason: 'visibility',
+    needs_other_member_yes: true,
+    other_member_yes_count: 0,
+  });
+  assert.deepEqual(governance.explicitApprovalRowFields(
+    { requires_explicit_approval: null, explicit_approval_reason: 'admins' }, g
+  ), {
+    requires_explicit_approval: false,
+    explicit_approval_reason: null,
+    needs_other_member_yes: false,
+    other_member_yes_count: null,
+  }, 'an unflagged row carries no reason, whatever the column says');
 });
 
 // #3234: the threshold as it stood when voting opened (display only). Same

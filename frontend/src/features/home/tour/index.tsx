@@ -16,7 +16,7 @@
  * mark, targeting the platform's own self-hosted row for as long as Home is up
  * (`Home.publishImproveTarget`, #1367). So steps 3 to 5 are one interaction
  * rather than three descriptions (step 1, what a community is, and step 2,
- * Shortcuts, only describe what they point at):
+ * My apps, only describe what they point at):
  *
  *   * step 3 spotlights the MARK that opens that menu, asking the viewer to
  *     press it. The click is NOT intercepted: the tour subscribes to
@@ -31,9 +31,10 @@
  *     around it does, because each of them leaves the tour (a dialog, a new
  *     session) and a spotlight is not an instruction to press.
  *     ./tour-steps.ts carries the whole argument;
- *   * step 5 shuts the menu through `Improve.close()`, the controller's own
- *     close path and never a write into its DOM, then points at the Me tab,
- *     whose screen holds Settings, where the tour can be replayed.
+ *   * the steps after it shut the menu through `Improve.close()`, the
+ *     controller's own close path and never a write into its DOM, then point
+ *     at the Messages tab, where Homeroom bot is, and the Me tab, whose
+ *     screen holds Settings, where the tour can be replayed.
  *
  * ── The island rules, and how each is kept ────────────────────────────
  *
@@ -170,6 +171,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { isEmbeddedPanel } from '../../../lib/side-panel-mode';
 import { readVisibility, useVisibility } from '../../../lib/visibility-store';
@@ -500,6 +502,9 @@ export function OnboardingTour() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [otherSurface, setOtherSurface] = useState(false);
 
+  // The card's words (the step's are message ids; the counter reads the
+  // runtime), in the language on screen.
+  const t = useMessages('onboarding');
   const step = stepAt(index);
   const last = isLastStep(index);
 
@@ -732,9 +737,9 @@ export function OnboardingTour() {
     if (panelOpenNow()) void Improve.close();
   }, [live, index]);
 
-  // Step 5 ends the arc by shutting the panel itself — and the app's menu with
-  // it, because the step that carries `closesPanel` spotlights a tab, and on a
-  // phone the menu's sheet is drawn over the tab bar, hiding the thing the
+  // The steps after the menu's end the arc by shutting the panel itself — and
+  // the app's menu with it, because a step that carries `closesPanel`
+  // spotlights a tab, and on a phone the menu's sheet is drawn over the tab bar, hiding the thing the
   // cut-out is drawn around.
   useEffect(() => {
     if (!live) return;
@@ -1050,10 +1055,10 @@ export function OnboardingTour() {
             id="home-tour-title"
             className="mt-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100"
           >
-            {step.title}
+            {t(step.title)}
           </h2>
           <p id="home-tour-text" className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            {step.body}
+            {t(step.body)}
           </p>
           <div className="mt-4 flex items-center gap-2">
             <Button
@@ -1065,7 +1070,7 @@ export function OnboardingTour() {
               className="rounded px-1 py-1"
               onClick={() => setConfirming(true)}
             >
-              Skip
+              {t('onboarding:tour.skip')}
             </Button>
             <div className="ml-auto flex items-center gap-2">
               <Button
@@ -1078,7 +1083,7 @@ export function OnboardingTour() {
                 disabled={index === 0}
                 onClick={goBack}
               >
-                Back
+                {t('core:common.back')}
               </Button>
               {/*
                   On every step. On the menu step it opens the menu rather
@@ -1091,7 +1096,7 @@ export function OnboardingTour() {
                 size="sm"
                 onClick={goNext}
               >
-                {last ? 'Finish' : 'Next'}
+                {last ? t('onboarding:tour.finish') : t('onboarding:tour.next')}
               </Button>
             </div>
           </div>
@@ -1107,7 +1112,7 @@ export function OnboardingTour() {
             id="home-tour-confirm-text"
             className="text-sm text-zinc-700 dark:text-zinc-200"
           >
-            Are you sure? You can reopen this from Settings.
+            {t('onboarding:tour.confirm.text')}
           </p>
           <div className="mt-4 flex items-center justify-end gap-2">
             <Button
@@ -1118,7 +1123,7 @@ export function OnboardingTour() {
               ink="muted"
               onClick={() => setConfirming(false)}
             >
-              Keep going
+              {t('onboarding:tour.confirm.keepGoing')}
             </Button>
             <Button
               id="home-tour-confirm-skip"
@@ -1126,7 +1131,7 @@ export function OnboardingTour() {
               size="sm"
               onClick={() => finish('skip')}
             >
-              Skip the tour
+              {t('onboarding:tour.confirm.skip')}
             </Button>
           </div>
         </div>

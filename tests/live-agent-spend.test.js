@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const path = require('node:path');
 const worker = require('../src/services/worker');
 const progress = require('../src/services/worker-progress');
@@ -107,6 +108,7 @@ function clientHarness({ search = '' } = {}) {
   sandbox.window = sandbox;
   sandbox.addEventListener = () => {};
   sandbox.Settings = { state: {} };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   const file = path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js');
   vm.runInContext(fs.readFileSync(file, 'utf8') + '\n;this.chat = DevChat;', sandbox);

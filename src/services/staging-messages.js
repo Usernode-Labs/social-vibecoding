@@ -43,8 +43,8 @@ function demoConversations(user) {
         { ...lin, role: 'member', status: 'member', joinedAt: '2026-08-10T10:03:00Z' },
       ],
       memberCount: 3, membershipStatus: 'member', myRole: 'owner', requester: null, peer: null,
-      latestMessage: null, latestSummary: 'I attached the launch checklist.',
-      lastActivityAt: '2026-08-13T12:45:00Z', unreadCount: 0,
+      latestMessage: null, latestSummary: 'How the launch card looks on my phone.',
+      lastActivityAt: '2026-08-13T12:52:00Z', unreadCount: 0,
       canSend: true, canInvite: true, canManage: true,
     },
     {
@@ -117,7 +117,7 @@ function demoMessagesRaw(user, conversationId) {
       content: 'The proposal card is ready to review.', createdAt: '2026-08-13T13:30:00Z', editedAt: null,
       reply: null, reactions: [], attachments: [], objects: [{
         type: 'spec', appId: 1, appSlug: 'usernode', sessionId: 3327, version: 1,
-        available: true, title: 'Platform Messages spec v1', subtitle: 'Homeroom',
+        available: true, title: 'Platform Messages plan v1', subtitle: 'Homeroom',
         state: 'v1', author: 'ada', href: '#app/usernode/dev/sessions/3327',
       }, {
         type: 'governance', appId: 1, appSlug: 'usernode', proposalId: 701,
@@ -146,12 +146,21 @@ function demoMessagesRaw(user, conversationId) {
     }], objects: [],
   }, {
     // #2387: a message its author deleted — the placeholder the transcript
-    // draws in its place. Sender and time stay; nothing it said does. It is
-    // the newest row, and the list's latestSummary above still reads the
-    // checklist because a deleted message is never the latest.
+    // draws in its place. Sender and time stay; nothing it said does.
     id: 9100202, conversationId, sender: ada,
     content: '', createdAt: '2026-08-13T12:50:00Z', editedAt: null, deleted: true,
     reply: null, reactions: [], attachments: [], objects: [], saved: false,
+  }, {
+    // #4055: a picture the viewer sent, beside ada's above, so the preview
+    // shows Download on both your own picture and someone else's.
+    id: 9100203, conversationId, sender: self,
+    content: 'How the launch card looks on my phone.', createdAt: '2026-08-13T12:52:00Z', editedAt: null,
+    reply: null, reactions: [], attachments: [{
+      id: 'cccccccccccccccccccccccccccccccc', name: 'launch-card-phone.png',
+      size: DEMO_SCREENSHOT_PNG.length, contentType: 'image/png', kind: 'image',
+      url: `/api/conversations/${conversationId}/attachments/cccccccccccccccccccccccccccccccc?demo=1`,
+      viewUrl: null,
+    }], objects: [],
   }];
   if (conversationId === 910004) {
     const lin = DEMO_LIN;
@@ -456,13 +465,42 @@ async function ensureFixtures(pool, user) {
 const BOT_DM_LEGACY_ID = 910005;
 const BOT_DM_QUESTION_KEY = 'staging-hrbot-question';
 const BOT_DM_OFFER_KEY = 'staging-hrbot-offer';
+// B3: the action id the demo offer's buttons name. No homeroom_bot_dm_actions
+// row stands behind it: the action endpoint answers the demo without one.
+const BOT_DM_DEMO_ACTION_ID = 990001;
 const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
+// B6: a first version's plan, waiting for Build it, and a request the bot
+// has two questions about. Fixtures too: the plan's Build it names an action
+// no row stands behind, and nothing is posted on any request.
+const BOT_DM_PLAN_KEY = 'staging-hrbot-plan';
+const BOT_DM_PLAN_ACTION_ID = 990002;
+const BOT_DM_TWO_QUESTIONS_KEY = 'staging-hrbot-two-questions';
+// #4488: a complicated change's plan on a project that already exists,
+// waiting for its requester's Build it, its screens on the request. A
+// fixture too: Build it names an action no row stands behind.
+const BOT_DM_COMPLICATED_PLAN_KEY = 'staging-hrbot-complicated-plan';
+const BOT_DM_COMPLICATED_PLAN_ACTION_ID = 990003;
+// #4046: and a first version's plan its maker already built, which the
+// card that follows its build sits under.
+const BOT_DM_BUILT_PLAN_KEY = 'staging-hrbot-plan-built';
+// B7, #3870: a change ready to try, its card saying what the change is.
+// Its session id stands for no session: Try it opens nothing (the demo
+// project has no slug) and Approve answers with an error, never a vote.
+// #4097 follow-up: a build that did not finish, with its Try again button.
+const BOT_DM_STUCK_KEY = 'staging-hrbot-build-failed';
+const BOT_DM_READY_KEY = 'staging-hrbot-ready';
+const BOT_DM_READY_SESSION_ID = 990901;
+// #4231: a new project's first version gone live, with Open, Open community
+// and Invite people. No project stands behind its slug: Open and Open
+// community find nothing, and the invite sheet opens but makes no link.
+const BOT_DM_FIRST_LIVE_KEY = 'staging-hrbot-first-live';
+const BOT_DM_FIRST_LIVE_SLUG = 'staging-demo-plants';
 
 async function ensureBotDmFixture(pool, user) {
   if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return null;
   await pool.query(
-    `INSERT INTO users (username, password, is_synthetic)
-     VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE)
+    `INSERT INTO users (username, password, is_synthetic, display_name)
+     VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
      ON CONFLICT DO NOTHING`
   );
   const bot = (await pool.query(
@@ -511,6 +549,129 @@ async function ensureBotDmFixture(pool, user) {
           kind: 'confirm', appName: 'Staging demo app', status: 'open', mirrors: false,
           question: 'File this as a request on Staging demo app?',
           answers: ['File it', 'Not now'],
+          // B3: its buttons, as a live offer carries them (homeroom-bot-mayor.js
+          // offerActions). The demo's action endpoint decides nothing.
+          actionId: BOT_DM_DEMO_ACTION_ID,
+          actions: [
+            { id: 'yes', label: 'File it', style: 'primary', type: 'server' },
+            { id: 'no', label: 'Not now', style: 'secondary', type: 'server' },
+          ],
+        },
+      },
+    });
+  }
+  // B6: a new project's plan, and a request with two questions. Each is
+  // sent once, after what is already there.
+  const sentB6 = new Set((await pool.query(
+    `SELECT idempotency_key FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = ANY($3::text[])`,
+    [opened.conversationId, bot.id, [BOT_DM_PLAN_KEY, BOT_DM_TWO_QUESTIONS_KEY]]
+  )).rows.map((row) => row.idempotency_key));
+  if (!sentB6.has(BOT_DM_PLAN_KEY)) {
+    // #4046: first, a plan built already, with the card that follows its
+    // build under it, and the waiting plan's own card above it, as a live
+    // first version has them. The plans carry their cards' steps (the
+    // client draws no card beside them), which demoCards gives. Sent with
+    // the waiting plan only, so an older fixture keeps its newest message.
+    const activity = require('./homeroom-bot-activity');
+    const dm = require('./homeroom-bot-dm');
+    const built = {
+      bullets: [
+        'Staging demo: everyone\'s miles this week',
+        'Log a run for any day',
+        'Each runner\'s miles against their goal',
+      ],
+      questions: [{
+        question: 'What counts as keeping up?',
+        answers: ['Each runner picks their own goal', 'One shared club goal', 'No goals, just everyone\'s miles'],
+      }],
+    };
+    const runClub = { appName: 'Staging demo run club', issueNumber: 1, firstVersion: true };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: dm.planCardText({ appName: runClub.appName, plan: built }),
+      idempotency_key: BOT_DM_BUILT_PLAN_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'plan', ...runClub, plan: built, status: 'answered', chosen: 'build', answer: 'Build it',
+          choices: [built.questions[0].answers[0]],
+        },
+      },
+    });
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: activity.cardText(runClub, dm, { go: true }),
+      idempotency_key: activity.DEMO_CARD_KEYS.building,
+      // #4392: drawn as the bot's thanks for answering, as cardUnderPlan sends it.
+    }, { metadata: { homeroomBot: { kind: 'activity', ...runClub, thanks: true, appEmoji: '🏃' } } });
+    const plants = { appName: 'Staging demo plants', issueNumber: 1, firstVersion: true };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: activity.cardText(plants, dm, { queued: true }),
+      idempotency_key: activity.DEMO_CARD_KEYS.plan,
+    }, { metadata: { homeroomBot: { kind: 'activity', ...plants } } });
+    const plan = {
+      bullets: [
+        'Staging demo: a list of your plants with how often each needs water',
+        'A Today view of the plants that need watering now',
+        'Tap a plant to mark it watered; its next date moves on by itself',
+      ],
+      questions: [{ question: 'How should it remind you?', answers: ['In the app', 'Phone alert'] }],
+    };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: require('./homeroom-bot-dm').planCardText({ appName: 'Staging demo plants', plan }),
+      idempotency_key: BOT_DM_PLAN_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'plan', appName: 'Staging demo plants', issueNumber: 1, firstVersion: true,
+          plan, actionId: BOT_DM_PLAN_ACTION_ID, status: 'open',
+        },
+      },
+    });
+  }
+  if (!sentB6.has(BOT_DM_TWO_QUESTIONS_KEY)) {
+    const lead = '**Staging demo app** · request #16: Staging demo, a weekly reminder\n\n'
+      + 'I have two questions before I build this:';
+    const questions = [
+      { question: 'What time on Sunday?', answers: ['9 AM', '8 AM', '10 AM'] },
+      { question: 'How should it remind you?', answers: ['In the app', 'Phone alert'] },
+    ];
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: `${lead}\n\n1. ${questions[0].question}\n2. ${questions[1].question}`,
+      idempotency_key: BOT_DM_TWO_QUESTIONS_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'question', appName: 'Staging demo app', issueNumber: 16,
+          issueTitle: 'Staging demo, a weekly reminder', mirrors: true, status: 'open',
+          question: questions[0].question, answers: questions[0].answers, questions, lead,
+        },
+      },
+    });
+  }
+  // #4488: a complicated change's plan, sent once, after what is there.
+  const complicatedSent = await pool.query(
+    `SELECT 1 FROM conversation_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
+    [opened.conversationId, bot.id, BOT_DM_COMPLICATED_PLAN_KEY]
+  );
+  if (!complicatedSent.rows.length) {
+    const plan = {
+      bullets: [
+        'Staging demo: a Leaderboard tab beside the list',
+        'Points for each item you finish, counted weekly',
+        'Your own place shown at the top',
+      ],
+      questions: [{ question: 'Who shows on the leaderboard?', answers: ['Everyone in the project', 'Only people who opt in'] }],
+      complicated: true,
+    };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: require('./homeroom-bot-dm').planCardText({ appName: 'Staging demo app', plan, issueNumber: 17 }),
+      idempotency_key: BOT_DM_COMPLICATED_PLAN_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'plan', appName: 'Staging demo app', issueNumber: 17, firstVersion: false,
+          plan, actionId: BOT_DM_COMPLICATED_PLAN_ACTION_ID, status: 'open',
         },
       },
     });
@@ -526,6 +687,56 @@ async function ensureBotDmFixture(pool, user) {
     [opened.conversationId, bot.id, [cardKeys.done, cardKeys.working]]
   );
   const sentKeys = new Set(sentCards.rows.map((row) => row.idempotency_key));
+  // #3870: a change ready to try, sent just before the activity cards so the
+  // one being built stays the DM's newest message. A fixture whose cards are
+  // already there is left as it was rather than given a newer last message.
+  if (!sentKeys.size) {
+    const dm = require('./homeroom-bot-dm');
+    // #4097 follow-up: a build that did not finish says what to tap, Try
+    // again, rather than "reply here" with nothing to press.
+    const stuck = { appName: 'Staging demo app', issueNumber: 13, issueTitle: 'Staging demo, a print view' };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: dm.dmText('build_failed', { reason: 'the build ran past its time limit' }, stuck),
+      idempotency_key: BOT_DM_STUCK_KEY,
+    }, {
+      metadata: {
+        homeroomBot: { kind: 'build_failed', ...stuck, actions: dm.STUCK_ACTIONS.build_failed, status: 'open' },
+      },
+    });
+    const firstLive = { appName: 'Staging demo plants', issueNumber: 1, firstVersion: true };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: dm.mergedText({ line: dm.requestLine(firstLive), appName: firstLive.appName, live: true }),
+      idempotency_key: BOT_DM_FIRST_LIVE_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'merged', appSlug: BOT_DM_FIRST_LIVE_SLUG, ...firstLive, live: true,
+          link: `#app/${BOT_DM_FIRST_LIVE_SLUG}`,
+          actions: [
+            dm.openAppAction({ slug: BOT_DM_FIRST_LIVE_SLUG, appName: firstLive.appName }),
+            ...dm.firstLiveActions({ slug: BOT_DM_FIRST_LIVE_SLUG }),
+          ],
+        },
+      },
+    });
+    const ready = { appName: 'Staging demo app', issueNumber: 11, issueTitle: 'Staging demo, grey out finished items' };
+    const card = { approve: true, last: true };
+    await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+      content: dm.dmText('proposal', { sessionId: BOT_DM_READY_SESSION_ID, card }, ready),
+      idempotency_key: BOT_DM_READY_KEY,
+    }, {
+      metadata: {
+        homeroomBot: {
+          kind: 'proposal', ...ready,
+          ready: { group: false, last: true, waitingOn: [] },
+          sessionId: BOT_DM_READY_SESSION_ID, epoch: 0,
+          actions: dm.readyActions({ sessionId: BOT_DM_READY_SESSION_ID, epoch: 0, approve: true }),
+          status: 'open',
+          changeTitle: 'Staging demo: a calmer colour for finished items',
+        },
+      },
+    });
+  }
   for (const card of [
     { key: cardKeys.done, issueNumber: 9, issueTitle: 'Staging demo, show item counts' },
     { key: cardKeys.working, issueNumber: 14, issueTitle: 'Staging demo, show a total under the list' },
@@ -550,6 +761,42 @@ async function ensureBotDmFixture(pool, user) {
     [user.id, BOT_DM_LEGACY_ID, opened.conversationId]
   );
   return opened.conversationId;
+}
+
+// The demo of a card joining work already under way: what opening the bot's
+// DM does on a live copy (homeroom-bot-activity.js catchUpCards), which a
+// staging copy cannot, since the bot never works there. Opening the demo DM
+// gives the demo's request #15, whose plan was begun before it had a card,
+// its card at the end of the transcript, once. Like the fixture's other
+// cards it stands for no request: nothing is recorded or posted, and
+// demoCards says how far along it is. Only in the viewer's own fixture, and
+// only once the fixture is there. Resolves { added }.
+async function ensureDemoUnderWayCard(pool, user) {
+  if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return { added: 0 };
+  const { rows: [fixture] } = await pool.query(
+    `SELECT f.conversation_id, b.id AS bot_id
+       FROM staging_conversation_fixtures f
+       JOIN users b ON b.username = 'homeroom_bot' AND b.is_synthetic = TRUE
+       JOIN conversation_members cm ON cm.conversation_id = f.conversation_id AND cm.user_id = b.id
+      WHERE f.user_id = $1 AND f.legacy_id = $2`,
+    [user.id, BOT_DM_LEGACY_ID]
+  );
+  if (!fixture) return { added: 0 };
+  const activity = require('./homeroom-bot-activity');
+  const { issueNumber, issueTitle, startedMinutesAgo } = activity.DEMO_UNDER_WAY;
+  const startedAt = new Date(Date.now() - startedMinutesAgo * 60 * 1000).toISOString();
+  const sent = await conversations.sendMessage(pool, { id: fixture.bot_id }, fixture.conversation_id, {
+    content: activity.cardText({ appName: 'Staging demo app', issueNumber, issueTitle, firstVersion: false },
+      require('./homeroom-bot-dm'), { joined: true }),
+    idempotency_key: activity.DEMO_CARD_KEYS.underWay,
+  }, {
+    metadata: {
+      homeroomBot: {
+        kind: 'activity', appName: 'Staging demo app', issueNumber, issueTitle, mirrors: true, startedAt,
+      },
+    },
+  });
+  return { added: sent?.messageId && !sent.duplicate ? 1 : 0 };
 }
 
 async function resolveLegacyLink(pool, user, id) {
@@ -577,6 +824,6 @@ async function resolveLegacyMessageLink(pool, user, conversationId, id) {
 }
 
 module.exports = {
-  ensureFixtures, ensureBotDmFixture, resolveLegacyLink, resolveLegacyMessageLink, demoConversations, demoMessages,
-  BOT_DM_LEGACY_ID,
+  ensureFixtures, ensureBotDmFixture, ensureDemoUnderWayCard, resolveLegacyLink, resolveLegacyMessageLink,
+  demoConversations, demoMessages, BOT_DM_LEGACY_ID,
 };

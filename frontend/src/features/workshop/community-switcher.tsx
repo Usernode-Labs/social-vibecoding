@@ -4,7 +4,8 @@
  * All communities first (the list of every community you are in), then each
  * community with its tile, who it is for and how many are in it, how many
  * votes it is waiting on you for, and a tick on the one you are on; then
- * "Join or start a community", which is Discover. Picking one makes it the
+ * "Join a community" (Discover) and "Start a community" (the new-project
+ * dialog, #3543). Picking one makes it the
  * tab's community and opens its hub (./community-scope.ts goToCommunity).
  *
  * The communities are drawn as the Communities screen draws them (#3519):
@@ -15,10 +16,11 @@
  * never folded away.
  *
  * It replaced the in-place "Which project?" panel under the header, and it
- * opens from three places, all through the same store: the phone's tab
- * pressed while it is lit, the community's name and ⌄ in the coloured
- * header, and the header's "Communities ⌄" on the Communities list. (On a wide
- * window the lit sidebar row goes back to All communities instead.)
+ * opens from three places, all through the same store: the community's name
+ * and ⌄ in the coloured header, the header's "Communities ⌄" on the
+ * Communities list, and the phone's tab HELD (#3701). The tab PRESSED while
+ * it is lit no longer opens it, at any width: it goes up a level, to the
+ * community, its top, then All communities (./tab-ladder.ts).
  *
  * ── Two presentations ──────────────────────────────────────────────────
  *
@@ -36,8 +38,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-import { CheckIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CheckIcon, PlusIcon, SearchIcon, UserGroupIcon } from '@/components/ui/icons';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
@@ -63,23 +67,24 @@ function useWide(): boolean {
   return wide;
 }
 
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
-
 /** "Public · 23 members", "Private · 11 members", "Just you". */
 export function switcherSub(info: Pick<CommunityInfo, 'audience' | 'memberCount'>): string {
-  if (info.audience === 'solo') return 'Just you';
-  const who = info.audience === 'invited' ? 'Private' : 'Public';
-  return `${who} · ${plural(Number(info.memberCount) || 0, 'member', 'members')}`;
+  if (info.audience === 'solo') return translate('communities:switcher.row.solo');
+  const count = Number(info.memberCount) || 0;
+  return info.audience === 'invited'
+    ? translate('communities:switcher.row.invited', { count })
+    : translate('communities:switcher.row.open', { count });
 }
 
 function Waiting({ n }: { n: number }) {
+  const t = useMessages('communities');
   if (!n) return null;
-  return <span className="community-switcher-waiting" data-switcher-waiting="">{`${n} to vote`}</span>;
+  return <span className="community-switcher-waiting" data-switcher-waiting="">{t('communities:switcher.toVote', { count: n })}</span>;
 }
 
 function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
+  // Subscribed: the second line (switcherSub) is read in the language on screen.
+  useMessages('communities');
   const color = useCommunityColor({ color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.slug });
   const app = { slug: info.slug, name: info.name, icon_url: info.iconUrl, icon_emoji: info.iconEmoji };
   return (
@@ -116,12 +121,16 @@ function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
  * moves focus to the first row it revealed, and "Show fewer" keeps focus on
  * itself.
  */
-function SwitcherSection({ audience, label, rows, current }: {
+function SwitcherSection({ audience, label, count, rows, current }: {
   audience: Audience;
+  /** The section's heading and its count's accessible name, as message ids. */
   label: string;
+  count: string;
   rows: CommunityInfo[];
   current: string | null;
 }) {
+  // Subscribed: the heading and the fold row (sectionFoldFrom) follow the language.
+  const t = useMessages('communities');
   const floor = sectionFloor(rows, current);
   const [limit, setLimit] = useState(floor);
   const fold = sectionFoldFrom(rows.length, limit, floor);
@@ -139,8 +148,8 @@ function SwitcherSection({ audience, label, rows, current }: {
   return (
     <div ref={groupRef} role="group" aria-labelledby={labelId} data-switcher-section={audience}>
       <h3 className="community-switcher-section" id={labelId}>
-        <span>{label}</span>
-        <span className="community-switcher-section-n" aria-label={`${rows.length} in ${label}`}>{rows.length}</span>
+        <span>{t(label)}</span>
+        <span className="community-switcher-section-n" aria-label={t(count, { count: rows.length })}>{rows.length}</span>
       </h3>
       {shown.map((info) => (
         <Row key={info.slug} info={info} current={current === info.slug} />
@@ -179,6 +188,7 @@ function roveRows(e: React.KeyboardEvent<HTMLDivElement>): void {
 
 /** The switcher's contents, in either presentation. Exported for tests. */
 export function SwitcherBody(): ReactNode {
+  const t = useMessages('communities');
   const st = useStoreState(communityScopeStore);
   const all = !st.slug;
   const rows = (st.list || []).map((slug) => st.info[slug]).filter(Boolean) as CommunityInfo[];
@@ -192,7 +202,7 @@ export function SwitcherBody(): ReactNode {
   return (
     <>
       <div className="community-switcher-head">
-        <h2 className="community-switcher-title" id="community-switcher-title">Your communities</h2>
+        <h2 className="community-switcher-title" id="community-switcher-title">{t('communities:switcher.title')}</h2>
       </div>
       {/* Up and Down move between the rows, as in the Homeroom menu. */}
       <div className="community-switcher-list" onKeyDown={roveRows}>
@@ -212,9 +222,9 @@ export function SwitcherBody(): ReactNode {
             <UserGroupIcon />
           </span>
           <span className="community-switcher-text">
-            <span className="community-switcher-name">All communities</span>
+            <span className="community-switcher-name">{t('communities:switcher.all.name')}</span>
             <span className="community-switcher-sub">
-              {st.list ? plural(st.list.length, 'community', 'communities') : 'Every community you are in'}
+              {st.list ? t('communities:switcher.all.count', { count: st.list.length }) : t('communities:switcher.all.every')}
             </span>
           </span>
           <Waiting n={Number(st.totalNeeds) || 0} />
@@ -223,16 +233,20 @@ export function SwitcherBody(): ReactNode {
           </span>
         </button>
         {st.list == null ? (
-          <p className="community-switcher-note" data-switcher-loading="">Loading your communities…</p>
+          <p className="community-switcher-note" data-switcher-loading="">{t('communities:switcher.loading')}</p>
         ) : sections.map((section) => (
           <SwitcherSection
             key={section.key}
             audience={section.key}
             label={section.label}
+            count={section.count}
             rows={section.rows}
             current={st.slug}
           />
         ))}
+        {/* #3543: two ways out, not one. "Join or start a community" went
+            to Discover, where there is nothing to start; Start opens the
+            new-project dialog, which asks who it is for first. */}
         <button
           type="button"
           className="community-switcher-row"
@@ -240,10 +254,23 @@ export function SwitcherBody(): ReactNode {
           onClick={() => { closeSwitcher(); window.location.hash = '#apps'; }}
         >
           <span className="community-switcher-tile community-switcher-tile-add" aria-hidden="true">
+            <SearchIcon className="w-5 h-5" />
+          </span>
+          <span className="community-switcher-text">
+            <span className="community-switcher-name">{t('communities:switcher.join')}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="community-switcher-row"
+          data-switcher-start=""
+          onClick={() => { closeSwitcher(); (window as any).App?.showCreateModal?.(); }}
+        >
+          <span className="community-switcher-tile community-switcher-tile-add" aria-hidden="true">
             <PlusIcon className="w-5 h-5" />
           </span>
           <span className="community-switcher-text">
-            <span className="community-switcher-name">Join or start a community</span>
+            <span className="community-switcher-name">{t('communities:switcher.start')}</span>
           </span>
         </button>
       </div>
@@ -302,7 +329,9 @@ function SwitcherMenu(): ReactNode {
       const t = e.target as Node | null;
       if (t && panel.current?.contains(t)) return;
       // The opener toggles on its own; a press on it must not close and reopen.
-      if (t instanceof Element && t.closest('[data-community-switch], #platform-tab-workshop')) return;
+      // (Not the rail's Communities row: it opens nothing since #3701, so a
+      // press on it closes the menu like a press anywhere else.)
+      if (t instanceof Element && t.closest('[data-community-switch]')) return;
       closeSwitcher();
     };
     // Escape gives focus back to whatever opened it.

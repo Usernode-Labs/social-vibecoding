@@ -43,6 +43,8 @@ import type { ReactNode } from 'react';
 
 import { SECTION_TAB_ACTIVE } from '@/components/ui/tabs';
 
+import { htmlText } from '../../../lib/i18n/runtime';
+
 /** The card shell, matching `.gc-vote-item`'s box (see dev-card.tsx). */
 export const SKELETON_CARD_CLS =
   'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3';
@@ -107,7 +109,12 @@ export function CountSkeleton(): ReactNode {
  * column and it is filling". Only the counts are unknown, so only the counts
  * pulse — see `COUNT_BAR` below, the string form of <CountSkeleton/>.
  */
-const KANBAN_COLS = ['Requests', 'Underway', 'In review', 'Done'];
+const KANBAN_COLS = [
+  'project:kanban.skeleton.requests',
+  'project:kanban.skeleton.underway',
+  'project:kanban.skeleton.waiting',
+  'project:kanban.skeleton.done',
+];
 
 /** <CountSkeleton/> as a string, for the HTML builders below. */
 const COUNT_BAR =
@@ -154,28 +161,28 @@ function cardHtml(i: number): string {
  * `getElementById` for even a frame is not worth the tidiness.
  */
 export function skeletonKanbanHtml(): string {
-  const tabs = KANBAN_COLS.map((title, i) => (
+  const tabs = KANBAN_COLS.map((id, i) => (
     '<div class="dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 '
     + 'flex flex-col items-center justify-center rounded-full font-semibold '
     + (i === 0 ? SECTION_TAB_ACTIVE : 'text-zinc-500 dark:text-zinc-400')
     + '">'
-    + `<span class="text-xs leading-tight truncate max-w-full">${title}</span>`
+    + `<span class="text-xs leading-tight truncate max-w-full">${htmlText(id)}</span>`
     + `<span class="font-mono text-[11px] leading-tight">${COUNT_BAR}</span>`
     + '</div>'
   )).join('');
 
-  const cols = KANBAN_COLS.map((title, i) => (
+  const cols = KANBAN_COLS.map((id, i) => (
     `<div class="dev-kanban-col${i === 0 ? ' dev-kanban-col-active' : ''}">`
     + '<div class="dev-kanban-col-head text-[0.9375rem] font-semibold '
     + 'text-zinc-500 dark:text-zinc-400 mb-2 px-0.5">'
-    + `${title} <span class="text-zinc-500 dark:text-zinc-500 font-mono">· ${COUNT_BAR}</span>`
+    + `${htmlText(id)} <span class="text-zinc-500 dark:text-zinc-500 font-mono">· ${COUNT_BAR}</span>`
     + '</div>'
     + '<div class="space-y-2 animate-pulse" aria-hidden="true">'
     + cardHtml(i) + cardHtml(i + 1)
     + '</div></div>'
   )).join('');
 
-  return '<div class="sr-only" role="status">Loading the board</div>'
+  return `<div class="sr-only" role="status">${htmlText('project:kanban.skeleton.loadingBoard')}</div>`
     + '<div class="sm:hidden flex items-stretch gap-0.5 mb-2 rounded-full '
     + `bg-white dark:bg-zinc-900 p-0.5" aria-hidden="true">${tabs}</div>`
     + `<div class="flex gap-3 overflow-x-auto pb-2" aria-hidden="true">${cols}</div>`;
@@ -190,6 +197,6 @@ export function skeletonKanbanHtml(): string {
 export function skeletonListHtml(n: number): string {
   let rows = '';
   for (let i = 0; i < n; i += 1) rows += cardHtml(i);
-  return '<div class="sr-only" role="status">Loading</div>'
+  return `<div class="sr-only" role="status">${htmlText('project:kanban.skeleton.loading')}</div>`
     + `<div class="space-y-2 animate-pulse" aria-hidden="true">${rows}</div>`;
 }

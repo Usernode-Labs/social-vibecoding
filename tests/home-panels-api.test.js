@@ -29,6 +29,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -93,6 +94,12 @@ function makeMockPool(state) {
             // array_agg(COALESCE(c.reward, ct.reward)) FILTER (NOT done)
             open_rewards: all.filter((r) => !isDone(r))
               .map((r) => (r.reward != null ? r.reward : r.t_reward)),
+            // array_agg(json_build_array(COALESCE(c.reward, ct.reward),
+            // COALESCE(ua.pts, 0))) FILTER (the same predicate all_total
+            // counts) — the reward beside the viewer's own points on it,
+            // for the season's points summary.
+            all_rewards: all
+              .map((r) => [(r.reward != null ? r.reward : r.t_reward), Number(r.my_points) || 0]),
             ...(gate ? { hidden_count: every.length - all.length } : {}),
           }],
         };
@@ -559,6 +566,65 @@ test('GET /api/home-panels: prose in an OFF-page open reward still withholds the
   assert.equal(body.panels[0].points_remaining, null);
 });
 
+test('GET /api/home-panels: points_total and points_earned follow the season, prose excluded', async () => {
+  // Both figures read the EXPANDED season, not the capped page, and the
+  // prose row is left out of the total AND its earned points with it.
+  const allRows = [
+    ...Array.from({ length: 4 }, (_, i) =>
+      row({ id: i + 1, reward: '100 pts', my_activity_count: 1, my_points: 50 })),
+    row({ id: 5, reward: '½ of your final credits', my_activity_count: 1, my_points: 999 }),
+    row({ id: 6, reward: 'Up to 1,000 pts', my_points: 0 }),
+  ];
+  const { app } = makeApp(
+    { season: SEASON, rows: allRows.slice(0, 4), allRows, total: 6 },
+    { user: USER }
+  );
+  const { body } = await get(app, '/api/home-panels');
+  const panel = body.panels[0];
+  assert.equal(panel.challenges.length, 4, 'the page is capped, the figures are not');
+  assert.equal(panel.points_total, 1400,
+    '100 on each of the first four plus 1,000 on the sixth; the prose row counts nothing');
+  assert.equal(panel.points_earned, 200,
+    'the viewer\'s 50 on each done numeric row; 999 earned on prose is left out');
+});
+
+test('GET /api/home-panels: while Getting started gates the season, points follow the gate too', async () => {
+  // Ten challenges, four of them First challenges: the points figures read
+  // the same set the count does (the gate's rows), not the hidden six.
+  const allRows = Array.from({ length: 10 }, (_, i) =>
+    row({ id: i + 1, display_order: i + 1, reward: '100 pts',
+      my_activity_count: i < 1 ? 1 : 0, my_points: i < 1 ? 100 : 0 }));
+  const { app, calls } = makeApp(
+    { season: SEASON, rows: allRows.slice(0, 4), allRows, onboardingRows: onboardingRows(0) },
+    { user: USER }
+  );
+  const { body } = await get(app, '/api/home-panels');
+  const panel = body.panels[0];
+  assert.equal(panel.total, 4);
+  assert.equal(panel.points_total, 400, 'the gate\'s four rows only, not the ten the season has');
+  assert.equal(panel.points_earned, 100);
+  // One pair per challenge, the reward beside the viewer's own points on
+  // it, joined in from the ledger and filtered by the same predicate
+  // all_total counts.
+  const totals = calls.find((c) => c.sql.includes('AS all_total'));
+  assert.match(totals.sql,
+    /array_agg\(json_build_array\(COALESCE\(c\.reward, ct\.reward\), COALESCE\(ua\.pts, 0\)\)\)/);
+  assert.match(totals.sql,
+    /LEFT JOIN \(\s*SELECT challenge_id, SUM\(points\) AS pts\s*FROM user_activities\s*WHERE user_id = \$1\s*GROUP BY challenge_id\s*\) ua ON ua\.challenge_id = c\.id/);
+});
+
+test('GET /api/home-panels: no numeric reward anywhere, the points figures are null', async () => {
+  const rows = [
+    row({ id: 1, reward: '½ of your final credits' }),
+    row({ id: 2, t_reward: 'Fame' }),
+  ];
+  const { app } = makeApp({ season: SEASON, rows }, { user: USER });
+  const { body } = await get(app, '/api/home-panels');
+  const panel = body.panels[0];
+  assert.equal(panel.points_total, null);
+  assert.equal(panel.points_earned, null, 'no "0 of 0 pts" — the line simply does not draw');
+});
+
 test('the totals query asks for the open rewards, and the row query asks for up to 40 rows', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   await get(app, '/api/home-panels');
@@ -636,6 +702,7 @@ function loadHomePanels() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   installPanelsStore(sandbox);
   vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox);

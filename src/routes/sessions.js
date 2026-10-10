@@ -12,6 +12,7 @@ const webFetch = require('../services/web-fetch');
 const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
+const previewClock = require('../services/preview-clock');
 const proposalDescription = require('../services/proposal-description');
 const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const platformIssueBlock = require('../services/platform-issue-block');
@@ -19,6 +20,7 @@ const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
+const classicSessions = require('../services/classic-sessions');
 const { claimIssueForUser } = require('../services/issue-claims');
 const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
@@ -47,7 +49,9 @@ const {
   getDesignGuidance,
   runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
+  specHtmlContract,
 } = require('../services/prompts');
+const specHtml = require('../services/spec-html');
 const {
   IN_LOOP_BROWSER_GUIDANCE,
   HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
@@ -56,6 +60,7 @@ const models = require('../services/models');
 const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
+const journeyEvents = require('../services/journey-events');
 const modelFallback = require('../services/model-fallback');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
@@ -206,9 +211,8 @@ const issueAnnounce = require('../services/issue-announce');
 // Mayor's in-process draft_issue_report tool below.
 const issueDraft = require('../services/issue-draft');
 const {
-  reviewedHeadForSession,
   visualHeadForSession,
-  currentVotePredicateSql,
+  countedVotePredicateSql,
 } = require('../services/pr-vote-revision');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
@@ -498,9 +502,13 @@ const MANUAL_SESSION_TITLE_MAX = 256;
 // Mayor creates each change through POST /api/apps/:slug/sessions on a
 // delegated grant; nothing else may create one any more (not a browser, a
 // shell cached before the switch, a CLI token, nor Global Chat's loopback),
-// and forking a chat into a new classic session is retired with them.
-// Sessions that already exist keep working exactly as they did: only the
-// creation routes read this.
+// and forking a chat into a new classic session is retired with them. Only
+// the creation routes read this.
+//
+// #3976: the sessions that already exist are read-only. Their chat takes no
+// new message and nothing continues their work; reading them and everything
+// about the proposal they became stays open. See services/classic-sessions.js
+// for the line between the two.
 const CLASSIC_SESSIONS_RETIRED = 'New work starts in an agent session now. '
   + 'Start one from Messages or New change.';
 
@@ -856,6 +864,23 @@ function specVersionSharedVisibilitySql(specAlias, viewerParam) {
                 ))`;
 }
 
+// #4479: the plan a change was built from, as its page's plan card names it:
+// the newest version this viewer may read (the owner, every version; anyone
+// else, one shared with them), or null. Through the ONE visibility fragment
+// above, so the card never offers a Read that GET /specs/:version refuses.
+async function changePlanFor(pool, sessionId, ownerId, viewerId) {
+  const { rows } = await pool.query(
+    `SELECT s.version, s.built_at
+       FROM chat_session_specs s
+      WHERE s.session_id = $1
+        AND ($2::int = $3::int OR ${specVersionSharedVisibilitySql('s', '$3')})
+      ORDER BY s.version DESC
+      LIMIT 1`,
+    [sessionId, ownerId ?? null, viewerId ?? null]
+  );
+  return rows[0] ? { version: Number(rows[0].version), at: rows[0].built_at } : null;
+}
+
 function stagingMockTranscript(sessionId) {
   if (!STAGING_MOCK_TRANSCRIPT_IDS.has(sessionId)) return null;
   const t = (minsAgo) => new Date(Date.now() - minsAgo * 60 * 1000).toISOString();
@@ -884,7 +909,7 @@ function stagingMockTranscript(sessionId) {
     },
     {
       id: 5, role: 'system', model: null, created_at: t(84),
-      content: 'Spec drafted',
+      content: 'Plan drafted',
       metadata: { specPreview: '# [Mock] Readable cards on narrow screens\n\n- Two-row card layout\n- Actions wrap instead of crushing the title\n', specVersion: 1, specLines: 4 },
     },
     {
@@ -1041,6 +1066,16 @@ async function loadSessionSpec(pool, sessionId) {
   return (rows[0] && rows[0].spec_md) || '';
 }
 
+// #3699: the latest spec as both its text (spec_md, a markdown copy when the
+// spec was written as HTML) and its HTML document, or null for a markdown spec.
+async function loadSessionSpecDoc(pool, sessionId) {
+  const { rows } = await pool.query(
+    'SELECT spec_md, spec_html FROM chat_sessions WHERE id = $1',
+    [sessionId]
+  );
+  return { md: (rows[0] && rows[0].spec_md) || '', html: (rows[0] && rows[0].spec_html) || null };
+}
+
 // ── Failing proposal checks → next-turn context ──────────────────────────
 //
 // The coding agent never sees its own proposal-check verdicts: checks run
@@ -1093,8 +1128,10 @@ async function loadSessionCheckContext(pool, sessionId) {
 // bounded.
 function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MAX) {
   if (checkState !== 'failing') return { total: 0, blocking: 0, rows: [] };
+  // A unit suite that never reached `npm test` names no failing test, and
+  // a fix turn handed it would go looking for one.
   const all = (Array.isArray(testResults) ? testResults : [])
-    .filter((r) => r && r.status !== 'pass');
+    .filter((r) => r && r.status !== 'pass' && !unitSuiteRow.isNotRunRow(r));
   const failing = [
     ...all.filter(unitSuiteRow.isUnitSuiteRow),
     ...all.filter((r) => !unitSuiteRow.isUnitSuiteRow(r)),
@@ -1114,6 +1151,14 @@ function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MA
       consoleError: Array.isArray(r.consoleErrors) && r.consoleErrors[0]
         ? String(r.consoleErrors[0].message || '').slice(0, 200)
         : null,
+      // #3978: the unit-suite row's first failing-test excerpt — the
+      // assertion message and expected/actual, which the grouped reason
+      // above deliberately does not carry. One test, tightly clipped; the
+      // rest is what a re-run of the named files prints.
+      excerpt: unitSuiteRow.isUnitSuiteRow(r)
+        && Array.isArray(r.failureDetails) && r.failureDetails[0] && r.failureDetails[0].excerpt
+        ? String(r.failureDetails[0].excerpt).replace(/\s+/g, ' ').slice(0, 400)
+        : null,
     })),
   };
 }
@@ -1126,7 +1171,10 @@ function buildFailingChecksBlock(checkState, testResults) {
   const blocking = { length: summary.blocking };
   const lines = summary.rows.map((r) => {
     const firstConsole = r.consoleError ? ` · first console error: ${r.consoleError}` : '';
-    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
+    const line = `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
+    // The unit-suite row also carries its first failing test's error (#3978):
+    // what the failure actually asserted, flattened onto one indented line.
+    return r.excerpt ? `${line}\n  first failing test's error: ${r.excerpt}` : line;
   });
   const more = failing.length > FAILING_CHECKS_MAX
     ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';
@@ -1286,6 +1334,15 @@ async function buildSessionDiscussionBlock(pool, session) {
 // tests can keep requiring it from this module.
 const { stripSpecWrapperFence } = require('../services/spec-format');
 
+// #3699: what a spec author's final message is stored as. A markdown spec is
+// its fence-stripped text, as it always was. An HTML spec is stored as its
+// markdown copy (`text`), which is what every reader of spec text gets and so
+// what `ccText` means at each capture site, beside the document (`html`).
+function captureSpecOutput(raw) {
+  const { markdown, html } = specHtml.normalizeSpecOutput(stripSpecWrapperFence(String(raw || '').trim()));
+  return { text: String(markdown || '').trim(), html: html || null };
+}
+
 // #1204: spot an agent run that died on the wire and reported it as its
 // FINAL message ("API Error: Connection lost mid-response…") instead of in
 // its exit code. A scout's final message IS the spec, so without this the
@@ -1304,13 +1361,15 @@ const { agentApiFailure, describeAgentApiFailure } = require('../services/agent-
 // it uses MAX(version)+1. Ordinary callers remain best-effort; durable scout
 // publication passes required:true so the version and its receipt/card roll
 // back together instead of committing a partially replayable outcome.
-async function snapshotSessionSpec(pool, sessionId, content, { required = false } = {}) {
+async function snapshotSessionSpec(pool, sessionId, content, { required = false, html = null } = {}) {
   try {
+    // #3699: content_html is the version's HTML document when it was written
+    // as one; content is then its markdown copy.
     const { rows } = await pool.query(
-      `INSERT INTO chat_session_specs (session_id, version, content)
-       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2)
+      `INSERT INTO chat_session_specs (session_id, version, content, content_html)
+       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2, $3)
        RETURNING version`,
-      [sessionId, content]
+      [sessionId, content, html || null]
     );
     return rows[0].version;
   } catch (err) {
@@ -1330,6 +1389,9 @@ async function persistScoutPublication({
   sessionId,
   turnId = null,
   content,
+  // #3699: the spec's HTML document when it was written as one; `content` is
+  // then its markdown copy (captureSpecOutput).
+  contentHtml = null,
   conversationContent = null,
   hadSpec = false,
   durationMs = null,
@@ -1344,21 +1406,38 @@ async function persistScoutPublication({
   if (!ccText) throw new Error('persistScoutPublication: spec content required');
   const lineCount = ccText.split('\n').length;
   const baseScoutText = hadSpec
-    ? `Scout revised the spec (now ${lineCount} lines).`
-    : `Scout drafted a ${lineCount}-line spec from the codebase.`;
+    ? `Scout revised the plan (now ${lineCount} lines).`
+    : `Scout drafted a ${lineCount}-line plan from the codebase.`;
   const scoutText = localAgentLabel
     ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Homeroom credits were used.`
     : baseScoutText;
+  let html = typeof contentHtml === 'string' && contentHtml.trim() ? contentHtml.trim() : null;
+  if (html) {
+    // #3699: which stylesheet the screens draw with depends on the app
+    // (spec-html.js, stampSpecStyles); an app that cannot be read gets the
+    // native kit alone, the choice that never borrows the shell's styles.
+    let app = null;
+    try {
+      const { rows } = await pool.query(
+        'SELECT a.slug, a.self_hosted FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1',
+        [sessionId],
+      );
+      app = rows[0] || null;
+    } catch (err) {
+      log.warn('sessions', 'Could not read the app of an HTML spec', { sessionId, err: err.message });
+    }
+    html = specHtml.stampSpecStyles(html, specHtml.specStylesFor(app));
+  }
   const persist = async (client, { requiredSnapshot }) => {
     await client.query(
-      'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-      [ccText, sessionId],
+      'UPDATE chat_sessions SET spec_md = $1, spec_html = $3 WHERE id = $2',
+      [ccText, sessionId, html],
     );
     const specVersion = await snapshotSessionSpec(
       client,
       sessionId,
       ccText,
-      { required: requiredSnapshot },
+      { required: requiredSnapshot, html },
     );
     const metadata = {
       specPreview: buildSpecPreview(ccText),
@@ -1369,6 +1448,7 @@ async function persistScoutPublication({
         ? { scoutConversationSpecExact: true }
         : {}),
       specVersion,
+      ...(html ? { specFormat: 'html' } : {}),
       ...(durationMs != null ? { durationMs } : {}),
       ...(quickReplies ? { quickReplies } : {}),
       ...(recovered ? { recovered: true } : {}),
@@ -3229,7 +3309,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // defer to — the route's whole job is to start one unattended turn
       // immediately, and that turn may push. Deferring would only move the
       // same mint a few lines down the same request.
-      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`);
+      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`, Date.now(), issue && issue.title);
       try {
         await github.createBranch(repoOwner, repoName, branchName);
       } catch (err) {
@@ -3407,7 +3487,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // `fromBranch` argument below. Defer it and the first turn would
       // branch off main instead, silently discarding the work the clone
       // was created to continue.
-      const branchName = branchNames.devBranchName(req.user.username);
+      const branchName = branchNames.devBranchName(req.user.username, Date.now(), src.session_title);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       let inheritedCodeBranch = false;
       if (github.isEnabled() && repoOwner && repoName) {
@@ -3442,12 +3522,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // default backend/model atomically (no insert-then-patch).
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title,
-            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort, spec_html)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING *`,
         [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
          src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle,
-         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort, src.spec_html || null]
       );
       const session = rows[0];
       await topicAttrs.selfAssignProposal(pool, src.app_id, session.id, req.user);
@@ -3474,8 +3554,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       // Carry the spec version history too, so the spec viewer shows v1…vN.
       await pool.query(
-        `INSERT INTO chat_session_specs (session_id, version, content, built_at, commit_sha, pr_number)
-         SELECT $1, version, content, built_at, commit_sha, pr_number
+        `INSERT INTO chat_session_specs (session_id, version, content, content_html, built_at, commit_sha, pr_number)
+         SELECT $1, version, content, content_html, built_at, commit_sha, pr_number
          FROM chat_session_specs WHERE session_id = $2`,
         [session.id, src.id]
       ).catch((err) => log.warn('sessions', 'Spec history copy failed (continuing)', { err: err.message }));
@@ -3628,7 +3708,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (req.path.endsWith('/details') && process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id))
           || stagingMockOwnSessions(req.user.id, config.selfAppSlug).find((s) => s.id === Number(req.params.id));
-        if (mock) return res.set('Cache-Control', 'no-store').json({ session: mock });
+        if (mock) {
+          return res.set('Cache-Control', 'no-store').json({
+            session: { ...mock, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE },
+          });
+        }
       }
       const { rows } = await pool.query(
         `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.transcript_shared_at, cs.session_title, cs.pr_title,
@@ -3639,7 +3723,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
                 cs.shots_state, cs.shots_run_id,
                 cs.shots_detail, cs.shots_updated_at,
-                a.slug AS app_slug
+                cs.app_id, a.slug AS app_slug
            FROM chat_sessions cs
            JOIN apps a ON a.id = cs.app_id
           WHERE cs.id = $1`,
@@ -3661,6 +3745,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const { rows: specs } = await pool.query('SELECT spec_md FROM chat_sessions WHERE id = $1', [session.id]);
           detail.spec_md = specs[0]?.spec_md || null;
         }
+        detail.plan = await changePlanFor(pool, session.id, session.user_id, req.user.id).catch(() => null);
         if (detail.source === 'cli_handoff') {
           const { rows: handoffs } = await pool.query(`SELECT handoff_head_sha, handoff_uploaded_sha, handoff_upload_checked_sha, handoff_base_sha FROM chat_sessions WHERE id = $1`, [session.id]);
           const proposal = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] });
@@ -3670,6 +3755,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           ? await require('../services/shots-view')
             .getForSession(pool, detail, detail.app_slug)
           : null;
+        // #4452: how long testing usually takes on this app.
+        detail.checks_estimate = await require('../services/checks-estimate').forApp(pool, session.app_id);
       }
       // `?results=failing`: the change page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
@@ -3701,10 +3788,19 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes pv
                   WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count,
+                    AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count,
+                -- The member floor (services/governance.js applyNoTimerMerge):
+                -- Yes votes from someone other than the author, read only for
+                -- a proposal flagged for explicit approval.
+                CASE WHEN cs.requires_explicit_approval THEN
+                  (SELECT COUNT(*)::int FROM pr_votes pv
+                    WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                      AND pv.user_id IS DISTINCT FROM cs.user_id
+                      AND ${countedVotePredicateSql('pv', 'cs')})
+                END AS other_yes_count,
                 -- #1258: the upstream commit this proposal's branch started
                 -- from. It is not a column on the session — it lives on the
                 -- job that produced the branch — and a coding agent that
@@ -3772,14 +3868,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const governanceSvc = require('../services/governance');
           const gov = await governanceSvc.getGovernance(pool, rows[0].app_id);
           const electorate = await governanceSvc.getElectorate(pool, rows[0].app_id, gov);
+          // #788: a flagged proposal has no merge clock and waits for a Yes
+          // from someone other than its author, so the header pill says
+          // that rather than "merging shortly".
+          const flagged = !!rows[0].requires_explicit_approval;
           const q = electorate.approverIds
             ? await governanceSvc.qualifiedCounts(
               pool, 'pr', rows[0].id, electorate.approverIds,
-              reviewedHeadForSession(rows[0])
+              flagged ? { authorId: rows[0].user_id ?? null } : undefined
             )
-            : { yes: rows[0].yes_count, no: rows[0].no_count };
+            : { yes: rows[0].yes_count, no: rows[0].no_count, otherYes: rows[0].other_yes_count };
           const gate = governanceSvc.computeGate(
-            gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at
+            gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at, null,
+            {
+              explicitApproval: flagged,
+              otherYes: q.otherYes,
+              memberCount: flagged
+                ? await governanceSvc.communityMemberCount(pool, rows[0].app_id) : undefined,
+            }
           );
           rows[0].votes_required = gate.required;
           rows[0].merge_window_ends_at = gate.windowEndsAt;
@@ -3787,7 +3893,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           rows[0].approvals_required = gate.approvalsRequired;
           rows[0].qualified_yes_count = gate.qualifiedYes;
           rows[0].qualified_no_count = gate.qualifiedNo;
+          Object.assign(rows[0], governanceSvc.explicitApprovalRowFields(rows[0], gate));
         } catch { /* pill falls back to the raw tallies */ }
+        // B10a: a project that is just you reads "Waiting for your approval"
+        // where a group's reads "Waiting for approval" (MergeStatus.lifecycle).
+        try {
+          const membership = await communities.getMembership(pool, { id: rows[0].app_id }, req.user.id);
+          rows[0].app_audience = membership ? membership.audience : null;
+        } catch { /* the pill keeps the group's words */ }
+        delete rows[0].other_yes_count;
       }
 
       // A GET on this route is NOT by itself evidence that the user opened
@@ -3858,6 +3972,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // live path delivers the same shape via the visuals_ready event).
       // Best-effort — a visuals hiccup must not break opening the session.
       const session = rows[0];
+      // #3976: the dev chat reads this to put its composer away and say why.
+      // Decided here, beside the routes that refuse, so the screen and the
+      // server cannot disagree about which sessions take no new message.
+      session.classic_read_only = classicSessions.isClassicSession(session);
       // #1650: a managed local handoff cannot be proposed merely because it
       // is active. Its exact submitted head must have live staging and a
       // terminal passing verdict, and the in-memory build/check/capture gates
@@ -4168,6 +4286,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       await issueAnnounce.announceIssueCreated(pool, owner, repo, issue, isAppTarget
         ? { id: row.app_id, slug: row.app_slug, name: row.app_name }
         : null);
+      // #3952: the people the confirmed draft names with @. Never rejects.
+      notifications.notifyIssueMentions?.(pool, {
+        ...(isAppTarget ? { appId: row.app_id } : { owner, repo }),
+        issueNumber: issue.number, authorId: req.user.id,
+        text: `${draft.title || ''}\n\n${draft.body || ''}`,
+      });
 
       log.info('sessions', 'Issue filed after user confirm', {
         sessionId, msgId, number: issue.number, user: req.user.username,
@@ -4277,6 +4401,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { backend, model, reasoningEffort } = req.body || {};
       if (!Number.isFinite(sessionId)) {
         return res.status(400).json({ error: 'Bad session id' });
+      }
+      // #3976: a classic session's coding agent and model are what its next
+      // turn would run on, and it has no next turn. Ahead of the resolvers,
+      // which can call out over the network and provision a key.
+      if (classicSessions.isClassicSession(
+        await classicSessions.loadOwned(pool, sessionId, req.user.id),
+      )) {
+        return res.status(409).json(classicSessions.refusal());
       }
 
       // ── Phase 1: validate network-dependent inputs BEFORE locking ──
@@ -4394,6 +4526,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isFinite(sessionId)) {
         return res.status(400).json({ error: 'Bad session id' });
+      }
+      // #3976: a classic session is not built anywhere next, so there is no
+      // venue left to choose for it.
+      if (classicSessions.isClassicSession(
+        await classicSessions.loadOwned(pool, sessionId, req.user.id),
+      )) {
+        return res.status(409).json(classicSessions.refusal());
       }
       const venue = typeof (req.body || {}).venue === 'string' ? req.body.venue : null;
       // Clearing is legitimate: it returns the session to "nobody has
@@ -4867,13 +5006,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     async (req, res) => {
       try {
         const { rows: sessionRows } = await pool.query(
-          `SELECT cs.id FROM chat_sessions cs
+          `SELECT cs.id, cs.agent_session_id, cs.is_headless, cs.source FROM chat_sessions cs
            WHERE cs.id = $1 AND cs.user_id = $2
              AND cs.status IN ('active', 'promoted')
              AND cs.is_headless = FALSE`,
           [req.params.id, req.user.id]
         );
         if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
+        // #3976: a file is uploaded to go with a message, and a classic
+        // session takes no new message.
+        if (classicSessions.isClassicSession(sessionRows[0])) {
+          return res.status(409).json(classicSessions.refusal());
+        }
         const sessionId = sessionRows[0].id;
 
         const filename = String(req.query.filename || '').trim();
@@ -4997,32 +5141,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
            AND cs.source IS DISTINCT FROM 'imported'`,
         [req.params.id, req.user.id]
       );
-      let { rows: sessionRows } = await loadChatSession();
+      const { rows: sessionRows } = await loadChatSession();
       if (!sessionRows.length) {
-        // A message to a paused session resumes it (#2779 follow-up): paused
-        // is bookkeeping, never something the user is asked to undo first.
-        // The resume keeps every rule the resume route has (the caps, and
-        // pausing the user's least recently used session to make room).
+        // A paused session is refused for what it is, never resumed first: a
+        // resume spends a slot and may pause another of the user's sessions.
+        // (A message to a paused classic session used to resume it, #2779
+        // follow-up; since #3976 a classic session takes no message at all.)
         const { rows: pausedRows } = await pool.query(
-          `SELECT id, agent_session_id FROM chat_sessions
+          `SELECT id, agent_session_id, is_headless, source FROM chat_sessions
             WHERE id = $1 AND user_id = $2 AND status = 'paused'
               AND is_headless = FALSE AND source IS DISTINCT FROM 'imported'`,
           [req.params.id, req.user.id]
         );
-        // Refused below anyway, so it is never resumed first: a resume
-        // spends a slot and may pause another of the user's sessions.
         if (pausedRows.length && pausedRows[0].agent_session_id != null) {
           return res.status(409).json({
             error: 'This change belongs to an agent session. Continue it there.',
             agentSessionId: pausedRows[0].agent_session_id,
           });
         }
-        if (pausedRows.length) {
-          const resumed = await resumePausedSession({
-            pool, config, user: req.user, sessionId: Number(pausedRows[0].id),
-          });
-          if (!resumed.ok) return res.status(resumed.status).json({ error: resumed.error });
-          ({ rows: sessionRows } = await loadChatSession());
+        if (pausedRows.length && classicSessions.isClassicSession(pausedRows[0])) {
+          return res.status(409).json(classicSessions.refusal());
         }
       }
       if (!sessionRows.length) {
@@ -5056,6 +5194,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           sessionId: session.id, clientMessageId, viewer: req.user,
         });
         if (delivery.received) return chatDelivery.answerDuplicate(res, delivery);
+      }
+      // #3976: every other row this route loads is a classic session, and a
+      // classic session is read-only: new work starts in an agent session.
+      // After the duplicate lookup, so a retry of a message stored before
+      // this landed still learns it was received. The turn below is kept
+      // for now; deleting the classic dev chat is a later change.
+      if (classicSessions.isClassicSession(session)) {
+        return res.status(409).json(classicSessions.refusal());
       }
       const isOpenRouterSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
 
@@ -5147,8 +5293,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // this handler is already holding.
       if (!String(session.branch_name || '').trim()) {
         try {
+          // #3229: the branch is named after the change, from the same
+          // LLM-free title the session's first name comes from.
           const ensured = await sessionLifecycle.ensureSessionBranch({
             pool, sessionId: session.id, username: req.user.username,
+            label: session.session_title || sessionTitles.deterministicTitle(message || ''),
           });
           session.branch_name = ensured.branchName;
         } catch (err) {
@@ -5279,12 +5428,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.get('/api/sessions/:id/spec', async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
-        `SELECT cs.id, cs.user_id, cs.spec_md
+        `SELECT cs.id, cs.user_id, cs.spec_md, cs.spec_html
          FROM chat_sessions cs
          WHERE cs.id = $1`,
         [req.params.id]
       );
 
+      // #3699: `html` is the latest version's HTML document when it was
+      // written as one; `spec` is then its markdown copy.
       if (sessionRows.length && sessionRows[0].user_id === req.user.id) {
         const { rows: versions } = await pool.query(
           `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
@@ -5296,6 +5447,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         );
         return res.json({
           spec: sessionRows[0].spec_md || '',
+          html: sessionRows[0].spec_html || null,
           versions,
         });
       }
@@ -5306,7 +5458,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // query, then is stripped from the metadata rows.
         const { rows } = await pool.query(
           `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
-                  LENGTH(content) AS char_count, content
+                  LENGTH(content) AS char_count, content, content_html
            FROM chat_session_specs s
            WHERE s.session_id = $1
              AND ${specVersionSharedVisibilitySql('s', '$2')}
@@ -5316,7 +5468,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         if (rows.length) {
           return res.json({
             spec: rows[0].content || '',
-            versions: rows.map(({ content, ...meta }) => meta),
+            html: rows[0].content_html || null,
+            versions: rows.map(({ content, content_html: _html, ...meta }) => meta),
           });
         }
       }
@@ -5371,7 +5524,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
     try {
       const { rows } = await pool.query(
-        `SELECT s.version, s.content, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at
+        `SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at
          FROM chat_session_specs s
          JOIN chat_sessions cs ON cs.id = s.session_id
          WHERE s.session_id = $1
@@ -5388,7 +5541,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
           return res.json({ spec: stagingMockSpecVersion(version) });
         }
-        return res.status(404).json({ error: 'Spec version not found' });
+        return res.status(404).json({ error: 'Plan version not found' });
       }
       res.json({ spec: rows[0] });
     } catch (err) {
@@ -5436,7 +5589,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          WHERE session_id = $1 AND version = $2`,
         [sessionId, version]
       );
-      if (!specRows.length) return res.status(404).json({ error: 'Spec version not found' });
+      if (!specRows.length) return res.status(404).json({ error: 'Plan version not found' });
       const spec = specRows[0];
 
       // Title + snippet for the card. The title is the first H1
@@ -5464,8 +5617,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         },
       };
       const summaryLine = title
-        ? `📋 ${req.user.username || 'Someone'} shared "${title}" (spec v${spec.version}).`
-        : `📋 ${req.user.username || 'Someone'} shared spec v${spec.version} from a dev session.`;
+        ? `📋 ${req.user.username || 'Someone'} shared "${title}" (plan v${spec.version}).`
+        : `📋 ${req.user.username || 'Someone'} shared plan v${spec.version} from a dev session.`;
 
       const { rows: msgRows } = await pool.query(
         `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
@@ -5536,13 +5689,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          WHERE session_id = $1 AND version = $2`,
         [sessionId, version]
       );
-      if (!specRows.length) return res.status(404).json({ error: 'Spec version not found' });
+      if (!specRows.length) return res.status(404).json({ error: 'Plan version not found' });
 
       const users = await notifications.resolveUsers(pool, [username.toLowerCase()]);
       if (!users.length) return res.status(404).json({ error: 'User not found' });
       const recipient = users[0];
       if (recipient.id === req.user.id) {
-        return res.status(400).json({ error: 'You already have this spec' });
+        return res.status(400).json({ error: 'You already have this plan' });
       }
 
       // Collab-private apps: a share must not grant a non-member a spec
@@ -5596,25 +5749,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // once and cached, so the 3s status poll costs nothing.
   //
   // #1378: the set became a Map because `stoppable` is now part of the
-  // payload and the fixtures have to be able to show BOTH answers. A seeded
-  // fixture has no in-memory stop handle and no durable active_turn, so it
-  // would compute stoppable:false for all of them — regressing the two
-  // estimator fixtures to the "Finishing up…" spinner and breaking the
-  // checks that assert their cohort note. The '-unstoppable' fixture is the
-  // one that deliberately keeps the false answer.
+  // payload. A seeded fixture has no in-memory stop handle and no durable
+  // active_turn, so it would compute stoppable:false — regressing the
+  // estimator fixtures to the "Finishing up…" spinner — so each one declares
+  // itself stoppable. (A '-unstoppable' fixture kept the false answer until
+  // #4268 removed it: its screen was the composer's, which a read-only
+  // classic session no longer draws.)
   let stagingCohortFixtureIds = null;
   async function stagingCohortFixtureSessions() {
     if (process.env.USERNODE_ENV !== 'staging') return null;
     if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
     try {
       const { rows } = await pool.query(
-        `SELECT id, branch_name FROM chat_sessions
+        `SELECT id FROM chat_sessions
           WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
       );
-      stagingCohortFixtureIds = new Map(rows.map((r) => [
-        r.id,
-        { stoppable: !String(r.branch_name || '').endsWith('-unstoppable') },
-      ]));
+      stagingCohortFixtureIds = new Map(rows.map((r) => [r.id, { stoppable: true }]));
     } catch {
       stagingCohortFixtureIds = new Map();
     }
@@ -5748,6 +5898,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     const durableStop = turnLifecycle.stopRequestOf(durableTurn);
     const stopping = stopHandleNow ? !!stopHandleNow.stopped : !!durableStop;
 
+    // #4533: what the running turn is and since when, off its record, for
+    // get_change: a busy change said nothing of what held it (PR #4533's
+    // checks fix waited an hour behind one). Its mode ('build', 'scout',
+    // 'sync', 'shots'), or the Homeroom bot's follow-up its mark names
+    // ('homeroom_bot_checks_fix', 'homeroom_bot_reply').
+    let turn = null;
+    if (durableTurn) {
+      const mark = require('../services/homeroom-bot-followup').turnMarkOf(durableTurn);
+      turn = {
+        startedAt: durableTurn.startedAt || null,
+        kind: mark ? `homeroom_bot_${mark.followUp}` : (durableTurn.mode || null),
+      };
+    }
+
     // #937: WHEN the stop was requested, so a reloading client (or a second
     // tab joining mid-stop) rebuilds its escalation ladder at the right
     // rung instead of restarting a calm "Stopping…" that never escalates.
@@ -5836,14 +6000,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // fallback read this the same way the resolving banner reads
     // `resolving`.
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
-    // estimate
+    // estimate, turn ({ startedAt, kind } | null, #4533)
     // (+ resolving, sync, status, and `delivery` when asked for, #3177).
     // `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
     // clearEstimate. `stopRequestedAt` is epoch ms | null (#937) and drives
     // the client's stop-escalation ladder across reloads.
     res.json({
-      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate,
+      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
       spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
@@ -6196,6 +6360,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     return {
       status: 'ready', url: session.staging_url, verified: true,
       checksRunning: session.check_state === 'pending',
+      // The preview bar's title ("Flat 4B Chores · Preview"). A caller that
+      // opens a preview from a slug alone (the bot's ready card, an agent
+      // session) has no name to show; this answer does.
+      appName: session.app_name || null,
+      // A change that only shows at certain times declares the moment to see
+      // it at (services/preview-clock.js). Try it opens the preview there and
+      // the bar says so. Absent when nothing is declared.
+      ...previewClock.previewAnswer(session),
     };
   }
 
@@ -6213,6 +6385,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
       const result = await inspectPreview(session);
+      // The admin Journey's creation path: a preview answered as ready is
+      // a preview opened, once per viewer per change. Never awaited.
+      if (result.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
       return res.json(result.status === 'missing'
         ? { status: 'unavailable', reason: 'missing' }
         : result);
@@ -6260,6 +6435,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // reason to churn the app or its database, but it is a reason not to
       // navigate the reviewer to stale/current/error content.
       const inspected = await inspectPreview(session, { repairDockerAlias: true });
+      // As in preview-status: a ready answer is a preview opened. A rebuild
+      // is not, until the client asks again once it is up.
+      if (inspected.status === 'ready') journeyEvents.notePreviewOpened(pool, { sessionId: session.id, viewerId: req.user.id });
       if (inspected.status !== 'missing') return res.json(inspected);
 
       // Dedup concurrent clicks: at most one rebuild per session in flight.
@@ -6371,7 +6549,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           || visuals.hasInFlightCapture(sessionId)) {
         return res.json({ status: 'running' });
       }
+      // The same holds for a run of this commit that another process
+      // launched and that is still on the cluster, running or finished but
+      // not yet read: the harvest collects it (services/check-harvest.js),
+      // and starting over would throw it away, or cancel it mid-run. Asked
+      // before the stamp below, which would set it back to "building". Its
+      // stored verdict clears its manifest, and a press after that starts a
+      // fresh run. `collecting` lets the client say why nothing new started.
       recheckInFlight.add(sessionId);
+      if (await require('../services/check-harvest').runToCollect(config, pool, sessionId, session.checks_commit_sha || null)) {
+        recheckInFlight.delete(sessionId);
+        return res.json({ status: 'running', checkState: 'pending', collecting: true });
+      }
 
       // #607: stamp 'pending' + broadcast BEFORE responding so the client's
       // immediate refresh deterministically sees the in-progress state (the
@@ -6431,13 +6620,13 @@ function buildHeadlessFollowUpMessage(src) {
     + `other users can clone the same auto session independently without affecting yours.`;
   switch (src.headless_outcome) {
     case 'spec':
-      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec. Open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
+      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a plan. Open the plan viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
       return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch. See the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
     case 'spec_code':
-      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it: the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the auto session drafted a plan (open the plan viewer to review it) AND implemented it: the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the plan and the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
     default:
-      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision. See its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec, so open the spec viewer to review it alongside the questions.' : ''}`;
+      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision. See its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a plan, so open the plan viewer to review it alongside the questions.' : ''}`;
   }
 }
 
@@ -6456,13 +6645,13 @@ function buildHeadlessFollowUpQuickReplies(src) {
     case 'spec':
       // #1046: mirrors RECOVERY_PILLS.spec_done — the build pill names the
       // whole spec, not one component of it.
-      replies = ['Build the spec', 'Revise the spec', 'What will this change?'];
+      replies = ['Build the plan', 'Revise the plan', 'What will this change?'];
       break;
     case 'code':
       replies = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
       break;
     case 'spec_code':
-      replies = ['Propose it to the group', 'Revise the spec', 'Make a tweak'];
+      replies = ['Propose it to the group', 'Revise the plan', 'Make a tweak'];
       break;
     default:
       return null;
@@ -6555,13 +6744,18 @@ function buildHeadlessSeed(issueNumber, issue, comments, botUsername, threadMess
     createdAt: c.createdAt || '',
   }));
 
-  seed += `\n\n${threadContext.buildIssueDiscussionBlock({
-    issueNumber,
-    githubComments: clippedGithub,
-    threadMessages: thread,
-    botUsername,
-    truncated: list.length > kept.length,
-  })}`;
+  // Inside the same UNTRUSTED DATA warning a person's own session reads its
+  // discussion under (buildDiscussionPromptBlock): anyone can comment, on
+  // GitHub too, and the Homeroom bot builds from this seed.
+  seed += threadContext.buildDiscussionPromptBlock({
+    issueBlock: threadContext.buildIssueDiscussionBlock({
+      issueNumber,
+      githubComments: clippedGithub,
+      threadMessages: thread,
+      botUsername,
+      truncated: list.length > kept.length,
+    }),
+  });
   return seed;
 }
 
@@ -7320,8 +7514,8 @@ async function runHeadlessSession({
         const specHasQuestions = specHasBlockingQuestions(currentSpec);
         const decisionTurnId = headlessTurnId;
         const decisionFallback = specHasQuestions
-          ? '_The spec has open questions. Review them before implementation._'
-          : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._';
+          ? '_The plan has open questions. Review them before implementation._'
+          : '_Plan drafted. Review it in the plan viewer after starting a session from this auto session._';
         const decisionEffect = await runHeadlessMayorEffect({
           pool,
           sessionId: session.id,
@@ -7361,8 +7555,8 @@ async function runHeadlessSession({
           const finalText = mayorText2.trim()
             ? mayorText2
             : (specHasQuestions
-              ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
-              : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._');
+              ? '_The plan has open questions. Review the Questions section in the plan viewer after starting a session from this auto session._'
+              : '_Plan drafted. Review it in the plan viewer after starting a session from this auto session._');
           const messageApplied = await persistHeadlessMayorRow({
             pool,
             sessionId: session.id,
@@ -7437,7 +7631,7 @@ async function runHeadlessSession({
             const buildBilling = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
             let buildResult;
             if (buildBilling.error) {
-              await sendStatus('Spec drafted; implementation skipped, because the daily budget was reached.');
+              await sendStatus('Plan drafted; implementation skipped, because the daily budget was reached.');
               buildResult = {
                 toolResultText: 'Implementation skipped — the daily LLM budget is exhausted. The spec remains the deliverable; a human will review and build it later.',
                 isError: true,
@@ -7447,7 +7641,7 @@ async function runHeadlessSession({
               // and its debits) must bill the re-resolved payer — the
               // turn-start resolution may differ now that the scout spent.
               userApiKey = buildBilling.apiKey;
-              await sendStatus('Auto session: spec looks straightforward, so implementing it now...');
+              await sendStatus('Auto session: plan looks straightforward, so implementing it now...');
               const buildPromptArg = typeof buildCall.input?.prompt === 'string' && buildCall.input.prompt.trim()
                 ? buildCall.input.prompt.trim()
                 : seed;
@@ -7498,10 +7692,10 @@ async function runHeadlessSession({
             headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
           }
           const phase3Fallback = outcome === 'spec_code'
-            ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
+            ? '_Plan drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
             : outcome === 'question'
-              ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
-              : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+              ? '_The plan has open questions. Review the Questions section in the plan viewer after starting a session from this auto session._'
+              : '_Plan drafted, but the implementation attempt did not complete; review the plan in the plan viewer after starting a session from this auto session._';
           postDispatchBillingAvailable = await resolveHeadlessPayer('phase-3-wrapup');
           const phase3Effect = await runHeadlessMayorEffect({
             pool,
@@ -7541,10 +7735,10 @@ async function runHeadlessSession({
           if (outcome === 'question') questionTextToPost = mayorText3.trim();
           if (!mayorText3.trim()) {
             mayorText3 = outcome === 'spec_code'
-              ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
+              ? '_Plan drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
               : outcome === 'question'
-                ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
-                : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+                ? '_The plan has open questions. Review the Questions section in the plan viewer after starting a session from this auto session._'
+                : '_Plan drafted, but the implementation attempt did not complete; review the plan in the plan viewer after starting a session from this auto session._';
           }
           const servedModel3 = mayor3.servedModel || selectedModel;
           const costCents3 = mayor3.usage
@@ -7800,7 +7994,7 @@ function staticWrapUpText(outcome, { toolKind = null } = {}) {
       : "_The coding agent didn't complete successfully. See the status messages above._";
   }
   if (outcome === 'spec' || outcome === 'spec_done') {
-    return "_Spec updated: it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+    return "_Plan updated: it's in the plan viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
   }
   if (outcome === 'no_changes') {
     return '_The coding agent finished without changing anything. See the status messages above._';
@@ -7961,7 +8155,7 @@ async function runRecoveredWrapUp({
         + 'interruptions, delays, or this note itself. Call suggest_replies with 2-3 next steps '
         + 'that NAME what changed here, not generic platform actions — with the one exception in '
         + 'POST-SPEC BUILD PILL: if this turn left a spec and nothing built, the first pill still '
-        + 'says "Build the spec" rather than naming one component of it.',
+        + 'says "Build the plan" rather than naming one component of it.',
     });
 
     const currentSpec = await loadSessionSpec(pool, sessionId);
@@ -8640,7 +8834,8 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     // headless success paths (spec persist / testing notes), never PR or
     // staging (the headless contract).
     if (recoveryActiveTurn.mode === 'scout') {
-      const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+      const capturedSpec = captureSpecOutput(result.lastResultText);
+      const ccText = capturedSpec.text;
       // #1204: the replayed journal can end on a transport-failure notice
       // just like a live turn does. There is no re-dispatch on this path
       // (the run is being finalized after a platform restart, not driven),
@@ -8653,6 +8848,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           sessionId: session.id,
           turnId: recoveryActiveTurn.turnId || null,
           content: ccText,
+          contentHtml: capturedSpec.html,
           conversationContent: result.lastResultText || '',
           hadSpec: !!(session.spec_md || '').trim(),
           agentBackend: recoveryActiveTurn.backend || session.agent_backend || 'claude_code',
@@ -8788,9 +8984,9 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
   }
   const fallbackMayorText = outcome === 'spec'
-    ? '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._'
+    ? '_Plan drafted. Review it in the plan viewer after starting a session from this auto session._'
     : outcome === 'spec_code'
-      ? '_Spec drafted and change committed. Start a session from this auto session to open the PR._'
+      ? '_Plan drafted and change committed. Start a session from this auto session to open the PR._'
       : outcome === 'code'
         ? '_Change committed and pushed. Start a session from this auto session to open the PR._'
         : "_The auto session's dispatch didn't finish successfully. See the status above._";
@@ -8952,7 +9148,7 @@ function describeTurnError(err) {
   // that it travels as a file (worker.TURN_PROMPT_PATH), but other
   // spawns can still theoretically hit it.
   if (/\bE2BIG\b/.test(message)) {
-    return 'This request was too large to hand to the coding agent. Trim the session spec or attachments before retrying';
+    return 'This request was too large to hand to the coding agent. Trim the session plan or attachments before retrying';
   }
   // Cold worker bootstrap failed: the container never reached warm-ready,
   // so the coding agent was never launched and not one file was touched.
@@ -9257,15 +9453,24 @@ async function runScoutTool({
   // preserving accepted content. This replaced the Mayor's old
   // in-process write_spec/edit_spec tools (#111) — Claude Code does a
   // much better job at spec drafting and revision than the Mayor did.
-  const existingSpec = (await loadSessionSpec(pool, session.id)).trim();
+  // #3699: apps in config.htmlSpecApps get an HTML spec (before/after
+  // screens, diagrams). A revision of an HTML spec revises the document
+  // itself; a markdown spec on such an app is rewritten as one.
+  const htmlSpec = specHtml.htmlSpecsEnabledFor(config, session.app_slug);
+  const platformStyles = specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform';
+  const existingDoc = await loadSessionSpecDoc(pool, session.id);
+  const existingSpec = existingDoc.md.trim();
+  const existingShown = htmlSpec && existingDoc.html ? existingDoc.html.trim() : existingSpec;
   const revisionBlock = existingSpec
     ? `
 
-This session ALREADY HAS a spec doc, shown verbatim below. Your task is a REVISION of it, not a from-scratch rewrite: apply the requested changes, keep everything else intact (the user may have already reviewed and accepted the rest), and re-verify against the repo only where the change requires it. Your final message must be the COMPLETE revised spec document — it replaces the doc wholesale. If the existing spec does not follow the two-section structure mandated below ("## User-facing changes" / "## Technical implementation"), reorganize it into those two sections as part of this revision while preserving its content.
+This session ALREADY HAS a spec doc, shown verbatim below. Your task is a REVISION of it, not a from-scratch rewrite: apply the requested changes, keep everything else intact (the user may have already reviewed and accepted the rest), and re-verify against the repo only where the change requires it. Your final message must be the COMPLETE revised spec document — it replaces the doc wholesale. ${htmlSpec
+      ? 'If the existing spec is markdown, or does not follow the HTML structure mandated below, rewrite it as that HTML document as part of this revision while preserving its content.'
+      : 'If the existing spec does not follow the two-section structure mandated below ("## User-facing changes" / "## Technical implementation"), reorganize it into those two sections as part of this revision while preserving its content.'}
 
 ==== CURRENT SPEC DOC (revise this) ====
 
-${existingSpec}
+${existingShown}
 
 ==== END CURRENT SPEC DOC ====`
     : '';
@@ -9327,20 +9532,20 @@ ${scoutPlanModeLine}${personalFilesNote}${revisionBlock}
 ${issueHelperNote}${runLocally ? '' : `\n${HOMEROOM_READ_NOTE}\n`}${prodDebug ? `
 ${debugAccess.promptBlock()}
 ` : ''}
-Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
-- A complete, self-contained markdown document the user can review on its own.
+Your job is to investigate this repo and produce ${htmlSpec ? 'an HTML SPEC' : 'a MARKDOWN SPEC'} for the change. The spec should be:
+- A complete, self-contained ${htmlSpec ? 'HTML document (the format is described below)' : 'markdown document'} the user can review on its own.
 - Grounded in real file evidence — reference actual file paths and current behaviour, not guesses.
-- Structured as TWO halves under these exact H2 headings, in this order: "## User-facing changes" then "## Technical implementation". The spec viewer renders the two halves as tabs, so content outside them is undesirable — keep everything except the title and an optional 1-2 sentence summary inside one of the two halves. "User-facing changes" must be readable by a non-developer: describe what the user will see and do differently (screens, behaviour, before/after) — no file paths, no schema, no code. "Technical implementation" holds everything else: affected files, data model, edge cases, tests, considerations, deferred work. All other headings must be ### or deeper — no other ## headings anywhere in the document.
+- ${htmlSpec ? 'Structured as TWO halves, the "user" and "tech" sections described below, in that order, standing for' : 'Structured as TWO halves under these exact H2 headings, in this order:'} "## User-facing changes" then "## Technical implementation". The spec viewer renders the two halves as tabs, so content outside them is undesirable — keep everything except the title and an optional 1-2 sentence summary inside one of the two halves. "User-facing changes" must be readable by a non-developer: describe what the user will see and do differently (screens, behaviour, before/after) — no file paths, no schema, no code. "Technical implementation" holds everything else: affected files, data model, edge cases, tests, considerations, deferred work. All other headings must be ### or deeper — no other ## headings anywhere in the document.
 - Specific enough that a coding agent could implement it without re-doing your investigation, but NOT a literal diff or code block.
 - If the planned change introduces data-dependent UI (lists, threads, leaderboards, anything that renders rows), the "Technical implementation" half should name the staging seed data the build will need (per the "Staging mock data" platform convention), so seeding is planned rather than improvised at build time.${scoutDesignBrief}
 
-The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.
+${htmlSpec ? specHtmlContract(platformStyles) : `The spec is rendered as markdown in a viewer that follows standard CommonMark fencing. If you include a fenced code block that ITSELF contains a triple-backtick fence (common when quoting markdown examples or the platform's \`\`\`filepath:...\`\`\` output convention), wrap the OUTER block in a four-backtick fence (\`\`\`\`) — a longer fence can safely contain shorter ones. Otherwise the inner \`\`\` closes the block early and the rest of the spec renders broken. When in doubt, prefer fewer/inline code samples over deeply nested fences.`}
 
 Do NOT pad the spec with open questions. Only include a "### Questions" subsection — placed at the END of the "User-facing changes" half, since questions are for the (possibly non-technical) requester — for things that genuinely BLOCK implementation: decisions the coding agent cannot reasonably make on its own and that would change what gets built. Make a sensible default choice wherever you can and state it, rather than asking. Non-blocking items — things worth noting but not required to answer before building — belong in the "Technical implementation" half under "### Considerations" (trade-offs, assumptions, things to keep in mind) or "### Deferred work" (out-of-scope or follow-up items), NOT as questions. When there are no blockers, OMIT the "### Questions" subsection entirely — do NOT write "### Questions\nNone" or an empty section.
 
-Your final assistant message must be ONLY the markdown spec — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
+Your final assistant message must be ONLY the ${htmlSpec ? 'HTML spec, starting with <article data-spec>' : 'markdown spec'} — no preamble, no "I'll investigate...", no "Here's the spec:". The host captures that final message verbatim and stores it as the session's spec doc.
 
-CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.${headless ? `
+${htmlSpec ? 'CRITICAL: Output the spec as RAW HTML. Do NOT wrap your whole response in a code fence: the first characters of your message are <article data-spec> and the last are </article>.' : `CRITICAL: Output the spec as RAW markdown. Do NOT wrap your whole response in a code fence — no leading \`\`\`markdown line and no trailing \`\`\`. A whole-document fence makes the spec render as one big code block instead of formatted markdown. Fences are only for actual code/quoted snippets INSIDE the spec.`}${headless ? `
 
 HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue — no human is available to answer questions during the run. If the Mayor's instructions list ambiguities or unresolved points, resolve them from the code BEFORE considering them open: read the relevant files, state what the code shows, and choose a sensible default where one exists. Any "### Questions" section you do write (at the end of the "User-facing changes" half) will be relayed verbatim to the issue reporter as a GitHub comment, so it must contain ONLY questions a codebase cannot answer (product intent, preferences, reproduction details), each self-contained, numbered, and carrying your suggested default.` : ''}`;
 
@@ -9765,7 +9970,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       return stoppedResult();
     }
 
-    const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
+    const capturedSpec = captureSpecOutput(result.lastResultText);
+    const ccText = capturedSpec.text;
     // #1204: after the retry above, is the final message STILL a transport
     // failure notice rather than a spec?
     const apiFailure = agentApiFailure(ccText);
@@ -9782,7 +9988,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // dropped connection, and freezing this as a spec version would put a
       // one-line error notice in the viewer's version history forever.
       isError = true;
-      const msg = `${describeAgentApiFailure(apiFailure)}. The spec doc was not updated, so send your request again to retry.`;
+      const msg = `${describeAgentApiFailure(apiFailure)}. The plan was not updated, so send your request again to retry.`;
       await sendStatus(msg, turnFailure());
       summaryParts.push(msg);
     } else if (result.ccIsError) {
@@ -9806,8 +10012,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // Markerless exits (exitCode -1, or null — never normalized) mean
       // the run died, not that the scout chose to write nothing.
       const msg = (result.exitCode === -1 || result.exitCode == null)
-        ? `${describeMarkerlessExit(result.markerlessCause)} No spec text was produced.`
-        : 'Scout finished but produced no spec text.';
+        ? `${describeMarkerlessExit(result.markerlessCause)} No plan text was produced.`
+        : 'Scout finished but produced no plan text.';
       await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else {
@@ -9816,6 +10022,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         sessionId: session.id,
         turnId: durableTurnId,
         content: ccText,
+        contentHtml: capturedSpec.html,
         conversationContent: result.lastResultText || '',
         hadSpec: !!existingSpec,
         durationMs: Date.now() - turnStartedMs,
@@ -10039,6 +10246,9 @@ async function runCodexAttemptLoop({
         ? { ...result, agentHarness: runtimeContext.agentHarness }
         : result),
       usageScope: agentTurn.usageScopeForHarness(runtimeContext.agentHarness),
+      // The upstream provider OpenRouter named for the turn's requests, when
+      // the Claude Code listener saw one (worker.js observeCodingProviderResult).
+      routedProvider: result?.routedProvider || null,
       telemetryComponent: result?.providerDispatched === true
         ? (telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'))
@@ -10988,6 +11198,10 @@ path: /another/changed/view
     change" button.
   - Keep the steps short, numbered when practical, and understandable to a
     non-technical tester.
+  - If the change only shows at certain times, add one
+    "<!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->" line: a
+    moment when it shows with the preview's data, in the app's time zone
+    ("Time-dependent features" in the system instructions).
   - The block must be LAST in your final message. Skip it entirely for changes
     with nothing user-visible to test.`;
 
@@ -11067,6 +11281,10 @@ function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   tool with concrete reviewer-facing claims and real user flows (or impact
   "none" with a specific reason for a non-visual change). If the tool fails,
   report the failure; never claim that intent was recorded when it was not.
+- When the change is a rename, a changed flow, a data or settings change, or
+  a measured improvement, also call declare_diagram once with that kind; it
+  is drawn on the change's card when it has no before/after shots. Mermaid
+  is only for a change declared with impact "none".
 - Implement the change, run focused checks, commit it on the existing session
   branch, and finish the turn. The Homeroom harness handles push, pull request
   creation, staging, checks, and scheduling the paired shots run after
@@ -12925,8 +13143,9 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
           try {
             const pat = process.env.GITHUB_BOT_TOKEN;
             if (pat) {
-              const { Octokit } = await import('@octokit/rest');
-              const ok = new Octokit({ auth: pat });
+              // The bot token's client from services/github.js, so the
+              // request is recorded and counted against the hourly budget.
+              const ok = await github.getOctokit(repoOwner);
               // #127: append the "How to test" section so the guidance is
               // visible right where reviewers find the staging link.
               const testingComment = prMetadata.buildTestingBlock(session.testing_md, session.testing_path);
@@ -13379,4 +13598,12 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, changePlanFor, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, captureSpecOutput, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+// #4524: the topic page's fast open asks GET /api/apps/:slug/proposals/:id
+// for its item beside the board load, and production serves an active or
+// paused session there when it is the viewer's own or shared. The demo rows
+// the generators above make live only in the session lists' responses, so
+// the single proposal route resolves them through these same generators
+// (see its staging fallback in routes/votes.js).
+module.exports.stagingMockOwnSessions = stagingMockOwnSessions;
+module.exports.stagingMockSharedSessions = stagingMockSharedSessions;

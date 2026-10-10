@@ -1,8 +1,9 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 import * as api from './api';
-import { WORK_CHANGED_EVENT } from './bot-shared';
-import type { HomeroomBotActivity } from './types';
+import { SPINNING_OUTCOMES, WORK_CHANGED_EVENT } from './bot-shared';
+import { handleEvent } from './store';
+import type { HomeroomBotActivity, HomeroomBotReadyNow } from './types';
 
 /*
  * #3736: the state of the activity cards in the Homeroom bot's DM
@@ -19,13 +20,34 @@ import type { HomeroomBotActivity } from './types';
  * in view, once a minute: the one step the loop announces nothing for is the
  * plan starting after the read. Like every conversation event, none of them
  * carries data.
+ *
+ * Opening the DM also asks the server, once, to give a card to any of the
+ * viewer's work the bot has under way without one (work begun before cards
+ * existed, or looked at again after a restart): catchUpBotActivity below.
+ *
+ * 5 October: the same read says where the changes of the viewer's ready
+ * cards stand now (./bot-ready.tsx), so a card sent "ready to try" says it
+ * is live once it is, and who it still waits on as others approve. A vote on
+ * one of them announces `homeroom_bot_work_changed` to whoever asked for it.
  */
 
 /** Asked again this often while a card is going, in case a step was not announced. */
 export const POLL_MS = 60 * 1000;
 
+
+/** Pure: whether anything the read holds is still moving, so it is read again now and then. */
+export function stillMoving(snap: Pick<BotActivitySnapshot, 'cards' | 'ready'>): boolean {
+  for (const card of snap.cards.values()) {
+    if (card.state === 'working' || (card.outcome && SPINNING_OUTCOMES.has(card.outcome))) return true;
+  }
+  for (const ready of snap.ready.values()) if (ready.state === 'going_live') return true;
+  return false;
+}
+
 export interface BotActivitySnapshot {
   cards: ReadonlyMap<number, HomeroomBotActivity>;
+  /** The ready cards' changes as they stand now, by message id. */
+  ready: ReadonlyMap<number, HomeroomBotReadyNow>;
   /** The first read has landed. */
   loaded: boolean;
   /** The last read failed (what was read before is kept). */
@@ -34,7 +56,7 @@ export interface BotActivitySnapshot {
   landed: number;
 }
 
-const EMPTY: BotActivitySnapshot = { cards: new Map(), loaded: false, failed: false, landed: 0 };
+const EMPTY: BotActivitySnapshot = { cards: new Map(), ready: new Map(), loaded: false, failed: false, landed: 0 };
 let snapshot: BotActivitySnapshot = EMPTY;
 const listeners = new Set<() => void>();
 
@@ -68,9 +90,13 @@ export function readsAsked(): number {
 /** Read every card's state again. `fresh`: past the worker's offline copy. */
 export function loadBotActivity({ fresh = true }: { fresh?: boolean } = {}): Promise<void> {
   const mine = ++seq;
-  const run: Promise<void> = api.getHomeroomBotActivity({ fresh }).then((cards) => {
+  const run: Promise<void> = api.getHomeroomBotActivity({ fresh }).then(({ cards, ready }) => {
     if (mine !== seq) return;
-    publish({ cards: new Map(cards.map((card) => [card.messageId, card])), loaded: true, failed: false, landed: mine });
+    publish({
+      cards: new Map(cards.map((card) => [card.messageId, card])),
+      ready: new Map(ready.map((entry) => [entry.messageId, entry])),
+      loaded: true, failed: false, landed: mine,
+    });
   }).catch(() => {
     if (mine === seq) publish({ ...snapshot, failed: true });
   }).finally(() => {
@@ -83,6 +109,21 @@ export function loadBotActivity({ fresh = true }: { fresh?: boolean } = {}): Pro
 /** A card drawn before anything was read (or anywhere the sync is not): read once. */
 export function ensureBotActivity(): void {
   if (!snapshot.loaded && !snapshot.failed && !inFlight) void loadBotActivity({ fresh: false });
+}
+
+/**
+ * The bot's DM `conversationId` opened: work the bot has under way for the
+ * viewer without a card gets one (the server sends it, at the end of the
+ * DM). When one was added, the transcript and the cards read again, as the
+ * bot's news arriving over the socket would make them, socket or not. A
+ * failure costs nothing: the next opening asks again.
+ */
+export function catchUpBotActivity(conversationId: number): Promise<void> {
+  return api.catchUpHomeroomBotActivity().then((added) => {
+    if (!added) return;
+    handleEvent({ type: 'conversation_message_created', conversationId });
+    void loadBotActivity();
+  }).catch(() => {});
 }
 
 /**
@@ -112,16 +153,18 @@ export function cardRecord(snap: BotActivitySnapshot, messageId: number, drawnAt
  * BotActivitySync. `newsKey` is the newest message the bot sent there.
  */
 export function useBotActivitySync(conversationId: number, newsKey: number | null): void {
-  const { cards } = useBotActivity();
-  const going = [...cards.values()].some((card) => card.state === 'working');
+  const snap = useBotActivity();
+  const going = stillMoving(snap);
   // The newest bot message already accounted for: the first one the
   // transcript draws is what was there when the read below was made.
   const seenNews = useRef<number | null>(null);
 
-  // Another conversation reads afresh.
+  // Another conversation reads afresh, and opening it gives work already
+  // under way the cards it is missing.
   useEffect(() => {
     seenNews.current = null;
     void loadBotActivity({ fresh: false });
+    void catchUpBotActivity(conversationId);
   }, [conversationId]);
 
   // The bot's news here moves its work on, and a new card is news.

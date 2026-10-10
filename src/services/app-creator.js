@@ -15,6 +15,8 @@ const { getTemplateFiles, getConnectorScaffoldFiles, getCanonicalRepoFile } = re
 const appTemplates = require('./app-templates');
 const { getPool } = require('../db/pool');
 const appCreationPhase = require('./app-creation-phase');
+const journeyEvents = require('./journey-events');
+const appSketch = require('./app-sketch');
 const { pushAppStatusUpdate, pushAppCreationPhase } = require('./ws');
 
 // Record which step of creation is running, and tell the connected
@@ -127,6 +129,12 @@ async function createApp(config, appRow) {
     if (!repoUrl && github.isEnabled()) {
       try {
         const botUsername = await github.getBotUsername();
+        // The first session's card (services/app-sketch.js), if one is
+        // being made: waited for a little, so the first commit can carry it
+        // (design/sketch.json, and its emoji as dapp.json's icon). No sketch
+        // row, no wait.
+        const sketch = await appSketch.whenReady(pool, appId).catch(() => null);
+
         // adoptExisting: a Retry after a create that died between the
         // GitHub create call and the repo_url persist re-runs with the
         // SAME slug, so the repo already exists on the bot account and a
@@ -139,13 +147,24 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) || appSketch.taglineOf(sketch), template: templateOf(appRow), sketch });
+        // Its description above is the creator's own line, else the card's
+        // tagline (#4235), so the first dapp.json says what the app is for
+        // rather than leaving the hub to quote the creator's prompt.
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
 
         await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, appId]);
         useGitHub = true;
+        if (sketch) {
+          await appSketch.markCommitted(pool, appId).catch(() => {});
+        } else {
+          // One still being made is committed on its own when it is ready
+          // (its file, and dapp.json's icon when it has none). Not awaited;
+          // never throws.
+          appSketch.commitWhenReady(pool, { appId, name, owner: botUsername, repo: slug });
+        }
       } catch (err) {
         // GitHub is enabled but the repo couldn't be provisioned. Falling
         // back to a local build here used to leave a healthy-looking app
@@ -361,6 +380,11 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     await appManifest.reconcileAppAdmins(pool, { id: appId, slug }, manifest)
       .catch((err) => log.warn('app-creator', 'Admins reconcile failed', { appId, err: err.message }));
 
+    // And the manifest's `topics` array (#4417): an imported repo that
+    // names topics starts with them. No-op when the block is absent.
+    await appManifest.reconcileAppTopics(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Topics reconcile failed', { appId, err: err.message }));
+
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360):
     // persist the density the before/after preview shots are captured at
     // onto apps.screenshot_device_scale so the capture orchestrator can
@@ -449,6 +473,11 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
        mainSha || null, build.imageRef, build.buildRef, deployed.runtimeKind,
        deployed.runtimeName, appId]
     );
+
+    // The first time this project runs, for the admin Journey's creation
+    // path: last_deploy_at above moves again on every merge, so it cannot
+    // say when that was. Once only, and never a reason creation fails.
+    await journeyEvents.markFirstRunning(pool, appId);
 
     endPhases(slug);
     pushAppStatusUpdate({ id: appId, slug, status: 'running', url: appUrl });

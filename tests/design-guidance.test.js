@@ -1,3 +1,4 @@
+// test:changed: when src/prompts/design-guidance.md (the guidance this suite pins, read through services/prompts.js; scripts/test-changed.js)
 'use strict';
 
 // #2817: every coding agent builds with the same written design guidance,
@@ -22,6 +23,9 @@ test('the design guidance covers taste, UI/UX and coherence', () => {
   assert.match(guidance, /==== END UI DESIGN ====$/);
   assert.match(guidance, /native UI kit/, 'the app\'s own kit comes before anything invented');
   assert.match(guidance, /one primary action/i);
+  // A filled button only where the view's job is an action: reading or browsing may have none.
+  assert.match(guidance, /- One job per view, and one primary \(filled\) button when that job is an action; a screen for reading or browsing may have none\. Everything else is secondary or plain\./);
+  assert.match(guidance, /confirm: one primary action where the screen's job is an action \(a screen for reading or browsing may have none\);/);
   assert.match(guidance, /same word for the same concept/, 'cross-element coherence is checked');
   assert.match(guidance, /empty state[\s\S]*loading state[\s\S]*error state/);
   assert.doesNotMatch(guidance, /\{\{/, 'no template token survives');
@@ -50,7 +54,9 @@ test('#3737: the self-check walks both looks, and every build follows the app\'s
     assert.match(guidance, /Both looks: every new app has a light and a dark look that follow the viewer's Homeroom theme\./);
     assert.match(guidance, /Only an app whose `CLAUDE\.md` declares one fixed look, or an older app built with one look, keeps a single look\./,
       'no drive-by conversion of an app built with one look');
-    assert.match(guidance, /If the app's `CLAUDE\.md` has a `Design:` note \(under "App-specific conventions"\), that is this app's look: its accent, neutrals, type, spacing and signature element\. Follow it/);
+    // #3737 Rec2: a new app's record is its CLAUDE.md's "## Design"
+    // section; an app whose first version came before it has a note.
+    assert.match(guidance, /If the app's `CLAUDE\.md` has a "## Design" section \(or a `Design:` note under "App-specific conventions"\), that is this app's look: its accent, neutrals, type, spacing and signature element\. Follow it/);
   }
 });
 
@@ -108,4 +114,11 @@ test('an OpenRouter scout is told it reads through the shell and changes nothing
   assert.match(SESSIONS, /const scoutPlanModeLine = isCodexSession && agentIdentity\.harness !== 'claude'\s*\n\s*\? 'You are running in PLAN MODE: read and search the repository with read-only shell commands/);
   assert.match(SESSIONS, /: 'You are running in PLAN MODE: you can read files \(Read, Glob, Grep\) but you cannot edit, commit, or push anything\. Do not attempt to\.';/,
     'the Claude scout keeps its exact wording');
+});
+
+test('one accent, and the colours an app\'s "## Design" section gives its subject are not accents (7 Oct 2026)', () => {
+  const flat = prompts.getDesignGuidance().replace(/\s+/g, ' ');
+  assert.match(flat, /- One accent colour, kept for the primary action and status\. Colours the app's "## Design" section gives its subject \(a map's water and parks, team colours, card suits, traffic-light statuses\) are not accents: use them as that section says\./);
+  // Its examples are none of the App bench's starter briefs.
+  assert.doesNotMatch(flat, /bread|proofing|RSS|feed reader|ear train|voxel|tier list|ranking/i);
 });

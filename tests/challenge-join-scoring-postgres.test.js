@@ -190,6 +190,20 @@ test('community challenges count a join at once, against the full PostgreSQL sch
       await call('POST', `/api/apps/${arena.slug}/membership`, { joined: true });
       assert.equal((await credits(as.id)).length, 1, 'never paid twice');
 
+      // Home's featured list: its ⊕ is a pin, which joins by trigger
+      // (#4600). The route counts the join before it answers, and says the
+      // pin was the join; a second pin joins nothing and says so.
+      as = await user();
+      got = await call('POST', `/api/apps/${arena.slug}/favorite`, { favorited: true });
+      assert.equal(got.status, 200);
+      assert.equal(got.body.joined, true, 'the pin was the join');
+      assert.equal((await credits(as.id)).length, 1, 'featured list: credited before the response');
+      assert.equal(await done(as.id), true);
+      await call('POST', `/api/apps/${arena.slug}/favorite`, { favorited: false });
+      got = await call('POST', `/api/apps/${arena.slug}/favorite`, { favorited: true });
+      assert.equal(got.body.joined, false, 'an unpin is not a leave, so pinning again joins nothing');
+      assert.equal((await credits(as.id)).length, 1, 'never paid twice');
+
       // The join screen, Homeroom ticked beside an open community.
       as = await user();
       got = await call('POST', '/api/me/communities', { join: [homeroom.slug, arena.slug] });
@@ -218,6 +232,31 @@ test('community challenges count a join at once, against the full PostgreSQL sch
       assert.equal((await credits(as.id)).length, 1, 'accepted invite: credited on the spot');
       assert.equal((await credits(host.id)).length, 1,
         'and the host of what is now a Private community, on the same tap');
+
+      // An invite LINK into a private group, followed from the shell's
+      // confirm (App._followInvite): the door of the first-session
+      // run-through (2026-10-04), where "Join a community" read Not started
+      // just after the join. Building there is by invitation, so the link is
+      // the maker's collaborator invite, accepted (apply_community_invite).
+      // The project was "Just you" until this tap and a Private community
+      // after it, so it counts for the joiner and, now, for its maker.
+      const maker = await user();
+      const den = await app({ createdBy: maker.id, view: 'private', collab: 'private' });
+      await scorer.scoreOnJoin(pool, config);
+      assert.deepEqual(await credits(maker.id), [], 'alone in it, the maker has found nobody yet');
+      const link = await invites.createInvite(pool, { app: den, user: { id: maker.id, isAdmin: false } });
+      assert.equal(link.ok, true);
+      as = await user();
+      got = await call('POST', `/api/invite-links/by-token/${link.link.token}/redeem`);
+      assert.equal(got.status, 200);
+      assert.equal(got.body.status, 'joined');
+      const { rows: [seat] } = await pool.query(
+        'SELECT source FROM community_members WHERE community_id = $1 AND user_id = $2',
+        [den.community_id, as.id]);
+      assert.equal(seat.source, 'collaborator', 'in by the collaborator invite the link stands for');
+      assert.equal((await credits(as.id)).length, 1, 'invite link into a private group: credited on the spot');
+      assert.equal(await done(as.id), true, 'so Home and Challenges read Join a community as done');
+      assert.equal((await credits(maker.id)).length, 1, 'and its maker, whose project is a group now');
     } finally {
       listener.close();
       await getPool(config).end().catch(() => {});

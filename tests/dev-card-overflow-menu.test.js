@@ -66,6 +66,7 @@ function makeAppView(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -238,7 +239,7 @@ test('proposal, foreign, plain collaborator', () => {
   // Explore is a ⋯ row again (#1787 round four): a door to a side conversation
   // about the proposal rather than one of the things you do to it, and the
   // widest pill on the card when it rode the face.
-  assert.ok(labels.some((l) => /Explore in dev chat/.test(l)), 'offered from ⋯');
+  assert.ok(labels.some((l) => /Explore in a coding agent/.test(l)), 'offered from ⋯');
   assert.ok(!proposalCardHtml(AppView, PR()).includes('gc-explore-chat-btn'),
     '…and nowhere on the face');
   // Kudos went the other way (#1688): the slot is the band's one pill —
@@ -276,7 +277,7 @@ test('proposal, author: Open session + Withdraw, and no Explore', () => {
   const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ user_id: ME })));
   assert.ok(labels.some((l) => /Open session/.test(l)));
   assert.ok(labels.some((l) => /^Withdraw$/.test(l)));
-  assert.ok(!labels.some((l) => /Explore in dev chat/.test(l)));
+  assert.ok(!labels.some((l) => /Explore in a coding agent/.test(l)));
 });
 
 test('proposal, author, imported PR: no Open session (there is no in-app session)', () => {
@@ -373,6 +374,10 @@ test('merged proposal: Undo, and never twice over a revert', () => {
   assert.ok(!menuLabels(AppView, mergedCardHtml(AppView, 
     merged({ revert_session_id: 9, revert_pr_number: 900 }), 3))
     .some((l) => /^Undo$/.test(l)));
+  // A change that went live inside another one has no merge of its own to
+  // undo (services/included-changes.js; the server refuses it too).
+  assert.ok(!menuLabels(AppView, mergedCardHtml(AppView, merged({ included_in_session_id: 6288 }), 3))
+    .some((l) => /^Undo$/.test(l)));
 });
 
 test('merged proposal: completed-task attributes stay editable for collaborators', () => {
@@ -401,9 +406,9 @@ test('merged proposal: completed-task attributes stay editable for collaborators
   const detailModel = AppView._proposalCardModel(PR({ status: 'merged', chat_count: 0 }), { noNav: true });
   const detail = cardHtml(detailModel);
   assert.match(detail, /Set priority/);
-  assert.match(detail, /Unassigned/);
+  assert.doesNotMatch(detail, /Unassigned/, 'B10c: who is on it shows only when somebody is');
   assert.match(detail, /Set category/);
-  assert.equal((detail.match(/data-attr-chip/g) || []).length, 3);
+  assert.equal((detail.match(/data-attr-chip/g) || []).length, 2);
 });
 
 test('merged proposal: completed-task attributes remain read-only without collaboration access', () => {
@@ -429,7 +434,7 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   assert.equal(labels[0], 'Pledge kudos');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
-  assert.ok(!labels.some((l) => /Claim this issue/.test(l)), 'promoted onto the face');
+  assert.ok(!labels.some((l) => /Claim it/.test(l)), 'promoted onto the face');
   assert.ok(hasAction(AppView._issueCardModel(ISSUE()), 'markIssueInProgress'),
     'and is wired on the face instead');
   assert.ok(labels.some((l) => /Propose to close/.test(l)));
@@ -443,7 +448,7 @@ test('issue: a disabled row still EXPLAINS itself rather than vanishing', () => 
   const closed = menuItems(AppView, issueCardHtml(AppView, ISSUE()))
     .find((i) => /Close proposed/.test(i.label));
   assert.ok(closed.disabled);
-  assert.match(closed.title, /up for vote/);
+  assert.match(closed.title, /waiting for approval/);
   assert.ok(!closed.act, 'a disabled row carries no handler');
 
   // Weekly kudos allowance spent.
@@ -788,8 +793,8 @@ test('the ✨ that used to live inside the Explore label is now its icon', () =>
   // the merged board is where the ⋯ row still lives.
   const item = menuItems(AppView, mergedCardHtml(AppView, 
     PR({ status: 'merged', chat_count: 0 }), 3))
-    .find((i) => /Explore in dev chat/.test(i.label));
-  assert.equal(item.label, 'Explore in dev chat', 'no glyph baked into the label');
+    .find((i) => /Explore in a coding agent/.test(i.label));
+  assert.equal(item.label, 'Explore in a coding agent', 'no glyph baked into the label');
   assert.equal(AppView._menuIconGlyph(item), AppView.MENU_ICONS.explore);
 });
 
@@ -825,4 +830,44 @@ test('a folded kudos slot is a ⋯ row: the slot’s line, acting through its bu
   // A spec with neither a call nor a slot is dropped, as before.
   AppView._setFoldedCardActions('proposal:7', [{ key: 'x', label: 'x' }]);
   assert.equal(AppView._cardMenuItems('proposal:7').length, 0);
+});
+
+// A row's click reads the CURRENT list by index, so a pill folded while the
+// menu is open has to redraw it: drawn from the old list, every row under the
+// new one pointed one row off ("Change assignee…" opened the category picker).
+test('a pill folded while its card’s menu is open redraws that menu', () => {
+  const AppView = makeAppView();
+  const drawn = [];
+  AppView._fillCardMenu = (el, items) => { drawn.push({ el, labels: items.map((i) => i.label) }); };
+  AppView._cardMenus['issue:9'] = [{ label: 'Set category…', act: () => {} }, { label: 'Change assignee…', act: () => {} }];
+  const menu = {};
+  AppView._openCardMenu = { key: 'issue:9', el: menu, trigger: null, own: null };
+  AppView._setFoldedCardActions('issue:9', [{ key: 'primary', label: 'Build it now', act: { fn: 'chooseIssueWork', args: [9] } }]);
+  assert.equal(drawn.length, 1, 'redrawn once');
+  assert.equal(drawn[0].el, menu);
+  assert.deepEqual(drawn[0].labels, AppView._cardMenuItems('issue:9').map((i) => i.label), 'drawn from the list a click reads');
+  assert.equal(drawn[0].labels.length, 3);
+  // Another card's fold leaves the open menu alone.
+  AppView._setFoldedCardActions('issue:10', [{ key: 'primary', label: 'Build it now', act: { fn: 'chooseIssueWork', args: [10] } }]);
+  assert.equal(drawn.length, 1);
+  AppView._openCardMenu = null;
+});
+
+// The fold can also land WHILE the menu opens: mounting its rows lets React
+// run the board's pending effects, before the menu counts as open. A click
+// is resolved by the row's own label, so a row drawn from the older list
+// still acts as itself.
+test('a clicked ⋯ row acts as the row it reads, whatever moved under it', () => {
+  const AppView = makeAppView();
+  const row = (label) => ({ label, act: () => {} });
+  const drawnList = [row('Claim it'), row('Set category…'), row('Change assignee…')];
+  const live = [row('Build it now'), ...drawnList];
+  assert.equal(AppView._cardMenuRowItem(live, 2, 'Change assignee…').label, 'Change assignee…', 'found by its label, not its old index');
+  assert.equal(AppView._cardMenuRowItem(live, 3, 'Change assignee…'), live[3], 'the index when it still reads the same');
+  assert.equal(AppView._cardMenuRowItem(live, 1, null), live[1], 'no label to go by: the index');
+  assert.equal(AppView._cardMenuRowItem(live, 1, 'Gone'), live[1], 'a label no longer listed: the index');
+  const toggle = SRC.slice(SRC.indexOf('  _toggleCardMenu(trigger) {'), SRC.indexOf('  _fillCardMenu(menu, items) {'));
+  assert.match(toggle, /AppView\._openCardMenu = \{ key, el: menu, trigger, own, at: \{ top: at\.top, left: at\.left \} \};\s*\/\/[\s\S]*?const now = AppView\._cardMenuItems\(key, own\);\s*if \(now\.length !== items\.length \|\| now\.some\(\(x, i\) => x\.label !== items\[i\]\.label\)\) \{\s*AppView\._fillCardMenu\(menu, now\);/,
+    'drawn again once open when the list moved while it opened');
+  assert.match(toggle, /const it = AppView\._cardMenuRowItem\(live\.length \? live : items,\s*parseInt\(btn\.dataset\.menuIdx, 10\), label \? label\.textContent : null\);/);
 });

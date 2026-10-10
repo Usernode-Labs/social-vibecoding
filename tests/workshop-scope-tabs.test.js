@@ -78,8 +78,9 @@ test('picking a community goes to its hub, and All communities to the list', () 
     'a community opens on its hub');
   assert.match(fn, /void app\?\.navigateToApp\?\.\(slug, 'dev'\);/);
   assert.ok(!fn.includes('startSession') && !fn.includes('giveFeedback'), 'nothing is started from the switcher');
-  // Join or start a community is Discover.
+  // Join a community is Discover; #3543: Start a community is the new-project dialog.
   assert.match(SWITCHER, /data-switcher-join=""\s*onClick=\{\(\) => \{ closeSwitcher\(\); window\.location\.hash = '#apps'; \}\}/);
+  assert.match(SWITCHER, /data-switcher-start=""\s*onClick=\{\(\) => \{ closeSwitcher\(\); \(window as any\)\.App\?\.showCreateModal\?\.\(\); \}\}/);
 });
 
 test('the switcher says which community you are on, who each is for, and what it waits on you for', () => {
@@ -112,7 +113,10 @@ test('the switcher says which community you are on, who each is for, and what it
   assert.match(all, />Private · 1 member<\/span>/);
   assert.match(all, />Just you<\/span>/);
   assert.equal((all.match(/data-switcher-waiting/g) || []).length, 2, 'a zero says nothing');
-  assert.ok(all.indexOf('data-switcher-join') > all.indexOf('data-switcher-community="notes"'), 'Join or start a community last');
+  assert.ok(all.indexOf('data-switcher-join') > all.indexOf('data-switcher-community="notes"'), 'Join, then Start, last');
+  assert.ok(all.indexOf('data-switcher-start') > all.indexOf('data-switcher-join'));
+  assert.match(all, />Join a community</);
+  assert.match(all, />Start a community</);
   const one = render('garden');
   assert.match(one, /data-switcher-community="garden" aria-current="true"/, 'the tab\'s community is ticked');
   assert.doesNotMatch(one, /data-switcher-community="all" aria-current/);
@@ -295,8 +299,10 @@ test('#852: a project page leads with its tabs, and All items with its way back 
   };
   // #3583: the page also says whose it is (`data-ws-slug`), which AppView
   // reads when it saves the list's offset on the way out.
-  assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">/);
-  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">[\s\S]*?<\/div><\/div><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
+  assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band="" data-place-bar="workshop">/);
+  // #4486: All items' way back is the first thing in its pinned head, one
+  // row with the search and the grouping, under the place bar (#4417).
+  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band="" data-place-bar="all">[\s\S]*?<\/h2><\/div><\/div><div class="dev-ws-tabbody"><section class="dev-ws-pane" data-ws-pane=""><div class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead=""><button type="button" class="dev-ws-page-back un-touch-target" data-ws-page-back=""/);
   const ws = read(WORKSHOP_PATH);
   assert.doesNotMatch(ws, /AppWorkshopScope|useScopeInline|scopeFitsInline|data-ws-scope-inline|SCOPE_INLINE_/);
   const css = read('public/css/app.css');

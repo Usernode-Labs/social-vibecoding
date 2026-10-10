@@ -24,6 +24,7 @@
  */
 
 import type { ActionSpec, StatusPillState } from '../card/model';
+import type { RequestSpecCard } from './request-model';
 
 
 /** The four tints a note box comes in. Resolved to classes by the component. */
@@ -110,7 +111,19 @@ export interface CheckRow {
    */
   keepReason?: boolean;
   reason?: string | null;
+  /**
+   * The repo unit suite row's per-test excerpts (request #3978): the file,
+   * the test name and the captured error text — assertion message,
+   * expected/actual, the first stack lines. Empty on every other row; a
+   * declared check's reason is its diagnosis.
+   */
+  details?: { file: string | null; test: string; excerpt: string }[];
   errors?: { kind: string; message: string; source?: string | null }[];
+  /**
+   * The repo unit suite only (#3978): per failing test, its file, its name
+   * and a bounded, redacted excerpt of the error the runner printed.
+   */
+  details?: { file?: string | null; test: string; excerpt: string }[];
 }
 
 export interface ChecksVerdict {
@@ -307,7 +320,6 @@ export interface RosterView {
   approved?: boolean;
   yes?: { label: string; names: string };
   no?: { label: string; names: string };
-  needs?: string;
   /** #1688: the line each counted vote carries, one entry per voter who left one. */
   reasons?: { who: string; vote: 'yes' | 'no'; text: string }[];
   /** #1688: "Earlier version: @alice, @bob …" — votes on a previous version, or null. */
@@ -349,6 +361,22 @@ export interface IssueProposalRef {
 }
 
 /**
+ * #4244 — a CLOSED request's one status band, at the top of its card
+ * (`_issueClosedBandView`). `merged` when a merged change closed it (`ref` is
+ * that change, drawn as the band's pill); `settled` when a close vote or an
+ * admin did (`how` says which, when the server knows).
+ */
+export interface IssueClosedBand {
+  tone: 'merged' | 'settled';
+  /** Short stamp: "Oct 5", or "3d ago" inside a week. */
+  when: string | null;
+  whenTitle: string | null;
+  /** Which way it was closed; null on a merged close (the pill says it). */
+  how: 'vote' | 'admin' | null;
+  ref: IssueProposalRef | null;
+}
+
+/**
  * The change page's hero (topic-head.tsx `ChangeHero`): the words of the
  * Workshop's Needs-you item, for one change. The card's meta line carried
  * the same facts as one ellipsising row — "PR#2473 · snait · 5h ago · In
@@ -359,11 +387,11 @@ export interface IssueProposalRef {
  * them.
  */
 export interface HeroView {
-  /** The eyebrow's first word — "Proposal", or "Change" before review. */
+  /** The eyebrow's first word, "Change" (B10b). */
   kind: string;
-  /** "PR#2473", linking to GitHub when the change has a pull request. */
+  /** "PR#2473", linking to GitHub when the change has a pull request. Rides the hero's by-line and is drawn in Details (B10b). */
   ref: { s: string; href: string | null } | null;
-  /** "In review", "Merged", "Private change", "Visible to the group". */
+  /** "Waiting for approval", "Merged", "Not shared yet", "Visible to the group". */
   status: string;
   /** "5h ago", with the full stamp as its title. */
   age: { s: string; title?: string } | null;
@@ -462,11 +490,118 @@ export interface StepsView {
 }
 
 /** Everything under the card, by topic kind. */
+/** #4453: what a request's page says about the request itself. */
+export interface RequestView {
+  number: number;
+  /** The category's name, as plain words under "Request #N"; null when unset. */
+  category: string | null;
+  /** The ⋯ disc's rows, registered with AppView's card-menu registry. '' for none. */
+  menuKey: string;
+  asker: string;
+  /** When it was asked: the formatted stamp, its unelided title and the instant. */
+  askedAt: string | null;
+  askedTime: string;
+  askedTitle: string;
+  title: string;
+  /** The author's inline title editor, open (`AppView._editingIssueTitle`). */
+  titleEditing: { issue: number; initial: string } | null;
+  /** The request's words, rendered, without the leading "**Source:**" line. */
+  bodyHtml: string;
+  /**
+   * The author's editor for the words. `source` is the "**Source:**" line
+   * the page leaves out, put back in front of what they save.
+   */
+  editor: { issue: number; markdown: string; source: string | null; canEdit: boolean };
+  status: RequestStatusView;
+}
+
+/** The card under the request: where it stands, and the one next step. */
+export interface RequestStatusView {
+  /** How far the issue row alone says it got; the stream can add Spec. */
+  stage: 'asked' | 'built' | 'voted';
+  /** Who is on it, as the sentence's first half ("You're working on this."). */
+  lead: string;
+  /** Said instead of the spec half when the row knows more ("A change is waiting for approval."). */
+  note: string | null;
+  /** The claim's lapse, in small words. */
+  fine: string | null;
+  /** The one action for this viewer, or null. */
+  action: { label: string; title?: string; disabled?: boolean; act?: { fn: string; args?: unknown[] }; href?: string } | null;
+  /** A closed request: the words that say so, and no stepper. */
+  closed: string | null;
+}
+
+/** #4455: one part of a Votes or Testing card's bar. */
+export interface ChangeBarPart {
+  /** Its share of the bar's length (a yes each, or how long that part usually takes). */
+  weight: number;
+  /** How full it is, 0–100. */
+  pct: number;
+  /** `moving` is drawn in the lit ink, `done` green on a finished card, `bad` red. */
+  state: 'moving' | 'done' | 'bad' | 'idle';
+}
+
+/** #4455: the Votes card or the Testing card under a change's summary. */
+export interface ChangeGateView {
+  name: string;
+  /** The figure at the right of the name: "Needs 1 more yes", "about 6 min left". */
+  figure: string;
+  /** `ask` is in the accent (the viewer can give it), `done` green, `bad` red. */
+  tone: 'ask' | 'muted' | 'done' | 'bad' | 'warn';
+  /** Finished: full and green, with a green check. */
+  done: boolean;
+  segments: ChangeBarPart[];
+  /** The bar's words for a screen reader. */
+  label: string;
+  /** The one line under the card, as its sentences. */
+  note: string[];
+  /** Why this status is shown, disclosed beside the note when available. */
+  noteDetail?: string;
+  /** Testing only: its re-run, or a retry of the preview. */
+  actions?: ActionSpec[];
+  /** Testing only: a "See what failed" door into Details. */
+  details?: boolean;
+  /**
+   * Votes only, on a merge of Homeroom itself that is not live yet: the
+   * server's `release` block, which the card words after the note and keeps
+   * counting down ("Merged; goes live in the next release (about 8
+   * minutes)", frontend/src/lib/release-eta.ts).
+   */
+  release?: unknown;
+}
+
+/** #4455: what a change's page says about the change itself, as the thread's root post. */
+export interface ChangeThreadView {
+  /** The pull request's number, for "Change #N"; null before it has one. */
+  number: number | null;
+  category: string | null;
+  author: string;
+  at: string | null;
+  time: string;
+  timeTitle: string;
+  /** "via Claude Code": what built it, when something outside Homeroom did. */
+  via: string | null;
+  votes: ChangeGateView;
+  testing: ChangeGateView;
+  /** The Before and after card, or null when there is nothing to show. */
+  shots: { state: string; html: string; line: string | null; waiting?: boolean } | null;
+  /** Whether the Addresses row carries "👏 Thank <author>". */
+  thanks: boolean;
+}
+
 export interface TopicBody {
   changeId?: number;
   issues?: IssueLink[];
-  /** #2431 — on an ISSUE's page, the change that closed it or is on it. */
+  /** #2431 — on an ISSUE's page, the change on it (an open issue's). */
   addressedBy?: IssueProposalRef | null;
+  /** #4244 — on a CLOSED issue's page, the band that says so, and by what. */
+  closedBand?: IssueClosedBand | null;
+  /**
+   * On a CHANGE's page, the change it went live inside: an open change a
+   * merged one was built on is marked merged as included in it
+   * (services/included-changes.js, `AppView._includedInView`).
+   */
+  includedIn?: IssueProposalRef | null;
   /** Open issues already loaded for this app; the picker filters them locally. */
   issueOptions?: IssueLink[];
   /** The proposal owner/full platform admin may change issue associations. */
@@ -529,12 +664,36 @@ export interface TopicBody {
     markdown: string;
     canEdit: boolean;
   } | null;
-  /** Render the `#dev-issue-comments` host (features/dev-board/issue-comments.tsx). */
-  comments?: boolean;
+  /**
+   * #4453: a request's page, drawn as a Messages reply thread
+   * (./request-head.tsx). Set on an issue's page only; its GitHub comments
+   * are in the thread's stream now (`AppView._requestThreadRows`).
+   */
+  request?: RequestView | null;
+  /** #4455: a change's page, drawn as a Messages reply thread (./change-head.tsx). */
+  thread?: ChangeThreadView | null;
   /** A proposal's plain-language summary, already rendered. */
   summaryHtml?: string | null;
+  /**
+   * #4490: the diagram its author sent (services/diagram.js), which leads
+   * the change's page. Untyped here; lib/diagram reads it defensively.
+   */
+  diagram?: unknown;
+  /**
+   * #4479: the plan a change was built from, as the card a request's page
+   * hangs under the request (`AppView._changePlanCard`), or null.
+   */
+  plan?: RequestSpecCard | null;
   /** The previous summary was retained for provenance but no longer describes this revision. */
   summaryStale?: boolean;
+  /**
+   * The rest of the summary, folded under `summaryHtml` as "How it’s built":
+   * on a change Homeroom bot built, everything from its spec's Design
+   * heading on (`AppView._summaryParts`). Null when the summary is shown
+   * whole. The open flag lives in app-view.js (`_summaryMoreOpen`), as
+   * `proposalBody`'s does, so a repaint does not shut it.
+   */
+  summaryMore?: { id: number | null; open: boolean; html: string } | null;
   /**
    * #1370's "Full proposal details" disclosure — the complete GitHub PR
    * description, deliberately quieter than the generated summary above it.
@@ -545,8 +704,13 @@ export interface TopicBody {
    * follow keeps the disclosure from collapsing under the reader.
    */
   proposalBody?: { id: number | null; open: boolean; html: string } | null;
+  /**
+   * A change page with no summary and no plan folds `proposalBody` under
+   * the summary line as "Description", where the line says it is.
+   */
+  descriptionFold?: boolean;
   details?: ProposalDetails | null;
-  /** A change page's hero, and the steps under it. Set with `changeId`. */
+  /** A change page's hero, and its steps (drawn in Details, B10b). Set with `changeId`. */
   hero?: HeroView | null;
   steps?: StepsView | null;
   /** The one-line explainer under a session or governance card. */

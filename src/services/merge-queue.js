@@ -20,7 +20,9 @@
 // produces the same merge commit the sync would have pushed, so the sync is
 // pure cost; and its checks judged its own head against the main of the
 // time, which is the thing the group approved. Being behind main is not a
-// reason to do anything. The DIRECT LANE merges every approved, clean
+// reason to do anything. (The one exception is a preview that will not
+// start, which gives no verdict to judge it on: services/boot-failure-sync.js
+// syncs that proposal itself.) The DIRECT LANE merges every approved, clean
 // candidate in a pass, one exact-sha GitHub call each and no worker turn:
 // checkAndMerge re-measures each head at its integration gate, so a sibling
 // landing a moment earlier is noticed there (a fresh merge-tree, not a stale
@@ -72,7 +74,7 @@ const github = require('./github');
 const limits = require('./limits');
 const integration = require('./integration');
 const { runSyncMain } = require('./sync-main');
-const { currentVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
+const { currentVotePredicateSql, countedVotePredicateSql, reviewedHeadSql, sameSha } = require('./pr-vote-revision');
 const { getPool } = require('../db/pool');
 
 // App-level single-flight. Every trigger — a vote crossing threshold, a
@@ -140,10 +142,19 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
                        AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes,
             (SELECT COUNT(*)::int FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS yes_count,
             (SELECT COUNT(*)::int FROM pr_votes pv
               WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
+                AND ${countedVotePredicateSql('pv', 'cs')}) AS no_count,
+            -- The member floor (services/governance.js applyNoTimerMerge):
+            -- a flagged proposal is approved only once someone other than
+            -- its author has said Yes.
+            CASE WHEN cs.requires_explicit_approval THEN
+              (SELECT COUNT(*)::int FROM pr_votes pv
+                WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                  AND pv.user_id IS DISTINCT FROM cs.user_id
+                  AND ${countedVotePredicateSql('pv', 'cs')})
+            END AS other_yes_count
        FROM chat_sessions cs
        JOIN apps a ON a.id = cs.app_id
       WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id <> $2`,
@@ -153,13 +164,16 @@ async function loadLine(pool, appId, { excludeId = 0 } = {}) {
   const qualified = electorate.approverIds
     ? await governance.qualifiedCountsBatch(pool, 'pr', rows.map((r) => r.id), electorate.approverIds)
     : null;
+  const memberCount = rows.some((r) => r.requires_explicit_approval)
+    ? await governance.communityMemberCount(pool, appId)
+    : undefined;
 
   return rows.map((r) => {
-    const q = qualified ? (qualified.get(r.id) || { yes: 0, no: 0 })
-      : { yes: r.yes_count, no: r.no_count };
+    const q = qualified ? (qualified.get(r.id) || { yes: 0, no: 0, otherYes: 0 })
+      : { yes: r.yes_count, no: r.no_count, otherYes: r.other_yes_count };
     const approved = !!governance.computeGate(
       gov, electorate.active, q.yes, q.no, r.promoted_at || r.created_at, null,
-      { explicitApproval: !!r.requires_explicit_approval }
+      { explicitApproval: !!r.requires_explicit_approval, otherYes: q.otherYes, memberCount }
     ).mergeable;
     return { ...r, approved };
   });

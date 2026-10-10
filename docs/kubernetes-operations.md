@@ -33,6 +33,41 @@ a new atomic release. Missing platform or capture artifacts fail closed and
 require the normal `main` workflow; the scheduled path never rebuilds them as
 an incidental side effect.
 
+Every stable release restarts the platform, and each restart re-runs the
+checks of every proposal in flight and interrupts the bot's builds. The
+workflow runs one push to `main` at a time, and its "Check branch tip before
+publishing" step decides which runs publish:
+
+- **Spacing.** A stable release goes out no sooner than
+  `RELEASE_MIN_GAP_MINUTES` (10) after the previous one. The gap is timed
+  from the end of the run that published the previous release, which is when
+  Argo CD was asked to roll it out.
+- **The tip run waits.** The run for `main`'s tip waits inside that step for
+  the rest of the gap, then publishes. A newer merge landing during the wait
+  ends it: the waiting run skips, and the newer merge's run, queued behind it,
+  publishes once built. The newest merge is always released.
+- **Runs behind the tip** publish only when the newest release's revision
+  merged at least `RELEASE_EVERY_MINUTES` (15) before theirs, and they skip
+  inside the gap.
+
+On 7 October 2026 the platform rolled out four times in sixteen minutes
+(21:41:57 to 21:57:49 UTC) while approved proposals merged one after another;
+that is what the gap prevents.
+
+If the age of the previous release cannot be read, the run publishes as it
+did before the gap existed. Feature-branch candidates never wait.
+
+**To release at once, for example an urgent fix,** run the workflow on
+`main` by hand:
+
+```bash
+gh workflow run build-kubernetes-images.yml --ref main
+```
+
+A dispatched run never waits. A run that is waiting when the dispatched run
+is queued behind it skips in its favour, so `main` goes out as soon as the
+dispatched run has built, with one restart.
+
 Argo owns the platform Deployment, database, namespaces, service accounts and
 runtime permissions. The platform owns generated apps, previews, workers and
 check Jobs. Keep each change with its owner; source commits do not themselves
@@ -62,9 +97,15 @@ commit, and once (per commit and verdict) records the stall on
 admins. The Dev board shows an amber banner with the workflow run linked until
 the running build catches up. A red run is reported at once; a run still going,
 a run that succeeded without a rollout, or no run at all is reported after
-`RELEASE_GRACE_MS` (default ten minutes). Re-running the failed workflow jobs,
-or the next merge, releases the commit; the poller clears the record on the new
-build's first tick. A token without `actions:read` degrades to the time-based
+`RELEASE_GRACE_MS` (default ten minutes). The workflow runs one push at a time,
+so after a burst of merges the newest one's run waits for the others. The
+tip's run may also wait out the release gap above. So a run that has not
+finished is reported only once no run of the workflow on `main` has finished
+for the grace plus `RELEASE_MIN_GAP_MINUTES`. A run that succeeded gives the
+rollout its own grace from when it finished. Re-running the failed workflow
+jobs, or the next merge, releases the commit; a build that already carries the recorded commit
+reads as resolved at once, and the poller clears the record on the new build's
+first tick at `main`. A token without `actions:read` degrades to the time-based
 verdict rather than failing.
 
 Nothing in that chain tells open browser tabs about the new build either; the
@@ -113,6 +154,60 @@ working HTTPS even when their Pods are Ready. Existing Ingresses keep their old
 TLS references until reconciled or migrated. The infra runbook
 `docs/23-social-vibecoding-shared-tls.md` includes a read-only migration planner,
 issuance-limit recovery and explicit retirement of legacy Certificates.
+
+## Custom domains
+
+A project's manager can serve it at a web address they own (#4405,
+`services/app-domains.js`): they add a CNAME from `app.example.com` to
+`<slug>.USERNODE_APPS_DOMAIN` and a TXT record `_homeroom.app.example.com`
+carrying the claim's token, and the leader's sweep verifies both against
+public resolvers every minute. Once verified, `deployCustomDomain`
+(`services/kubernetes.js`) writes a second Ingress, `sv-domain-<id>`, beside
+the app's own: the same asset prefixes and gate routing, the custom host, and
+a `cert-manager.io/cluster-issuer` annotation naming `CLUSTER_ISSUER`
+(default `letsencrypt-public`), the one place an app Ingress asks for a
+certificate of its own. The certificate lands in `sv-domain-<id>-tls` in
+`APP_NAMESPACE` and goes with the Ingress when the domain is removed,
+disabled or the app is deleted.
+
+Prerequisites: the ClusterIssuer must have an HTTP-01 solver for the apps'
+ingress class (the platform host's own certificate is issued the same way),
+port 80 must reach the ingress for the challenge, and the app namespace's
+policy must let ingress-controller traffic reach cert-manager's solver pods
+there. The app's own Ingress and the shared wildcard Secret are never touched
+(`tests/kubernetes-app-tls.test.js`).
+
+To take a domain out of service without touching the project, use Disable in
+the admin console's Domains section (`#admin/domains`), which deletes the
+Ingress and its Secret; Enable verifies the claim again from the start.
+
+## Before/after shots cleanup
+
+Shots recovery retries resource cleanup for every terminal run outcome, including
+superseded cancellations and stale runs. It removes current and legacy base/head
+environments, their disposable databases, and hosted screenshot fixture apps.
+The two-minute recovery poll handles at most 20 terminal cleanup retries, after
+a five-minute grace period. Failed attempts remain pending and move behind runs
+that have not been attempted, so an API outage cannot strand the rest of the queue.
+
+`trace_summary.cleanupComplete` is trusted only with the current
+`cleanupVersion` (2). Earlier versions omitted hosted fixture runtimes; these rows
+are rechecked automatically. Run metadata is retained until cleanup succeeds.
+A successful capture can still publish its shots with cleanup pending.
+
+At startup and every six hours, the retention sweep also checks Kubernetes
+Deployments against their shots/evidence run labels, exact runtime names and run
+state. It removes up to 100 abandoned runtimes per pass, including those whose run
+rows disappeared with a deleted session. It leaves nonterminal runs and resources
+younger than 45 minutes alone. Ordinary apps and proposal previews are excluded.
+The synthetic hosted fixture app id is `2147482999`; its `production` environment
+label does not mean that it is a user's deployed app.
+
+Recovery logs report `cleanupRetried`; retention logs additionally report
+`orphanRuntimesExamined`, `orphanRuntimesRemoved` and `orphanRuntimeFailures`.
+Kubernetes or database read failures abort inventory cleanup without deletion.
+No separate manual cleanup is required for the historical fixture backlog after
+deploying this change; use the normal platform image/chart release path.
 
 ## HTTP keep-alive ordering
 
@@ -184,9 +279,32 @@ stuck — and every `CHECK_HARVEST_SWEEP_MS` (30s) after, at most
 - **moot** when the session no longer wants the run — decided meanwhile, head
   moved, session closed, or (under the preview lifecycle) a newer run owns it.
 
+A platform process that shuts down hands its rows over first: it stamps
+their heartbeat as long past, so the next leader's boot sweep seats them at
+once instead of a minute later. A run whose process died without doing so is
+still covered: before the stale sweep starts a session over, it looks for that
+session's current run on the cluster. If the capture Job is still running, or
+the run finished less than `CHECKS_STALE_MS` ago, the harvest settles it
+instead. A run that starts stops the still-running Jobs of the session's runs
+for other commits (background deletion; their input Secrets go with them).
+Runs for the same commit are left to finish, because their verdict still
+counts.
+
+The paths that start a run ask the same question first (`runToCollect`): a
+manual "Re-run checks" (or `recheck_change`), a promote or vote-time kick, a
+recheck that would rebuild the preview, the sweeper's preview heal, boot
+recovery, and every capture under the preview lifecycle. While the session
+still waits on that commit's verdict and its run is on the cluster, nothing new
+starts; the button and the tool say the run is still going. Once the verdict is
+stored the manifest is gone and a re-run starts fresh. Only a run whose inputs
+changed (new capture routes or shots for the same commit) replaces it.
+
 Under `PREVIEW_LIFECYCLE_ENABLED` the harvester adopts the run's
 `preview_operations` row first and writes through the same ownership check a
-live run does; a request for a newer revision aborts the harvest. Outside the
+live run does; a request for a newer revision aborts the harvest. A capture
+for the same revision finds the run under the lifecycle lock and leaves it:
+it cancels only other commits' check Jobs and does not take the row. A build,
+or a forced capture, still cancels every check Job of the session. Outside the
 Kubernetes capture runtime the harvester is a no-op. The stale sweep
 (`CHECKS_STALE_MS`) remains the backstop for rows with no manifest at all.
 
@@ -233,6 +351,113 @@ PostgreSQL connections and an isolated temporary schema. Set
 existing `SQL_CHECK_CONNECTION_URL` supplied by the unit runner. It never falls
 back to the application's `DATABASE_URL`. Kubernetes termination and cancellation
 are covered by `tests/kubernetes-preview-cancellation.test.js` with API doubles.
+
+## Check Jobs, their input Secrets and the worker quota
+
+A checks run creates a capture Job and a unit-suite Job in the worker namespace,
+each with an input Secret the Job owns. Once the run's verdict is stored and
+its `check_runs` manifest cleared, the run deletes its finished Jobs with
+background propagation, which takes their Pods and Secrets too; the harvester
+does the same after settling an orphan. The Jobs' `ttlSecondsAfterFinished`
+(3600 s) covers everything else: superseded or failed runs, the main-watch
+suite, and whatever a crash leaves. Keep it at least that long, because it is
+how late a harvest can still read a run after a slow leader handover.
+
+`services/check-retention.js` removes what no owner will. On the leader, every
+15 minutes and at most 50 deletions a pass, it deletes:
+
+- check input Secrets (`sv-capture-…-input`, `sv-unit-suite-…-input`) with no
+  owner, older than two hours, that no Pod or Job in the namespace names;
+- finished check Pods whose Job is gone, finished at least the Job TTL ago.
+
+It never touches a worker's `-env` Secret or anything with an owner. It needs
+`list` on Secrets and `delete` on Pods in the worker namespace, which nothing
+else in the platform uses; the foundation owns those grants. Without them each
+pass logs `Check leftover sweep stopped` and deletes nothing.
+
+The namespace's ResourceQuota counts Secrets and Jobs as well as CPU. Size
+`secrets` and `count/jobs.batch` for bursts of concurrent runs on top of the
+worker env Secrets; they are object counts, so headroom costs nothing.
+
+## Workflow governance machine
+
+`platform.workflowGovernanceEnabled` (default `false`) becomes `WF_GOVERNANCE_ENABLED`.
+When it is on, the governance-proposal machine in `src/workflow/` decides governance
+proposals. The governance-apply ticker and the stale sweeper's Pass 0b then leave those
+proposals alone. `docs/workflows.md` explains the machine and where it runs.
+
+- **Where it runs.** The machine runs inside the platform Pod; there is no extra
+  workload. Every Pod listens for outcomes and runs pipeline slots, so it applies its
+  own votes; only the advisory-lock leader runs the timer and service loops and the
+  boot backfill.
+- **Schema.** The schema it needs (`wf_*` tables and triggers) is additive and ships
+  with every release, whether the flag is on or off.
+
+### Activation and rollback
+
+Unlike the coordinated preview lifecycle, an ordinary rolling change is safe in both
+directions. No maintenance window or scale-to-zero is needed.
+
+1. **Set the value.** Set `platform.workflowGovernanceEnabled: true` in the platform's
+   values in the infra repository. Argo CD rolls the Deployment with the same image.
+2. **During the rollout overlap.**
+   - The old Pod may still be the leader and apply proposals the old way.
+   - The machine and the old apply functions both lock the proposal's row, so
+     whichever commits first applies it. The machine ends the other's instance
+     `superseded` (`closed_outside`).
+   - The new Pod applies its own votes and withdrawals at once: its pipeline slots run
+     before it is leader. Only what the leader's loops do (timers, follow-up work, and
+     enrolling proposals opened before the flag) waits until it is elected. A route on
+     a proposal not enrolled yet enrolls it itself.
+3. **Verify.**
+   - **The new Pod's log.** It shows `Workflow runtime started` and, on the leader,
+     `Enrolled open governance proposals` with a count.
+   - **Admin → Workflows.** It lists the enrolled proposals, and its problems panel
+     is empty.
+   - **Votes.** A vote on a test proposal answers at once.
+4. **Watch for old writers.** In production the ownership trigger logs instead of
+   refusing (`WF_OWNERSHIP_MODE` defaults to `log`). Over the following days, the
+   problems panel in Admin → Workflows should show no "written outside its machine"
+   line. One lists the column, how often, and its latest writes: the row, the
+   connection's `application_name` and the statement, which name the code path that
+   still writes a governance proposal outside the machine (`wf_ownership_violations`).
+
+**Rollback.** Set the value back to `false` and let Argo CD roll the Deployment.
+- **What happens to the proposals.** The old paths decide them again. The trigger
+  stops guarding them as soon as the new Pods record the flag off.
+- **Turning it on again later is safe.** A proposal decided or deleted in the
+  meantime ends its instance without being applied twice.
+
+## Workflow merge-followups machine
+
+`platform.workflowMergeFollowupsEnabled` (default `false`) becomes
+`WF_MERGE_FOLLOWUPS_ENABLED`. When it is on, what follows a merge (production delivery,
+preview teardown, included changes, closing requests, the announcements) is durable work
+of the merge-followups machine, and a change reads live only once production runs it.
+`merge-followup-recovery` and the boot resume of issue-close watches stand down.
+`docs/workflows.md` explains the machine.
+
+### Activation and rollback
+
+An ordinary rolling change, safe in both directions.
+
+1. **Set the value.** Set `platform.workflowMergeFollowupsEnabled: true` in the
+   platform's values in the infra repository. Argo CD rolls the Deployment.
+2. **During the rollout overlap.**
+   - An old Pod may still merge the old way. Once a new Pod has recorded the flag, the
+     ownership trigger logs such an old merge in `wf_ownership_violations`, which is
+     `log` mode in production. The old merge tail then runs as before.
+   - A merge on a new Pod is reported to the machine and finished by the leader's loops.
+3. **Verify.**
+   - **The new Pod's log.** It shows `Workflow runtime started` with `merge-followups`.
+   - **Admin → Workflows.** The next merge appears as `merge-followups / session:<id>`
+     and reaches `live`, and its problems panel is empty.
+   - **The proposal's thread.** It says "is live" after the deploy, not before.
+
+**Rollback.** Set the value back to `false`.
+- **New merges** take the old tail again.
+- **Merges the machine already accepted** still finish: the runtime keeps running while
+  they have work left, and stops on a later boot once nothing is left.
 
 ## Read-only inventory and logs
 
@@ -287,6 +512,17 @@ failures under CPU contention. Unit-suite Jobs default to 8 CPUs / 4Gi (the CPU
 quota sets `node --test`'s process-pool size), requesting 4 CPUs / 1Gi.
 Evidence replays share the capture reservation. A smaller explicit CPU limit
 also caps the request; coding-worker resource settings are independent.
+
+`CHECKS_MAX_CONCURRENT_RUNS` (default 4, chart `config.checksMaxConcurrentRuns`)
+bounds how many proposal checks runs have Jobs in the worker namespace at once;
+main-watch's run of main has one slot besides them. A run waits for its slot
+after its preview is built and before it creates a Job, so the namespace
+quota no longer queues Pods whose deadlines are already running. The slots are
+the live `check_runs` rows: `admitted_at IS NULL` is a run waiting,
+`queued_at` its place in line. Red check runs track check-Job CPU across the
+cluster (9% under 10 cores, 24 to 29% above, October 2026), because every
+preview under test loads the one shared Postgres primary; lower the cap
+before raising quotas when proposals' checks go red together.
 
 All three check kinds carry `social.usernode.io/workload=check`. A hostname
 topology-spread preference counts that group across sessions in the worker
@@ -352,3 +588,52 @@ Self-app merges trigger the normal GitHub workflow. The cluster does not use
 the host's `deploy-status.json`, deploy-nudge file, systemd poller, Caddy reload
 or Compose blue/green scripts. Rollback is a reviewed GitOps/image revision
 change; the single-server `rollback.sh` is not a cluster rollback mechanism.
+
+## App-host gate
+
+Cilium's Envoy has no forward-auth hook, so on this runtime nothing
+platform-owned sat in front of app and preview hosts: a view-private app was
+gated only by its own code, and an app opened at its own address could not
+sign anyone in. `APP_GATE=on` (chart `config.appGate`) puts a small proxy in
+front of every managed app and preview Ingress: the `usernode-app-gate`
+Deployment in the app namespace (two replicas, `maxUnavailable: 0`, the
+platform's own image running `scripts/app-gate.js`). It asks the platform's
+`/__caddy/access` about each request, exactly as Caddy does on the standalone
+deployment, and proxies what is allowed to the app's Service. The three asset
+prefixes keep going straight to `usernode-platform-assets`.
+
+The gate holds no keys and reads no database. It fails closed: if the platform
+cannot be asked for 15 seconds, the visitor gets 503.
+
+Before turning it on:
+
+1. The app namespace's network policy (foundation repository) must allow the
+   ingress controller to reach pods labelled
+   `app.kubernetes.io/name=usernode-app-gate` on 3000, those pods to reach
+   generated app and preview pods on 3000, and those pods to reach the
+   platform Service (`PLATFORM_INTERNAL_URL`). The platform's own policy
+   already admits the app namespace (`networkPolicy.internalCallerNamespaces`).
+2. `PLATFORM_INTERNAL_URL` must be set (the chart sets it from
+   `config.internalUrl`).
+
+Turning it on: set `config.appGate: "on"` and sync. The platform leader brings
+the gate up, waits for it to be ready, and only then repoints every managed
+Ingress's catch-all path at it. If the gate does not come up, no Ingress is
+touched. New deploys follow the same rule.
+
+Check: `kubectl -n social-apps get deploy usernode-app-gate`, then open a
+private app's own address signed out (expect the platform's view of the app)
+and signed in (expect the app, signed in).
+
+Turning it off, the fallback: set `config.appGate: "off"` and sync. The
+leader repoints every Ingress straight back to its own Service on boot. In an
+incident, without waiting for a sync:
+
+```sh
+kubectl -n social-platform exec deploy/social-vibecoding -- node scripts/app-gate-switch.js off
+```
+
+This applies at once. Then set `config.appGate: "off"` too, or the next boot
+or app deploy routes through the gate again. `config.appHostSignin: "off"`
+(`APP_HOST_SIGNIN`) separately turns off signing people in at an app's own
+address, on both runtimes; the gate still keeps private apps members-only.

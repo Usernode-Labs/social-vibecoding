@@ -7,7 +7,9 @@
  * present but refuses. The toast is the kit's (`PlatformUI.toast`), so the
  * confirmation looks like every other one in the shell.
  */
-export async function copyToClipboard(text: string, done = 'Copied'): Promise<boolean> {
+import { t } from '../../lib/i18n/runtime';
+
+export async function copyToClipboard(text: string, done?: string): Promise<boolean> {
   let ok = false;
   try {
     if (navigator.clipboard?.writeText) {
@@ -16,11 +18,12 @@ export async function copyToClipboard(text: string, done = 'Copied'): Promise<bo
     }
   } catch { ok = false; }
   if (!ok) ok = legacyCopy(text);
-  toast(ok ? done : 'Couldn’t copy. Your browser blocked the clipboard.');
+  toast(ok ? (done ?? t('messages:clipboard.copied')) : t('messages:clipboard.failed'));
   return ok;
 }
 
-function legacyCopy(text: string): boolean {
+/** The hidden textarea alone; also the invite sheet's last resort (first-session/copy-invite.ts). */
+export function legacyCopy(text: string): boolean {
   try {
     const area = document.createElement('textarea');
     area.value = text;

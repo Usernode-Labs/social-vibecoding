@@ -42,6 +42,8 @@ export const stagingBridge = {
       testPanelHidden: true,
       testHtml: '',
       fsBtnHidden: true,
+      clockLabel: '',
+      clockAsNow: false,
     });
   },
   isOpen() {
@@ -78,6 +80,29 @@ export const stagingBridge = {
   },
 
   /**
+   * Who the previewed app is for (`apps.audience`: 'open' | 'invited' |
+   * 'solo'). Only words the banner; never touches the iframe.
+   */
+  setAudience(audience) {
+    stagingStore.set({ solo: audience === 'solo' });
+  },
+
+  /**
+   * The moment the preview is shown as of (`{ label, asNow }`), or null when
+   * its change declares none (src/services/preview-clock.js). Only words the
+   * line under the bar: the preview's address, `un-now` included, is
+   * app-view.js's, through setSrc. Answers whether a line is now drawn,
+   * which is what lets app-view.js open the preview at that moment at all.
+   */
+  setClock(clock) {
+    const label = clock && typeof clock.label === 'string' ? clock.label.trim() : '';
+    stagingStore.set(label
+      ? { clockLabel: label, clockAsNow: !!clock.asNow }
+      : { clockLabel: '', clockAsNow: false });
+    return !!label;
+  },
+
+  /**
    * #816: an EXPLICIT '' clears a line; `undefined` leaves it alone.
    * #3413: the retry label is reset on every call, so only a caller that
    * names it ("Retry preview") gets anything but "Retry sign-in".
@@ -86,7 +111,7 @@ export const stagingBridge = {
     const next = {
       loaderVisible: !!visible,
       loaderRetry: !!visible && !!patch.retry,
-      loaderRetryLabel: patch.retryLabel || 'Retry sign-in',
+      loaderRetryLabel: patch.retryLabel || null,
     };
     if (patch.title !== undefined) next.loaderTitle = patch.title;
     if (patch.sub !== undefined) next.loaderSub = patch.sub;

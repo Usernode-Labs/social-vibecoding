@@ -56,6 +56,7 @@ import { Chip, ChipRail } from '@/components/ui/chip';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { SearchIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { BrowseDetail } from './browse-detail';
@@ -81,11 +82,11 @@ function browse(): any {
 // what a key MEANS (resolveSort, the comparators); this is only the labelling.
 // tests/browse-screen.test.js asserts the two lists never drift apart.
 const SORT_OPTIONS: Array<{ key: string; label: string }> = [
-  { key: 'recommended', label: 'Recommended' },
-  { key: 'users', label: 'Most users' },
-  { key: 'active', label: 'Most active' },
-  { key: 'merged', label: 'Most changes merged' },
-  { key: 'new', label: 'Newest' },
+  { key: 'recommended', label: 'discover:sort.recommended' },
+  { key: 'users', label: 'discover:sort.users' },
+  { key: 'active', label: 'discover:sort.active' },
+  { key: 'merged', label: 'discover:sort.merged' },
+  { key: 'new', label: 'discover:sort.newest' },
 ];
 
 // The four filter chips — Browse.FILTERS, labelled. A COPY for the same reason
@@ -93,13 +94,14 @@ const SORT_OPTIONS: Array<{ key: string; label: string }> = [
 // a chip row that prerendered empty and hydrated full would be a mismatch.
 // tests/browse-screen.test.js pins the two lists together.
 const FILTER_CHIPS: Array<{ key: string; label: string }> = [
-  { key: 'all', label: 'All' },
-  { key: 'featured', label: 'Featured' },
-  { key: 'yours', label: 'Joined' },
-  { key: 'new', label: 'New' },
+  { key: 'all', label: 'discover:filter.all' },
+  { key: 'featured', label: 'discover:filter.featured' },
+  { key: 'yours', label: 'discover:filter.joined' },
+  { key: 'new', label: 'discover:filter.new' },
 ];
 
 export function BrowseScreen() {
+  const t = useMessages('discover');
   const screenRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'browse-screen', false);
@@ -173,8 +175,8 @@ export function BrowseScreen() {
             id="browse-search-input"
             type="text"
             autoComplete="off"
-            placeholder="Search all apps…"
-            aria-label="Search all apps"
+            placeholder={t('discover:search.placeholder')}
+            aria-label={t('discover:search.label')}
             className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             onInput={(e) => browse()?.setQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
@@ -187,8 +189,8 @@ export function BrowseScreen() {
           <button
             id="browse-search-clear"
             className={state.showClear ? CLEAR_CLASS : `hidden ${CLEAR_CLASS}`}
-            title="Clear search"
-            aria-label="Clear search"
+            title={t('discover:search.clear')}
+            aria-label={t('discover:search.clear')}
             onClick={() => clear(true)}
           >
             &times;
@@ -208,7 +210,7 @@ export function BrowseScreen() {
         <ChipRail
           id="browse-filter-chips"
           role="group"
-          aria-label="Filter apps"
+          aria-label={t('discover:filter.groupLabel')}
           className="mt-2 max-w-xl gap-2 px-0 py-0"
         >
           {FILTER_CHIPS.map((f) => (
@@ -220,7 +222,7 @@ export function BrowseScreen() {
               data-filter={f.key}
               onClick={() => browse()?.setFilter(f.key)}
             >
-              {f.label}
+              {t(f.label)}
             </Chip>
           ))}
         </ChipRail>
@@ -236,16 +238,16 @@ export function BrowseScreen() {
             should be as wide as its longest label, not as wide as the bar).
         */}
         <div id="browse-sort-bar" className="mt-2 flex items-center gap-2 max-w-xl">
-          <Label htmlFor="browse-sort-select" className="shrink-0">Sort</Label>
+          <Label htmlFor="browse-sort-select" className="shrink-0">{t('discover:sort.label')}</Label>
           <Select
             id="browse-sort-select"
             className="w-auto py-1.5"
-            aria-label="Sort apps"
+            aria-label={t('discover:sort.selectLabel')}
             value={state.sort}
             onChange={(e) => browse()?.setSort(e.currentTarget.value)}
           >
             {SORT_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>{o.label}</option>
+              <option key={o.key} value={o.key}>{t(o.label)}</option>
             ))}
           </Select>
         </div>
@@ -291,7 +293,7 @@ export function BrowseScreen() {
               // re-runs the same directory load.
               <AppsLoadError
                 className="md:col-span-full"
-                title="Couldn't load the app directory"
+                title={t('discover:loadError.directoryTitle')}
                 onRetry={() => browse()?._load?.()}
               />
             )

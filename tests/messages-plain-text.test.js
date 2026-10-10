@@ -13,6 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -68,12 +69,36 @@ test('what is not markup is left as it was', () => {
 
 test('the quote, the reply bar and the inbox preview all use it', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /className="messages-quote"[\s\S]{0,400}plainText\(message\.reply\.content\) \|\| 'Attachment'/);
+  assert.equal(message('messages:row.quote.attachment'), 'Attachment');
+  assert.match(row, /className="messages-quote"[\s\S]{0,400}plainText\(message\.reply\.content\) \|\| t\('messages:row\.quote\.attachment'\)/);
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /className="messages-reply-draft"[\s\S]{0,200}<p className="truncate">\{plainText\(reply\.content\) \|\| 'Attachment'\}<\/p>/);
+  assert.equal(message('messages:composer.replyAttachment'), 'Attachment');
+  assert.match(composer, /className="messages-reply-draft"[\s\S]{0,420}<p className="truncate">\{plainText\(reply\.content\) \|\| t\('messages:composer\.replyAttachment'\)\}<\/p>/);
   const api = read('frontend/src/features/messages/api.ts');
-  assert.match(api, /latestSummary: plainText\(text\(pick\(row, 'latestSummary', 'latest_summary', 'preview'\)\) \|\| latestMessage\?\.content \|\| ''\),/);
-  for (const [file, src] of [['message-row.tsx', row], ['composer.tsx', composer], ['api.ts', api]]) {
+  assert.match(api, /const summary = plainText\(text\(pick\(row, 'latestSummary', 'latest_summary', 'preview'\)\) \|\| latestMessage\?\.content \|\| ''\);/);
+  assert.match(api, /latestSummary: homeroomBot \? botRowPreview\(summary\) : summary,/);
+  for (const [file, src] of [['message-row.tsx', row], ['composer.tsx', composer]]) {
     assert.match(src, /import \{ plainText \} from '\.\/plain-text';/, file);
   }
+  assert.match(api, /import \{ botRowPreview, plainText \} from '\.\/plain-text';/, 'api.ts');
+});
+
+test('the Homeroom bot\'s row names the request by its title, not its number', () => {
+  // First-session run-through, 5 Oct 2026: the row read "Flat 4B Chores ·
+  // request #7: Fix mark as done Filed. This card follows it from here."
+  const { botRowPreview } = loadTsx('frontend/src/features/messages/plain-text.ts');
+  const line = '**Flat 4B Chores** · request #7: Fix mark as done\n\nFiled. This card follows it from here.';
+  assert.equal(botRowPreview(plainText(line)), 'Flat 4B Chores · Fix mark as done Filed. This card follows it from here.');
+  assert.equal(botRowPreview(plainText('**Flat 4B Chores** · request #7\n\nFiled.')), 'Flat 4B Chores · request #7 Filed.',
+    'with no title the number is all it is named by, so it stays');
+  assert.equal(botRowPreview(plainText('**Seed swap**, its first version\n\nBuilding.')), 'Seed swap, its first version Building.');
+  assert.equal(botRowPreview(plainText('Filed: **Note board** request #41: Add a search box.')), 'Filed: Note board request #41: Add a search box.',
+    'only the request line\'s own shape');
+
+  const { normalizeConversation } = loadTsx('frontend/src/features/messages/api.ts');
+  const row = { id: 9, kind: 'direct', membershipStatus: 'member', latestSummary: line };
+  assert.equal(normalizeConversation({ ...row, homeroomBot: true }).latestSummary,
+    'Flat 4B Chores · Fix mark as done Filed. This card follows it from here.', 'the bot\'s row');
+  assert.equal(normalizeConversation(row).latestSummary,
+    'Flat 4B Chores · request #7: Fix mark as done Filed. This card follows it from here.', 'anyone else\'s row is as it was');
 });

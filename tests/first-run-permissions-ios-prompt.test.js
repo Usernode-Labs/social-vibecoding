@@ -1,22 +1,23 @@
-// iOS notification-permission trigger reliability (first-run sheet).
+// The first-run "Set up your device" trigger on iOS, and what is left of the
+// iOS sheet.
 //
-// On iOS the ONLY automatic trigger for the OS notification prompt is the
-// first-run "Set up your device" sheet (its "Allow notifications" button
-// calls usernode.requestPermissions()). The sheet used to be guarded by a
-// single unconditional one-shot localStorage marker, and several paths set
-// that marker WITHOUT the OS prompt ever having been presented:
+// On iOS that sheet was only ever the notification prompt (its "Allow
+// notifications" button calls usernode.requestPermissions()), and it came on
+// the first screen of a fresh install, before the person had made anything
+// worth hearing about. iOS presents its own prompt once, so that ask was
+// answered "no", or never seen, for good. Decision D10 (#12) removed it: the
+// session-setup and anonymous-entry triggers present NOTHING on iOS, whatever
+// the marker or the permission says, and the ask moved to the moment the
+// Homeroom bot starts building a new app (NativeChrome.askForPing, pinned in
+// tests/create-progress-ping-ask.test.js).
 //
-//   - a degraded UI kit (PlatformUI.sheet() → null) still marked done;
-//   - earlier app/shell versions that reported "nothing to ask" on iOS
-//     marked done, and the marker survives app updates in the WebView;
-//   - a dismissed (possibly stacked, #1068) sheet marked done even though
-//     the user never tapped "Allow notifications".
+// What this file still pins:
 //
-// iOS can distinguish "never asked" from "denied" through the social-push
-// state (permissionStatus: notDetermined vs denied). While the permission
-// is still un-prompted, suppressing the ask forever is wrong — the sheet
-// must be offered again (once per launch). A determined status (granted
-// or denied) keeps the marker authoritative, and Android is unchanged.
+//   - iOS: the trigger presents nothing, reads nothing to decide that when
+//     the kit can tell, and records nothing;
+//   - the sheet itself, which the ?shot=notif-permissions link still draws
+//     in its iOS variant: a grant closes it, a denial keeps it open;
+//   - the one-shot and ghost-click rules, which now guard Android's sheet.
 //
 // Run with: node --test tests/first-run-permissions-ios-prompt.test.js
 
@@ -128,6 +129,7 @@ function boot(opts) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(nativeChromeSource, sandbox);
   return { sandbox, sheets, stored };
@@ -150,79 +152,133 @@ const IOS_UNPROMPTED = {
   deliveryActive: false,
 };
 
-test('iOS: a stale done-marker does not suppress the sheet while the OS ' +
-     'prompt has never been shown', async () => {
-  const { sandbox, sheets } = boot({
-    stored: { [MARKER]: '1' },
-    permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
+const ASKED_AT = 'sv:device_permissions_asked_at';
+const IOS_PERMS = {
+  platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null,
+};
+const ANDROID_PERMS = {
+  platform: 'android', exactAlarmGranted: false, batteryOptDisabled: false,
+};
+
+// Counts every bridge read the trigger makes, so "decided without asking
+// the app anything" is an assertion rather than a hope.
+function countReads(sandbox) {
+  const reads = { settings: 0, push: 0 };
+  const settings = sandbox.usernode.getSettingsState;
+  const push = sandbox.usernode.getSocialPushState;
+  sandbox.usernode.getSettingsState = async () => { reads.settings += 1; return settings(); };
+  sandbox.usernode.getSocialPushState = async () => { reads.push += 1; return push(); };
+  return reads;
+}
+
+// ── iOS: session setup presents nothing (#12, D10) ────────────────────
+
+test('iOS: session setup presents nothing, whatever the marker or the ' +
+     'permission says, and reads nothing to decide it', async () => {
+  for (const permissionStatus of ['notDetermined', 'denied', 'authorized']) {
+    for (const stored of [{}, { [MARKER]: '1' }]) {
+      const { sandbox, sheets, stored: after } = boot({
+        stored,
+        permissions: IOS_PERMS,
+        socialPushState: { ...IOS_UNPROMPTED, permissionStatus },
+      });
+      const reads = countReads(sandbox);
+      await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+      const label = `${permissionStatus}, ${stored[MARKER] ? 'marked' : 'unmarked'}`;
+      assert.equal(sheets.length, 0,
+        `${label}: the notification ask belongs to the create dialog now`);
+      assert.deepEqual({ ...reads }, { settings: 0, push: 0 },
+        `${label}: the kit says iOS, so no bridge read is spent on it`);
+      assert.equal(after[MARKER], stored[MARKER],
+        `${label}: nothing is recorded either way`);
+      assert.equal(sandbox.NativeChrome.firstRunSheetPresented(), false,
+        `${label}: the terms gate is not held behind a sheet that never opened`);
+    }
+  }
+});
+
+test('iOS by the snapshot\'s own word: a page whose kit cannot tell still ' +
+     'presents nothing', async () => {
+  // The fast path keys on the kit's platform. A kit that reports something
+  // else (or none at all) falls through to the settings read, and the
+  // snapshot's `platform` decides the same thing.
+  for (const unNative of [{ toast() {}, platform: 'desktop' }, null]) {
+    const { sandbox, sheets, stored } = boot({
+      unNative,
+      permissions: { ...IOS_PERMS, exactAlarmGranted: true },
+      socialPushState: IOS_UNPROMPTED,
+    });
+    await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+    assert.equal(sheets.length, 0);
+    assert.notEqual(stored[MARKER], '1', 'and records nothing');
+  }
+});
+
+test('decideFirstRunSheet skips iOS before anything else', () => {
+  const { sandbox } = boot({ permissions: IOS_PERMS });
+  const decide = sandbox.NativeChrome.decideFirstRunSheet;
+  assert.equal(decide({ isAndroid: false, needsAlarm: true, needsBattery: false }),
+    'skip', 'a missing notification permission is not a reason here any more');
+  assert.equal(decide({ isAndroid: false, needsAlarm: false, needsBattery: false }),
+    'skip', 'and nothing to ask is not "done": no marker is written for iOS');
+  assert.equal(decide({}), 'skip', 'an unknown platform is not Android');
+});
+
+test('anonymous: native session stays closed; iOS presents nothing and ' +
+     'Android device permissions remain available', async () => {
+  const ios = boot({
+    user: null,
+    permissions: IOS_PERMS,
     socialPushState: IOS_UNPROMPTED,
   });
-  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(sheets.length, 1,
-    'an un-prompted iOS device gets the sheet despite the marker');
-});
+  assert.equal(await ios.sandbox.NativeChrome.enterAnonymous(), false,
+    'anonymous pages never receive session authority');
+  if (ios.sandbox.NativeChrome._firstRunPromise) {
+    await ios.sandbox.NativeChrome._firstRunPromise;
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(ios.sheets.length, 0, 'anonymous iOS entry asks for nothing');
 
-test('iOS: marker plus a DENIED permission stays suppressed (the user ' +
-     'already answered the OS prompt)', async () => {
-  const { sandbox, sheets } = boot({
-    stored: { [MARKER]: '1' },
-    permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
-    socialPushState: { ...IOS_UNPROMPTED, permissionStatus: 'denied' },
+  const android = boot({
+    user: null,
+    kitPlatform: 'android',
+    capabilities: ['getSettingsState', 'requestNotificationPermission'],
+    permissions: { ...ANDROID_PERMS, notificationsGranted: false },
   });
-  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(sheets.length, 0);
+  android.sandbox.usernode.requestNotificationPermission = async () => ({ granted: false });
+  assert.equal(await android.sandbox.NativeChrome.enterAnonymous(), false);
+  // Anonymous entry fires the device-only sheet itself: wait for that run,
+  // without calling maybeShowFirstRunPermissions() here (that would mask a
+  // missing trigger).
+  if (android.sandbox.NativeChrome._firstRunPromise) {
+    await android.sandbox.NativeChrome._firstRunPromise;
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(android.sheets.length, 1,
+    'anonymous Android entry still offers the device-level notification ask');
 });
 
-test('iOS: marker plus an authorized permission stays suppressed', async () => {
-  const { sandbox, sheets } = boot({
-    stored: { [MARKER]: '1' },
-    permissions: { platform: 'ios', exactAlarmGranted: true, batteryOptDisabled: null },
-    socialPushState: { ...IOS_UNPROMPTED, permissionStatus: 'authorized' },
-  });
-  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(sheets.length, 0);
-});
+// ── Android: the trigger's own rules ───────────────────────────────────
 
-test('iOS: the sheet shows even when the settings snapshot claims ' +
-     'exactAlarmGranted while the push permission is un-prompted', async () => {
-  // Defends against native builds where the alarm boolean does not map to
-  // the notification permission (there are no exact alarms on iOS).
-  const { sandbox, sheets } = boot({
-    permissions: { platform: 'ios', exactAlarmGranted: true, batteryOptDisabled: null },
-    socialPushState: IOS_UNPROMPTED,
-  });
-  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(sheets.length, 1);
-});
-
-test('iOS: without the social-push capability the boolean fallback still ' +
-     'shows the sheet on a fresh device', async () => {
-  const { sandbox, sheets } = boot({
-    capabilities: ['getSettingsState'],
-    permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
-  });
-  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(sheets.length, 1);
-});
-
-test('a degraded kit (sheet unavailable) must NOT burn the one-shot ' +
-     'marker — nothing was shown', async () => {
+test('a degraded kit (sheet unavailable) must NOT write either marker: ' +
+     'nothing was shown', async () => {
   const { sandbox, sheets, stored } = boot({
     kitSheetUnavailable: true,
-    permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
-    socialPushState: IOS_UNPROMPTED,
+    kitPlatform: 'android',
+    permissions: ANDROID_PERMS,
   });
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
   assert.equal(sheets.length, 0);
   assert.notEqual(stored[MARKER], '1',
     'a launch that presented nothing must leave the next launch its chance');
+  assert.equal(stored[ASKED_AT], undefined, 'and must not start the day-long wait');
 });
 
 test('concurrent and repeat triggers in one document present exactly one ' +
      'sheet', async () => {
   const { sandbox, sheets } = boot({
-    permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
-    socialPushState: IOS_UNPROMPTED,
+    kitPlatform: 'android',
+    permissions: ANDROID_PERMS,
   });
   await Promise.all([
     sandbox.NativeChrome.maybeShowFirstRunPermissions(),
@@ -237,9 +293,9 @@ test('Android: asked within the last day, the sheet waits with no ' +
      'bridge reads', async () => {
   let settingsReads = 0;
   const { sandbox, sheets } = boot({
-    stored: { [MARKER]: '1', 'sv:device_permissions_asked_at': String(Date.now()) },
+    stored: { [MARKER]: '1', [ASKED_AT]: String(Date.now()) },
     kitPlatform: 'android',
-    permissions: { platform: 'android', exactAlarmGranted: false, batteryOptDisabled: false },
+    permissions: ANDROID_PERMS,
   });
   const inner = sandbox.usernode.getSettingsState;
   sandbox.usernode.getSettingsState = async () => { settingsReads += 1; return inner(); };
@@ -254,7 +310,7 @@ test('Android: the old marker alone no longer ends the asking', async () => {
   const { sandbox } = boot({
     stored: { [MARKER]: '1' },
     kitPlatform: 'android',
-    permissions: { platform: 'android', exactAlarmGranted: false, batteryOptDisabled: false },
+    permissions: ANDROID_PERMS,
   });
   const inner = sandbox.usernode.getSettingsState;
   sandbox.usernode.getSettingsState = async () => { settingsReads += 1; return inner(); };
@@ -263,13 +319,37 @@ test('Android: the old marker alone no longer ends the asking', async () => {
     'a device that skipped once, or lost a permission later, is re-checked');
 });
 
-const IOS_PERMS = {
-  platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null,
-};
+test('Android: an unmarked device still gets the sheet', async () => {
+  const { sandbox, sheets } = boot({
+    kitPlatform: 'android',
+    permissions: ANDROID_PERMS,
+  });
+  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  assert.equal(sheets.length, 1);
+});
 
-test('iOS: granting from the sheet closes it, even when the native status ' +
-     'read still lags behind the OS dialog', async () => {
-  const { sandbox, sheets, stored } = boot({
+// ── The iOS sheet itself (what ?shot=notif-permissions draws) ──────────
+//
+// public/js/app.js presents it through NativeChrome.presentPermissionsSheet
+// with iOS permissions, and so do these tests: the trigger above no longer
+// does on iOS.
+
+function presentIosSheet(sandbox, sheets, pushStatus) {
+  const dismissals = [];
+  const handle = sandbox.NativeChrome.presentPermissionsSheet({
+    perms: IOS_PERMS,
+    isAndroid: false,
+    pushStatus,
+    onDismiss: (info) => dismissals.push(info),
+  });
+  assert.ok(handle, 'the kit presented the sheet');
+  assert.equal(sheets.length, 1);
+  return { sheet: sheets[0], dismissals };
+}
+
+test('iOS sheet: granting closes it, even when the native status read ' +
+     'still lags behind the OS dialog', async () => {
+  const { sandbox, sheets } = boot({
     permissions: IOS_PERMS,
     socialPushState: IOS_UNPROMPTED, // stays stale after the grant
   });
@@ -277,18 +357,17 @@ test('iOS: granting from the sheet closes it, even when the native status ' +
     granted: true,
     permissions: { ...IOS_PERMS, exactAlarmGranted: true },
   });
-  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
-  const allow = findButton(sheets[0].contentEl, 'Allow notifications');
+  const { sheet, dismissals } = presentIosSheet(sandbox, sheets, 'undetermined');
+  const allow = findButton(sheet.contentEl, 'Allow notifications');
   assert.ok(allow, 'the sheet renders the Allow notifications button');
   await allow.listeners.click();
-  assert.equal(sheets[0].handle.dismissed, true,
-    'a successful grant closes the sheet');
-  assert.equal(stored[MARKER], '1',
-    'closing on grant records first-run done');
+  assert.equal(sheet.handle.dismissed, true, 'a successful grant closes the sheet');
+  assert.equal(dismissals.length, 1);
+  assert.equal(dismissals[0].interacted, true, 'and it was an answer, not a ghost');
 });
 
-test('iOS: a requestPermissions that resolves before the user answers ' +
-     'still closes once the status settles to granted', async () => {
+test('iOS sheet: a requestPermissions that resolves before the user ' +
+     'answers still closes once the status settles to granted', async () => {
   const { sandbox, sheets } = boot({ permissions: IOS_PERMS });
   let reads = 0;
   sandbox.usernode.getSocialPushState = async () => {
@@ -302,61 +381,30 @@ test('iOS: a requestPermissions that resolves before the user answers ' +
     granted: false, permissions: IOS_PERMS,
   });
   sandbox.NativeChrome._FIRST_RUN_RECHECK_MS = 1;
-  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
-  const allow = findButton(sheets[0].contentEl, 'Allow notifications');
+  const { sheet } = presentIosSheet(sandbox, sheets, 'undetermined');
+  const allow = findButton(sheet.contentEl, 'Allow notifications');
   await allow.listeners.click();
-  assert.equal(sheets[0].handle.dismissed, true,
+  assert.equal(sheet.handle.dismissed, true,
     'the settled granted status closes the sheet');
 });
 
-test('iOS: a denial keeps the sheet open, un-granted, and unmarked', async () => {
-  const { sandbox, sheets, stored } = boot({
+test('iOS sheet: a denial keeps it open and un-granted', async () => {
+  const { sandbox, sheets } = boot({
     permissions: IOS_PERMS,
     socialPushState: IOS_UNPROMPTED,
   });
-  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  const { sheet } = presentIosSheet(sandbox, sheets, 'undetermined');
   sandbox.usernode.getSocialPushState = async () => ({
     ...IOS_UNPROMPTED, permissionStatus: 'denied',
   });
   sandbox.usernode.requestPermissions = async () => ({
     granted: false, permissions: IOS_PERMS,
   });
-  const allow = findButton(sheets[0].contentEl, 'Allow notifications');
+  const allow = findButton(sheet.contentEl, 'Allow notifications');
   await allow.listeners.click();
-  assert.equal(sheets[0].handle.dismissed, false);
-  assert.ok(findButton(sheets[0].contentEl, 'Skip for now'),
+  assert.equal(sheet.handle.dismissed, false);
+  assert.ok(findButton(sheet.contentEl, 'Skip for now'),
     'the dismiss affordance is still there');
-  assert.notEqual(stored[MARKER], '1');
-});
-
-test('anonymous: native session stays closed while device permissions remain available',
-  async () => {
-  const { sandbox, sheets } = boot({
-    user: null,
-    capabilities: ['getSettingsState', 'getSocialPushState'],
-    permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
-    socialPushState: IOS_UNPROMPTED,
-  });
-  const admitted = await sandbox.NativeChrome.enterAnonymous();
-  assert.equal(admitted, false, 'anonymous pages never receive session authority');
-  // Anonymous entry fires the device-only sheet itself — wait for that run, without
-  // calling maybeShowFirstRunPermissions() here (that would mask a
-  // missing trigger).
-  if (sandbox.NativeChrome._firstRunPromise) {
-    await sandbox.NativeChrome._firstRunPromise;
-  }
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(sheets.length, 1,
-    'anonymous entry must still trigger device-only permissions');
-});
-
-test('Android: an unmarked device still gets the sheet', async () => {
-  const { sandbox, sheets } = boot({
-    kitPlatform: 'android',
-    permissions: { platform: 'android', exactAlarmGranted: false, batteryOptDisabled: false },
-  });
-  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
-  assert.equal(sheets.length, 1);
 });
 
 // ── The sheet must survive its own opening tap ─────────────────────────
@@ -364,42 +412,44 @@ test('Android: an unmarked device still gets the sheet', async () => {
 // A tap that presents an overlay leaves a synthesized click behind
 // ~300ms later, and it lands on the backdrop that tap just put on screen.
 // The kit now refuses that click (decideBackdropDismiss in
-// public/usernode-native/v1/native.js), but this marker is one-shot and
-// silences the iOS notification prompt FOREVER, so it must not depend on
-// the kit alone: a dismissal nobody could have read, from a user who
-// pressed nothing on the sheet, is not an answer.
+// public/usernode-native/v1/native.js), but these markers end the asking
+// for a day, so they must not depend on the kit alone: a dismissal nobody
+// could have read, from a user who pressed nothing on the sheet, is not an
+// answer.
 
-test('a dismissal too fast to have been read leaves the marker unwritten', async () => {
+test('a dismissal too fast to have been read leaves both markers unwritten', async () => {
   const { sandbox, sheets, stored } = boot({
-    permissions: IOS_PERMS,
-    socialPushState: IOS_UNPROMPTED,
+    kitPlatform: 'android',
+    permissions: ANDROID_PERMS,
   });
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
   // The ghost: nothing on the sheet was touched, and it arrives at once.
   sheets[0].handle.dismiss();
   assert.notEqual(stored[MARKER], '1',
-    'a ghost-click dismissal must not burn the one-shot iOS prompt');
+    'a ghost-click dismissal must not count as an answer');
+  assert.equal(stored[ASKED_AT], undefined,
+    'nor start the day-long wait before the next offer');
 });
 
 test('a dismissal the user could have read records first-run done', async () => {
   const { sandbox, sheets, stored } = boot({
-    permissions: IOS_PERMS,
-    socialPushState: IOS_UNPROMPTED,
+    kitPlatform: 'android',
+    permissions: ANDROID_PERMS,
   });
   sandbox.NativeChrome._FIRST_RUN_MIN_SEEN_MS = 5;
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
   await new Promise((resolve) => setTimeout(resolve, 20));
   sheets[0].handle.dismiss();
-  assert.equal(stored[MARKER], '1',
-    'a real "not now" is still an answer and still one-shot');
+  assert.equal(stored[MARKER], '1', 'a real "not now" is still an answer');
+  assert.ok(Number(stored[ASKED_AT]) > 0, 'and waits a day before asking again');
 });
 
 test('pressing Skip records first-run done however fast it happens', async () => {
-  // Interaction, not elapsed time, is what makes a dismissal an answer —
+  // Interaction, not elapsed time, is what makes a dismissal an answer:
   // otherwise the guard would eat a decisive tap made in under 450ms.
   const { sandbox, sheets, stored } = boot({
-    permissions: IOS_PERMS,
-    socialPushState: IOS_UNPROMPTED,
+    kitPlatform: 'android',
+    permissions: ANDROID_PERMS,
   });
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
   const skip = findButton(sheets[0].contentEl, 'Skip for now');

@@ -33,8 +33,10 @@ test('live without a group vote, the team share, and possible lockstep', { timeo
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const week = journey.parseWeek('2026-09-21', new Date('2026-10-07T12:00:00Z'));
-  const user = async (username, isAdmin = false) => (await pool.query(
-    "INSERT INTO users (username, password, is_admin) VALUES ($1, 'x', $2) RETURNING id", [username, isAdmin])).rows[0].id;
+  const user = async (username, isAdmin = false, { bot = false, test = false } = {}) => (await pool.query(
+    `INSERT INTO users (username, password, is_admin, is_synthetic, test_account_created_at)
+     VALUES ($1, 'x', $2, $3, CASE WHEN $4::boolean THEN NOW() END) RETURNING id`,
+    [username, isAdmin, bot, test])).rows[0].id;
   const ana = await user('ana');
   const ben = await user('ben');
   const boss = await user('boss', true);
@@ -42,9 +44,10 @@ test('live without a group vote, the team share, and possible lockstep', { timeo
   for (let i = 0; i < 3; i += 1) ring.push(await user(`ring${i}`));
   const app = (await pool.query(
     "INSERT INTO apps (name, slug, created_by, status) VALUES ('Run Club', 'run-club', $1, 'running') RETURNING id", [ana])).rows[0].id;
-  const change = async (author, mergedAt) => (await pool.query(
-    `INSERT INTO chat_sessions (app_id, user_id, status, merged_at, pr_number) VALUES ($1, $2, 'merged', $3, 1) RETURNING id`,
-    [app, author, mergedAt])).rows[0].id;
+  const change = async (author, mergedAt, issue = null) => (await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, status, merged_at, pr_number, created_from_issue_number)
+     VALUES ($1, $2, 'merged', $3, 1, $4) RETURNING id`,
+    [app, author, mergedAt, issue])).rows[0].id;
   const vote = (sessionId, userId, at) => pool.query(
     "INSERT INTO pr_votes (session_id, user_id, vote, created_at) VALUES ($1, $2, 'yes', $3)", [sessionId, userId, at]);
 
@@ -66,12 +69,27 @@ test('live without a group vote, the team share, and possible lockstep', { timeo
     await vote(c, ben, `2026-09-25T0${i}:30:00Z`);
   }
 
+  // The Homeroom bot built two of ben's requests: one with ana's yes, one
+  // nobody else said yes to. Both are ben's changes; the second went live
+  // without the group. A test account's own change is nobody's.
+  const bot = await user('homeroom_bot', false, { bot: true });
+  await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 21, $2), ($1, 22, $2)', [app, ben]);
+  const builtWithYes = await change(bot, '2026-09-26T10:00:00Z', 21);
+  await vote(builtWithYes, ana, '2026-09-26T09:00:00Z');
+  const builtAlone = await change(bot, '2026-09-26T11:00:00Z', 22);
+  await vote(builtAlone, ben, '2026-09-26T10:30:00Z');
+  const tester = await user('tess', false, { test: true });
+  await change(tester, '2026-09-26T12:00:00Z');
+
   const trust = await journey.trustChecks(pool, { week });
-  assert.equal(trust.withoutGroupVote.count, 1);
-  assert.equal(trust.withoutGroupVote.of, 8, 'out of the live changes by real people');
+  assert.equal(trust.withoutGroupVote.count, 2);
+  assert.equal(trust.withoutGroupVote.of, 10, 'out of the live changes by real people, the bot\'s builds for them included');
   assert.equal(trust.withoutGroupVote.atLeastForced, 1);
-  assert.deepEqual(trust.withoutGroupVote.changes, [{ slug: 'run-club', project: 'Run Club', author: 'ana', forced: true }]);
-  assert.deepEqual(trust.teamShare, { team: 1, of: 9 });
+  assert.deepEqual([...trust.withoutGroupVote.changes].sort((a, b) => a.author.localeCompare(b.author)), [
+    { slug: 'run-club', project: 'Run Club', author: 'ana', forced: true },
+    { slug: 'run-club', project: 'Run Club', author: 'ben', forced: false },
+  ], 'the bot\'s build is credited to the person who asked, and their own yes is not the group\'s');
+  assert.deepEqual(trust.teamShare, { team: 1, of: 11 }, 'a test account\'s change is not counted at all');
   assert.deepEqual(trust.lockstep.possible.map((p) => p.name).sort(), ['ring0', 'ring1', 'ring2'],
     'the accounts voting within seconds of each other, not ben who votes on the same changes later');
   assert.deepEqual(trust.lockstep.cutoffs, journey.LOCKSTEP_CUTOFFS);

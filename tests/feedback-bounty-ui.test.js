@@ -22,6 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
@@ -88,10 +89,15 @@ test('the row is repainted from the live Kudos budget, not a literal', () => {
   assert.match(feedbackJs, /const resetBountyRow = \(\) => \{/);
   assert.match(feedbackJs, /window\.Kudos\?\.Budget\?\.state/);
   // Both copy variants interpolate the server's numbers.
-  assert.match(feedbackJs, /\$\{remaining\} of \$\{limit\} left this week/);
-  assert.match(feedbackJs, /You've used all \$\{limit\} kudos this week/);
+  assert.match(feedbackJs, /t\('dialogs:feedback\.bounty\.costRemaining', \{ count: remaining, limit \}\)/);
+  assert.equal(message('dialogs:feedback.bounty.costRemaining', { count: 3, limit: 5 }), 'Costs 1 kudos. 3 of 5 left this week');
+  assert.match(feedbackJs, /t\('dialogs:feedback\.bounty\.usedAll', \{ count: limit, \.\.\.RT\.resetMoment\('weekly'\) \}\)/);
+  assert.equal(message('dialogs:feedback.bounty.usedAll', { count: 5, day: 'Monday', time: '2:00 AM' }),
+    "You've used all 5 kudos this week. Resets Monday at 2:00 AM.");
   // #3230: the reset in the viewer's own clock, the UTC instant on hover.
-  assert.match(feedbackJs, /RT \? RT\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/);
+  assert.match(feedbackJs, /bountyNote\.textContent = RT\s*\? t\('dialogs:feedback\.bounty\.usedAll', [^\n]*\n\s*: t\('dialogs:feedback\.bounty\.usedAllUtc', \{ count: limit \}\)/);
+  assert.equal(message('dialogs:feedback.bounty.usedAllUtc', { count: 5 }),
+    "You've used all 5 kudos this week. Resets Monday 00:00 UTC.");
   assert.match(feedbackJs, /bountyNote\.title = RT\.resetUtc\('weekly'\)/);
   // #1582: and the cost is stated in every state the box can be ticked in —
   // including the one where the budget fetch failed and there is no figure.
@@ -99,8 +105,10 @@ test('the row is repainted from the live Kudos budget, not a literal', () => {
     feedbackJs.indexOf('if (remaining === null) bountyNote'),
     feedbackJs.indexOf("bountyRow.classList.remove('hidden')"),
   );
-  assert.match(note, /remaining === null\) bountyNote\.textContent = 'Costs 1 kudos'/);
-  assert.match(note, /`Costs 1 kudos\. \$\{remaining\} of \$\{limit\} left this week`/);
+  assert.match(note, /remaining === null\) bountyNote\.textContent = t\('dialogs:feedback\.bounty\.cost'\)/);
+  assert.equal(message('dialogs:feedback.bounty.cost'), 'Costs 1 kudos');
+  assert.match(note, /t\('dialogs:feedback\.bounty\.costRemaining', \{ count: remaining, limit \}\)/);
+  assert.match(message('dialogs:feedback.bounty.costRemaining', { count: 1, limit: 5 }), /^Costs 1 kudos\. 1 of 5 left this week$/);
 });
 
 test('resetBountyRow unchecks the box and disables it at zero remaining', () => {
@@ -164,9 +172,11 @@ test('the confirmation reports the bounty outcome and refreshes the meter', () =
     feedbackJs.indexOf('const submitFeedback = async () => {'),
     feedbackJs.indexOf('Feedback._open = (opts = {}) => {')
   );
-  assert.match(submit, /Pledged 1 kudos as a bounty/);
-  assert.match(submit, /\$\{data\.bounty\.remaining\} left this week/);
-  assert.match(submit, /Couldn't add the bounty/);
+  assert.match(submit, /t\('dialogs:feedback\.bounty\.pledged', \{ count: Number\(data\.bounty\.remaining\) \}\)/);
+  assert.equal(message('dialogs:feedback.bounty.pledged', { count: 4 }), 'Pledged 1 kudos as a bounty. 4 left this week.');
+  assert.match(submit, /t\('dialogs:feedback\.bounty\.failedReason', \{ reason: data\.bounty\.error \}\)/);
+  assert.match(message('dialogs:feedback.bounty.failedReason', { reason: 'no allowance left' }), /^Couldn't add the bounty: no allowance left\.$/);
+  assert.match(message('dialogs:feedback.bounty.failed'), /^Couldn't add the bounty/);
   // The drawer meter must show the number the user just spent down to.
   assert.match(submit, /data\.bounty\.placed[\s\S]{0,400}Kudos\?\.Budget\?\.refresh/);
 });
@@ -246,9 +256,17 @@ test('both shot checks survive the manifest reader', () => {
 test('the Kudos-tab subtitle reads the cap from the budget', () => {
   assert.doesNotMatch(lbJs, /'5 kudos per week/);
   assert.match(lbJs, /window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20/);
-  assert.match(lbJs, /kudos per week, resets \$\{/);
-  assert.match(lbJs, /window\.ResetTime\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/,
-    '#3230: in the viewer\u2019s own clock where ResetTime is loaded');
+  assert.match(lbJs, /PlatformI18n\.t\('leaderboard:kudos\.subtitle',\s*\{ count: Number\(window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20\), \.\.\.window\.ResetTime\.resetMoment\('weekly'\) \}\)/,
+    '#3230: in the viewer’s own clock where ResetTime is loaded');
+  assert.match(lbJs, /: PlatformI18n\.t\('leaderboard:kudos\.subtitleUtc', \{ count: Number\(window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20\) \}\)/);
+  assert.equal(message('leaderboard:kudos.subtitle', { count: 20, day: 'Sunday', time: '8:00 PM' }),
+    '20 kudos per week, resets Sunday at 8:00 PM. Give them to changes you appreciate.');
+  assert.equal(message('leaderboard:kudos.subtitleUtc', { count: 20 }),
+    '20 kudos per week, resets Monday 00:00 UTC. Give them to changes you appreciate.');
+  // The newcomer's word (first-session run-through, 4 Oct 2026): a change,
+  // not a PR.
+  assert.match(message('leaderboard:kudos.subtitle', { count: 20, when: 'Monday' }), /Give them to changes you appreciate\.$/);
+  assert.doesNotMatch(lbJs, /PRs you appreciate/);
 });
 
 test('a Dev-screen pledge also refreshes the drawer kudos meter', () => {

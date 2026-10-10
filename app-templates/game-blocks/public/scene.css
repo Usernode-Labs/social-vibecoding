@@ -1,0 +1,303 @@
+/* The block world's scene: a sky, the world (drawn by public/app.js with
+ * three.js) filling the screen, chunky lettering and dark glass panels over
+ * it, and the hotbar of blocks along the bottom. It is one look of its own,
+ * the same daylight in both of the page's looks, written down in
+ * CLAUDE.md "## Design". Its colours are named once, here, and the 3D scene
+ * draws with the same ones. The kit's own parts (the toast) follow the
+ * page's look.
+ */
+
+.blocks {
+  --sky-top: #6db7f2;
+  --sky: #a9d7f7;
+  --horizon: #dcefff;
+  --panel: rgba(18, 24, 33, 0.74);
+  --panel-line: rgba(255, 255, 255, 0.14);
+  --text: #f7f9fb;
+  --text-soft: rgba(247, 249, 251, 0.74);
+  --grass: #6dbb45;
+  --grass-deep: #3f7f26;
+  --dirt: #8b5a2b;
+  --sun: #ffd45c;
+  font-family: ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif;
+  color: var(--text);
+}
+.sky {
+  background: linear-gradient(var(--sky-top) 0%, var(--sky) 45%, var(--horizon) 62%, var(--horizon) 100%);
+}
+
+/* ── The title screen, over the world ─────────────────────────────────── */
+
+.title-scrim {
+  background: linear-gradient(rgba(18, 24, 33, 0) 30%, rgba(18, 24, 33, 0.55) 100%);
+}
+.title-name {
+  font-size: clamp(2.75rem, 12vw, 5rem);
+  line-height: 0.95;
+  font-weight: 900;
+  text-align: center;
+  overflow-wrap: anywhere;
+  color: #ffffff;
+  text-shadow:
+    0 3px 0 var(--grass-deep),
+    0 6px 0 var(--dirt),
+    0 9px 0 #5e3b1a,
+    0 16px 24px rgba(0, 0, 0, 0.35);
+}
+.title-line {
+  max-width: 24rem;
+  text-align: center;
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  font-weight: 600;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+.panel {
+  width: 100%;
+  border-radius: 1rem;
+  border: 2px solid var(--panel-line);
+  background: var(--panel);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+  padding: 1.25rem;
+}
+.panel-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.panel-note {
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+.panel .skeleton {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.btn-enter,
+.btn-plain {
+  display: inline-flex;
+  min-height: 3.25rem;
+  min-width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.75rem;
+  padding: 0 1.5rem;
+  font-weight: 900;
+  font-size: 1.125rem;
+}
+.btn-enter {
+  background: linear-gradient(var(--grass) 0 70%, var(--grass-deep) 70%);
+  color: #ffffff;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.35), 0 6px 0 3px rgba(0, 0, 0, 0.25);
+}
+.btn-enter:active {
+  transform: translateY(2px);
+}
+.btn-plain {
+  min-height: 2.75rem;
+  border: 2px solid var(--panel-line);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-size: 1rem;
+}
+.btn-enter:focus-visible,
+.btn-plain:focus-visible,
+.hud-btn:focus-visible,
+.slot:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 3px;
+}
+
+/* Who is building now. */
+.builders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.builder {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.25rem 0.75rem 0.25rem 0.25rem;
+  font-weight: 700;
+  font-size: 0.9375rem;
+}
+.builder-face {
+  height: 1.75rem;
+  width: 1.75rem;
+  flex-shrink: 0;
+  border-radius: 0.375rem;
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.35), inset 0 -3px 0 rgba(0, 0, 0, 0.25);
+}
+.builder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.keys {
+  max-width: 26rem;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* ── In the world: full screen, a crosshair, the hotbar ───────────────── */
+
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  height: 1.375rem;
+  width: 1.375rem;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  background:
+    linear-gradient(#ffffff, #ffffff) center / 2px 100% no-repeat,
+    linear-gradient(#ffffff, #ffffff) center / 100% 2px no-repeat;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.8));
+}
+
+.hud-btn {
+  display: flex;
+  height: 2.75rem;
+  min-width: 2.75rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border-radius: 0.75rem;
+  background: var(--panel);
+  color: var(--text);
+  padding: 0 0.75rem;
+  font-size: 1rem;
+  font-weight: 800;
+}
+.hud-chip {
+  border-radius: 0.75rem;
+  background: var(--panel);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+/* The hotbar: one slot per block, the one in your hand raised and lit. */
+.hotbar {
+  display: flex;
+  max-width: calc(100vw - 1.5rem);
+  gap: 0.25rem;
+  overflow-x: auto;
+  border-radius: 0.875rem;
+  background: var(--panel);
+  padding: 0.375rem;
+  scrollbar-width: none;
+}
+.slot {
+  position: relative;
+  display: flex;
+  height: 2.875rem;
+  width: 2.875rem;
+  flex-shrink: 0;
+  align-items: flex-end;
+  justify-content: flex-end;
+  border-radius: 0.5rem;
+  border: 3px solid transparent;
+  padding: 0.125rem 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.8);
+  box-shadow: inset 0 5px 0 rgba(255, 255, 255, 0.3), inset 0 -5px 0 rgba(0, 0, 0, 0.22);
+}
+.slot-on {
+  border-color: #ffffff;
+  transform: translateY(-3px);
+  box-shadow: inset 0 5px 0 rgba(255, 255, 255, 0.3), inset 0 -5px 0 rgba(0, 0, 0, 0.22), 0 0 0 2px rgba(0, 0, 0, 0.5);
+}
+.slot-glass {
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0 18%, rgba(255, 255, 255, 0) 18% 100%);
+}
+.hand-name {
+  border-radius: 0.5rem;
+  background: var(--panel);
+  padding: 0.25rem 0.625rem;
+  font-size: 0.875rem;
+  font-weight: 800;
+}
+
+/* Touch: a stick to walk, and buttons to fly and build. */
+.stick {
+  position: relative;
+  height: 7.5rem;
+  width: 7.5rem;
+  border-radius: 9999px;
+  background: rgba(18, 24, 33, 0.45);
+  border: 2px solid var(--panel-line);
+  touch-action: none;
+}
+.stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  height: 3rem;
+  width: 3rem;
+  margin: -1.5rem 0 0 -1.5rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.touch-btn {
+  display: flex;
+  height: 3.5rem;
+  min-width: 3.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1rem;
+  background: rgba(18, 24, 33, 0.6);
+  border: 2px solid var(--panel-line);
+  color: #ffffff;
+  padding: 0 0.75rem;
+  font-size: 0.9375rem;
+  font-weight: 800;
+  touch-action: none;
+  user-select: none;
+}
+.touch-place {
+  background: linear-gradient(var(--grass) 0 70%, var(--grass-deep) 70%);
+}
+
+/* A builder's name, over their head. */
+.label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+  border-radius: 0.375rem;
+  background: rgba(18, 24, 33, 0.7);
+  padding: 0.125rem 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(18, 24, 33, 0.35);
+}

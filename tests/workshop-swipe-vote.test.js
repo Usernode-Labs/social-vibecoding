@@ -22,6 +22,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -172,8 +173,11 @@ test('an upward drag is let go, and a sideways one never also clicks', () => {
 test('the hints are two aria-hidden stamps, drawn only on a swipeable card', () => {
   const item = body(WORKSHOP, 'const FeedItem = memo(function FeedItem(', '\n});\n');
   assert.match(item, /data-ws-swipeable=\{swipe \? '' : undefined\}/);
-  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Yes<\/span> : null\}/);
-  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">No<\/span> : null\}/);
+  // #3977: a Just-you change's are its approval's words (approves(row)).
+  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">\{approves\(row\) \? t\('project:needsYou\.swipe\.approve'\) : t\('project:needsYou\.swipe\.yes'\)\}<\/span> : null\}/);
+  assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">\{approves\(row\) \? t\('project:needsYou\.swipe\.dontApprove'\) : t\('project:needsYou\.swipe\.no'\)\}<\/span> : null\}/);
+  assert.deepEqual(['approve', 'yes', 'dontApprove', 'no'].map((key) => message(`project:needsYou.swipe.${key}`)),
+    ['Approve', 'Yes', 'Don’t approve', 'No']);
   // After the caption, so `.dev-ws-item-by + .dev-ws-item-title +
   // .dev-ws-item-summary ~ .dev-ws-item-caption` (a declared check) still
   // matches.

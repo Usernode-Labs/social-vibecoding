@@ -6,6 +6,7 @@ const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const communities = require('../services/communities');
 const github = require('../services/github');
+const githubBudget = require('../services/github-budget');
 const staging = require('../services/staging');
 const stagingRecovery = require('../services/staging-recovery');
 const visuals = require('../services/visuals');
@@ -445,8 +446,24 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
-  const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
+  exactKeys(body, ['branch', 'patch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
+  // #4263. The new work arrives as a fork `branch` OR as a `patch` (the
+  // connector's update-by-patch), never both. A patch is applied AT a commit,
+  // so it names that commit in `expectedHeadSha`. Its size limit is the
+  // patch service's own (it names the limit and the fallback); this bound is
+  // only the body's.
+  if (body.patch != null && body.branch != null) {
+    throw new ValidationError('Pass branch or patch, not both');
+  }
+  const patch = body.patch == null
+    ? null
+    : boundedText(body.patch, { label: 'patch', min: 1, max: 512 * 1024 });
+  if (patch != null && body.expectedHeadSha == null) {
+    throw new ValidationError('A patch needs expectedHeadSha: the commit it was made against');
+  }
+  const branch = patch != null
+    ? null
+    : boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
     : boundedText(body.forkRepo, { label: 'forkRepo', min: 1, max: 100, trim: true });
@@ -506,7 +523,7 @@ function parseUpdateFromForkBody(body) {
     ? []
     : parseImportLinkedIssues({ linkedIssues: body.linkedIssues });
   const testing = require('../services/testing-notes').parseSubmitted(body);
-  return { branch, forkRepo, expectedHeadSha, testing, title,
+  return { branch, patch, forkRepo, expectedHeadSha, testing, title,
     description, summary,
     recheck, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
 }
@@ -887,6 +904,7 @@ function proposalHandoffRoutes(config) {
           user: req.user,
           session,
           branch: input.branch,
+          patch: input.patch,
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
@@ -1239,7 +1257,7 @@ function proposalHandoffRoutes(config) {
         log.warn('proposal-handoff', 'GitHub branch creation failed', {
           app: app.slug, ...github.describeGithubError(err),
         });
-        return res.status(503).json({ error: 'github_unavailable' });
+        return res.status(503).json(githubBudget.githubUnavailableBody(err));
       }
 
       let created;
@@ -1467,7 +1485,7 @@ function proposalHandoffRoutes(config) {
               requestId: detail.requestId,
               message: detail.message,
             });
-            return res.status(503).json({ error: 'github_unavailable' });
+            return res.status(503).json(githubBudget.githubUnavailableBody(err));
           }
           // The exact local/platform pair is already durable. This can be a
           // retry before submission or long after its staging checks passed.
@@ -1668,7 +1686,7 @@ function proposalHandoffRoutes(config) {
               log.warn('proposal-handoff', 'Promoted managed revision head read failed', {
                 sessionId: session.id, ...github.describeGithubError(err),
               });
-              return res.status(503).json({ error: 'github_unavailable' });
+              return res.status(503).json(githubBudget.githubUnavailableBody(err));
             }
             if (String(remoteHead).toLowerCase() !== input.headSha) {
               return res.status(409).json({
@@ -1690,7 +1708,7 @@ function proposalHandoffRoutes(config) {
             }
             const spec = input.spec || session.spec_md;
             if (input.spec) {
-              await pool.query(`UPDATE chat_sessions SET spec_md = $1 WHERE id = $2`, [input.spec, session.id]);
+              await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
             }
             await snapshotSpec(pool, session.id, spec, input.headSha);
             const adopted = await pool.query(
@@ -1782,7 +1800,7 @@ function proposalHandoffRoutes(config) {
             log.warn('proposal-handoff', 'GitHub commit adoption failed', {
               sessionId: session.id, ...github.describeGithubError(err),
             });
-            return res.status(503).json({ error: 'github_unavailable' });
+            return res.status(503).json(githubBudget.githubUnavailableBody(err));
           }
 
           await insertHistory(pool, session.id, input.history);
@@ -1798,7 +1816,7 @@ function proposalHandoffRoutes(config) {
           }
           const spec = input.spec || session.spec_md;
           if (input.spec) {
-            await pool.query(`UPDATE chat_sessions SET spec_md = $1 WHERE id = $2`, [input.spec, session.id]);
+            await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
           }
           await snapshotSpec(pool, session.id, spec, input.headSha);
           const adopted = await pool.query(
@@ -1959,7 +1977,7 @@ function proposalHandoffRoutes(config) {
         log.warn('proposal-handoff', 'Could not verify branch before promotion', {
           sessionId: session.id, ...github.describeGithubError(err),
         });
-        return res.status(503).json({ error: 'github_unavailable' });
+        return res.status(503).json(githubBudget.githubUnavailableBody(err));
       }
       const checkedHead = currentCheckedHead(session);
       if (String(remoteHead).toLowerCase() !== checkedHead) {

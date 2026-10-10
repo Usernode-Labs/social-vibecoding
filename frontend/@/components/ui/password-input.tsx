@@ -3,6 +3,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Input, type InputProps } from '@/components/ui/input';
 import { EyeIcon, EyeOffIcon } from '@/components/ui/icons';
+import { useMessages } from '../../../src/lib/i18n/react';
 
 /**
  * A password field with a show/hide toggle (#1606).
@@ -59,6 +60,7 @@ const TOGGLE =
 const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
   ({ className, wrapperClassName, ...props }, ref) => {
     const [shown, setShown] = React.useState(false);
+    const t = useMessages('core');
     return (
       <div className={cn('relative', wrapperClassName)}>
         <Input
@@ -75,9 +77,9 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
         <button
           type="button"
           className={TOGGLE}
-          aria-label={shown ? 'Hide password' : 'Show password'}
+          aria-label={shown ? t('core:ui.passwordInput.hide') : t('core:ui.passwordInput.show')}
           aria-pressed={shown}
-          title={shown ? 'Hide password' : 'Show password'}
+          title={shown ? t('core:ui.passwordInput.hide') : t('core:ui.passwordInput.show')}
           onClick={() => setShown((on) => !on)}
         >
           {shown

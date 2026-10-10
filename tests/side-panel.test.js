@@ -191,7 +191,7 @@ test('the title is the page\'s own header title, except where that would only na
   assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Workshop', 'the Workshop is the Workshop, as the prototype titles it');
   assert.equal(R.titleFor('messages', 'Inbox'), 'Messages', 'and the inbox is Messages');
   assert.equal(R.titleFor('app/notes-ab12/dev/proposals/12', 'Notes'), 'Proposal');
-  assert.equal(R.titleFor('app/notes-ab12/dev/issues/7', 'Notes'), 'Issue');
+  assert.equal(R.titleFor('app/notes-ab12/dev/issues/7', 'Notes'), 'Request');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/41', 'Notes'), 'Change');
   assert.equal(R.titleFor('app/notes-ab12/dev/sessions/new', 'Notes'), 'New change');
   // Derived from the route while the document has said nothing yet.
@@ -259,7 +259,7 @@ test('an open panel renders ONE frame, at a constant address, with the spinner a
     title: 'Design review', canBack: true, loading: true,
   });
   const loading = renderToHtml(createElement(api.SidePanelIsland, {}));
-  assert.match(loading, /<iframe id="side-panel-frame" title="Side panel" src="\/\?panel=1#messages\/4" class="side-panel-frame"><\/iframe><div id="side-panel-loading"/,
+  assert.match(loading, /<iframe id="side-panel-frame" title="Side panel" src="\/\?panel=1#messages\/4" class="side-panel-frame" data-un-keyboard-relay=""><\/iframe><div id="side-panel-loading"/,
     'the frame is the body\'s first child, transparent while its document boots');
   assert.match(loading, />Design review<\/h2>/);
   api.sidePanelStore.set({ loading: false, route: 'app/x/dev/proposals/1', title: 'Proposal' });
@@ -927,6 +927,7 @@ function router({ embedded = false, takes = true } = {}) {
   const root = fakeElement();
   if (embedded) root.classList.add('in-side-panel');
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {}, state: null },
     URL, URLSearchParams, console, setTimeout, clearTimeout,

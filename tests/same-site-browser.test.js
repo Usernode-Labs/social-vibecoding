@@ -107,6 +107,20 @@ const OWN = 'has its own Origin/Sec-Fetch-Site check';
 const FILTER = 'a method filter, rate limit or 404/405 fallback: changes nothing itself';
 
 const EXEMPT = new Map([
+  // Apple answers sign-in with a cross-site form POST by design
+  // (response_mode=form_post). The route changes nothing: it hands the
+  // fields to the GET callback, which counts only with the binder cookie of
+  // the browser that started the trip.
+  ['sign-in-providers.js POST /api/auth/oauth/apple/callback', 'the provider\'s own cross-site answer; it only redirects to the binder-checked GET'],
+  ['sign-in-providers.js POST /api/auth/oauth/finish', JSON_FIELD],
+  // Inside the Homeroom app: the start needs `from`, the finish the state and
+  // the ID token, each in a JSON body.
+  ['sign-in-providers.js POST /api/auth/oauth/:provider/native/start', JSON_FIELD],
+  ['sign-in-providers.js POST /api/auth/oauth/:provider/native', JSON_FIELD],
+  // WP-E: a mail client's one-click unsubscribe (RFC 8058) is a cross-site
+  // POST by design. It carries no session; the HMAC token in its query is
+  // the whole of the check, and all it can do is turn activity mail off.
+  ['activity-mail.js POST /mail/unsubscribe', 'a mail client\'s one-click unsubscribe: sessionless, the signed token in the link is the check'],
   ['agent-session-drafts.js POST /api/agent-sessions/:id/drafts', JSON_FIELD],
   ['agent-sessions.js POST /api/agent-sessions/:id/attachments', RAW],
   ['agent-sessions.js POST /api/agent-sessions/:id/turns', JSON_FIELD],
@@ -123,12 +137,17 @@ const EXEMPT = new Map([
   ['apps.js POST /api/apps/:slug/visibility-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/admins-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/governance-pr', JSON_FIELD],
+  // #4417: a topics proposal needs its `op` (and the topic's fields) in a
+  // JSON body, like the rename and visibility PRs beside it.
+  ['apps.js POST /api/apps/:slug/topics-pr', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/favorite', JSON_FIELD],
   ['apps.js POST /api/apps/:slug/membership', JSON_FIELD],
   ['auth.js POST /api/auth/login', JSON_FIELD],
   ['auth.js POST /api/auth/otp/request', JSON_FIELD],
   ['auth.js POST /api/auth/otp/verify', JSON_FIELD],
   ['auth.js POST /api/auth/otp/set-password', JSON_FIELD],
+  // #4594: the release mail's one-time link, read from the JSON body.
+  ['auth.js POST /api/auth/release-link', JSON_FIELD],
   ['auth.js POST /api/auth/register', JSON_FIELD],
   ['auth.js POST /api/me/api-key', JSON_FIELD],
   ['auth.js POST /api/me/password', JSON_FIELD],
@@ -142,6 +161,19 @@ const EXEMPT = new Map([
   ['auth.js POST /api/me/wallet-change-password', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-register', JSON_FIELD],
   ['auth.js POST /api/auth/wallet-link-login', JSON_FIELD],
+  // SESSION_MINT_PATHS names it for the live-session guard; the handler is
+  // sign-in-providers.js's, below.
+  ['auth.js POST /api/auth/oauth/finish', JSON_FIELD],
+  ['auth.js POST /api/auth/oauth/:provider/native', JSON_FIELD],
+  // Phone sign-in (routes/phone-auth.js). SESSION_MINT_PATHS names verify
+  // and finish for the live-session guard, so auth.js's registrations of
+  // those two paths are listed here the same way; the handlers are
+  // phone-auth.js's, and every one of them carries JSON body fields.
+  ['auth.js POST /api/auth/phone/verify', JSON_FIELD],
+  ['auth.js POST /api/auth/phone/finish', JSON_FIELD],
+  ['phone-auth.js POST /api/auth/phone/request', JSON_FIELD],
+  ['phone-auth.js POST /api/auth/phone/verify', JSON_FIELD],
+  ['phone-auth.js POST /api/auth/phone/finish', JSON_FIELD],
   ['board-order.js POST /api/apps/:slug/board-order', JSON_FIELD],
   ['chat-drafts.js POST /api/sessions/:id/drafts', JSON_FIELD],
   ['chat.js POST /api/apps/:slug/messages', JSON_FIELD],
@@ -158,8 +190,6 @@ const EXEMPT = new Map([
   ['cli-auth.js POST /api/cli/device/token', JSON_FIELD],
   ['cli-auth.js POST /api/cli/device/approve', OWN],
   ['collaborators.js POST /api/apps/:slug/invites', JSON_FIELD],
-  ['content-reports.js POST /api/apps/:slug/report', JSON_FIELD],
-  ['content-reports.js POST /api/apps/:slug/messages/:id/report', JSON_FIELD],
   ['conversations.js POST /api/conversations', JSON_FIELD],
   ['conversations.js POST /api/conversations/:id/respond', JSON_FIELD],
   ['conversations.js POST /api/conversations/:id/members', JSON_FIELD],
@@ -176,15 +206,22 @@ const EXEMPT = new Map([
   ['dev-flow.js POST /api/apps/:slug/external-tasks/:id/submit-update', OWN],
   ['feedback.js POST /api/feedback/title', JSON_FIELD],
   ['feedback.js POST /api/feedback/screenshot', RAW],
+  ['feedback.js POST /api/feedback/video', RAW],
   ['feedback.js POST /api/feedback', JSON_FIELD],
   ['github-webhook.js POST /api/github/webhook', TOKEN],
+  // #4264: a coding agent's sandbox, authenticated by the task's one-time
+  // upload token in Authorization; no cookie is read.
+  ['external-agent-patch-upload.js POST /api/external-tasks/:taskId/patch', TOKEN],
+  ['mail-webhooks.js POST /api/mail/webhooks/resend', 'Resend raw-body Svix signature; no cookie or browser session authorizes a callback'],
   ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],
   ['global-chat.js POST /api/global-chat/actions/:token/confirm', JSON_FIELD],
   ['internal.js POST /api/internal/shots/:runId/shot', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/skip', TOKEN],
   ['internal.js POST /api/internal/shots/:runId/note', TOKEN],
+  ['internal.js POST /api/internal/shots/:runId/problem', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/visible-changes', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/diagram', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/visual-evidence-intent', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/push', TOKEN],
   ['internal.js POST /api/internal/sessions/:sessionId/pr', TOKEN],
@@ -221,6 +258,7 @@ const EXEMPT = new Map([
   ['public-api.js POST /api/public/waitlist/confirm', JSON_FIELD],
   ['public-api.js POST /api/public/waitlist/more/:token', JSON_FIELD],
   ['report-snapshots.js POST /api/apps/:slug/report-snapshots', JSON_FIELD],
+  ['request-specs.js POST /api/apps/:slug/issues/:number/spec', JSON_FIELD],
   ['sessions.js POST /api/sessions/:id/attachments', RAW],
   ['sessions.js POST /api/sessions/:id/chat', JSON_FIELD],
   ['sessions.js POST /api/sessions/:id/specs/:version/share-user', JSON_FIELD],
@@ -241,6 +279,8 @@ const EXEMPT = new Map([
   ['votes.js POST /api/sessions/:id/vote', JSON_FIELD],
   ['waitlist-connect.js POST /waitlist/connect/:provider/complete', JSON_FIELD],
   ['workshop-ask.js POST /api/apps/:slug/workshop/ask', JSON_FIELD],
+  // #4313: the ?demo=1 Needs-you cards' vote, answered and never cast (staging only).
+  ['workshop-overview.js POST /api/sessions/:id/vote', JSON_FIELD],
   // Declarations the literal-path scan used to miss.
   ['anthropic-proxy.js ALL `${ROUTE_PREFIX}*`', TOKEN],
   ['app-illustrations.js POST /api/apps/:slug/featured-illustration', RAW],

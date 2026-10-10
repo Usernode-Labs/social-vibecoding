@@ -32,6 +32,7 @@
 
 import { useEffect, useRef } from 'react';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   autocompleteStore,
@@ -55,6 +56,7 @@ function useActiveScroll(active: number) {
 }
 
 export function MentionMenuView({ items, active }: AutocompleteSlot<MentionOption>) {
+  const t = useMessages('chat');
   const activeRef = useActiveScroll(active);
   return (
     <>
@@ -67,9 +69,19 @@ export function MentionMenuView({ items, active }: AutocompleteSlot<MentionOptio
           data-username={item.username}
           data-index={i}
         >
-          <span className="gc-mention-option-at">@</span>
-          {item.username}
-          {item.you ? <span className="gc-mention-option-you">you</span> : null}
+          {item.bot ? (
+            <>
+              <img className="gc-mention-option-mark" src="/brand/homeroom-mark.png" alt="" aria-hidden="true" />
+              {item.displayName || item.username}
+              <span className="messages-bot-badge">{t('chat:group.mention.aiBadge')}</span>
+            </>
+          ) : (
+            <>
+              <span className="gc-mention-option-at">@</span>
+              {item.username}
+              {item.you ? <span className="gc-mention-option-you">{t('chat:group.mention.you')}</span> : null}
+            </>
+          )}
         </div>
       ))}
     </>
@@ -116,14 +128,19 @@ export function RefMenuView({ items, active }: AutocompleteSlot<RefOption>) {
  * same as theirs.
  */
 export function EmojiMenuView({ items, active, query }: EmojiSlot) {
+  const t = useMessages('chat');
   const activeRef = useActiveScroll(active);
   if (!items.length) return null;
   return (
     <>
       <div className="gc-emoji-menu-heading">
-        Emoji matching <span className="gc-emoji-menu-query">{`:${query}`}</span>
+        <RichMessage
+          id="chat:group.emojiMenu.heading"
+          values={{ query: `:${query}` }}
+          components={[<span className="gc-emoji-menu-query" />]}
+        />
       </div>
-      <div role="listbox" aria-label="Emoji">
+      <div role="listbox" aria-label={t('chat:group.emojiMenu.label')}>
         {items.map((item, i) => (
           <div
             key={item.emoji}

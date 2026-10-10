@@ -29,6 +29,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -131,6 +132,7 @@ function loadPane({ challenges, eventId = null }) {
   sandbox.TopochainEventContext = context;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(CHALLENGES_SRC, sandbox, { filename: 'topochain-challenges.js' });
 
   const pane = sandbox.window.TopochainChallenges;
@@ -179,7 +181,8 @@ test('onboarding progress uses personal completion and explains the later unlock
   pane._onboarding = { total: 3, completed: 2, unlocked: false, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in First challenges' },
+  assert.equal(message('leaderboard:progress.firstLabel', { done: 2, count: 3 }), '2 of 3 done in First challenges');
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, scope: 'first' },
     'setup is its own scope while it gates the rest');
   // 2026-10-01: what a new account finishes is its Getting started list.
   assert.equal(grid.notice, 'Finish Getting started to unlock the rest of the season.');
@@ -390,7 +393,7 @@ test('_loadedEventId tracks the event the grid belongs to', () => {
   assert.match(CHALLENGES_SRC,
     /TopochainChallenges\._loadedEventId = eventId;/,
     'loadChallenges records which event its list is for');
-  const load = CHALLENGES_SRC.slice(CHALLENGES_SRC.indexOf('async loadChallenges()'));
+  const load = CHALLENGES_SRC.slice(CHALLENGES_SRC.indexOf('async loadChallenges('));
   const assignAt = load.indexOf('_loadedEventId = eventId');
   const guardAt = load.indexOf('if (eventId == null)');
   assert.ok(assignAt > -1 && assignAt < guardAt,
@@ -759,20 +762,26 @@ test('card and page descriptors carry the illustration tone only when it is tone
   pane._detailChallenge = null;
 });
 
-// The progress over the grid (ITERATION 03): "N/M done in <event>", scoped to
-// the selected event once the bar's list has it.
+// The progress over the grid (ITERATION 03): "N/M done in this event", scoped
+// to the selected event once the bar's list has it.
 test('the grid opens on its progress: the tally, scoped to the selected event', () => {
   const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._renderGrid();
-  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, caption: 'done' },
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3 },
     'no event known yet: the bare tally');
+  assert.equal(message('leaderboard:progress.plainLabel', { done: 2, count: 3 }), '2 of 3 done');
   context.selectedEvent = () => ({ id: 900500, name: 'Season 2' });
   pane._renderGrid();
-  // QA 2026-09-24 Q17: an event's tally says it is an event's.
-  assert.equal(store.get().grid.progress.caption, 'done in this event · Season 2');
+  // QA 2026-09-24 Q17: an event's tally says it is an event's. It does not
+  // name it (issue #4528): production's event name is the season's.
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, scope: 'event' });
+  assert.equal(message('leaderboard:progress.eventLabel', { done: 2, count: 3 }),
+    '2 of 3 done in this event');
+  assert.equal(message('leaderboard:progress.event', { done: 2, count: 3 }),
+    '<0>2/3</0><1>done in this event</1>', 'the drawn line names no event either');
   context.selectedEvent = () => ({ id: 900500, name: '  ' });
   pane._renderGrid();
-  assert.equal(store.get().grid.progress.caption, 'done', 'a blank name is left out');
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3 }, 'a blank name is left out');
   assert.equal(store.get().grid.points, undefined, 'and it carries no points');
   delete context.selectedEvent;
 });
@@ -957,7 +966,9 @@ test('the page is a level of the screen: the platform header is its nav bar', ()
     // pane asks App for that name rather than knowing it — a stub that
     // answered `undefined` would have this test passing on the fallback while
     // the screen said the wrong word.
-    _leaderboardTitle: (sub) => LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard',
+    // The table holds message ids; the name is its English catalog text.
+    _leaderboardTitle: (sub) => (LEADERBOARD_TITLES[sub || 'challenges']
+      ? message(LEADERBOARD_TITLES[sub || 'challenges']) : 'Leaderboard'),
   };
   sandbox.window.Leaderboard = { isOpen: () => true, section: 'challenges' };
   pane._openIdx(0);
@@ -1082,4 +1093,48 @@ test('Me no longer lists completions; its row lands on the Challenges tab', () =
 test('the header back chevron asks the Challenges page first', () => {
   assert.match(appJs, /if \(App\._inLeaderboard && window\.TopochainChallenges\?\.handleBack\?\.\(\)\) return;/,
     'the same claim chain Settings, Admin and Browse use');
+});
+
+// #3253, #3248: the list row's `counted_by` ({ measure, target }) is the rule
+// that scores the challenge, and the page says under the task what it counts:
+// a proposal only once it is put to the vote, and nothing past a counted
+// measure's target while the challenge is still open.
+test('the page says a proposal counts at Propose to group, and when more stops counting', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const row = (counted_by, extra = {}) => ({
+    id: 900500, completed: false, card_preview: { goal: 'Ship it' }, counted_by, ...extra,
+  });
+  const SENT = 'Counts when you press Propose to group, which puts your change to a vote.';
+  assert.equal(pane._countNoteOf(row({ measure: 'PROPOSAL_SENT', target: null })), SENT);
+  assert.equal(pane._countNoteOf(row({ measure: 'PROPOSAL_SENT', target: null }, { progress: { done: true, current: null, target: null } })),
+    SENT, 'the same line once it is done: the task still does not say it');
+
+  const accepted = (current, extra = {}) => row({ measure: 'PROPOSAL_ACCEPTED', target: 2 },
+    { progress: { done: current >= 2, current, target: 2 }, ...extra });
+  assert.equal(pane._countNoteOf(accepted(2)),
+    "This challenge counts up to 2, and you have 2. More accepted changes before it ends don't add to it.");
+  assert.equal(pane._countNoteOf(row({ measure: 'TRY_APPS', target: 3 }, { progress: { done: true, current: 3, target: 3 } })),
+    "This challenge counts up to 3, and you have 3. More before it ends don't add to it.", 'any counted measure');
+  // A This week challenge's cap is the week's, and starts again on Monday.
+  assert.equal(pane._countNoteOf(accepted(2, { card_preview: { goal: 'Ship it', label: 'WEEKLY' } })),
+    "This challenge counts up to 2 each week, and you have 2 this week. More accepted changes this week don't add to it. It starts again on Monday.");
+
+  const NONE = [
+    [accepted(1), 'not at the cap yet'],
+    [accepted(0), 'nothing yet'],
+    [accepted(2, { completed: true }), 'the organiser closed it'],
+    [accepted(2, { effective: { schedule_end: new Date(Date.now() - 60000).toISOString() } }), 'it has ended'],
+    [accepted(2, { progress: undefined }), 'no progress for this viewer'],
+    [row({ measure: 'PROPOSAL_ACCEPTED', target: null }, { progress: { done: true, current: 2, target: 2 } }), 'no cap sent'],
+    [row(null), 'nothing scores it'],
+    [row(undefined), 'an older payload'],
+    [row({ measure: 42 }), 'a malformed measure'],
+  ];
+  for (const [c, why] of NONE) assert.equal(pane._countNoteOf(c), null, why);
+
+  pane._detailChallenge = accepted(2);
+  assert.equal(pane.detailView().countNote, pane._countNoteOf(accepted(2)), 'the page carries it');
+  pane._detailChallenge = CH[0];
+  assert.equal(pane.detailView().countNote, null);
+  pane._detailChallenge = null;
 });

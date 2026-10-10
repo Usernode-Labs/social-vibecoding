@@ -33,14 +33,16 @@ const READS = {
     key: 'app:',
     keyLabel: 'app:<app id>',
     text: () => 'One row per person and app: apps they opened inside the window and spent at least '
-      + `${TRY_APPS_MIN_SECONDS} seconds in, added up across days. Apps they made themselves are left out.`,
+      + `${TRY_APPS_MIN_SECONDS} seconds in, added up across days. Apps they made themselves are left out, except on a First `
+      + 'challenge (the one-time Getting started list), where they count.',
   },
   USE_APPS_MINUTES: {
     tables: ['app_activity', 'apps'],
-    key: 'window',
-    keyLabel: 'window',
+    key: 'window:',
+    keyLabel: 'window:<first day of the window>',
     text: ({ target }) => 'One row per person: their time in apps inside the window, added up, once it reaches '
-      + `${target == null ? 'the target' : `${fmt(target)} minutes`}. Apps they made themselves are left out.`,
+      + `${target == null ? 'the target' : `${fmt(target)} minutes`}. Apps they made themselves are left out. `
+      + 'On a weekly challenge each week is a window of its own.',
   },
   PROPOSAL_SENT: {
     tables: ['chat_sessions', 'apps'],
@@ -57,11 +59,13 @@ const READS = {
       + 'left out: it is not a change the group accepted.',
   },
   USEFUL_FEEDBACK: {
-    tables: ['feedback_reports', 'apps'],
+    tables: ['feedback_reports', 'apps', 'community_members', 'app_collaborators'],
     key: 'feedback:',
     keyLabel: 'feedback:<report id>',
     text: () => 'Reports sent inside the window that reached GitHub as an issue. One whose issue call '
-      + 'failed helped nobody, and is left out.',
+      + 'failed helped nobody, and is left out. So is a report on a project they made, or on a "Just you" '
+      + 'project (the audience rule the Workshop labels them by): there is nobody else to tell. '
+      + 'On a First challenge (the one-time Getting started list) they count.',
   },
   CONNECT_ACCOUNTS: {
     tables: ['user_social_identities'],
@@ -101,23 +105,27 @@ const READS = {
       + 'they ever took.',
   },
   VOTE_CAST: {
-    tables: ['pr_votes', 'chat_sessions', 'issue_votes', 'issues', 'users', 'apps'],
+    tables: ['pr_votes', 'chat_sessions', 'homeroom_bot_requesters', 'issue_votes', 'issues', 'users', 'apps',
+      'community_members', 'app_collaborators'],
     key: 'vote:',
     keyLabel: 'vote:<pr, issue or workshop>:<id>',
     text: () => 'One row per person: their earliest vote inside the window, on a proposal or a request, '
       + 'or their look at the Workshop when nothing was up for a vote, whichever came first. A vote on '
-      + 'their own proposal or request is left out. The look is the Getting started card\'s Vote step: '
-      + 'when nothing is waiting for their vote in any community they are in, its button opens a '
-      + 'Workshop, and the server records the visit (users.getting_started_seen, keyed '
-      + 'vote:workshop:<user id>) only if nothing was waiting then. A vote that is cast again is dated by '
+      + 'their own proposal or request is left out, and so are a vote on what the Homeroom bot built '
+      + 'from a request they made and any vote in a "Just you" project. The look is the Getting started '
+      + 'card\'s Vote step: when nothing that would count is waiting for their vote in any community they '
+      + 'are in, its button opens a Workshop, and the server records the visit (users.getting_started_seen, '
+      + 'keyed vote:workshop:<user id>) only if nothing was waiting then. A vote that is cast again is dated by '
       + 'the last time, so a vote from before the window counts once it is cast again inside it.',
   },
   FEEDBACK_SENT: {
-    tables: ['feedback_reports', 'apps'],
+    tables: ['feedback_reports', 'apps', 'community_members', 'app_collaborators'],
     key: 'feedback:',
     keyLabel: 'feedback:<report id>',
-    text: () => 'The same reports as "Sent useful feedback": sent inside the window, and reached GitHub '
-      + 'as an issue. Nothing is graded; the first one that gets past the junk filter is the credit.',
+    text: () => 'The same reports as "Sent useful feedback": sent inside the window, reached GitHub '
+      + 'as an issue, and not about a project they made or a "Just you" one. Nothing is graded; the first '
+      + 'one that gets past the junk filter is the credit. On a First challenge (the one-time Getting '
+      + 'started list) a report on their own project counts too.',
   },
 };
 
@@ -127,12 +135,13 @@ const READS = {
 // Keyed by the scorer's own door names; a test holds the two together.
 const ON_THE_SPOT_TEXT = {
   join: ' A join also runs it on the spot, so the interval only paces memberships that arrive without '
-    + 'one: a Home pin, or a queued invite whose person is let in.',
+    + 'one: a queued invite whose person is let in, or the dapp.json reconcile. A Home pin that joins '
+      + 'runs it too.',
   vote: ' Casting a vote, or the Getting started card\'s look at the Workshop, also runs it on the '
     + 'spot, so the interval only paces what that pass missed.',
   feedback: ' Sending a report also runs it on the spot, so the interval only paces what that pass '
     + 'missed.',
-  appTime: ` Using an app also runs it on the spot, the moment somebody's time in an app they did not make `
+  appTime: ` Using an app also runs it on the spot, the moment somebody's time in an app `
     + `first reaches ${TRY_APPS_MIN_SECONDS} seconds, so the interval only paces time that crosses the `
     + 'line another way: added up over days, or partly from before the window.',
 };
@@ -218,7 +227,8 @@ function anatomy(measureKey, { points = null, target = null } = {}) {
     steps.push({
       kind: 'grade',
       title: 'Grade each new one',
-      text: `One call to ${grader.GRADE_MODEL} for each new ${spec.unit}, one at a time, at most `
+      text: `One call to ${grader.GRADE_MODEL} (${grader.GRADE_FALLBACK_MODEL} when it does not answer in time) `
+        + `for each new ${spec.unit}, one at a time, at most `
         + `${scorer.MAX_GRADES_PER_RUN} in a run across every graded rule. It is sent the app name, the first `
         + `${fmt(grader.GRADE_TITLE_CHARS)} characters of the title and the first ${fmt(grader.GRADE_TEXT_CHARS)} of the text, `
         + `and returns a score from 1 to ${ceiling == null ? 'the ceiling' : fmt(ceiling)} with a reason. Both are kept on the `

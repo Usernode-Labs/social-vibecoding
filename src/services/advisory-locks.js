@@ -78,7 +78,20 @@ const HOMEROOM_BOT_LOCK = 991012;
 // Held from the GitHub merge call through its finalizer. Recovery may only
 // inspect/replay that proposal after the live owner has released it.
 const MERGE_FINALIZATION_LOCK = 991013;
+// The Homeroom bot's activity cards for work already under way: the
+// CLASSIFIER half of `pg_try_advisory_lock(classifier, userId)`, session-
+// scoped, held while one person's missing cards are found and sent
+// (homeroom-bot-activity.js catchUpCards). Two of their tabs opening the DM
+// at once would otherwise each find the same piece of work without a card,
+// and send it one each when it moved on a step between them.
+const HOMEROOM_BOT_CARDS_LOCK = 991014;
+// The checks queue's admission pass (services/checks-queue.js). Transaction-
+// scoped and exclusive across platform Pods: a pass reads every run that
+// holds or wants a checks slot and admits the next ones, and two passes
+// reading the same free slot at once would both fill it.
+const CHECKS_QUEUE_LOCK = 991015;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, MERGE_FINALIZATION_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
-  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK };
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, HOMEROOM_BOT_CARDS_LOCK,
+  CHECKS_QUEUE_LOCK };

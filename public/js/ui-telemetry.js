@@ -21,12 +21,17 @@
   ]);
   const SCREENS = new Set([
     'shell_boot', 'app_detail', 'app_discussion', 'feedback_dialog',
-    'report_dialog', 'change_workspace', 'preview', ...NAV_SCREENS,
+    'report_dialog', 'change_workspace', 'preview', 'ping_ask', ...NAV_SCREENS,
   ]);
   const VIAS = new Set(['own', 'nudged', 'handed', 'address', 'back', 'returned']);
   const ACTIONS = new Set([
     'shell_boot', 'app_detail_load', 'app_discussion_load',
     'feedback_submit', 'content_report_submit', 'change_create', 'preview_open',
+    'push_permission',
+    // A request/proposal/governance page opened from a link (#4524): the
+    // measure the fast-open work reports against. Keep identical with the
+    // server's ACTIONS.
+    'topic_load',
   ]);
   const OUTCOMES = new Set(['success', 'failure', 'cancelled']);
   const ERRORS = new Set([

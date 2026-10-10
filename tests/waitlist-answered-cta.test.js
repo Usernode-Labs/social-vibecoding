@@ -20,6 +20,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -66,11 +67,15 @@ test('the survey publishes on save, and the card reads it for both label and cop
   const screen = fs.readFileSync(
     path.join(ROOT, 'frontend/src/features/auth/waitlist.tsx'), 'utf8');
   assert.match(screen, /const surveyAnswered = useSurveyAnswered\(moreToken\)/);
-  assert.match(screen, /surveyAnswered \? 'Edit my answers' : 'Answer them now'/);
+  assert.match(screen, /surveyAnswered \? t\('auth:waitlist\.more\.edit'\) : t\('auth:waitlist\.more\.start'\)/);
+  assert.equal(message('auth:waitlist.more.edit'), 'Edit my answers');
+  assert.equal(message('auth:waitlist.more.start'), 'Answer them now');
   // The pitch above the button changes with it — "four more questions, about
   // three minutes" over an "Edit my answers" button is the same incoherence
   // one line up.
-  assert.match(screen, /Your answers are saved\./);
+  assert.match(screen, /\? t\('auth:waitlist\.more\.answered'\)/);
+  assert.match(message('auth:waitlist.more.answered'), /Your answers are saved\./);
   // The heading does not: a declared check pins it.
-  assert.match(screen, /Want in sooner\?/);
+  assert.match(screen, /\{t\('auth:waitlist\.more\.title'\)\}/);
+  assert.match(message('auth:waitlist.more.title'), /Want in sooner\?/);
 });

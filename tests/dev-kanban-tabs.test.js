@@ -1,5 +1,8 @@
 // #814: mobile kanban tabs. Below 640px the Dev board renders ONE column at
-// a time behind a tab strip instead of scrolling sideways.
+// a time behind a tab strip instead of scrolling sideways. #4486: the strip
+// is the pipeline now, Requests › Underway › Waiting for approval › Done,
+// the columns' heads on a wide window and the tabs on a phone (StageStrip in
+// card/dev-kanban.tsx), with every attribute the checks read kept.
 //
 // The switch WAS presentation-only — every column stayed in the markup and
 // CSS (app.css, @media max-width: 639px) decided what was visible. It is not
@@ -78,6 +81,7 @@ function makeCtx(over) {
   if (o.search !== undefined) sandbox.location = { search: o.search };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox;
@@ -124,7 +128,10 @@ test('Done column visibly names the live production boundary', () => {
   };
   const html = kanbanHtml(AppView);
   assert.match(html, /data-kanban-col-status="done"/);
-  assert.match(html, /Production live through PR #42 · abcdef0/);
+  assert.match(html, /Live in production through PR #42 · abcdef0/, 'in the board\u2019s words (#4486)');
+  // A child app names the change too, when the deployment knows it.
+  AppView._mergedCtx.deployment = { kind: 'child', state: 'deployed', runningSha: 'abcdef0123', livePrNumber: 42 };
+  assert.match(kanbanHtml(AppView), /Live in production through PR #42</);
 });
 
 test('Done column calls out pending and stalled production changes', () => {
@@ -165,14 +172,16 @@ const activeAttr = (html) => (html.match(/data-kanban-active="([^"]+)"/) || [])[
 
 // ── Tab strip shape ────────────────────────────────────────────────────────
 
-test('renders one tab per column, in board order, inside a hidden-at-sm tablist', () => {
+test('renders one step per column, in board order, in one tablist at every width (#4486)', () => {
   const AppView = makeAppView();
   seedBoard(AppView);
   const html = kanbanHtml(AppView);
   assert.deepEqual(tabKeys(html), ['issues', 'inprogress', 'inreview', 'done']);
   assert.match(html, /id="dev-kanban-tabs"[^>]*role="tablist"/);
-  // Desktop keeps every column: the strip is the only thing hidden there.
-  assert.match(html, /id="dev-kanban-tabs"[^>]*class="sm:hidden/);
+  // Not hidden on a wide window any more: there the steps are the columns'
+  // heads, on the board's own grid.
+  assert.match(html, /id="dev-kanban-tabs"[^>]*class="dev-kanban-stages"/);
+  assert.ok(!/sm:hidden/.test(html));
 });
 
 test('the tab strip is emitted before the board, which keeps its #dev-kanban id', () => {
@@ -182,7 +191,7 @@ test('the tab strip is emitted before the board, which keeps its #dev-kanban id'
   assert.ok(html.indexOf('id="dev-kanban-tabs"') < html.indexOf('id="dev-kanban"'),
     'tabs render above the columns');
   // The shipped dapp.json test asserts #dev-kanban — it must survive.
-  assert.match(html, /<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2"/);
+  assert.match(html, /<div id="dev-kanban" data-kanban-active="issues">/);
 });
 
 test('each tab is a real button wired to its column for assistive tech', () => {
@@ -237,39 +246,23 @@ function tabsConstant(name) {
   return parts.join('');
 }
 
-test('the tab strip wears the language\'s segmented control (#2441)', () => {
+test('the strip is the pipeline (#4486): a step per stage, its icon, name and count, and an arrow to the next', () => {
   const AppView = makeAppView();
   seedBoard(AppView);
   const html = kanbanHtml(AppView);
-
-  const strip = html.match(/<div id="dev-kanban-tabs"[^>]*>/);
-  assert.ok(strip, 'the strip container is located');
-  // The track: the same raised white pill SECTION_TABS_LIST_BASE draws, laid
-  // out to span the phone (`flex`, not `inline-flex`) because its four tabs
-  // are `flex-1 basis-0` and share that width.
-  const surface = 'rounded-full bg-white dark:bg-zinc-900 p-0.5';
-  assert.ok(tabsConstant('SECTION_TABS_LIST_BASE').includes(surface),
-    'the track surface is still spelled this way in tabs.tsx');
-  assert.match(strip[0],
-    /class="sm:hidden flex items-stretch gap-0\.5 mb-2 rounded-full bg-white dark:bg-zinc-900 p-0\.5"/);
-  assert.ok(!/border-b/.test(strip[0]), 'no rule under the strip any more');
-
-  const active = tabTag(html, 'issues');
-  assert.ok(active.includes(tabsConstant('SECTION_TAB_ACTIVE')),
-    'the selected tab is the language\'s inversion, from tabs.tsx');
-  assert.ok(active.includes('rounded-full'), 'and it is a pill, not an underlined cell');
-
-  for (const key of ['inprogress', 'inreview', 'done']) {
-    assert.ok(tabTag(html, key).includes(tabsConstant('SECTION_TAB_INACTIVE')),
-      `the ${key} tab is the unselected treatment, from tabs.tsx`);
+  const strip = html.slice(0, html.indexOf('<div id="dev-kanban"'));
+  for (const [key, title] of [['issues', 'Requests'], ['inprogress', 'Underway'], ['inreview', 'Waiting for approval'], ['done', 'Done']]) {
+    const tab = tabTag(html, key);
+    assert.match(tab, /class="dev-kanban-step"/, `the ${key} step`);
+    assert.ok(!/violet|bg-zinc|border-b/.test(tab), 'its treatment is app.css\u2019s, by state, not a class string');
+    assert.match(strip, new RegExp(`data-kind="${key}"[^>]*><svg[\\s\\S]*?</svg></span><span class="dev-kanban-step-name">${title}</span>`));
   }
-
-  // The retired shape, in every one of its spellings.
-  for (const tab of ['issues', 'inprogress', 'inreview', 'done'].map((k) => tabTag(html, k))) {
-    assert.ok(!/border-b-2|border-violet-500|border-transparent/.test(tab),
-      'no underline left on any tab');
-    assert.ok(!/violet/.test(tab), 'and no violet ink: the selection is the near-black fill');
-  }
+  assert.equal((strip.match(/class="dev-kanban-step-arrow"/g) || []).length, 3, 'arrows between the steps');
+  // The lit tab on a phone wears the "where you are" tokens, as the tab
+  // bars do; on a wide window nothing is lit, every column being up.
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  assert.match(css, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-kanban-step\[aria-selected="true"\] \{ background: var\(--lit-tint\); box-shadow: inset 0 0 0 1px var\(--lit-line\); \}/);
+  assert.match(css, /\.dev-kanban-step-tile\[data-kind="done"\] \{ background: var\(--state-ok-bg\); color: var\(--state-ok\); \}/, 'Done is the one green step');
 });
 
 test('the restyle left every attribute the checks select on untouched (#2441)', () => {
@@ -303,9 +296,9 @@ test('tab counts mirror the column header counts', () => {
   assert.equal(tabCount(html, 'issues'), '2');
   assert.equal(tabCount(html, 'inreview'), '1');
   assert.equal(tabCount(html, 'done'), '3');
-  // Same numbers in the (desktop-only) column headings.
-  assert.match(html, /Requests <span[^>]*>· 2<\/span>/, 'the Issues column is "Requests" (UI overhaul)');
-  assert.match(html, /Done <span[^>]*>· 3<\/span>/);
+  // The steps ARE the column headings now (#4486): one count per column.
+  assert.match(html, /<span class="dev-kanban-step-name">Requests<\/span><span class="dev-kanban-step-n">2<\/span>/, 'the Issues column is "Requests" (UI overhaul)');
+  assert.ok(!/dev-kanban-col-head/.test(html), 'and no second heading over the column');
 });
 
 test('Done tab shows the server total, not the loaded page length', () => {
@@ -313,7 +306,6 @@ test('Done tab shows the server total, not the loaded page length', () => {
   seedBoard(AppView, { merged: 3, total: 25 });
   const html = kanbanHtml(AppView);
   assert.equal(tabCount(html, 'done'), '25');
-  assert.match(html, /Done <span[^>]*>· 25<\/span>/);
 });
 
 test('while filtering, the Done tab shows the matching count instead of the total', () => {
@@ -322,7 +314,6 @@ test('while filtering, the Done tab shows the matching count instead of the tota
   AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'PR 1' };
   const html = kanbanHtml(AppView);
   assert.equal(tabCount(html, 'done'), '1');
-  assert.match(html, /Done <span[^>]*>· 1<\/span>/);
 });
 
 test('an empty column keeps its tab, showing 0 next to the in-column placeholder', () => {
@@ -549,45 +540,26 @@ test('no ?view= at all lands on the Workshop on every width', () => {
 // to 640px, so pin all three together — a future edit to one of them alone
 // would silently split the board's layout from its tab strip.
 
-test('the 640px breakpoint agrees across the JS default, app.css and sm:hidden', () => {
+test('the 640px breakpoint agrees across the JS default and app.css', () => {
   const AppView = makeAppView();
   assert.equal(AppView.KANBAN_MULTICOL_MEDIA, '(min-width: 640px)');
 
   const css = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8'
   );
-  // Single column (tab strip) strictly below 640px …
-  assert.match(css, /@media \(max-width: 639px\) \{[^}]*#dev-kanban \{ overflow-x: hidden; \}/);
-  // … and from 640px up the columns are side by side. In the band the
-  // breakpoint reclaimed they stay in ONE row at the readable 16rem width
-  // and the board scrolls sideways — it must never wrap, and it must never
-  // lift the floor (that would squeeze four columns into ~150px each).
-  const band = css.match(
-    /@media \(min-width: 640px\) and \(max-width: 1023px\) \{([\s\S]*?)\n\}/
-  );
-  assert.ok(band, 'the 640-1023px band has its own block');
-  assert.match(band[1], /flex-wrap: nowrap;/);
-  assert.match(band[1], /overflow-x: auto;/);
-  assert.doesNotMatch(band[1], /flex-wrap: wrap/);
-  assert.doesNotMatch(band[1], /min-width: 0/);
-  // The floor and the flex sizing must live in app.css, not as Tailwind
-  // utilities in the markup — those land later in the cascade and would
-  // beat every media query above.
-  assert.match(css, /\.dev-kanban-col \{\s*flex: 1 1 0;\s*min-width: 16rem;\s*\}/);
-  // From 1024px up the four columns fit in one row with NO sideways scroll,
-  // which needs a floor low enough for the bottom of that range: four 16rem
-  // columns plus three gap-3 gaps overflow a 1024px window's ~1000px of
-  // content width, four 14rem ones don't.
-  const wide = css.match(/@media \(min-width: 1024px\) \{\s*\.dev-kanban-col \{ min-width: (\d+(?:\.\d+)?)rem; \}/);
-  assert.ok(wide, 'the >=1024px range sets its own column floor');
-  const floorPx = parseFloat(wide[1]) * 16;
-  assert.ok(floorPx * 4 + 12 * 3 <= 1000,
-    `four ${floorPx}px columns + gaps must fit a 1024px window without scrolling`);
-  assert.doesNotMatch(css, /@media \(max-width: 1023px\) \{\s*\/\* No sideways scroll/);
-
-  seedBoard(AppView);
-  // Tailwind's sm: is min-width 640px, i.e. the same line.
-  assert.match(kanbanHtml(AppView), /id="dev-kanban-tabs"[^>]*class="sm:hidden/);
+  // Single column (the strip is the tabs) strictly below 640px …
+  assert.match(css, /@media \(max-width: 639px\) \{\s*#dev-kanban \{ display: block; overflow-x: hidden; \}/);
+  assert.match(css, /@media \(max-width: 639px\) \{[\s\S]*?\.dev-kanban-stages \{\s*display: flex;/);
+  // … and from 640px up the four columns sit on ONE grid, 220px at the
+  // least, and the board scrolls sideways rather than squeezing them
+  // further (#4486). The strip is laid on the same grid.
+  assert.match(css, /#dev-kanban \{\s*display: grid;\s*grid-template-columns: repeat\(4, minmax\(220px, 1fr\)\);\s*column-gap: 20px;\s*align-items: start;\s*overflow-x: auto;/);
+  assert.match(css, /\.dev-kanban-stages \{\s*display: grid; grid-template-columns: repeat\(4, minmax\(220px, 1fr\)\); column-gap: 20px;/);
+  assert.doesNotMatch(css, /@media \(min-width: 640px\) and \(max-width: 1023px\) \{\s*#dev-kanban/, 'no band of its own: the grid scrolls');
+  // The flex sizing stays in app.css for the board route's loading skeleton,
+  // which lays the same classes out in a row; inside the grid it is lifted.
+  assert.match(css, /\.dev-kanban-col \{\s*flex: 1 1 0;\s*min-width: 14rem;\s*\}/);
+  assert.match(css, /#dev-kanban > \.dev-kanban-col \{ min-width: 0; \}/);
 });
 
 // ── Environment tolerance ──────────────────────────────────────────────────
@@ -648,10 +620,9 @@ test('narrow: only the active column renders cards, and every column keeps its s
     assert.equal(tabCount(narrow, key), tabCount(wide, key), `${key} tab count`);
   }
 
-  // The cards themselves are the only thing that waits. A card draws as its
-  // folded row by default (#1787, card/fold.tsx), so count the fold wrappers
-  // — one per card at either size.
-  const cards = (h) => (h.match(/class="dev-ws-rowwrap/g) || []).length;
+  // The cards themselves are the only thing that waits. A card draws as the
+  // Workshop's row (#4486, workshop/work-row.tsx), so count the rows.
+  const cards = (h) => (h.match(/class="dev-ws-wrow dev-ws-brow"/g) || []).length;
   assert.ok(cards(wide) > cards(narrow),
     `narrow renders fewer cards (wide ${cards(wide)}, narrow ${cards(narrow)})`);
   assert.ok(cards(narrow) > 0, 'the ACTIVE column still renders its cards');
@@ -665,11 +636,11 @@ test('wide is untouched, which is the contract the checks runner asserts under',
   // describes, card for card.
   const plain = kanbanHtml(AppView);
   assert.equal(withNarrow(false, () => kanbanHtml(AppView)), plain);
-  const cards = (h) => (h.match(/class="dev-ws-rowwrap/g) || []).length;
+  const cards = (h) => (h.match(/class="dev-ws-wrow dev-ws-brow"/g) || []).length;
   assert.ok(cards(plain) > 0);
   // Every column carries cards at desktop width — the thing 30 declared
   // checks select through (`#dev-kanban-col-inprogress [data-issue-row=…]`
-  // and friends; the folded row carries the same hook as the card).
+  // and friends; the board's row carries the same hook as the card).
   for (const key of ['issues', 'inprogress', 'inreview', 'done']) {
     const start = plain.indexOf(`id="dev-kanban-col-${key}"`);
     assert.notEqual(start, -1);

@@ -8,10 +8,10 @@
 // arrives is a bare `/`, which is the home page.
 //
 // So the mail links to a QUERY — `/?signup=1` — which a rewriter has to carry
-// in order to reconstruct the address at all. `AuthScreens.enter()` already
-// honoured that spelling for signup and now honours `?login=1` too, rewriting
-// either to its hash route on arrival so the address bar ends up where the old
-// link pointed.
+// in order to reconstruct the address at all. `AuthScreens.enter()` honours
+// it and `?login=1`, and takes either off the address on arrival. Both open
+// the story with the sign-in sheet over it now, rather than the sign-in
+// screen (tests/sign-in-sheet-flow.test.js runs that end of it).
 //
 // Run with: node --test tests/waitlist-release-link.test.js
 'use strict';
@@ -90,7 +90,10 @@ test('the anonymous boot honours both query spellings, and rewrites them', () =>
   const body = enter.slice(0, enter.indexOf('\n    },'));
   assert.match(body, /params\.has\('signup'\)/);
   assert.match(body, /params\.has\('login'\)/);
-  // Rewritten to the hash route, so both spellings settle on one address.
+  // The release mail's two land on the story's own address, the link kept
+  // for the landing to open its sheet; the status mail's on its hash route.
+  assert.match(body, /AuthScreens\._releaseLink = \{/);
+  assert.match(body, /history\.replaceState\(null, '', '\/'\);/);
   assert.match(body, /history\.replaceState\(null, '', `\/#\$\{route\}`\)/);
   // Only when there is no hash already: an explicit fragment still wins.
   assert.match(body, /if \(!location\.hash\) \{/);
@@ -113,4 +116,15 @@ test('the whole thing stays inside a try/catch', () => {
   const body = enter.slice(0, enter.indexOf('\n    },'));
   assert.ok(body.indexOf('try {') < body.indexOf('URLSearchParams'));
   assert.match(body, /\} catch \(_\) \{\}/);
+});
+
+test('the release mail\'s one-time sign-in link is its own credential, kept off the GET (#4594)', () => {
+  const fn = MAIL.slice(MAIL.indexOf('async function sendWaitlistReleaseMail'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /signInToken \? `&\$\{CREDENTIAL_PARAM\}=/, 'a separate parameter, not more_token');
+  // Arrival keeps it for the sheet, which spends it with a POST.
+  assert.match(AUTH_SCREENS, /signIn: route === 'signup' && key && \/\^\[A-Za-z0-9_-\]\{43\}\$\/\.test\(key\) \? key : null/);
+  assert.doesNotMatch(AUTH_SCREENS, /release-link/, 'nothing spends it on arrival');
+  const sheet = fs.readFileSync(path.join(ROOT, 'frontend/src/features/auth/sign-in-sheet.tsx'), 'utf8');
+  assert.match(sheet, /fetchSessionMint\('\/api\/auth\/release-link', \{\s*method: 'POST'/);
 });

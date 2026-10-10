@@ -11,8 +11,10 @@ const communities = require('../services/communities');
 const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
+const groupChannelNotify = require('../services/group-channel-notify');
 const conversationsSvc = require('../services/conversations');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { isDemoNeedsProposal } = require('./workshop-overview');
 const {
   appChatReadLimiter,
   attachmentUploadLimiter,
@@ -24,7 +26,8 @@ const {
 // #194's topic threads, plus #2387's reply threads ('message', ref = the
 // root chat_messages.id). services/ws.js validateThread is the write-side
 // twin of this set and checks each ref against the database.
-const THREAD_TYPES = new Set(['issue', 'session', 'governance', appChat.MESSAGE_THREAD]);
+// #4417: 'category' is a topic's channel (services/app-chat.js).
+const THREAD_TYPES = new Set(['issue', 'session', 'governance', appChat.MESSAGE_THREAD, appChat.CATEGORY_THREAD]);
 const MAX_THREAD_REF = 2147483647; // PostgreSQL INTEGER
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -201,6 +204,31 @@ function stagingMockGeneralStream(appId) {
   return [...rows.slice(0, at + 1), ...replies, ...rows.slice(at + 1)];
 }
 
+// #4238: Homeroom bot's "I've made the first version" line, as a new
+// project's channel has it (ws.sendFirstVersionMessage), at the end of the
+// general mock, for the app it is read on, so a preview shows the line and
+// its Open button. The newest row (id order is time order), and only in the
+// first page the route answers: the Messages list's preview and a mock
+// permalink read the mock without it.
+const DEMO_FIRST_VERSION_ID = 9902009;
+function stagingMockFirstVersion(appId, app) {
+  if (!app || !app.slug) return null;
+  const dm = require('../services/homeroom-bot-dm');
+  const appName = app.name || app.slug;
+  const open = dm.openAppAction({ slug: app.slug, appName });
+  return {
+    id: DEMO_FIRST_VERSION_ID, user_id: 0, username: dm.BOT_USERNAME,
+    content: `[Mock] ${dm.firstVersionText({ appName, live: true })}`,
+    msg_type: 'message',
+    metadata: { kind: 'first_version', appSlug: app.slug, ...(open ? { actions: [open] } : {}) },
+    thread_type: null, thread_ref: null,
+    created_at: new Date(Date.now() - 30 * 1000).toISOString(),
+    edited_at: null, reactions: [], bookmarked: false,
+    has_unread_notification: false, app_id: appId, posted_via: null,
+    deleted: false, thread: null,
+  };
+}
+
 // The demo topics whose mock transcript IS the fixture: the declared checks
 // read these rows (#1926's folded conflict notices, #2236's via-agent chip on
 // issue 900008's Discussion), so they must not depend on nobody having typed
@@ -219,9 +247,39 @@ function isPinnedDemoThread(thread) {
   return !!thread && PINNED_DEMO_THREADS.has(`${thread.type}:${thread.ref}`);
 }
 
+// #4417: an empty topic channel on a `?demo=1` preview: three people
+// talking about the topic, so the channel, its head line and its composer
+// are reviewable before anybody has said a word there. Its own ids, above
+// the rest of the mock's, and the topic's own thread on every row.
+// The ids stagingMockTopicChannel gives its rows: a `?demo=1` read cursor
+// moved onto one is the demo's, and answers without touching the database.
+const TOPIC_MOCK_FIRST_ID = 9902031;
+const TOPIC_MOCK_ROWS = 3;
+function isTopicMockId(id) {
+  return id >= TOPIC_MOCK_FIRST_ID && id < TOPIC_MOCK_FIRST_ID + TOPIC_MOCK_ROWS;
+}
+
+function stagingMockTopicChannel(appId, thread) {
+  const now = Date.now();
+  const row = (offset, minutesBack, username, content) => ({
+    id: TOPIC_MOCK_FIRST_ID + offset, user_id: 0, username, content,
+    msg_type: 'message', metadata: {},
+    thread_type: thread.type, thread_ref: thread.ref,
+    created_at: new Date(now - minutesBack * 60 * 1000).toISOString(),
+    edited_at: null, reactions: [], bookmarked: false,
+    has_unread_notification: false, app_id: appId, posted_via: null,
+    deleted: false, thread: null,
+  });
+  return [
+    row(0, 95, 'staging-demo-user', '[Mock] A topic is a lasting conversation about one part of the project. This is where it happens.'),
+    row(1, 40, 'staging-tester', '[Mock] And a request made from a message here is filed under this topic.'),
+    row(2, 5, 'staging-demo-user', '[Mock] So the requests about this part, and the talk about them, are in one place.'),
+  ];
+}
+
 // What a staging `?demo=1` first page answers with, or null to serve the real
 // rows unchanged. `realRows` is the page the SELECT returned, oldest first.
-function stagingDemoTranscript(appId, thread, realRows) {
+function stagingDemoTranscript(appId, thread, realRows, app = null) {
   // A real message's reply thread is never padded: the one mock reply
   // thread is answered by stagingMockReplyThread before the database is
   // read, and fixture replies under somebody's real message would be a lie.
@@ -234,7 +292,10 @@ function stagingDemoTranscript(appId, thread, realRows) {
     return [...mock, ...realRows.filter((m) => !mockIds.has(m.id))];
   }
   if (realRows.length) return null;
-  return thread ? stagingMockGroupChat(appId, thread) : stagingMockGeneralStream(appId);
+  if (thread && thread.type === appChat.CATEGORY_THREAD) return stagingMockTopicChannel(appId, thread);
+  if (thread) return stagingMockGroupChat(appId, thread);
+  const firstVersion = stagingMockFirstVersion(appId, app);
+  return [...stagingMockGeneralStream(appId), ...(firstVersion ? [firstVersion] : [])];
 }
 
 // #2387: the mock reply thread, as `thread_type=message&thread_ref=<root>`
@@ -254,8 +315,10 @@ function stagingMockReplyThread(appId, rootId) {
 // on a mock row (or a mock reply, which opens on its root) answers the whole
 // mock transcript with its focus; `after` answers what follows. Null when
 // the id is not a mock one, so the real read runs.
-function stagingMockStreamPage(appId, { around = null, after = null } = {}) {
-  const rows = stagingMockGeneralStream(appId);
+function stagingMockStreamPage(appId, { around = null, after = null, app = null } = {}) {
+  // #4238: with the first-version line the first page ends with.
+  const firstVersion = stagingMockFirstVersion(appId, app);
+  const rows = [...stagingMockGeneralStream(appId), ...(firstVersion ? [firstVersion] : [])];
   const ids = new Set(rows.filter((m) => !m.thread_type).map((m) => m.id));
   if (around != null) {
     if (ids.has(around)) {
@@ -287,7 +350,9 @@ function stagingMockStreamPage(appId, { around = null, after = null } = {}) {
 // nothing unread; an unread leaves the mock rows from other people at and
 // after the message — the same definition of "unread" as the real one.
 function stagingMockUnreadCount(appId, messageId, move) {
-  const rows = stagingMockGroupChat(appId, null);
+  // #4238: the first-version line ends the stream the route answers with,
+  // so the cursor reaches it; which app it names does not change the count.
+  const rows = [...stagingMockGroupChat(appId, null), stagingMockFirstVersion(appId, { slug: 'demo' })];
   if (!rows.some((m) => m.id === messageId)) return null;
   if (move === 'read') return 0;
   return rows.filter((m) => m.id >= messageId && m.msg_type === 'message'
@@ -372,7 +437,9 @@ function chatRoutes(config) {
   //     &around=<id>                a permalink window centred on one message
   //   → { messages /* oldest first */, has_more_before, has_more_after,
   //       focus?: { message_id, thread_ref },   // around only
-  //       root?: Message }                      // thread_type=message only
+  //       root?: Message,                       // thread_type=message only
+  //       read?: { last_read_message_id, unread_count } }
+  //                                             // the general stream's first page
   //
   // At most one of before / after / around. `around` on a reply-thread
   // message while reading the general stream centres the window on the
@@ -391,6 +458,11 @@ function chatRoutes(config) {
     // be present and valid to select a thread; a malformed pair is a 400
     // rather than silently falling back to general chat.
     const threadType = req.query.thread_type || null;
+    // #4313: a ?demo=1 Needs-you card's thread (a negative id, staging only)
+    // holds nobody's words; answer an empty page rather than refuse the ref.
+    if (threadType === 'session' && isDemoNeedsProposal(req.query.thread_ref)) {
+      return res.json({ messages: [], has_more_before: false, has_more_after: false });
+    }
     const threadRef = req.query.thread_ref != null ? parseThreadRef(req.query.thread_ref) : null;
     if (threadType || req.query.thread_ref != null) {
       if (!THREAD_TYPES.has(threadType) || threadRef == null) {
@@ -429,7 +501,7 @@ function chatRoutes(config) {
         if (mock) return res.json(mock);
       }
       if (demo && !thread && (around != null || after != null)) {
-        const mock = stagingMockStreamPage(appId, { around, after });
+        const mock = stagingMockStreamPage(appId, { around, after, app });
         if (mock) return res.json(mock);
       }
 
@@ -440,6 +512,13 @@ function chatRoutes(config) {
       if (thread && thread.type === appChat.MESSAGE_THREAD) {
         rootRow = await appChat.findThreadRoot(pool, appId, thread.ref, viewerId);
         if (!rootRow) return res.status(404).json({ error: 'Message not found' });
+      }
+      // #4417: a topic's channel is readable whatever its state (a retired
+      // one is history, read-only), and only a topic of THIS app is one.
+      let topicChannel = null;
+      if (thread && thread.type === appChat.CATEGORY_THREAD) {
+        topicChannel = await require('../services/places').findTopic(pool, appId, thread.ref);
+        if (!topicChannel) return res.status(404).json({ error: 'Channel not found' });
       }
 
       const stream = { appId, thread, viewerId };
@@ -486,7 +565,7 @@ function chatRoutes(config) {
         }
       }
 
-      const messages = await hydrateRows(rows, { appId, viewerId, general: !thread });
+      const messages = await hydrateRows(rows, { appId, viewerId, general: !thread || !!topicChannel });
       const root = rootRow
         ? (await hydrateRows([rootRow], { appId, viewerId, general: true }))[0]
         : null;
@@ -497,7 +576,7 @@ function chatRoutes(config) {
       // has, and answering that with the same rows again would loop the
       // transcript.
       if (demo && before == null && after == null && around == null) {
-        const mock = stagingDemoTranscript(appId, thread, messages);
+        const mock = stagingDemoTranscript(appId, thread, messages, app);
         if (mock) {
           return res.json({ messages: mock, has_more_before: false, has_more_after: false });
         }
@@ -506,6 +585,23 @@ function chatRoutes(config) {
       const body = { messages, has_more_before: hasMoreBefore, has_more_after: hasMoreAfter };
       if (focus) body.focus = focus;
       if (root) body.root = root;
+      // The general stream's first page says where this reader's reading
+      // stood: read here, before the open marks it read, so the channel can
+      // open at its first unread message (public/js/group-chat.js
+      // _takeUnreadMark). Absent for a reader with no cursor.
+      if (!thread && before == null && after == null && around == null) {
+        const read = await appChat.readPosition(pool, appId, viewerId);
+        if (read) body.read = { last_read_message_id: read.lastReadMessageId, unread_count: read.unreadCount };
+      }
+      // #4417: a topic channel's first page says the same about its own
+      // cursor, and whether it still takes posts.
+      if (topicChannel) {
+        body.channel = { state: topicChannel.topic_state || 'live' };
+        if (before == null && after == null && around == null) {
+          const read = await appChat.categoryReadPosition(pool, appId, thread.ref, viewerId);
+          if (read) body.read = { last_read_message_id: read.lastReadMessageId, unread_count: read.unreadCount };
+        }
+      }
       res.json(body);
     } catch (err) {
       log.error('chat', 'Failed to load messages', { message: err.message });
@@ -520,7 +616,12 @@ function chatRoutes(config) {
     const direction = order === 'ASC' ? 'ASC' : 'DESC';
     const params = [appId];
     let where = 'm.app_id = $1';
-    if (thread) {
+    const topic = !!thread && thread.type === appChat.CATEGORY_THREAD;
+    let topicIndex = null;
+    if (topic) {
+      params.push(thread.ref);
+      topicIndex = params.length;
+    } else if (thread) {
       params.push(thread.type, thread.ref);
       where += ' AND m.thread_type = $2 AND m.thread_ref = $3';
     }
@@ -533,10 +634,33 @@ function chatRoutes(config) {
     // The general stream (#2387 follow-up): its own messages, and the live
     // replies of its reply threads, which the transcript draws as a line each
     // where they landed. A deleted reply leaves no line; neither does a reply
-    // under a root by somebody the viewer blocked.
+    // under a root by somebody the viewer blocked. #4417: only the replies
+    // whose root is IN the general stream: a reply thread can start in a
+    // topic's channel now, and its replies are drawn there.
     if (!thread) {
       where += ` AND (m.thread_type IS NULL OR (
         m.thread_type = 'message' AND m.deleted_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM chat_messages general_root
+           WHERE general_root.id = m.thread_ref AND general_root.thread_type IS NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_messages hidden_root
+            JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.user_id
+           WHERE hidden_root.id = m.thread_ref AND hb.blocker_id = $${viewerIndex}
+        )))`;
+    }
+    // #4417: a topic's channel is the general stream's shape one level down:
+    // its own messages, and the live replies of reply threads that start in
+    // it, under the same blocking rule.
+    if (topic) {
+      where += ` AND ((m.thread_type = 'category' AND m.thread_ref = $${topicIndex}) OR (
+        m.thread_type = 'message' AND m.deleted_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM chat_messages topic_root
+           WHERE topic_root.id = m.thread_ref AND topic_root.app_id = m.app_id
+             AND topic_root.thread_type = 'category' AND topic_root.thread_ref = $${topicIndex}
+        )
         AND NOT EXISTS (
           SELECT 1 FROM chat_messages hidden_root
             JOIN user_blocks hb ON hb.blocked_user_id = hidden_root.user_id
@@ -585,9 +709,16 @@ function chatRoutes(config) {
       ? target.thread_type === thread.type && Number(target.thread_ref) === thread.ref
       : target.thread_type == null;
     if (inStream) return { anchorId: target.id, messageId: target.id, threadRef: replyRoot };
-    if (!thread && replyRoot) {
+    // A reply, read from the stream its root is in: the general one, or
+    // (#4417) a topic's channel.
+    const topic = !!thread && thread.type === appChat.CATEGORY_THREAD;
+    if ((!thread || topic) && replyRoot) {
       const root = await appChat.findThreadRoot(pool, appId, replyRoot, viewerId);
       if (!root) return null;
+      const rootHere = topic
+        ? root.thread_type === appChat.CATEGORY_THREAD && Number(root.thread_ref) === thread.ref
+        : root.thread_type == null;
+      if (!rootHere) return null;
       return { anchorId: root.id, messageId: target.id, threadRef: root.id };
     }
     return null;
@@ -705,7 +836,9 @@ function chatRoutes(config) {
     if (general && messages.length) {
       try {
         const summaries = await appChat.threadSummaries(
-          pool, appId, messages.filter((m) => m.thread_type == null).map((m) => m.id), viewerId
+          pool, appId,
+          messages.filter((m) => m.thread_type == null || m.thread_type === appChat.CATEGORY_THREAD).map((m) => m.id),
+          viewerId
         );
         for (const m of messages) m.thread = summaries.get(Number(m.id)) || null;
       } catch (err) {
@@ -770,6 +903,9 @@ function chatRoutes(config) {
         }
         if (result?.code === 'channel_moved') {
           return res.status(409).json({ error: communities.CHANNEL_MOVED, code: 'channel_moved' });
+        }
+        if (result?.code === 'topic_closed') {
+          return res.status(409).json({ error: require('../services/ws').TOPIC_CLOSED_MESSAGE, code: 'topic_closed' });
         }
         log.error('chat', 'Canonical chat write returned no result', {
           slug: req.params.slug, code: result?.code,
@@ -880,6 +1016,25 @@ function chatRoutes(config) {
       if (messageId == null) {
         return res.status(400).json({ error: 'A positive integer message_id is required' });
       }
+      // #4417: `thread_type: 'category'` and its `thread_ref` move a topic
+      // channel's own cursor instead (app_category_chat_reads). The bell's
+      // small-group row is about the general stream, so it is left alone.
+      const body = req.body || {};
+      if (body.thread_type != null || body.thread_ref != null) {
+        const ref = parseThreadRef(body.thread_ref);
+        if (body.thread_type !== appChat.CATEGORY_THREAD || ref == null) {
+          return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
+        }
+        // A staging `?demo=1` topic channel's rows are mock ones.
+        if (IS_STAGING && req.query.demo === '1' && isTopicMockId(messageId)) {
+          return res.json({ unread_count: 0 });
+        }
+        const moved = await appChat.moveCategoryCursor(pool, {
+          appId: app.id, categoryId: ref, userId: req.user.id, messageId, unread: move === 'unread',
+        });
+        if (!moved.ok) return res.status(404).json({ error: 'Message not found' });
+        return res.json({ unread_count: moved.unread_count });
+      }
       if (IS_STAGING && req.query.demo === '1') {
         const mock = stagingMockUnreadCount(app.id, messageId, move);
         if (mock != null) return res.json({ unread_count: mock });
@@ -888,6 +1043,20 @@ function chatRoutes(config) {
         ? await appChat.markRead(pool, { appId: app.id, userId: req.user.id, messageId })
         : await appChat.markUnread(pool, { appId: app.id, userId: req.user.id, messageId });
       if (!result.ok) return res.status(404).json({ error: 'Message not found' });
+      // Read in the discussion is read in the bell: a small group's row
+      // about messages up to here is done with, so the next message rings
+      // again (services/group-channel-notify.js). "Mark unread" leaves the
+      // bell alone. Non-fatal: the cursor already moved.
+      if (move === 'read') {
+        try {
+          const cleared = await groupChannelNotify.markChannelRead(pool, req.user.id, app.id, messageId);
+          if (cleared > 0) {
+            require('../services/ws').pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          }
+        } catch (err) {
+          log.warn('chat', 'Could not clear discussion notifications', { slug: req.params.slug, message: err.message });
+        }
+      }
       return res.json({ unread_count: result.unread_count });
     } catch (err) {
       log.error('chat', `Failed to mark ${move}`, { slug: req.params.slug, message: err.message });
@@ -976,6 +1145,86 @@ function chatRoutes(config) {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // ── B9: asking Homeroom bot from the chat ───────────────────────────
+  //
+  // A message that mentions Homeroom bot is handed to it by the room itself
+  // (services/ws.js, homeroom-bot-chat.js). These two are the rest:
+  //
+  //   GET  /api/apps/:slug/my-bot-requests
+  //     → { bot, builds, cards }: the cards under the viewer's OWN messages
+  //       that asked the bot for something, for the chat to draw again after
+  //       a reload. Read from chat_bot_requests by requester, never from
+  //       chat_messages, so nobody else's card can come back.
+  //   POST /api/apps/:slug/messages/:id/request  { dismiss? }
+  //     → "Make this a request" on a message of the viewer's own (or File it
+  //       under the card that asked first): the same as a mention, without
+  //       the read. `dismiss` is Not now. Members only, from the person's own
+  //       browser, and capped per person by the service.
+  router.get('/api/apps/:slug/my-bot-requests', appChatReadLimiter, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const out = await require('../services/homeroom-bot-chat').myRequests(pool, { app, user: req.user });
+      return res.json(out);
+    } catch (err) {
+      log.error('chat', 'Failed to read the viewer\'s chat requests', { slug: req.params.slug, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/messages/:id/request', groupChatWriteLimiter, sameOriginBrowserOnly,
+    communities.requireAppMembership(pool), async (req, res) => {
+      res.set('Cache-Control', 'private, no-store');
+      if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+      try {
+        const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS);
+        if (!app) return res.status(404).json({ error: 'App not found' });
+        const botChat = require('../services/homeroom-bot-chat');
+        const [project, person] = await Promise.all([botChat.appRow(pool, app.id), botChat.personRow(pool, req.user.id)]);
+        if (!project || !person) return res.status(404).json({ error: 'App not found' });
+        const out = await botChat.requestFromMessage(pool, config, {
+          app: project, user: person, messageId: req.params.id, dismiss: req.body?.dismiss === true,
+        });
+        if (!out.ok) return res.status(out.status || 400).json({ error: out.error, code: out.code || null, card: out.card || null });
+        return res.json(out);
+      } catch (err) {
+        log.error('chat', 'Failed to make a message a request', { slug: req.params.slug, message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+  //   POST /api/apps/:slug/messages/:id/bot-offer  { choice: 'yes' | 'no' }
+  //     → a tap under one of Homeroom bot's offers in a thread
+  //       (homeroom-bot-voice.js decideOffer): File it, Withdraw it or
+  //       Propose to close, or Not now / Keep it. Only the person it was
+  //       offered to, once, and every gate the offer met is read again.
+  //       Members only, from the person's own browser.
+  router.post('/api/apps/:slug/messages/:id/bot-offer', groupChatWriteLimiter, sameOriginBrowserOnly,
+    communities.requireAppMembership(pool), async (req, res) => {
+      res.set('Cache-Control', 'private, no-store');
+      if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+      const choice = req.body?.choice;
+      if (choice !== 'yes' && choice !== 'no') return res.status(400).json({ error: 'Choose yes or no.' });
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'Message not found' });
+      try {
+        const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS);
+        if (!app) return res.status(404).json({ error: 'App not found' });
+        const out = await require('../services/homeroom-bot-voice').decideOffer(pool, config, {
+          app, user: req.user, messageId: id, choice,
+        });
+        if (!out.ok) {
+          return res.status(out.status || 400).json({ error: out.error || 'That didn\'t work.', said: out.said || null });
+        }
+        return res.json({ ok: true, decision: out.decision || null, said: out.said || null });
+      } catch (err) {
+        log.error('chat', 'Failed to decide a Homeroom bot offer', { slug: req.params.slug, message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
 
   // ── Group-chat file attachments (#694) ───────────────────────────
   //
@@ -1236,10 +1485,14 @@ function chatRoutes(config) {
         ]
       );
 
+      // B9: Homeroom bot, offered first when it answers this viewer here.
+      const botChat = require('../services/homeroom-bot-chat');
+      const here = await botChat.botFor(pool, { app, user: await botChat.personRow(pool, req.user.id) });
       res.json({
         users: rows.map((r) => (r.friend
           ? { username: r.username, friend: true }
           : { username: r.username })),
+        ...(here ? { bot: { username: 'homeroom_bot', displayName: 'Homeroom bot', builds: here.builds } } : {}),
       });
     } catch (err) {
       log.error('chat', 'Failed to load mention suggestions', { message: err.message });

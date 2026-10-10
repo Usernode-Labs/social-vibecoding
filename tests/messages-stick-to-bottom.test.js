@@ -21,6 +21,7 @@
 //      a measurement taken after the draw.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -258,7 +259,7 @@ test('the conversation follows a reader who was at the bottom before the message
   assert.match(THREAD, /const pinned = useStickToBottom\(scroller, !snap\.nextAfter\);/,
     'the thread scroller is watched, and a linked window is not the present');
   assert.match(THREAD, /if \(previousLast\.current === null \|\| sentNow \|\| pinned\.current\) \{\s*(?:\/\/[^\n]*\n\s*)*pinned\.current = sentNow \|\| !snap\.nextAfter;\s*el\.scrollTop = el\.scrollHeight;/,
-    'the first draw, the reader\'s own send, or a reader who was at the bottom');
+    'the first draw, a send from a linked window, or a reader who was at the bottom');
   assert.doesNotMatch(THREAD, /el\.scrollHeight - el\.scrollTop - el\.clientHeight\) < 180/,
     'no distance measured after the new rows are drawn');
   // Decided in a layout effect: before paint, and before a scroll event can
@@ -268,5 +269,27 @@ test('the conversation follows a reader who was at the bottom before the message
     'another conversation opens at its newest line');
   assert.match(THREAD, /shownFocus\.current = focusId;\s*previousLast\.current = last;\s*pinned\.current = false;/,
     'a message link lands on its message, and late growth does not take it to the bottom');
-  assert.match(THREAD, /onClick=\{\(\) => \{ pinned\.current = true; jumpToPresent\(\); \}\}>Jump to present</);
+  assert.equal(message('messages:thread.jumpToPresent'), 'Jump to present');
+  assert.match(THREAD, /onClick=\{\(\) => \{ pinned\.current = true; jumpToPresent\(\); \}\}>\{t\('messages:thread\.jumpToPresent'\)\}</);
+});
+
+// ── 4. #4511: your own send follows you only from the bottom ────────────
+
+test('#4511: the reader\'s own send moves them only when they were at the bottom, or in a linked window', () => {
+  assert.match(THREAD, /const sentNow = !!lastMessage\?\.pending && last !== previousLast\.current && fromWindow;/,
+    'a send while scrolled up in the present no longer jumps');
+  assert.match(THREAD, /const fromWindow = wasWindow\.current \|\| !!snap\.nextAfter;\s*wasWindow\.current = !!snap\.nextAfter;/,
+    'store.send takes a linked window to the present, and that send opens at the newest line');
+  assert.match(THREAD, /pinned\.current = true; wasWindow\.current = false;/, 'another conversation starts afresh');
+});
+
+test('#4511/#4513: a Messages reply thread follows only a pinned reader, and holds the bottom as the composer grows', () => {
+  const panel = THREAD.slice(THREAD.indexOf('function ReplyThreadPanel()'), THREAD.indexOf('function AppReplyThreadPanel('));
+  assert.ok(panel.length > 0);
+  assert.match(panel, /const pinned = useStickToBottom\(scroller, true\);/);
+  assert.match(panel, /useIsomorphicLayoutEffect\(\(\) => \{ pinned\.current = true; \}, \[conversationId, rootId\]\);/,
+    'a thread opens at its newest reply');
+  assert.match(panel, /if \(el && n !== count\.current && pinned\.current\) el\.scrollTop = el\.scrollHeight;/);
+  assert.doesNotMatch(panel, /requestAnimationFrame\(\(\) => \{ el\.scrollTop = el\.scrollHeight; \}\)/,
+    'no unconditional jump on every reply');
 });

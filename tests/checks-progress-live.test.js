@@ -123,6 +123,25 @@ test('the tracker dedupes by index, counts pass/fail, and reads the done sentine
   assert.ok(typeof s.updatedAt === 'string');
 });
 
+test('#4287: a retry-pass frame is a second opinion, not another check, so ran never passes expected', () => {
+  // The issue's shape: every declared check ran, four failed, and the
+  // capture asked each of them three more times. Counting those twelve
+  // retry frames read "744 of 732".
+  const t = visuals.makeChecksProgressTracker(732);
+  for (let i = 0; i < 732; i += 1) t.feed(`__USERNODE_TEST__ index=${i} status=${i < 4 ? 'fail' : 'pass'} loadStatus=200`);
+  const base = visuals.CAPTURE_RETRY_INDEX_BASE;
+  for (let i = 0; i < 12; i += 1) {
+    assert.equal(t.feed(`__USERNODE_TEST__ index=${base + i} status=pass loadStatus=200`), false,
+      'a retry frame does not move the bar');
+  }
+  t.feed('__USERNODE_TESTS_DONE__ ran=732 expected=732 deadline=0');
+  const s = t.snapshot();
+  assert.deepEqual([s.ran, s.passed, s.failed, s.expected, s.done], [732, 728, 4, 732, true]);
+  assert.equal(s.reportedRan, undefined, 'the container\'s own count agrees with the bar');
+  // The base is the container's: a retry index starts there and nowhere else.
+  assert.match(read('capture/capture.js'), new RegExp(`const RETRY_INDEX_BASE = ${base};`));
+});
+
 test('setChecksProgress writes only while this run is the pending one', async () => {
   const queries = [];
   const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [], rowCount: 1 }; } };
@@ -271,7 +290,9 @@ test('maybeRunUnitSuite observes its container and reports once more at the end'
   assert.match(src, /const options = \{\n\s+onStdoutLine: observe,/);
   assert.match(src, /kubernetes\.runUnitSuiteJob\(config, \{ sessionId, \.\.\.options \}\)/);
   assert.match(src, /docker\.runOneShot\(`usernode-unit-suite-\$\{sessionId\}`, options\)/);
-  assert.match(src, /const finalSnap = tracker\.finish\(passed\);\n\s+report\(finalSnap\);/);
+  // The last report also says when the suite never reached `npm test`, so
+  // the card does not call a refused Job "finished with failures".
+  assert.match(src, /const finalSnap = tracker\.finish\(passed, \{ notRun: !!\(notRun \|\| setupFailed\) \}\);\n\s+report\(finalSnap\);/);
   assert.match(src, /echo "\$\{CLONED_SENTINEL\}"\nif \[ -f package-lock\.json \]/, 'the cloned marker precedes npm ci');
   assert.match(src, /\.\.\.\(summary \? \{ summary \} : \{\}\),/, 'the TAP summary rides the row');
 });
@@ -333,6 +354,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SESSION_TRANSCRIPT_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -426,6 +448,9 @@ test('a verdict is one targeted read of the open proposal, and keeps the roster'
   const AppView = makeAppView();
   AppView._devTopic = { kind: 'proposal', id: 9 };
   const row = { id: 9, status: 'promoted', check_state: 'pending' };
+  // #4524: the lists answer only for the app they were loaded for; this one
+  // is loaded for the open app.
+  AppView._devDataSlug = 'app';
   AppView._proposals = [row];
   const ready = { phase: 'ready' };
   AppView._voteRoster[9] = ready;
@@ -505,6 +530,12 @@ test('the unit suite (npm test) gets its own line, bar and phase copy', () => {
   assert.match(done.sentence, /finished with failures: 2 failed, 10861 passed\./);
   const ok = AppView._unitSuiteProgressView({ phase: 'done', done: true, exitOk: true, ran: 10, passed: 9, skipped: 1, failed: 0, expected: 10 });
   assert.equal(ok.sentence, 'The repo unit suite (npm test) finished: 9 passed, 1 skipped.');
+  // A suite that never reached `npm test` (its Job refused, its setup
+  // stopped) is not one that finished with 0 failures.
+  const notRun = AppView._unitSuiteProgressView({ phase: 'done', done: true, exitOk: false, notRun: true, ran: 0, passed: 0, failed: 0, expected: null });
+  assert.equal(notRun.sub, 'npm test could not run');
+  assert.equal(notRun.sentence, 'The repo unit suite (npm test) could not run, so no test result came back.');
+  assert.equal(notRun.bar.done, true);
   const notes = AppView._checksStatusNotes({
     check_state: 'pending', check_phase: 'testing', checks_checked_at: new Date().toISOString(),
     checks_progress: { ran: 2, passed: 2, failed: 0, expected: 10, unit: { phase: 'running', ran: 5, passed: 5, failed: 0, expected: null } },
@@ -798,8 +829,9 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
     if (src[j] === '{') depth += 1;
     else if (src[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
   }
-  const ctx = { module: {}, console, connectionExhaustionMessage: () => '' };
+  const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   const rows = JSON.parse(JSON.stringify(ctx.__rows('me')));
@@ -813,6 +845,26 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
       assert.equal(row.checks_progress.checksMs, 252000, `${row.id}: so are the checks`);
     } else if (row.id === 9000028) {
       assert.equal(row.checks_progress.build.step, 'prepare_checks', 'the live fifth-step row is left alone');
+      assert.equal('checksMs' in row.checks_progress, false);
+    } else if (row.id === 9000054) {
+      // Waiting for a checks slot (services/checks-queue.js): the preview is
+      // built and the run says its place in line; no check has run, so no cost.
+      assert.equal(row.checks_progress.build.step, 'done');
+      assert.equal(row.checks_progress.queue.ahead, 2);
+      assert.equal('checksMs' in row.checks_progress, false);
+    } else if (row.id === 9000055) {
+      // #4502: deferred behind a conflict. The preview was built, but no
+      // tests ran; it carries build time, no checks cost or queue position.
+      assert.equal(row.check_phase, 'deferred');
+      assert.equal(row.checks_progress.build.step, 'done');
+      assert.equal('checksMs' in row.checks_progress, false);
+      assert.equal('queue' in row.checks_progress, false);
+    } else if (row.id === 9000026) {
+      // #4452: part way through its checks, for the change page's one
+      // testing bar: the build done, the checks and the unit suite running.
+      assert.equal(row.checks_progress.build.step, 'done');
+      assert.deepEqual([row.checks_progress.ran, row.checks_progress.expected], [284, 840]);
+      assert.deepEqual([row.checks_progress.unit.ran, row.checks_progress.unit.expected], [6900, 19240]);
       assert.equal('checksMs' in row.checks_progress, false);
     } else {
       assert.equal(row.checks_progress, undefined, `${row.id}: a run in flight (or none) carries no cost`);
@@ -935,11 +987,81 @@ test('an integration supersedes a check run rather than queueing behind it', () 
 test('the board card and the running badge carry the live count', () => {
   const AppView = makeAppView();
   const badge = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 12, passed: 12, failed: 0, expected: 523 } });
-  assert.match(badge, /Checks running…\s12\/523</);
+  // #4499: the count is a bar inside the chip, with the exact count as the
+  // tooltip and the bar's accessible name; the x/y text is gone.
+  assert.doesNotMatch(badge, /12\/523/);
+  assert.match(badge, />Checks<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="523" aria-valuenow="12" aria-label="12 of 523 checks done"><span class="checks-chip-bar-fill" style="width:2%"><\/span><\/span><\/span>$/);
+  assert.match(badge, /title="12 of 523 checks done\. Automated tests/);
+  // #4628: while the run is in flight but does not know its total yet — the
+  // build and prepare phase — the bar is there from the start, pulsing, in
+  // the ARIA indeterminate form: no valuenow, no valuemax, no fill. The
+  // build phase keeps its words ("Checks starting…", which a declared check
+  // reads on the board) beside its bar.
+  const startingBadge = AppView.checksBadgeHtml({ status: 'promoted' });
+  assert.match(startingBadge, />Checks starting…<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>$/, 'the build phase: words and the busy bar');
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
-  assert.match(quiet, /Checks running…</, 'no count before the first frame');
+  assert.match(quiet, />Checks<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>$/, 'the bar shows from the start');
+  assert.doesNotMatch(quiet, /aria-valuenow/, 'indeterminate: no valuenow');
+  assert.doesNotMatch(quiet, /aria-valuemax/, 'indeterminate: no valuemax');
+  assert.match(quiet, /title="Checks starting\. Automated tests/);
+  const noTotal = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } });
+  assert.match(noTotal, /checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="7 checks done so far"/, 'the words carry the count while there is no total');
+  assert.match(noTotal, /title="7 checks done so far\. Automated tests/);
+  // A deferred run is nothing in flight: today's words, no bar.
+  const deferred = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', check_phase: 'deferred' });
+  assert.match(deferred, /Checks running…</);
+  assert.doesNotMatch(deferred, /checks-chip-bar/, 'no bar over nothing running');
+
+  // The status-band chip the cards, the Workshop's rows and All items share.
+  const tag = (pr) => AppView.statusTagSpecs(pr, {}).find((t) => t.key === 'tag-checks-running');
+  const running = tag({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 619, passed: 619, failed: 0, expected: 732 } });
+  assert.equal(running.label, 'Checks');
+  assert.deepEqual({ ...running.progress }, { done: 619, total: 732, text: '619 of 732 checks done' });
+  assert.match(running.title, /^619 of 732 checks done\. /);
+  assert.equal(running.spinner, true);
+  const starting = tag({ status: 'promoted', check_state: null, console_check_state: null });
+  assert.equal(starting.label, 'Checks starting…');
+  assert.deepEqual({ ...starting.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks starting' });
+  const early = tag({ status: 'promoted', check_state: 'pending', checks_progress: null });
+  assert.equal(early.label, 'Checks');
+  assert.deepEqual({ ...early.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks starting' });
+  const earlyRan = tag({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } });
+  assert.deepEqual({ ...earlyRan.progress }, { done: 0, total: 0, indeterminate: true, text: '7 checks done so far' });
+
+  // Both React renderers draw the bar from the spec, the busy one included.
+  const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  assert.match(card, /\{b\.progress \? <ChecksBar progress=\{b\.progress\} \/> : null\}/);
+  assert.match(card, /role="progressbar"[\s\S]*aria-label=\{progress\.text\}/);
+  assert.match(card, /checks-chip-bar checks-chip-bar-busy/);
+  const row = read('frontend/src/features/dev-board/workshop/work-row.tsx');
+  assert.match(row, /\{t\.progress \? <ChecksBar progress=\{t\.progress\} \/> : null\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.checks-chip-bar-busy \{[\s\S]*?dev-ledger-progress-pulse/, 'the pulse is the ledger bar\'s own');
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.checks-chip-bar-busy \{ animation: none; \}/, 'still under reduced motion');
+  // Every word on the chip and its bar is read from the catalog: the label,
+  // and the count and tooltip, a whole message for each of the bar's cases.
   const src = APP_VIEW_SRC;
-  assert.match(src, /label: p\.check_state === 'pending' \? `Checks running…\$\{count\}` : 'Checks starting…',/);
+  assert.match(src, /label: fresh \? PlatformI18n\.t\('changes:badge\.tag\.checksStarting'\) : PlatformI18n\.t\('changes:badge\.tag\.checks'\),/);
+  assert.match(src, /text: PlatformI18n\.t\('changes:chips\.checks\.progress\.of', \{ done, count: bar\.expected \}\)/);
+  assert.match(src, /\? PlatformI18n\.t\('changes:chips\.checks\.progress\.soFar', \{ count: live\.bar\.ran \}\)\s*: PlatformI18n\.t\('changes:chips\.checks\.progress\.starting'\);/);
+  assert.match(src, /title: AppView\._checksChipTitle\(live, progress\),/);
+  const { message } = require('./lib/platform-i18n');
+  assert.equal(message('changes:badge.tag.checks'), 'Checks');
+  assert.equal(message('changes:badge.tag.checksStarting'), 'Checks starting…');
+  assert.equal(message('changes:chips.checks.label'), 'Checks');
+  assert.equal(message('changes:chips.checks.running'), 'Checks running…');
+  assert.equal(message('changes:chips.checks.runningRan', { ran: 7 }), 'Checks running… 7');
+  assert.equal(message('changes:chips.checks.progress.of', { done: 12, count: 523 }), '12 of 523 checks done');
+  assert.equal(message('changes:chips.checks.progress.soFar', { count: 7 }), '7 checks done so far');
+  assert.equal(message('changes:chips.checks.progress.starting'), 'Checks starting');
+  assert.equal(message('changes:chips.checks.progressTitle.of', { done: 12, count: 523 }),
+    '12 of 523 checks done. Automated tests are still running on the staging build. Merge is blocked until they pass.');
+  assert.equal(message('changes:chips.checks.progressTitle.soFar', { count: 7 }),
+    '7 checks done so far. Automated tests are still running on the staging build. Merge is blocked until they pass.');
+  assert.equal(message('changes:chips.checks.progressTitle.starting'),
+    'Checks starting. Automated tests are still running on the staging build. Merge is blocked until they pass.');
+  assert.equal(message('changes:chips.checks.runningTitle'),
+    'Automated tests are still running on the staging build. Merge is blocked until they pass.');
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {
@@ -1003,8 +1125,11 @@ test('a submit says WHEN its vote-clearing happens, not just a count', () => {
   // The imported tail: 'on_sync' until something re-pinned the head, then
   // 'now', or 'none' when the re-pin kept the votes (a mechanical move).
   assert.match(pu, /let votesClearing = votesCleared > 0 \? 'on_sync' : 'none';\s*\n\s*if \(applied\) votesClearing = cleared \? 'now' : 'none';/);
-  assert.match(pu, /votesClearing: settled \? 'now' : \(votesCleared > 0 \? 'on_sync' : 'none'\)/);
+  // The native tail: the same three answers, read off the reconcile, which
+  // also says when a mechanical or resolved move kept the votes.
+  assert.match(pu, /let votesClearing = votesCleared > 0 \? 'on_sync' : 'none';\s*\n\s*if \(settled\) votesClearing = cleared \? 'now' : 'none';/);
   const eat = read('src/services/external-agent-tasks.js');
   assert.match(eat, /votesClearing: result\.votesClearing \|\|/);
   assert.match(eat, /votesAtRisk: Number\.isInteger\(result\.votesAtRisk\)/);
+  assert.match(eat, /votesKept: result\.votesKept === true/);
 });

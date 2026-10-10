@@ -286,6 +286,18 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
         'a private app\'s community is as invisible as the app');
       assert.equal((await call('POST', `/api/apps/${hidden.slug}/membership`, { joined: true })).status, 404,
         'and cannot be joined from outside');
+
+      // The app's own record says who it is for as well, in the list's
+      // words: the preview banner and the vote picker read it off
+      // AppView.appData, which is this payload.
+      assert.equal((await call('GET', `/api/apps/${a.slug}`)).body.app.audience, 'open');
+      as = owner;
+      await collaborate(hidden.id, owner.id);
+      assert.equal((await call('GET', `/api/apps/${hidden.slug}`)).body.app.audience, 'solo',
+        'a private project with one person in it is just theirs');
+      await collaborate(hidden.id, viewer.id, 'invited');
+      assert.equal((await call('GET', `/api/apps/${hidden.slug}`)).body.app.audience, 'invited',
+        'and stops being so the moment someone is invited');
     } finally {
       await done();
     }
@@ -547,6 +559,37 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await communities.leave(pool, swap, me.id);
     const after = overview.shapeNeedsFeed((await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, 60])).rows);
     assert.deepEqual(after.map((f) => f.title), ['Older change']);
+  });
+
+  await t.test('#4270: the feed marks a Just-you change whose Yes is the one it needs `approve`', async () => {
+    const overview = require('../src/routes/workshop-overview');
+    const me = await user();
+    const bot = await user();
+    const mine = await app({ createdBy: me.id, view: 'private', collab: 'private' });
+    const strict = await app({ createdBy: me.id, view: 'private', collab: 'private' });
+    const group = await app({ createdBy: bot.id });
+    for (const a of [mine, strict, group]) await communities.join(pool, a, me.id);
+    // A private project is seen by the people building it, its maker first.
+    for (const a of [mine, strict]) await collaborate(a.id, me.id);
+    // A rule asking for two Yes votes keeps the vote, as on the card.
+    await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [strict.id]);
+    const promote = async (a, title, ago) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, pr_title, last_activity_at)
+       VALUES ($1, $2, 'promoted', $3, NOW() - $4::interval) RETURNING id`,
+      [a.id, bot.id, title, ago])).rows[0].id;
+    await promote(mine, 'Sunday reminder', '1 hour');
+    await promote(strict, 'Two to say yes', '2 hours');
+    await promote(group, 'Group change', '3 hours');
+    const read = async () => overview.shapeNeedsFeed(await overview.withVotesRequired(pool,
+      (await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, overview.NEEDS_FEED_MAX])).rows));
+    const feed = await read();
+    assert.deepEqual(feed.map((f) => [f.title, f.approve === true]), [
+      ['Sunday reminder', true], ['Two to say yes', false], ['Group change', false],
+    ]);
+    assert.ok(!('approve' in feed[2]), 'a group\'s item carries no flag at all');
+    // Once somebody else is in it, it is a group's: the vote is a vote.
+    await communities.join(pool, mine, bot.id);
+    assert.equal((await read()).find((f) => f.title === 'Sunday reminder').approve, undefined);
   });
 
   await t.test('an app suspended by moderation leaves the Messages and Workshop lists, admins included', async () => {

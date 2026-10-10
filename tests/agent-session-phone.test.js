@@ -25,6 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const panel = read('frontend/src/features/agent-session/index.tsx');
@@ -84,7 +85,7 @@ test('#3577: the session bar\'s pills are one row that never wraps; the naming p
   for (const cls of ['basis-0', 'grow', 'max-w-fit', 'min-w-[2.75rem]', 'whitespace-nowrap']) {
     assert.ok(focus.includes(cls), `focus pill: ${cls}`);
   }
-  assert.match(bar, /<span className="min-w-0 max-w-\[7rem\] truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/,
+  assert.match(bar, /<span className="min-w-0 max-w-\[7rem\] truncate">\{about\?\.focusApp\?\.name \|\| t\('agent:session\.bar\.anyApp'\)\}<\/span>/,
     'its name truncates; the pill\'s old 10rem cap, less its mark');
 
   // The change pill: no grow, a floor, a truncating label; the PR number
@@ -93,14 +94,16 @@ test('#3577: the session bar\'s pills are one row that never wraps; the naming p
   assert.ok(change.includes('min-w-[3.5rem]') && change.includes('whitespace-nowrap'));
   assert.ok(!change.includes('grow') && !change.includes('shrink-0'), 'it gives way only after the focus pill');
   assert.match(bar, /title=\{changeText\}/);
-  assert.match(bar, /<span className="\[@container\(max-width:24rem\)\]:hidden">\{` · PR #\$\{active\.prNumber\}`\}<\/span>/);
+  // B10d: the pill says where the change stands, with no pull request number.
+  assert.doesNotMatch(bar, /PR #\$\{active\.prNumber\}/);
 
   // The controls hold their width.
   assert.ok(classOf('data-agent-session-changes-button').includes('shrink-0'));
   assert.match(panel, /data-agent-session-menu\s+className="inline-flex h-7 w-7 shrink-0 /);
   // Open app keeps its mark and drops its words in a narrow row.
-  assert.match(panel, /<span className="truncate \[@container\(max-width:32rem\)\]:hidden">Open app<\/span>/);
-  assert.match(panel, /aria-label="Open app"/, 'and keeps its name when the words are hidden');
+  assert.match(panel, /<span className="truncate \[@container\(max-width:32rem\)\]:hidden">\{t\('agent:session\.bar\.openApp'\)\}<\/span>/);
+  assert.match(panel, /aria-label=\{t\('agent:session\.bar\.openApp'\)\}/, 'and keeps its name when the words are hidden');
+  assert.equal(message('agent:session.bar.openApp'), 'Open app');
 });
 
 test('#3577: rendered, Open app keeps its accessible name and narrows its padding in a narrow row', () => {
@@ -120,9 +123,10 @@ test('#3016: an empty message box is sized to its hint, measured without an inpu
 
 test('#3015: the mark says what its green dot means on hover, and keeps its name', () => {
   const mark = read('frontend/src/features/header/platform-mark.tsx');
-  assert.match(mark, /const WORKING_TITLE = 'One of your changes is building';/);
-  assert.match(mark, /title=\{working \? WORKING_TITLE : undefined\}/, 'only while the dot is showing');
-  assert.match(mark, /aria-label="Homeroom menu"/, 'the name the empty board\'s note uses is unchanged');
+  assert.equal(message('core:header.changeBuilding'), 'One of your changes is building');
+  assert.match(mark, /title=\{working \? t\('core:header\.changeBuilding'\) : undefined\}/, 'only while the dot is showing');
+  assert.match(mark, /aria-label=\{t\('core:header\.homeroomMenu'\)\}/);
+  assert.equal(message('core:header.homeroomMenu'), 'Homeroom menu', 'the name the empty board\'s note uses is unchanged');
 });
 
 test('#3075: the menu no longer says it in words; the mark\'s own spinner stays', () => {

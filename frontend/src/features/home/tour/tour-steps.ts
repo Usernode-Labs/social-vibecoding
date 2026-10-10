@@ -1,5 +1,5 @@
 /**
- * The five steps of the welcome tour, as data.
+ * The six steps of the welcome tour, as data.
  *
  * Kept as a plain table with no React in it so the order, the wording, the
  * anchoring and the interaction rules can be asserted without rendering
@@ -77,12 +77,14 @@
  * to nothing still runs: the screen dims whole and the card centres.
  */
 
+import { t as translate } from '../../../lib/i18n/runtime';
+
 export interface TourStep {
   /** Stable id, used for keys and for the tests that pin the order. */
   id: string;
-  /** The card's heading. */
+  /** The card's heading: a message id, read when the card is drawn. */
   title: string;
-  /** The card's body copy. One short paragraph, plain language. */
+  /** The card's body copy, a message id. One short paragraph, plain language. */
   body: string;
   /** Candidate selectors for the spotlight, in preference order. */
   targets: readonly string[];
@@ -114,8 +116,8 @@ export interface TourStep {
  * ── #3567: a fifth stop, first: what a community is ─────────────────────
  *
  * The join screen asks which communities to join and never says what one
- * does, and the four stops above take it for granted: Shortcuts names a
- * private community's mark, Ask for a change posts a request "the members"
+ * does, and the four stops above take it for granted: My apps names a
+ * private community's mark, Suggest an improvement posts a request "the members"
  * vote on. So the tour opens on the idea everything after it rests on:
  * communities build projects together, by proposing changes and voting them
  * in. It names the three audiences the way the screen does (AGENTS.md,
@@ -132,17 +134,17 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // community it is on, which is why the copy says "here" rather than
     // describing what the tab shows.
     id: 'communities',
-    title: 'Communities',
-    body: 'Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.',
+    title: 'onboarding:tour.step.communities.title',
+    body: 'onboarding:tour.step.communities.body',
     targets: ['#platform-tab-workshop'],
   },
   {
-    // The Shortcuts section, heading and grid together, so the card never
+    // The My apps section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback
     // for a section that has not rendered its box yet.
     id: 'apps',
-    title: 'Shortcuts',
-    body: 'The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
+    title: 'onboarding:tour.step.apps.title',
+    body: 'onboarding:tour.step.apps.body',
     targets: ['#home-apps-section', '#app-list'],
   },
   {
@@ -156,27 +158,53 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // way rather than skipping past it — the next step points INSIDE the
     // menu, so a Next that only moved the counter would land on nothing.
     id: 'app-menu',
-    title: 'The Homeroom menu',
-    body: 'Inside any app, this mark opens its menu. Tap it, or tap Next to open it.',
+    title: 'onboarding:tour.step.appMenu.title',
+    body: 'onboarding:tour.step.appMenu.body',
     targets: ['#platform-mark-btn'],
     interactive: true,
     advanceOn: 'menu-open',
   },
   {
-    // The menu's one button, Ask for a change, in its well
+    // The menu's one button, Suggest an improvement, in its well
     // (`#improve-quick-actions`, ../../improve/actions.tsx). It was Give
     // feedback and New change side by side, and people found both
-    // confusing; the step says what the button does and where making the
-    // change yourself went (Start a new change, under Agent sessions).
+    // confusing; the step says what the button does. B8: the request goes
+    // to Homeroom bot, which builds it (or, where it does not build, it
+    // goes to the group). #4225: and it says so against what people expect
+    // of a feedback button elsewhere, honestly: the bot starts on it, or
+    // brings it to the group, never "it builds it" as a promise.
+    //
+    // NO "BUILD IT YOURSELF" SENTENCE (first-session run-through, 5 Oct
+    // 2026). It said "To build it yourself with a coding agent, tap Build it
+    // yourself", the menu's row under its button; that row, with the whole
+    // Agent chats section, shows only once the viewer has had an agent
+    // session, so the person this tour is for would look for a row they do
+    // not have. The hub's ⋯ and a request's own page still offer it.
     id: 'menu-actions',
-    title: 'Ask for a change',
-    body: 'Post a request the members can see, vote on and pick up. To make a change yourself, use Start a new change under Agent sessions.',
+    title: 'onboarding:tour.step.menuActions.title',
+    body: 'onboarding:tour.step.menuActions.body',
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },
   {
+    // #4604: new people finished the tour without meeting Homeroom bot, the
+    // thing that builds what they ask for. This stop points at the Messages
+    // tab (the bottom bar on a phone, the rail from 768px up), where the
+    // bot's DM is the first row, and ending the tour is what has the bot
+    // say hello there (homeroom-bot-dm.js greetTourFinisher).
+    //
     // THE STEP THAT LEAVES THE MENU: the step before it points inside the
-    // menu, and the tab this one points at is behind it on a phone.
+    // menu, and the tab this one points at is behind it on a phone. Like
+    // every tab step it describes its target rather than asking for a press.
+    id: 'meet-bot',
+    title: 'onboarding:tour.step.meetBot.title',
+    body: 'onboarding:tour.step.meetBot.body',
+    targets: ['#platform-tab-messages'],
+    closesPanel: true,
+  },
+  {
+    // The menu is shut by the step before this one; the flag stays so Back
+    // and a resume never land here with the sheet over the tab bar.
     //
     // `#app-switcher-btn` until #2718, which retired the chip. Settings is a
     // row of the Profile screen the Me tab lands on, so the tab is where this
@@ -185,8 +213,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // tab after the signed-in user, so it names the place instead of a label
     // the tab no longer shows.
     id: 'settings',
-    title: 'Replay this any time',
-    body: 'You can replay this tour any time from Settings, on your profile.',
+    title: 'onboarding:tour.step.settings.title',
+    body: 'onboarding:tour.step.settings.body',
     targets: ['#platform-tab-me'],
     closesPanel: true,
   },
@@ -250,7 +278,7 @@ export function nextOpensMenu(index: number): boolean {
   return stepAt(index).advanceOn === 'menu-open';
 }
 
-/** The counter the card prints, e.g. "3 of 5". */
+/** The counter the card prints, e.g. "3 of 6". */
 export function stepCounter(index: number): string {
-  return `${clampIndex(index) + 1} of ${TOUR_LENGTH}`;
+  return translate('onboarding:tour.counter', { step: clampIndex(index) + 1, total: TOUR_LENGTH });
 }

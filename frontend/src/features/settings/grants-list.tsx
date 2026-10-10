@@ -21,6 +21,7 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { grantsStore } from './grants-store.js';
 
@@ -67,17 +68,18 @@ const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
  * hand-written red tint because it is destructive; this is the opposite act.
  */
 function RevokedRow({ grant }: { grant: GrantView }) {
+  const t = useMessages('settings');
   return (
     <div className={ROW_CLASS}>
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-zinc-500 dark:text-zinc-500 truncate">{grant.appName}</span>
         <span className="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">
-          Revoked
+          {t('settings:grants.revoked')}
         </span>
       </div>
       <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
         <span className="text-zinc-500 dark:text-zinc-500">
-          {`Re-enabling restores its $${grant.cap} daily cap.`}
+          {t('settings:grants.reenableNote', { cap: grant.cap })}
         </span>
         <Button
           type="button"
@@ -87,7 +89,7 @@ function RevokedRow({ grant }: { grant: GrantView }) {
           size="xs"
           onClick={() => { void controller()?._onGrantReenable?.(grant); }}
         >
-          Re-enable
+          {t('settings:grants.reenable')}
         </Button>
       </div>
     </div>
@@ -95,17 +97,18 @@ function RevokedRow({ grant }: { grant: GrantView }) {
 }
 
 function GrantRow({ grant }: { grant: GrantView }) {
+  const t = useMessages('settings');
   return (
     <div className={ROW_CLASS}>
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-zinc-700 dark:text-zinc-300 truncate">{grant.appName}</span>
         <span className="font-mono text-zinc-600 dark:text-zinc-400 shrink-0">
-          {`$${grant.spent} / $${grant.cap} today`}
+          {t('settings:grants.spentToday', { spent: grant.spent, cap: grant.cap })}
         </span>
       </div>
       <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
         <label className="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
-          Cap $
+          {t('settings:grants.capLabel')}
           {/* #2437 widened tests/shell-primitive-adoption.test.js's field-box
               scan to the WHITE fill, which is the fill this row has always
               used — so this field, hand-written since the conversion, became
@@ -136,7 +139,7 @@ function GrantRow({ grant }: { grant: GrantView }) {
               checked={grant.allowByok}
               onChange={(e) => controller()?._onGrantByokChange?.(grant.appId, e.currentTarget.checked)}
             />
-            Use my own key past the daily budget
+            {t('settings:grants.useOwnKey')}
           </label>
         ) : null}
         {/*
@@ -151,7 +154,7 @@ function GrantRow({ grant }: { grant: GrantView }) {
           className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
           onClick={() => { void controller()?._onGrantRevoke?.(grant.appId, grant.appName); }}
         >
-          Revoke
+          {t('settings:grants.revoke')}
         </button>
       </div>
     </div>
@@ -159,11 +162,12 @@ function GrantRow({ grant }: { grant: GrantView }) {
 }
 
 export function GrantsListView({ phase, grants }: GrantsState) {
+  const t = useMessages('settings');
   if (phase === 'idle') return null;
-  if (phase === 'loading') return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>;
-  if (phase === 'error') return <p className="text-xs text-red-700 dark:text-red-400">Failed to load app permissions.</p>;
+  if (phase === 'loading') return <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</p>;
+  if (phase === 'error') return <p className="text-xs text-red-700 dark:text-red-400">{t('settings:grants.loadFailed')}</p>;
   if (!grants.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-500">No apps have asked to use AI yet.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-500">{t('settings:grants.empty')}</p>;
   }
   return (
     <>

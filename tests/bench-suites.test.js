@@ -97,10 +97,10 @@ test('a task never takes the bot\'s own verdict as its reference', () => {
   assert.equal(suites.startingTask('triage', { ...facts, repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' }, snap).tags.repo_size, 'large');
 });
 
-test('the Suites card offers Delete only on deletable rows, and only to a full admin', () => {
+test('a suite offers Delete only when it is deletable, and only to a full admin', () => {
   globalThis.window = globalThis.window || globalThis;
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-  const { SuitesCard } = loadTsx('frontend/src/features/admin/admin-homeroom-bench.tsx', {
+  const { SuiteDetail, SuitesPage } = loadTsx('frontend/src/features/admin/admin-homeroom-bench.tsx', {
     stubs: {
       './admin-console.js': {
         AdminUI: new Proxy({}, { get: (_t, key) => (['btn', 'badge'].includes(key) ? new Proxy({}, { get: (_u, k) => `${key}-${String(k)}` }) : String(key)) }),
@@ -117,10 +117,20 @@ test('the Suites card offers Delete only on deletable rows, and only to a full a
     row(3, { runs: 2, deletable: false }),
     row(4, { is_default: true, deletable: false }),
   ];
-  const render = (canWrite) => renderToHtml(createElement(SuitesCard, { canWrite, suites: list, coreSuiteId: 4, onChanged() {}, say() {} }));
+  const props = { core: null, go() {}, onChanged() {}, say() {}, onMaterialize() {}, onFreezeCore() {} };
+  const render = (canWrite) => list.map((suite) => renderToHtml(createElement(SuiteDetail, { ...props, suite, isCore: suite.id === 4, canWrite }))).join('');
   const html = render(true);
   const deletes = [...html.matchAll(/data-bench-suite-delete="(\d+)"[^>]*>Delete</g)].map((m) => Number(m[1]));
   assert.deepEqual(deletes, [1], 'only the unfrozen suite with no runs that is not the default');
   assert.match(html, /class="btn-destructiveSm" data-bench-suite-delete="1"/);
   assert.doesNotMatch(render(false), /data-bench-suite-delete/, 'a view-only admin reads');
+  // Freeze, where the server would allow it: not on an unlabelled default (Core) suite.
+  const freezes = [...html.matchAll(/data-bench-suite-freeze="(\d+)"/g)].map((m) => Number(m[1]));
+  assert.deepEqual(freezes, [1, 3], 'not the frozen one, nor Core while tasks wait for their label');
+  // The list links each suite to its address; the address's suite is open, else the default.
+  const page = renderToHtml(createElement(SuitesPage, { ...props, suites: list, selectedId: null, coreSuiteId: 4, canWrite: true }));
+  assert.equal((page.match(/data-bench-suite="\d+"><a href="#admin\/homeroom-bot\/benchmark\/suites\/\d+"/g) || []).length, 4);
+  assert.match(page, /data-bench-suite-detail="4"/, 'no suite in the address: the default suite');
+  assert.match(page, /id="admin-homeroom-bench-new-suite"[^>]*>New suite</);
+  assert.match(page, /id="admin-homeroom-bench-core"/, 'Core\'s card while Core is not made');
 });

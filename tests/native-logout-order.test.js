@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { englishPlatformI18n } = require('./lib/platform-i18n');
+
 const settingsSource = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8'
@@ -14,9 +16,9 @@ const settingsSource = fs.readFileSync(
 // before any native teardown is attempted, and every surface ends on the
 // public landing page (#1524) — including the native path, whose old document
 // is otherwise forbidden continuation work.
-function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true, offlineLogout = false, webFailure, webPending = false } = {}) {
+function loadSettings({ nativeTerminal = true, nativeFailure, nativePending = false, webOk = true, offlineLogout = false, webFailure, webPending = false } = {}) {
   const order = [];
-  const logoutButton = { disabled: false };
+  const logoutButton = { disabled: false, textContent: 'Sign out' };
   let href = 'https://social.example/#settings';
   const location = {};
   Object.defineProperty(location, 'href', {
@@ -33,6 +35,8 @@ function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true, offl
   const stored = new Map();
 
   const sandbox = {
+    // The screen's words come from the English catalog, as they do in the shell.
+    PlatformI18n: englishPlatformI18n(),
     console: { log() {}, warn() {}, error() {} },
     document: {
       addEventListener() {},
@@ -75,6 +79,8 @@ function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true, offl
       },
       commitNativeLogout() {
         order.push('native-terminal');
+        // An app that never answers: neither replaced nor acknowledged.
+        if (nativePending) return new Promise(() => {});
         return nativeFailure ? Promise.reject(nativeFailure) : Promise.resolve(true);
       },
     },
@@ -161,7 +167,71 @@ test('native success arms a bounded net in case the WebView is not replaced',
     net.fn();
     assert.equal(loaded.href, '/',
       'a document that outlives its replacement still lands on the landing page');
+    // The issue-time net (#3915) finds the document already on its way out
+    // and does not navigate a second time.
+    loaded.timers.find((t) => t.ms === 8000).fn();
+    assert.deepEqual(loaded.order.filter((step) => step === 'navigate'), ['navigate']);
   });
+
+// #3915, iOS: "log out button not working, screen doesn't do anything (but
+// when I force close app and reopen it, then i am logged out)". The net above
+// was armed only once native ANSWERED, so an app that was slow to answer, or
+// never did, left the Settings screen exactly as it was until the bridge's own
+// twelve-second action timeout. Once the server has revoked the session the
+// page now leaves on a bound armed when the terminal call is ISSUED. The order
+// is unchanged: server revocation first, the terminal call, then (only then)
+// the timer that may navigate.
+test('a native call that never answers still leaves for the landing page', async () => {
+  const loaded = loadSettings({ nativeTerminal: true, nativePending: true });
+
+  const pending = loaded.sandbox.Settings.logout();
+  for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
+
+  assert.deepEqual(loaded.order, [
+    'close-native-realm', 'web-session', 'sw-cache', 'drop-cached-session',
+    'normalise-address', 'native-terminal',
+  ]);
+  const net = loaded.timers.find((t) => t.ms === 8000);
+  assert.ok(net, 'the net is armed as the terminal call is issued');
+  // Native gets a fair chance first: longer than the post-answer net, shorter
+  // than the bridge's 12s action timeout it used to wait behind.
+  assert.ok(net.ms > 5000 && net.ms < 12000);
+
+  net.fn();
+  assert.deepEqual(loaded.order.slice(-2), ['native-terminal', 'navigate']);
+  assert.equal(loaded.href, '/');
+  // Not a failure: no advisory claims the app failed to shut down.
+  assert.equal(loaded.stored.has('sv:logout_notice'), false);
+  assert.equal(loaded.logoutButton.disabled, true);
+  void pending;
+});
+
+test('the offline path arms no early net: only native can delete its cookie', async () => {
+  // Remote revocation failed, so the cookie may still be live and leaving
+  // before native confirms would boot the signed-in shell again.
+  const loaded = loadSettings({ offlineLogout: true, webOk: false, nativePending: true });
+
+  loaded.sandbox.Settings.logout();
+  for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
+
+  assert.ok(loaded.order.includes('native-terminal'));
+  assert.equal(loaded.timers.some((t) => t.ms === 8000), false);
+  assert.equal(loaded.timers.some((t) => t.ms === 5000), false);
+  assert.equal(loaded.order.includes('navigate'), false);
+});
+
+test('the button says Signing out while it runs, and Sign out again after a failure', async () => {
+  const loaded = loadSettings({ webOk: false });
+
+  const pending = loaded.sandbox.Settings.logout();
+  assert.equal(loaded.logoutButton.disabled, true);
+  assert.equal(loaded.logoutButton.textContent, 'Signing out…',
+    'the tap shows at once, before the first await');
+
+  assert.equal(await pending, false);
+  assert.equal(loaded.logoutButton.disabled, false);
+  assert.equal(loaded.logoutButton.textContent, 'Sign out');
+});
 
 test('web-only logout replaces the entry after clearing the web session',
   async () => {

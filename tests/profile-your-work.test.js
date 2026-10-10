@@ -9,13 +9,14 @@
 //     tests/me-requests-postgres.test.js);
 //   - what each view says, from ./profile-store.js;
 //   - the screen: hidden and empty in the prerender, one view at a time, the
-//     long groups folded, and Ask for a change at the foot of Your requests;
+//     long groups folded, and Suggest an improvement at the foot of Your requests;
 //   - the router's three addresses.
 //
 // Run with: node --test tests/profile-your-work.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -33,7 +34,8 @@ test('the summary counts what is in progress: in an agent session or up for a vo
   const profile = require('../src/routes/profile');
   assert.equal(profile.shapeSummary({ counts: { merged: 9, in_progress: 2 } }).inProgress, 2);
   const sql = read('src/routes/profile.js');
-  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE cs\.status IN \(\s*'active', 'paused', 'promoted', 'merging'\s*\)\)::int AS in_progress,/);
+  // A merged change still going live (live_at null) is in progress too.
+  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE cs\.status IN \(\s*'active', 'paused', 'promoted', 'merging'\s*\) OR \(cs\.status = 'merged' AND cs\.live_at IS NULL\)\)::int AS in_progress,/);
 });
 
 test('your requests: each says where it stands, and the counts are the whole set\'s', () => {
@@ -91,13 +93,13 @@ test('Your changes: in progress (either kind, newest first), then merged, then c
       closed: [row(4, '2026-08-01T12:00:00Z', 'Leaderboard badges')],
     },
   }, NOW);
-  assert.deepEqual(view.sections.map((s) => s.label), ['In progress', 'Merged', 'Closed']);
+  assert.deepEqual(view.sections.map((s) => s.label), ['In progress', 'Live', 'Closed']);
   assert.deepEqual(view.sections[0].rows.map((r) => [r.title, r.meta, r.href]), [
     ['Dark mode for run logs', 'Run Club · in progress', '#app/run-club/dev/sessions/1'],
-    ['Fix pace rounding', 'Run Club · in vote', '#app/run-club/dev/proposals/2'],
+    ['Fix pace rounding', 'Run Club · waiting for approval', '#app/run-club/dev/proposals/2'],
   ]);
   assert.equal(view.sections[1].rows[0].meta, 'Run Club · 2 days ago');
-  assert.equal(view.sections[2].rows[0].meta, 'Run Club · closed without merging');
+  assert.equal(view.sections[2].rows[0].meta, 'Run Club · closed without going live');
   assert.equal(proposalsView(null).loaded, false, 'a read that has not answered is not "nothing started"');
   assert.equal(proposalsView({ proposals: { inProgress: [], merged: [] } }).empty, true);
 });
@@ -171,7 +173,7 @@ test('Your requests: open, then done, each opening the request', () => {
   });
   assert.deepEqual(view.sections.map((s) => [s.label, s.rows.map((r) => r.meta)]), [
     ['Open', ['Run Club · someone is on it', 'Game Corner · nobody on it yet']],
-    ['Done', ['Homeroom · shipped', 'Odd · closed']],
+    ['Done', ['Homeroom · live', 'Odd · closed']],
   ]);
   assert.equal(view.sections[0].rows[0].href, '#app/run-club/dev/issues/11');
   assert.equal(view.sections[1].rows[1].href, null, 'no address built from a slug the shell would not route');
@@ -198,11 +200,11 @@ test('Your votes: still open, then decided, each saying your vote as it stands',
   });
   assert.deepEqual(view.sections.map((s) => [s.label, s.rows.map((r) => [r.title, r.meta, r.href])]), [
     ['Still open', [
-      ['Weekly distance leaderboard', 'Run Club · you voted yes', '#app/run-club/dev/proposals/31'],
+      ['Weekly distance leaderboard', 'Run Club · you voted yes', '#app/run-club/dev/changes/40'],
       ['Rename to Run Crew', 'Run Club · you voted yes', '#app/run-club/dev/governance/77'],
     ]],
     ['Decided', [
-      ['Route map on the run page', 'Run Club · you voted yes · merged', '#app/run-club/dev/proposals/32'],
+      ['Route map on the run page', 'Run Club · you voted yes · live', '#app/run-club/dev/proposals/32'],
       ['Timer sounds', 'Game Corner · you voted no · closed', '#app/game-corner/dev/proposals/33'],
     ]],
   ], 'kudos are not votes');
@@ -219,10 +221,13 @@ test('the screen ships hidden and empty, one root for all three views', () => {
   assert.doesNotMatch(html, /data-profile-work-group|Loading/, 'nothing but the frame until it is opened');
   assert.equal(mod.workKind('votes'), 'votes');
   assert.equal(mod.workKind('anything'), 'changes');
-  assert.deepEqual(mod.WORK_TITLES, { changes: 'Your changes', requests: 'Your requests', votes: 'Your votes' });
+  // The titles are catalog entries; the table holds their ids.
+  assert.deepEqual(mod.WORK_TITLES,
+    { changes: 'profile:work.changes.title', requests: 'profile:work.requests.title', votes: 'profile:work.votes.title' });
+  assert.deepEqual(Object.values(mod.WORK_TITLES).map((id) => message(id)), ['Your changes', 'Your requests', 'Your votes']);
 });
 
-test('each view draws its own groups; long ones fold; Your requests ends on Ask for a change', () => {
+test('each view draws its own groups; long ones fold; Your requests ends on Suggest an improvement', () => {
   const mod = loadTsx(SCREEN);
   const html = () => renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
   const merged = Array.from({ length: 7 }, (_, i) => ({
@@ -235,7 +240,7 @@ test('each view draws its own groups; long ones fold; Your requests ends on Ask 
   let out = html();
   assert.match(out, /data-profile-work-group="merged"/);
   assert.equal((out.match(/Merged \d/g) || []).length, mod.FOLD_AT, 'five, then the fold');
-  assert.match(out, /data-profile-work-all="merged"[\s\S]*?Show all merged/);
+  assert.match(out, /data-profile-work-all="merged"[\s\S]*?Show all live/);
 
   mod.profileProposalsStore.set({
     kind: 'requests',
@@ -244,7 +249,7 @@ test('each view draws its own groups; long ones fold; Your requests ends on Ask 
   out = html();
   assert.match(out, /data-profile-work="requests"/);
   assert.match(out, /Export runs/);
-  assert.match(out, /data-profile-work-ask=""[^>]*>Ask for a change</);
+  assert.match(out, /data-profile-work-ask=""[^>]*>Suggest an improvement</);
   assert.match(read(SCREEN), /onClick=\{\(\) => \{ \(window as any\)\.App\?\.openFeedbackModal\?\.\(\); \}\}/);
 
   mod.profileProposalsStore.set({ kind: 'votes', data: {} });
@@ -288,7 +293,11 @@ test('the router: three addresses no username can have, one screen, the bar name
   const app = read('public/js/app.js');
   assert.match(app, /PROFILE_WORK: \{\s*proposals: 'changes',\s*'your-changes': 'changes',\s*'your-requests': 'requests',\s*'your-votes': 'votes',\s*\},/);
   assert.match(app, /if \(parts\[0\] === 'profile' && App\.PROFILE_WORK\[parts\[1\]\]\) \{[\s\S]{0,600}?App\.navigateToProfileProposals\(App\.PROFILE_WORK\[parts\[1\]\]\);/);
-  assert.match(app, /App\.setHeaderTitle\(App\.PROFILE_WORK_TITLES\[view\]\);/);
+  // The table holds the three titles' message ids, read when the bar is named.
+  assert.match(app, /App\.setHeaderTitle\(PlatformI18n\.t\(App\.PROFILE_WORK_TITLES\[view\]\)\);/);
+  assert.match(app, /PROFILE_WORK_TITLES: \{\s*changes: 'shell:title\.yourChanges', requests: 'shell:title\.yourRequests', votes: 'shell:title\.yourVotes',\s*\},/);
+  assert.deepEqual(['shell:title.yourChanges', 'shell:title.yourRequests', 'shell:title.yourVotes'].map((id) => message(id)),
+    ['Your changes', 'Your requests', 'Your votes']);
   assert.match(app, /window\.UsernodeReact\?\.profileProposals\?\.open\?\.\(view\);/);
   // The dialog's "See your requests" lands on the view.
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const SEE_MINE_ROUTE = '#profile\/your-requests';/);

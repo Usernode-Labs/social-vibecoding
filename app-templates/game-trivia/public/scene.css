@@ -1,0 +1,464 @@
+/* The trivia game's scene: a game show. A dark stage under warm spotlights,
+ * the title in a frame of marquee lights, and four answer tiles in the
+ * colours and shapes a quiz show uses. It is one look of its own, the same
+ * in both of the page's looks, written down in CLAUDE.md "## Design". Its
+ * colours are named once, here. The kit's own parts (the toast) follow the
+ * page's look.
+ */
+
+.show {
+  --stage: #150d3a;
+  --stage-light: #2a176b;
+  --spot: rgba(255, 209, 102, 0.16);
+  --gold: #ffd166;
+  --text: #ffffff;
+  --text-soft: rgba(255, 255, 255, 0.76);
+  --card: rgba(255, 255, 255, 0.07);
+  --card-line: rgba(255, 255, 255, 0.16);
+  --red: #e2364b;
+  --blue: #2f6fdf;
+  --yellow: #f2b705;
+  --green: #1fa35b;
+  --ink: #2b1a00;
+  font-family: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Varela Round', system-ui, sans-serif;
+  color: var(--text);
+  background-color: var(--stage);
+  background-image:
+    radial-gradient(60% 45% at 18% -5%, var(--spot) 0%, rgba(255, 209, 102, 0) 70%),
+    radial-gradient(60% 45% at 82% -5%, var(--spot) 0%, rgba(255, 209, 102, 0) 70%),
+    radial-gradient(120% 70% at 50% 110%, var(--stage-light) 0%, rgba(42, 23, 107, 0) 70%);
+}
+
+/* ── The title screen ─────────────────────────────────────────────────── */
+
+/* The marquee: the title in a frame of lights. */
+.marquee {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  border: 6px dotted var(--gold);
+  border-radius: 2rem;
+  padding: 1.5rem 1.25rem 1.75rem;
+  box-shadow: 0 0 28px rgba(255, 209, 102, 0.3), inset 0 0 28px rgba(255, 209, 102, 0.16);
+}
+.badge {
+  display: flex;
+  height: 4.5rem;
+  width: 4.5rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 35% 30%, #ffe7a3, var(--gold) 45%, #e0a325);
+  color: var(--stage);
+  font-size: 2.75rem;
+  font-weight: 900;
+  box-shadow: 0 6px 0 #a87412, 0 12px 24px rgba(0, 0, 0, 0.35);
+}
+.title-name {
+  font-size: clamp(2.5rem, 11vw, 4.25rem);
+  line-height: 0.98;
+  font-weight: 900;
+  text-align: center;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  text-shadow: 0 4px 0 #6a3fd6, 0 10px 24px rgba(0, 0, 0, 0.4);
+}
+.title-line {
+  text-align: center;
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+
+.card-show {
+  width: 100%;
+  border-radius: 1.25rem;
+  border: 1px solid var(--card-line);
+  background: var(--card);
+  padding: 1.25rem;
+}
+.card-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.card-note {
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+.card-show .skeleton {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* The contestants: a bubble each. */
+.contestants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+.contestant {
+  display: flex;
+  width: 4.5rem;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  text-align: center;
+}
+.contestant-away {
+  opacity: 0.5;
+}
+.face {
+  display: flex;
+  height: 3rem;
+  width: 3rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  font-size: 1.25rem;
+  font-weight: 900;
+  color: #ffffff;
+}
+.face-small {
+  height: 1.75rem;
+  width: 1.75rem;
+  border-width: 2px;
+  font-size: 0.8125rem;
+}
+.face-red { background: var(--red); }
+.face-blue { background: var(--blue); }
+.face-yellow { background: var(--yellow); color: var(--ink); }
+.face-green { background: var(--green); }
+.contestant-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.btn-show,
+.btn-soft {
+  display: inline-flex;
+  min-height: 3rem;
+  min-width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0 1.5rem;
+  font-weight: 900;
+  font-size: 1.0625rem;
+}
+.btn-show {
+  background: var(--gold);
+  color: var(--stage);
+  box-shadow: 0 4px 0 #a87412;
+}
+.btn-show:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #a87412;
+}
+.btn-soft {
+  border: 1px solid var(--card-line);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+.btn-show:disabled,
+.btn-soft:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.btn-show:focus-visible,
+.btn-soft:focus-visible,
+.door:focus-visible,
+.tile:focus-visible,
+.q-field:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 3px;
+}
+
+/* The door to writing questions. */
+.door {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 1rem;
+  border-radius: 1.25rem;
+  border: 2px dashed rgba(255, 209, 102, 0.55);
+  background: rgba(255, 209, 102, 0.08);
+  padding: 1rem 1.25rem;
+  text-align: left;
+}
+.door-mark {
+  display: flex;
+  height: 3rem;
+  width: 3rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.875rem;
+  background: var(--gold);
+  color: var(--stage);
+  font-size: 1.5rem;
+  font-weight: 900;
+}
+
+.ranks {
+  display: flex;
+  flex-direction: column;
+}
+.rank {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.75rem;
+  border-top: 1px solid var(--card-line);
+}
+.rank:first-child {
+  border-top: 0;
+}
+.rank-place {
+  width: 1.5rem;
+  flex-shrink: 0;
+  font-weight: 900;
+  color: var(--gold);
+}
+
+/* ── Writing questions ────────────────────────────────────────────────── */
+
+.q-field {
+  display: block;
+  width: 100%;
+  min-height: 3rem;
+  border-radius: 0.875rem;
+  border: 2px solid var(--card-line);
+  background: rgba(255, 255, 255, 0.95);
+  color: #1c1240;
+  padding: 0.625rem 0.875rem;
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+.q-field::placeholder {
+  color: rgba(28, 18, 64, 0.45);
+  font-weight: 600;
+}
+.q-question {
+  min-height: 5rem;
+  resize: vertical;
+  font-size: 1.25rem;
+}
+.q-right {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(31, 163, 91, 0.35);
+}
+.q-label {
+  font-size: 0.875rem;
+  font-weight: 800;
+  color: var(--text-soft);
+}
+.q-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  border-radius: 1rem;
+  border: 1px solid var(--card-line);
+  background: var(--card);
+  padding: 0.875rem 1rem;
+}
+.q-answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+}
+.q-answer {
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.125rem 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+.q-answer-right {
+  background: var(--green);
+}
+
+/* ── The game: the question, the clock, the tiles ─────────────────────── */
+
+.pill {
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.375rem 0.875rem;
+  font-size: 0.9375rem;
+  font-weight: 800;
+}
+.clock {
+  position: relative;
+  height: 3.25rem;
+  width: 3.25rem;
+  flex-shrink: 0;
+}
+.clock svg {
+  height: 100%;
+  width: 100%;
+  transform: rotate(-90deg);
+}
+.clock-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.125rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+.about {
+  border-radius: 9999px;
+  background: var(--gold);
+  color: var(--stage);
+  padding: 0.25rem 0.875rem;
+  font-size: 0.9375rem;
+  font-weight: 900;
+}
+.question {
+  max-width: 40rem;
+  text-align: center;
+  font-size: clamp(1.5rem, 5.5vw, 2.5rem);
+  line-height: 1.2;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+.ask-note {
+  min-height: 1.5rem;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-soft);
+}
+.gain {
+  font-size: 1.75rem;
+  font-weight: 900;
+  color: var(--gold);
+}
+
+/* An answer tile: its colour and shape, the answer, who picked it. */
+.tile {
+  position: relative;
+  display: flex;
+  min-height: 4rem;
+  width: 100%;
+  align-items: center;
+  gap: 0.875rem;
+  border-radius: 1rem;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-size: 1.125rem;
+  font-weight: 800;
+  color: #ffffff;
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.28);
+  transition: transform 0.08s ease-out, opacity 0.2s ease-out;
+}
+@media (min-width: 640px) {
+  .tile {
+    min-height: 6.5rem;
+    font-size: 1.25rem;
+  }
+}
+.tile:active:not(:disabled) {
+  transform: translateY(3px);
+}
+.tile:disabled {
+  cursor: default;
+}
+.tile-red { background: var(--red); }
+.tile-blue { background: var(--blue); }
+.tile-yellow { background: var(--yellow); color: var(--ink); }
+.tile-green { background: var(--green); }
+.tile-shape {
+  display: flex;
+  height: 2.25rem;
+  width: 2.25rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.625rem;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 1.125rem;
+}
+.tile-text {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.tile-picks {
+  display: flex;
+  flex-shrink: 0;
+}
+.tile-picks .face {
+  margin-left: -0.375rem;
+}
+.tile-chosen {
+  box-shadow: 0 0 0 4px #ffffff, 0 5px 0 rgba(0, 0, 0, 0.28);
+}
+.tile-dim {
+  opacity: 0.45;
+}
+.tile-dim.tile-chosen {
+  opacity: 0.8;
+}
+.tile-right {
+  box-shadow: 0 0 0 4px var(--gold), 0 0 28px rgba(255, 209, 102, 0.55);
+}
+
+/* The scores, live, along the bottom. */
+.score-strip {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.25rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom));
+}
+.score {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.25rem 0.75rem 0.25rem 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.score-gain {
+  color: var(--gold);
+}
+
+.veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(10, 6, 30, 0.6);
+}
+.veil .card-show {
+  background: #22125a;
+}
+.trophy {
+  font-size: 3rem;
+  line-height: 1;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile {
+    transition: none;
+  }
+}

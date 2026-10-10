@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { message } = require('./lib/platform-i18n');
 
 const VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -115,7 +116,8 @@ test('import-pr item renders for a collaborator', () => {
   const end = FRAME_SRC.indexOf(') : null}', start);
   const gated = FRAME_SRC.slice(start, end);
   assert.ok(gated.includes('data-plus="import-pr"'), 'import-pr item present');
-  assert.ok(gated.includes('Import Feature from a PR'), 'label present');
+  assert.ok(gated.includes("title={t('project:menu.importPr.title')}"), 'label present');
+  assert.equal(message('project:menu.importPr.title'), 'Import Feature from a PR');
   // The group heading is NOT the row's to hide. #1490 gated heading and row
   // together, because import was the group's only action once New change
   // started in Improve; #1900 put File an issue back beside it, ungated, so
@@ -126,7 +128,7 @@ test('import-pr item renders for a collaborator', () => {
     'the group heading renders above the gate');
   assert.ok(FRAME_SRC.indexOf('data-plus="issue"') < start,
     'File an issue leads the group, outside the gate');
-  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('groupKey="settings"'),
+  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('data-plus="settings"'),
     'import-pr renders before the settings group');
   // …and the prop is fed from appData.can_collaborate, read in the module.
   assert.match(

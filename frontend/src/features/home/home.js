@@ -23,10 +23,12 @@
 // The `HomeLayout` and `window.HomePanels` reads throughout stay as they are:
 // both are published by sibling modules the island imports BEFORE this one, and
 // every read happens at call time, long after the bundle has evaluated.
+import { t as message, htmlText } from '../../lib/i18n/runtime';
 import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
+import { BUILD_LINE_TILE_CARD, BUILD_LINE_WORDS, buildLineTileClass, buildLineTileOf } from '../first-session/build-line-words.js';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -195,8 +197,7 @@ const Home = {
             ready: true, view: 'grid', rowTemplate: '', items: [],
             resultsHeading: null, emptyQuery: null, create: null,
             notice: {
-              text: "You're offline. Apps you've opened before will appear here once this "
-                + 'device has loaded them.',
+              text: message('home:grid.notice.offline'),
               tone: 'muted',
             },
           });
@@ -211,7 +212,7 @@ const Home = {
         resultsHeading: null, emptyQuery: null, create: null,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
-        notice: { text: "Couldn't load your apps", tone: 'error' },
+        notice: { text: message('home:grid.notice.loadFailed'), tone: 'error' },
       });
     }
   },
@@ -405,36 +406,37 @@ const Home = {
   // ceiling on one lane, not a second lane's own budget.
   POPULAR_LIMIT: 6,
 
-  // The popular half of the rail (#949): what everyone else is actually
-  // using, appended after the curated cards. Derived from the SAME
-  // /api/apps payload the grid already holds — `active_users` rides along
-  // with every row (see the au join in src/routes/apps.js), so this costs
-  // no query.
+  // The popular half of the rail: the public communities the viewer has
+  // NOT joined, appended after the curated cards. Derived from the SAME
+  // /api/apps payload the grid already holds — `member_count`, `audience`
+  // and `is_member` ride along with every row (see the serializer in
+  // src/routes/apps.js), so this costs no query.
   //
-  // The ranking mirrors Browse.sortApps' 'users' order exactly (most users
-  // first, ties keeping the server's own order via a stable sort), so the
-  // widget and the Browse directory can't disagree about what is popular.
-  // (#1383 gave the directory five orders and made 'recommended' its default
-  // — this lane still tracks the users one, which is the question the word
-  // "Popular" asks.) parseInt because the count arrives as a STRING — it is a
-  // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
+  // Popularity is the member count, most first, with `active_users` as the
+  // tie-break; after that the server's own order holds (the sort is stable).
+  // parseInt because a count arrives as a STRING when it comes straight off
+  // a Postgres bigint.
   //
-  // Only currently reviewed working apps with icons qualify. Also exclude:
+  // Only public communities (`audience === 'open'`) qualify, and only
+  // currently reviewed working ones with icons. Also exclude:
   //   * `featured` — the curated half of the same lane already offers those.
   //     The renderer dedupes by slug anyway, since one lane is where a
   //     double-listing would show as the same card twice.
-  //   * isYours — the whole point is apps you don't have yet.
-  // And a floor of one active user: an app nobody uses is not "popular",
-  // and padding the lane out with zero-user rows would misrepresent it.
+  //   * isJoined / isYours — the whole point is communities you haven't
+  //     joined. isYours stays in the exclusion too: a Home shortcut is not
+  //     membership, but adding one already joins you, so offering it again
+  //     is noise either way. `_discoverKeep` still holds a card just added
+  //     with + in place for the visit (#1567).
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
     if (Home._shotDiscoverEmpty()) return [];
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
+    const members = (a) => (parseInt(a && a.member_count, 10) || 0);
     return (apps || [])
-      .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
-        && users(a) >= 1
-        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
-      .sort((x, y) => users(y) - users(x))
+      .filter((a) => a && !a.featured && a.audience === 'open'
+        && Home.isDiscoveryReady(a)
+        && ((!Home.isJoined(a) && !Home.isYours(a)) || Home._discoverKeep.has(a.slug)))
+      .sort((x, y) => (members(y) - members(x)) || (users(y) - users(x)))
       .slice(0, Home.POPULAR_LIMIT);
   },
 
@@ -737,7 +739,7 @@ const Home = {
       }
       return true;
     } catch (err) {
-      PlatformUI.toast('Couldn’t save your home screen layout.');
+      PlatformUI.toast(message('home:layout.saveFailed'));
       await Home._ensureLayoutLoaded({ force: true });
       Home.render();
       return false;
@@ -788,7 +790,7 @@ const Home = {
       if (!matches.length) {
         emptyQuery = query;
       } else {
-        resultsHeading = `${matches.length} result${matches.length === 1 ? '' : 's'}`;
+        resultsHeading = message('home:search.results', { count: matches.length });
         items = matches.map((a) => ({ kind: 'card', placement: null, app: Home.appView(a) }));
       }
     } else {
@@ -874,7 +876,7 @@ const Home = {
       // not in the layout, so it is never dragged, stored or displaced; a drop
       // onto its cell lands in an empty cell and the next paint moves it on.
       // It FLOWS instead (no placement) when there is no cell to follow: an
-      // empty launcher, where it comes after the "No apps added yet" note, and
+      // empty launcher, where it is all the grid shows, and
       // overflow tiles, which have no cell of their own either.
       //
       // Present for EVERY account: `canCreate` decides its treatment, never
@@ -886,9 +888,12 @@ const Home = {
       const flows = !placed.length || items.some((it) => !it.placement);
       create = createHidden ? null : {
         enabled: canCreate,
-        hint: Home.CREATE_DISABLED_HINT,
+        hint: message(Home.CREATE_DISABLED_HINT),
         placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
+      // A private member makes no apps until they are let in off the
+      // waitlist (their Home's waitlist card says so), so no tile at all.
+      if (App.user?.privateMember) create = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -1013,10 +1018,15 @@ const Home = {
     // The status DOT and the active-users badge are gone from the tile face —
     // a launcher icon should read as an app, not a dashboard row. Every
     // non-running status still says so in words.
-    const statusLabel = isRunning ? ''
-      : app.status === 'creating' ? 'Spinning up...'
-      : isAwaiting ? 'Awaiting secrets'
-      : 'Error';
+    // #4053 (owner, 7 Oct 2026): a project whose first version Homeroom bot
+    // is making says where it is in the build line's words, from the time it
+    // is set up until it is live (Home.tileBuildLine), not "Spinning up...".
+    const buildLine = Home.tileBuildLine(app);
+    const statusLabel = buildLine ? message(BUILD_LINE_WORDS[buildLine])
+      : isRunning ? ''
+      : app.status === 'creating' ? message('home:grid.tile.status.creating')
+      : isAwaiting ? message('home:grid.tile.status.awaitingSecrets')
+      : message('home:grid.tile.status.error');
     // Retry is the errored card's primary recovery action, gated to
     // creator-or-full-admin (view-only admins excluded, issue #311).
     const showRetry = isError
@@ -1025,6 +1035,7 @@ const Home = {
     // creator / collaborators / admins, so it is simply absent for outsiders.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
+    const forkDeleted = !!forkName && !app.forked_from.name;
     return {
       slug: app.slug,
       name: String(app.name || ''),
@@ -1033,6 +1044,7 @@ const Home = {
       locked: !!app.locked,
       demo: !!app.demo,
       statusLabel,
+      buildLine,
       isAwaiting,
       isError,
       // Awaiting-secrets cards stay clickable so the viewer can open the app
@@ -1042,11 +1054,23 @@ const Home = {
       failureReason: isError && app.last_failure_reason ? String(app.last_failure_reason) : null,
       showRetry,
       forkName,
+      forkDeleted,
       // The tile's audience mark (communities, stage 4): GET /api/apps
       // derives it per row, and anything it does not say reads as a
       // public community, which draws no mark.
       audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
     };
+  },
+
+  /**
+   * #4053: the build line a tile shows (frontend/src/features/first-session/
+   * build-line-words.js), from the list's `first_version_line` (GET /api/apps:
+   * the line homeroom-bot-dm.js firstVersionState says for this viewer), or
+   * null. An app that failed to set up says that instead: Error and Retry.
+   */
+  tileBuildLine(app) {
+    if (!app || app.status === 'error') return null;
+    return buildLineTileOf(app.first_version_line);
   },
 
   // One placed item -> its view-model entry. The string version spliced
@@ -2120,11 +2144,14 @@ const Home = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ favorited: desired }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
+      // #4600: a pin that JOINED (the server says so: `joined`, after it has
+      // counted "Join a community") is a join, and says so as setMembership
+      // does, so Home's Challenges block and the Getting started card read
+      // again now rather than on their next refresh.
+      if (desired && data && data.joined === true) Home._announceMembership(slug, true);
       if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {
       app.is_favorited = prev.is_favorited;
@@ -2134,7 +2161,7 @@ const Home = {
       // renders, and a stale slug would expand the grid for an app that is
       // not there.
       Home._revealSlug = null;
-      PlatformUI.toast(`Update failed: ${err.message}`);
+      PlatformUI.toast(message('home:myApps.updateFailed', { reason: err.message }));
       await Home.load();
       if (typeof onChange === 'function') onChange();
     }
@@ -2154,12 +2181,12 @@ const Home = {
     const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
     const name = app.name || app.slug;
     const ok = await confirmModal?.show?.({
-      title: `Leave ${name} too?`,
+      title: message('home:leave.afterUnpin.title', { community: name }),
       message: app.view_visibility === 'private'
-        ? 'It’s off your Home screen. Leaving also ends your access until someone invites you back.'
-        : 'It’s off your Home screen. You can stay a member, or leave and stop proposing and voting on its changes.',
-      confirmLabel: 'Leave',
-      cancelLabel: 'Stay a member',
+        ? message('home:leave.afterUnpin.private')
+        : message('home:leave.afterUnpin.public'),
+      confirmLabel: message('home:leave.afterUnpin.confirm'),
+      cancelLabel: message('home:leave.afterUnpin.stay'),
       danger: true,
     });
     if (!ok) return false;
@@ -2180,6 +2207,16 @@ const Home = {
   // are afraid to touch. The creator is never offered it: the server refuses
   // (409) and the confirm would be a dead end.
   //
+  // A WRITE THAT LANDS SAYS SO on `document`, as the tour's done does
+  // (`sv:tour-done`): `sv:membership-changed`, with `{ slug, joined }`. The
+  // flags above keep the grid and Discover's pill in step, but Home's
+  // Challenges block holds a copy of what the server counted, for a minute
+  // (./home-panels.js), and a join changes it: the server counts "Join a
+  // community" before it answers (challengeScorer.scoreOnJoin). The block
+  // listens and reads again, so the challenge ticks on Home as it does on
+  // the Challenges tab, which reads afresh each time it opens. A leave says
+  // so the same way. A refused write says nothing: nothing changed.
+  //
   // Resolves true when the membership is now `desired`, false otherwise.
   async setMembership(slug, desired, onChange, opts = {}) {
     const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
@@ -2194,11 +2231,11 @@ const Home = {
       // silent leave is the one outcome this step exists to prevent.
       const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
       const ok = await confirmModal?.show?.({
-        title: `Leave ${name}?`,
+        title: message('home:leave.confirm.title', { community: name }),
         message: privateApp
-          ? 'You will lose access to it until someone invites you back.'
-          : 'You won’t be able to propose or vote on its changes until you join again.',
-        confirmLabel: 'Leave',
+          ? message('home:leave.confirm.private')
+          : message('home:leave.confirm.public'),
+        confirmLabel: message('home:leave.confirm.button'),
         danger: true,
       });
       if (!ok) return false;
@@ -2221,15 +2258,20 @@ const Home = {
       if (typeof onChange === 'function') onChange();
     }
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
+      // Joining a public community asks a provisional handle for a username
+      // first (username-first-run.js publicRetry).
+      const write = () => fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ joined: desired }),
       });
+      const retry = typeof window !== 'undefined' ? window.UsernameFirstRun?.publicRetry : null;
+      const res = desired && retry ? await retry(write) : await write();
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
-      PlatformUI.toast(desired ? `Joined ${name}` : `Left ${name}`);
+      PlatformUI.toast(desired ? message('home:membership.joined', { community: name }) : message('home:membership.left', { community: name }));
+      Home._announceMembership(slug, desired);
       if (!app) {
         await Home.load();
         if (typeof onChange === 'function') onChange();
@@ -2238,11 +2280,27 @@ const Home = {
     } catch (err) {
       if (app && prev) Object.assign(app, prev);
       Home._revealSlug = null;
-      PlatformUI.toast(`Couldn’t ${desired ? 'join' : 'leave'}: ${err.message}`);
+      PlatformUI.toast(desired
+        ? message('home:membership.joinFailed', { reason: err.message })
+        : message('home:membership.leaveFailed', { reason: err.message }));
       await Home.load();
       if (typeof onChange === 'function') onChange();
       return false;
     }
+  },
+
+  // The event setMembership's landed write dispatches (see there). Never
+  // throws: the write has landed, and a document without CustomEvent (the
+  // server-side prerender, a test's stub) only means nobody is listening.
+  MEMBERSHIP_EVENT: 'sv:membership-changed',
+  _announceMembership(slug, joined) {
+    try {
+      if (typeof document === 'undefined' || typeof document.dispatchEvent !== 'function') return;
+      if (typeof CustomEvent !== 'function') return;
+      document.dispatchEvent(new CustomEvent(Home.MEMBERSHIP_EVENT, {
+        detail: { slug, joined: !!joined },
+      }));
+    } catch (_) { /* a listener's trouble is not the write's */ }
   },
 
   // The slow path for a slug neither app list carries — see toggleAdded.
@@ -2256,15 +2314,14 @@ const Home = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ favorited: desired }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (desired) Home._revealSlug = slug;
-      PlatformUI.toast(desired ? 'Added to Shortcuts' : 'Removed from Shortcuts');
+      PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
+      if (desired && data && data.joined === true) Home._announceMembership(slug, true);
     } catch (err) {
       Home._revealSlug = null;
-      PlatformUI.toast(`Update failed: ${err.message}`);
+      PlatformUI.toast(message('home:myApps.updateFailed', { reason: err.message }));
     }
     await Home.load();
     if (typeof onChange === 'function') onChange();
@@ -2316,7 +2373,7 @@ const Home = {
   // message. Mirrors the status enum in main-drift-poller.js.
   reportCheckResult(data) {
     if (!data || !data.status) {
-      PlatformUI.toast('Check finished (no details returned).');
+      PlatformUI.toast(message('home:check.noDetails'));
       return;
     }
     switch (data.status) {
@@ -2330,38 +2387,46 @@ const Home = {
         // but most operators reach for the home-card ⟳ first.
         if (data.slug) {
           PlatformUI.confirm({
-            title: 'Latest commit is already running',
-            message: 'Force a rebuild anyway? (Useful if env vars or platform code changed.)',
-            confirmLabel: 'Rebuild',
+            title: message('home:check.noDrift.title'),
+            message: message('home:check.noDrift.message'),
+            confirmLabel: message('home:check.noDrift.confirm'),
           }).then((ok) => {
             if (!ok) return;
             fetch(`/api/apps/${data.slug}/redeploy`, { method: 'POST' })
               .then((r) => r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j.error || `HTTP ${r.status}`))))
-              .then(() => PlatformUI.toast('Rebuild started. Watch the version pill.'))
-              .catch((err) => PlatformUI.toast(`Rebuild kickoff failed: ${err.message}`));
+              .then(() => PlatformUI.toast(message('home:check.rebuild.started')))
+              .catch((err) => PlatformUI.toast(message('home:check.rebuild.failed', { reason: err.message })));
           });
         }
         return;
       case 'redeployed':
-        PlatformUI.toast(`Redeployed to ${(data.to || '').slice(0, 7)}.`);
+        PlatformUI.toast(message('home:check.redeployed', { sha: (data.to || '').slice(0, 7) }));
         return;
       case 'in_flight':
-        PlatformUI.toast('A redeploy is already in progress for this app.');
+        PlatformUI.toast(message('home:check.inFlight'));
         return;
       case 'first_seen':
-        PlatformUI.toast(`Recorded current SHA (${(data.sha || '').slice(0, 7)}). Future drift will trigger a redeploy.`);
+        PlatformUI.toast(message('home:check.firstSeen', { sha: (data.sha || '').slice(0, 7) }));
         return;
       case 'fetch_failed':
-        PlatformUI.toast(`Couldn't reach GitHub: ${data.error || 'unknown error'}`);
+        PlatformUI.toast(data.error
+          ? message('home:check.fetchFailed', { reason: data.error })
+          : message('home:check.fetchFailedUnknown'));
         return;
       case 'invalid_repo':
-        PlatformUI.toast('This app has an invalid repo URL.');
+        PlatformUI.toast(message('home:check.invalidRepo'));
         return;
       case 'rebuild_failed':
-        PlatformUI.toast(`Drift detected (${(data.from || '').slice(0, 7)} → ${(data.attempted || '').slice(0, 7)}) but redeploy failed: ${data.error || 'unknown error'}`);
+        PlatformUI.toast(data.error
+          ? message('home:check.rebuildFailed', {
+            from: (data.from || '').slice(0, 7), to: (data.attempted || '').slice(0, 7), reason: data.error,
+          })
+          : message('home:check.rebuildFailedUnknown', {
+            from: (data.from || '').slice(0, 7), to: (data.attempted || '').slice(0, 7),
+          }));
         return;
       default:
-        PlatformUI.toast(`Check finished: ${data.status}`);
+        PlatformUI.toast(message('home:check.finished', { status: data.status }));
     }
   },
 
@@ -2411,10 +2476,12 @@ const Home = {
     // Every non-running status still says so in words on the tile — see
     // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
     // secrets" and "Error" are unaffected.
-    const statusLabel = app.status === 'running' ? ''
-      : app.status === 'creating' ? 'Spinning up...'
-      : isAwaiting ? 'Awaiting secrets'
-      : 'Error';
+    const buildLine = Home.tileBuildLine(app);
+    const statusLabel = buildLine ? htmlText(BUILD_LINE_WORDS[buildLine])
+      : app.status === 'running' ? ''
+      : app.status === 'creating' ? htmlText('home:grid.tile.status.creating')
+      : isAwaiting ? htmlText('home:grid.tile.status.awaitingSecrets')
+      : htmlText('home:grid.tile.status.error');
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
     // The active-users badge is gone from the tile face too. The count is
@@ -2450,8 +2517,12 @@ const Home = {
     const failureTip = isError && app.last_failure_reason
       ? ` title="${escapeHtml(String(app.last_failure_reason)).replace(/"/g, '&quot;')}"`
       : '';
+    // #4053: a first version's build line is quiet (blue when it asks), not
+    // the status colours below.
     const warningHtml = statusLabel
-      ? `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`
+      ? (buildLine
+        ? `<p class="${buildLineTileClass(buildLine)}" data-build-line="${buildLine}">${statusLabel}</p>`
+        : `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`)
       : '';
 
     const isLocked = !!app.locked;
@@ -2466,9 +2537,11 @@ const Home = {
           ? 'bg-emerald-500 border-emerald-500 text-white'
           : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
-        isAdded ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'
+        isAdded ? htmlText('home:discover.card.addedTip') : htmlText('home:discover.card.addTip')
       }" aria-label="${
-        isAdded ? `Remove ${escapeHtml(app.name)} from Shortcuts` : `Add ${escapeHtml(app.name)} to Shortcuts`
+        isAdded
+          ? htmlText('home:discover.card.removeNamed', { app: String(app.name || '') })
+          : htmlText('home:discover.card.addNamed', { app: String(app.name || '') })
       }" aria-pressed="${isAdded}">${
         isAdded
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
@@ -2477,7 +2550,7 @@ const Home = {
     // Discovery keeps its explicit menu beside the add badge. Launcher
     // tiles use long press / right click instead (#1616).
     const hamburgerHtml = (corner) => `
-      <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+      <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="${htmlText('home:grid.tile.actions')}" aria-label="${htmlText('home:grid.tile.actions')}" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
     // Discovery grids show BOTH: the add/remove badge as the primary
     // affordance, plus the same "…" menu the home cards have, so an app
     // you haven't added still offers Fork / build log / admin actions
@@ -2493,18 +2566,19 @@ const Home = {
     // not a corner button the icon covered on phones. Same classes as
     // app-grid.tsx's RETRY_BTN; a Retry tile greys only its icon.
     const retryHtml = showRetry
-      ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="Retry ${escapeHtml(String(app.name || '')).replace(/"/g, '&quot;')}">Retry</button>`
+      ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="${htmlText('home:grid.tile.retryNamed', { app: String(app.name || '') })}">${htmlText('core:common.retry')}</button>`
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
-    // corner (opposite the hamburger badge) marking this tile as a fork.
-    // The full "Forked from <name>" label lives in the app-view header;
+    // corner (opposite the hamburger badge) marking this tile as a remix.
+    // The full "Remixed from <name>" label lives on the app's own page;
     // here it's glyph-only with the resolved live name (or "<deleted>")
     // in the tooltip. `forked_from` is null for non-forks.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
+    const forkDeleted = !!forkName && !app.forked_from.name;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Forked from ${escapeHtml(forkName)}" aria-label="Forked from ${escapeHtml(forkName)}">⑂</span>`
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}" aria-label="${(forkDeleted ? htmlText('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : htmlText('home:grid.tile.remixedFrom', { app: forkName }))}">⑂</span>`
       : '';
 
     const icon = Home.iconTileFor(app);
@@ -2537,7 +2611,7 @@ const Home = {
     // would 404. They keep the long-press menu instead.
     const demoAttr = app.demo ? ' data-demo="true"' : '';
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}${buildLine ? ` ${BUILD_LINE_TILE_CARD}` : ''}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
         <div class="relative w-14 h-14 shrink-0${showRetry ? ' grayscale-[0.75]' : ''}">
           <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}">
             ${icon.html}
@@ -2658,7 +2732,7 @@ const Home = {
     try {
       await window.usernode.removeHomeScreenShortcut(id);
     } catch (err) {
-      PlatformUI.toast(`Remove from widget failed: ${(err && err.message) || err}`);
+      PlatformUI.toast(message('home:widget.removeFailed', { reason: String((err && err.message) || err) }));
       await Home._refreshWidgetItems();
       Home.render();
     }
@@ -2674,7 +2748,7 @@ const Home = {
     try {
       await window.usernode.reorderHomeScreenShortcuts(ids);
     } catch (err) {
-      PlatformUI.toast(`Widget reorder failed: ${(err && err.message) || err}`);
+      PlatformUI.toast(message('home:widget.reorderFailed', { reason: String((err && err.message) || err) }));
       await Home._refreshWidgetItems();
       Home.render();
     }
@@ -3355,17 +3429,19 @@ const Home = {
   },
   // Last-pass telemetry, for the Settings → "Widget icons" row. Kept
   // here rather than derived there: by the time someone opens Settings
-  // the interesting pass has long finished.
+  // the interesting pass has long finished. The outcome is recorded as
+  // `{ kind, sent, refused }`, not as text: Settings says it, together with
+  // the time, as one whole message (settings:usernode.widgetIcons.lastCheck.*).
   _lastHealAt: 0,
   _lastHealOutcome: null,
   async _healWidgetIconsPass() {
     if (Home._shortcutSupport?.mechanism !== 'widget') {
-      Home._lastHealOutcome = 'skipped, not the widget mechanism';
+      Home._lastHealOutcome = { kind: 'skippedMechanism' };
       return;
     }
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') {
-      Home._lastHealOutcome = 'skipped, no shortcut bridge';
+      Home._lastHealOutcome = { kind: 'skippedBridge' };
       return;
     }
     // Resolve the dual-icon capability BEFORE building any marker or
@@ -3436,8 +3512,10 @@ const Home = {
       } catch (_) { /* private mode — retried next load, sends deduped by `tried` */ }
     }
     Home._lastHealOutcome = (sent || failed)
-      ? `sent ${sent}${failed ? `, ${failed} refused` : ''}`
-      : 'nothing to send';
+      ? (failed
+        ? { kind: 'sentRefused', sent, refused: failed }
+        : { kind: 'sent', sent })
+      : { kind: 'nothing' };
     if (healed) {
       try {
         const resp = await bridge.getHomeScreenShortcuts();
@@ -3564,8 +3642,8 @@ const Home = {
     if (!app.demo && app.slug) {
       items.push({
         key: 'app-details',
-        label: 'App details',
-        title: 'Version, status and everything you can do with this app',
+        label: message('home:menu.details.label'),
+        title: message('home:menu.details.tip'),
         run: () => {
           window.Browse?.noteDetailOrigin?.('home');
           location.hash = `#apps/${encodeURIComponent(app.slug)}`;
@@ -3584,8 +3662,8 @@ const Home = {
     if (app.repo_url) {
       items.push({
         key: 'github',
-        label: 'View on GitHub',
-        title: 'Open this app’s repository',
+        label: message('home:menu.github.label'),
+        title: message('home:menu.github.tip'),
         // `noopener` explicitly: the target document must not get a handle on
         // this window, and repo_url is app-supplied.
         run: () => window.open(app.repo_url, '_blank', 'noopener'),
@@ -3594,16 +3672,16 @@ const Home = {
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: app.your_apps_hidden ? 'Add to Shortcuts' : 'Remove from Shortcuts',
+        label: app.your_apps_hidden ? message('home:menu.myApps.add') : message('home:menu.myApps.remove'),
         title: app.your_apps_hidden
-          ? 'Show this app in Shortcuts again. You keep your builder access either way.'
-          : 'Hide this app from Shortcuts. It stays live and you keep your builder access.',
+          ? message('home:menu.myApps.showAgainTip')
+          : message('home:menu.myApps.hideTip'),
         run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? 'Remove from Shortcuts' : 'Add to Shortcuts',
+        label: app.is_favorited ? message('home:menu.myApps.remove') : message('home:menu.myApps.add'),
         run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }
@@ -3620,8 +3698,8 @@ const Home = {
     // beside it.
     items.push({
       key: 'notifications',
-      label: 'Notifications',
-      title: 'Choose what this app can notify you about, here and on your phone.',
+      label: message('home:menu.notifications.label'),
+      title: message('home:menu.notifications.tip'),
       run: () => window.UsernodeReact?.dialogs?.appNotifications?.open({ slug: app.slug }),
     });
     // Native homescreen shortcut — only when the page runs inside a
@@ -3647,13 +3725,13 @@ const Home = {
         // by default) management section — reorder or remove from there.
         items.push({
           key: 'add-to-homescreen',
-          label: 'Edit in Homeroom widget',
+          label: message('home:menu.widget.edit'),
           run: () => Home._revealWidgetSection(),
         });
       } else {
         items.push({
           key: 'add-to-homescreen',
-          label: isWidget ? 'Add to Homeroom widget' : 'Add to phone home screen',
+          label: isWidget ? message('home:menu.widget.add') : message('home:menu.phoneHome.add'),
           run: () => Home._menuAddShortcut(app),
         });
       }
@@ -3676,8 +3754,8 @@ const Home = {
     if (installHost !== 'none') {
       items.push({
         key: 'install',
-        label: 'Add to Home Screen',
-        title: 'Put this app on your phone’s home screen with its own icon',
+        label: message('home:menu.install.label'),
+        title: message('home:menu.install.tip'),
         run: () => {
           const href = `/app/${encodeURIComponent(app.slug)}/install`;
           if (installHost === 'standalone') {
@@ -3700,7 +3778,7 @@ const Home = {
       });
     }
     if (isError && (user.canAdminWrite || user.id === app.created_by)) {
-      items.push({ key: 'retry', label: 'Retry', run: () => Home._menuRetry(app) });
+      items.push({ key: 'retry', label: message('home:menu.retry'), run: () => Home._menuRetry(app) });
     }
     // #416: "View build log" for involved users — on errored apps, and
     // on running apps whose last recorded failure post-dates the last
@@ -3714,8 +3792,8 @@ const Home = {
     if (canSeeBuildLog && (isError || rebuildFailed)) {
       items.push({
         key: 'build-log',
-        label: 'View build log',
-        title: app.last_failure_reason || 'See why the last build/deploy failed',
+        label: message('home:menu.buildLog.label'),
+        title: app.last_failure_reason || message('home:menu.buildLog.tip'),
         run: () => window.BuildLog && BuildLog.open(app.slug),
       });
     }
@@ -3725,31 +3803,34 @@ const Home = {
       // menu vanishing with zero feedback.
       items.push({
         key: 'check-updates',
-        label: 'Check for updates',
+        label: message('home:menu.checkUpdates.label'),
         keepOpen: true,
         run: (itemEl) => Home._menuCheckUpdates(app, itemEl),
       });
     }
-    // Fork: available to anyone who can see the app (every card in this
-    // list is already visibility-filtered server-side, so presence here
-    // implies view access). Hidden for the platform self-app, which has
-    // no per-app repo/DB/container to clone. Reuses the same fork dialog
-    // + POST /api/apps/:slug/fork flow as the app-view header action.
+    // Fork, which people see as "Remix": available to anyone who can see
+    // the app (every card in this list is already visibility-filtered
+    // server-side, so presence here implies view access). Hidden for the
+    // platform self-app, which has no per-app repo/DB/container to copy.
+    // Reuses the same dialog + POST /api/apps/:slug/fork flow as the
+    // Workshop "+" menu. `sub` is the line a row with room for one shows
+    // under the label (About, Discover); the popover shows it as a tooltip.
     if (!app.self_hosted && typeof AppView !== 'undefined' && AppView.promptFork) {
       items.push({
         key: 'fork',
-        label: 'Fork this app',
-        title: 'Create your own independent copy of this app',
+        label: message('home:menu.remix.label'),
+        sub: message('home:menu.remix.sub'),
+        title: message('home:menu.remix.sub'),
         run: () => AppView.promptFork({ slug: app.slug, name: app.name }),
       });
     }
     if (user.canAdminWrite) {
       items.push({
         key: 'lock',
-        label: app.locked ? 'Unlock app' : 'Lock app',
+        label: app.locked ? message('home:menu.lock.unlock') : message('home:menu.lock.lock'),
         title: app.locked
-          ? 'App locked: merges also need an admin yes vote. Click to unlock.'
-          : 'Lock this app. An admin yes vote will also be required to merge changes.',
+          ? message('home:menu.lock.unlockTip')
+          : message('home:menu.lock.lockTip'),
         run: () => Home._menuToggleLock(app),
       });
     }
@@ -3760,10 +3841,10 @@ const Home = {
     // (delete_block 'shared' is only ever handed to them) keeps the entry,
     // because the dialog is also where the deletion refusal is explained.
     if (user.canAdminWrite || app.can_manage || app.can_delete || app.delete_block === 'shared') {
-      items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
+      items.push({ key: 'app-settings', label: message('home:menu.settings'), run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
     if (App.user && app.slug && app.can_report === true) items.push({
-      key: 'report', label: 'Report app',
+      key: 'report', label: message('home:menu.report'),
       run: () => window.UsernodeReact?.dialogs?.report?.open({ targetType: 'app', target: app.slug, label: app.name || app.slug }),
     });
     return items;
@@ -3801,7 +3882,7 @@ const Home = {
       <div class="card-menu-title">${escapeHtml(app.name || app.slug)}</div>
       <div class="card-menu-slug">${escapeHtml(app.slug)}</div>
       <div class="card-menu-version">${pillHtml}</div>
-      ${updatedRel ? `<div class="card-menu-updated">Updated ${escapeHtml(updatedRel)}</div>` : ''}
+      ${updatedRel ? `<div class="card-menu-updated">${htmlText('home:menu.updated', { when: updatedRel })}</div>` : ''}
       ${pillsHtml ? `<div class="card-menu-pills">${pillsHtml}</div>` : ''}`;
   },
 
@@ -4307,7 +4388,7 @@ const Home = {
       return true;
     } catch (err) {
       const msg = String((err && err.message) || err);
-      if (!/denied/i.test(msg)) PlatformUI.toast(`Add to home screen failed: ${msg}`);
+      if (!/denied/i.test(msg)) PlatformUI.toast(message('home:menu.phoneHome.addFailed', { reason: msg }));
       return false;
     }
   },
@@ -4337,18 +4418,18 @@ const Home = {
   async _menuCheckUpdates(app, itemEl) {
     if (itemEl) {
       itemEl.disabled = true;
-      itemEl.textContent = 'Checking…';
+      itemEl.textContent = message('home:menu.checkUpdates.checking');
     }
     try {
       const res = await fetch(`/api/apps/${app.slug}/check-updates`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        PlatformUI.toast(data.error || `Check failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || message('home:menu.checkUpdates.failedHttp', { status: res.status }));
       } else {
         Home.reportCheckResult(data);
       }
     } catch (err) {
-      PlatformUI.toast(`Check failed: ${err.message}`);
+      PlatformUI.toast(message('home:menu.checkUpdates.failed', { reason: err.message }));
     } finally {
       Home.closeCardMenu();
       await Home.load();
@@ -4365,12 +4446,12 @@ const Home = {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Lock toggle failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || message('home:menu.lock.failedHttp', { status: res.status }));
         return;
       }
       Home.updateAppCardLock(app.slug, nextLocked);
     } catch (err) {
-      PlatformUI.toast(`Lock toggle failed: ${err.message}`);
+      PlatformUI.toast(message('home:menu.lock.failed', { reason: err.message }));
     }
   },
 
@@ -5099,7 +5180,7 @@ const Home = {
   // is on every home screen regardless of quota, so this string is what the
   // locked tile announces in its tooltip and label. The dialog it opens
   // carries the exact used-of-limit numbers.
-  CREATE_DISABLED_HINT: 'View your app allowance or request more slots.',
+  CREATE_DISABLED_HINT: 'home:create.disabledHint',
 
   // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,
   // each button cloneNode'd and swapped for a fresh copy so a re-paint could
@@ -5168,6 +5249,14 @@ const Home = {
 // Node, where there is no window.
 if (typeof window !== 'undefined') window.Home = Home;
 
+// The grid's view model holds text (a tile's status, the results heading),
+// so a language change rebuilds it from the apps already loaded.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (Home._apps.length) Home.render();
+  });
+}
+
 // escapeHtml and formatRelativeTime used to be AMBIENT here: as a classic
 // script's top-level function declarations they were `window.escapeHtml` /
 // `window.formatRelativeTime`, and home.js was the LAST tag to declare either,
@@ -5208,12 +5297,12 @@ function formatRelativeTime(input) {
   const t = new Date(input);
   if (Number.isNaN(t.getTime())) return null;
   const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
-  if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
-  return `${Math.floor(seconds / (86400 * 365))}y ago`;
+  if (seconds < 60) return message('home:time.justNow');
+  if (seconds < 3600) return message('home:time.minutesAgo', { count: Math.floor(seconds / 60) });
+  if (seconds < 86400) return message('home:time.hoursAgo', { count: Math.floor(seconds / 3600) });
+  if (seconds < 86400 * 30) return message('home:time.daysAgo', { count: Math.floor(seconds / 86400) });
+  if (seconds < 86400 * 365) return message('home:time.monthsAgo', { count: Math.floor(seconds / (86400 * 30)) });
+  return message('home:time.yearsAgo', { count: Math.floor(seconds / (86400 * 365)) });
 }
 
 // Back online: refill a grid that could only show the offline note. Guarded

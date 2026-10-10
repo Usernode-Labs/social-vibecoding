@@ -62,12 +62,14 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { LockIcon, UserGroupIcon } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { listText } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
+import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
-import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { TileSkeleton } from '../apps/tile-skeleton';
+import { BUILD_LINE_TILE_CARD, buildLineTileClass } from '../first-session/build-line-words.js';
 import { CreateTile } from './create-tile';
 import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
@@ -161,6 +163,7 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
 function AppCardTile({ app, style, yours, live }: {
   app: HomeAppView; style?: string; yours: boolean; live: boolean;
 }) {
+  const t = useMessages('home');
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
     node.current = el;
@@ -200,15 +203,15 @@ function AppCardTile({ app, style, yours, live }: {
       className={`app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
         app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer')
           : app.showRetry ? 'cursor-not-allowed' : 'cursor-not-allowed grayscale-[0.75]'
-      }`}
+      }${app.buildLine ? ` ${BUILD_LINE_TILE_CARD}` : ''}`}
       data-slug={app.slug}
       data-status={app.status}
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={live ? `${app.name}, ${LIVE_APP_LABEL}` : app.name}
+      aria-label={live ? listText([app.name, liveAppLabel()]) : app.name}
       aria-haspopup="menu"
-      title={`${app.name}. Hold or right-click for app actions`}
+      title={t('home:grid.tile.tip', { app: app.name })}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
       {...(yours ? { 'data-yours': 'true' } : null)}
       {...(live ? { 'data-live': 'true' } : null)}
@@ -286,8 +289,8 @@ function AppCardTile({ app, style, yours, live }: {
         {app.forkName ? (
           <span
             className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
-            title={`Forked from ${app.forkName}`}
-            aria-label={`Forked from ${app.forkName}`}
+            title={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
+            aria-label={app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName })}
           >
             ⑂
           </span>
@@ -305,8 +308,8 @@ function AppCardTile({ app, style, yours, live }: {
           <span
             className="app-card-stage absolute -bottom-1 -right-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
             data-stage={app.audience}
-            title={app.audience === 'invited' ? 'Private community' : 'Just you'}
-            aria-label={app.audience === 'invited' ? 'Private community' : 'Just you'}
+            title={app.audience === 'invited' ? t('home:grid.tile.audience.invited') : t('home:grid.tile.audience.solo')}
+            aria-label={app.audience === 'invited' ? t('home:grid.tile.audience.invited') : t('home:grid.tile.audience.solo')}
           >
             {app.audience === 'invited'
               ? <UserGroupIcon className="w-3 h-3" aria-hidden="true" />
@@ -328,12 +331,17 @@ function AppCardTile({ app, style, yours, live }: {
               type="button"
               className={RETRY_BTN}
               data-slug={app.slug}
-              aria-label={`Retry ${app.name}`}
+              aria-label={t('home:grid.tile.retryNamed', { app: app.name })}
               onClick={(e) => { e.stopPropagation(); controller()?._onRetry?.(app.slug, e.currentTarget); }}
             >
-              Retry
+              {t('core:common.retry')}
             </button>
           </div>
+        ) : app.buildLine ? (
+          // #4053: the first version's build line, in the tile's words.
+          <p className={buildLineTileClass(app.buildLine)} data-build-line={app.buildLine}>
+            {app.statusLabel}
+          </p>
         ) : app.statusLabel ? (
           <p
             className={`app-card-status ${app.isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}`}
@@ -348,42 +356,16 @@ function AppCardTile({ app, style, yours, live }: {
 }
 
 /**
- * "Your apps" with nothing in it (#2564).
- *
- * The launcher had no empty state: a finished load with no apps rendered an
- * empty `#app-list`, so the area under the "Your apps" label was blank and a
- * first sign-in read as a screen that had failed to fill rather than one with
- * nothing in it yet. This is the one line it says instead, and it is the SAME
- * sentence the app-context sheet's switcher strip already used for the same
- * empty set — see ../apps/no-apps-yet.ts for why that is a shared constant.
- *
- * It is NOT the other two empty answers this grid already had, and it must not
- * replace either: a failed load is `AppsLoadError` with a Retry, and a search
- * that matched nothing names the query. Both mean "something went wrong or is
- * being hidden"; this one means "there is genuinely nothing here yet", which is
- * why it points at Discover rather than offering an action of its own.
- *
- * `col-span-full` because the item has no placement of its own — every tile on
- * this canvas is placed at an explicit cell and this note is not a tile, so it
- * auto-places into the first row and spans the four columns. `flex
- * items-center` centres it in that row: a grid item stretches to the row box,
- * and in the grid view app.css sizes every row at a fixed `--home-cell-h`, so
- * padding alone would sit the line hard against the top of a 116px row. The
- * `py-8` is for the case where no auto-row height applies and the item is only
- * as tall as its content.
+ * "Your apps" with nothing in it says nothing (the owner, 6 October 2026): a
+ * new account's Home is the New project tile alone, which says what to do,
+ * and the "Look around first" tour points at it. It used to carry the line
+ * "No apps added yet. Make one with New project, or find one in the Discover
+ * section." (#2564), which told a new account what the tile beside it
+ * already showed. A failed load and a search that matched nothing keep their
+ * own lines.
  */
-export function AppsEmptyNote() {
-  return (
-    <div
-      data-home-apps-empty=""
-      className="col-span-full flex items-center justify-center px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400"
-    >
-      {NO_APPS_YET}
-    </div>
-  );
-}
-
 export function AppGrid() {
+  const t = useMessages('home');
   const state = useStoreState(gridStore);
   const live = useLiveAppSlugs();
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -407,21 +389,6 @@ export function AppGrid() {
   // recognizers fighting for the same gesture.
   const canDrag = state.view === 'grid' && state.ready;
 
-  // A FINISHED load of the launcher canvas that holds nothing.
-  //
-  // `state.ready` is the whole hydration contract here: the store's initial
-  // value is `ready: false` (grid-store.ts), the SSG pass renders that value,
-  // and so this branch is absent from the prerendered document — which is what
-  // it has to be, since the note is data-dependent and a first client render
-  // that disagreed with the prerender would `console.error` and fail the
-  // proposal checks. The other three conditions keep it out of the states that
-  // already answer for themselves: a load notice (offline, or the error card),
-  // a search that matched nothing, and the search view generally.
-  const empty = state.ready
-    && state.view === 'grid'
-    && !state.notice
-    && state.emptyQuery === null
-    && state.items.length === 0;
   useEffect(() => {
     const el = listRef.current;
     const N = controller();
@@ -471,9 +438,11 @@ export function AppGrid() {
       ) : null}
       {state.emptyQuery !== null ? (
         <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-          {`No apps match “${state.emptyQuery}”. Clear the search and try `}
-          <span className="text-violet-700 dark:text-violet-400">Discover</span>
-          {' below.'}
+          <RichMessage
+            id="home:grid.noMatches"
+            values={{ query: state.emptyQuery }}
+            components={[<span className="text-violet-700 dark:text-violet-400" />]}
+          />
         </div>
       ) : null}
       {state.resultsHeading ? (
@@ -482,11 +451,10 @@ export function AppGrid() {
       {!state.ready && !state.notice ? (
         <TileSkeleton
           n={SKELETON_TILES}
-          label="Loading your apps"
+          label={t('home:grid.loading')}
           className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2"
         />
       ) : null}
-      {empty ? <AppsEmptyNote /> : null}
       {state.items.map((item) => (
         <AppCardTile
           key={`card:${item.app.slug}`}

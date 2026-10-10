@@ -1,15 +1,18 @@
 'use strict';
 
 // Browser contract for the session-pinned Claude/Codex selector. The dialog
-// itself is DOM-heavy, so these tests exercise the two consequential seams:
-// createSession must send the user's explicit choice, and an existing-session
-// change must go through reset-agent-context and update the pinned row.
+// itself is DOM-heavy, so these tests exercise the consequential seam: an
+// existing-session change must go through reset-agent-context and update the
+// pinned row. (The other seam, `createSession` sending the explicit choice,
+// went with the dev chat's classic session creation in #4268: nothing could
+// reach it, and POST /api/apps/:slug/sessions refuses a browser.)
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
@@ -20,7 +23,6 @@ const { SW_VERSION } = require('../public/sw.js');
 function makeHarness() {
   const requests = [];
   const toasts = [];
-  const improveCreates = [];
   let responder = async () => ({ ok: false, status: 500, json: async () => ({}) });
   const document = {
     getElementById: () => null,
@@ -52,9 +54,6 @@ function makeHarness() {
     },
     escapeHtml: (value) => String(value ?? ''),
     PlatformUI: { toast: (message) => toasts.push(message) },
-    Improve: {
-      onSessionCreated: (session, appSlug) => improveCreates.push({ session, appSlug }),
-    },
     App: {
       currentTab: 'dev',
       currentSubTab: 'sessions',
@@ -65,13 +64,13 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   return {
     DevChat: sandbox.__DevChat,
     requests,
     toasts,
-    improveCreates,
     app: sandbox.App,
     respondWith(fn) { responder = fn; },
   };
@@ -144,7 +143,8 @@ test('an OpenRouter task opens on favorites without replacing an uncommon curren
   assert.equal(h.DevChat._openRouterFavoritesOnlyByDefault(models, 'missing'), false);
   assert.match(SRC, /id="dc-agent-choice-model-search"/);
   assert.match(SRC, /id="dc-agent-choice-favorites-only"/);
-  assert.match(SRC, /Platform recommendations start in Favorites/);
+  assert.match(SRC, /PlatformI18n\.htmlText\('devchat:agentChoice\.catalogNote'\)/);
+  assert.match(message('devchat:agentChoice.catalogNote'), /Platform recommendations start in Favorites/);
 });
 
 test('the simplified proposal picker ships through a fresh shell cache', () => {
@@ -364,98 +364,6 @@ test('a concurrent first-use claim accepts the valid key created by the other re
   assert.equal(prefs.openrouterCredentialSource, 'usernode_managed');
   assert.equal(statusReads, 2);
   assert.equal(h.app.user.openrouterAvailable, true);
-});
-
-test('new session creation sends the explicit Claude choice', async () => {
-  const h = makeHarness();
-  h.respondWith(async () => ({
-    ok: true,
-    status: 201,
-    json: async () => ({ session: { id: 41, agent_backend: 'claude_code' } }),
-  }));
-
-  const session = await h.DevChat.createSession('demo', undefined, {
-    backend: 'claude_code', model: null, reasoningEffort: null,
-  });
-
-  assert.equal(session.id, 41);
-  assert.equal(h.requests.length, 1);
-  assert.equal(h.requests[0].url, '/api/apps/demo/sessions');
-  assert.deepEqual(JSON.parse(h.requests[0].options.body), {
-    backend: 'claude_code', model: null, reasoningEffort: null,
-  });
-});
-
-test('new session creation sends the exact Codex model and effort with the issue link', async () => {
-  const h = makeHarness();
-  h.respondWith(async () => ({
-    ok: true,
-    status: 201,
-    json: async () => ({ session: { id: 42, agent_backend: 'codex_openrouter' } }),
-  }));
-
-  await h.DevChat.createSession('demo', 287, {
-    backend: 'codex_openrouter',
-    model: 'openai/gpt-5.3-codex',
-    reasoningEffort: 'high',
-  });
-
-  assert.deepEqual(JSON.parse(h.requests[0].options.body), {
-    issueNumber: 287,
-    backend: 'codex_openrouter',
-    model: 'openai/gpt-5.3-codex',
-    reasoningEffort: 'high',
-  });
-});
-
-test('creation asks nothing and sends no backend key', async () => {
-  // Creating a session used to open the agent chooser first, so a modal
-  // stood between "Propose a change" and a chat — and cancelling it left
-  // nothing behind. It asks nothing now: the session is created with the
-  // server's own default and the venue line above the composer says which
-  // one that was.
-  //
-  // The three keys must be ABSENT rather than null. A `backend: null` is
-  // still an explicit choice in the request body, and the server would
-  // have to decide what a null choice means; omitting them leaves the
-  // default exactly where it already lives.
-  const h = makeHarness();
-  let chooserOpened = false;
-  h.DevChat._chooseCodingAgent = async () => { chooserOpened = true; return null; };
-  h.respondWith(async () => ({
-    ok: true,
-    status: 201,
-    json: async () => ({ session: { id: 43, agent_backend: 'claude_code' } }),
-  }));
-
-  const session = await h.DevChat.createSession('demo');
-
-  assert.equal(chooserOpened, false, 'no chooser is opened at creation time');
-  assert.equal(session.id, 43);
-  assert.equal(h.requests.length, 1);
-  assert.deepEqual(JSON.parse(h.requests[0].options.body), {});
-});
-
-test('successful creation publishes the new row to Improve immediately', async () => {
-  const h = makeHarness();
-  const created = {
-    id: 44,
-    status: 'active',
-    created_at: '2026-09-04T10:00:00.000Z',
-  };
-  h.respondWith(async () => ({
-    ok: true,
-    status: 201,
-    json: async () => ({ session: created }),
-  }));
-
-  await h.DevChat.createSession('demo');
-
-  assert.equal(h.improveCreates.length, 1);
-  assert.equal(h.improveCreates[0].session, created,
-    'the successful server row, not a guessed client copy, is published');
-  assert.equal(h.improveCreates[0].appSlug, 'demo',
-    'the app slug fills the field RETURNING * does not carry');
 });
 
 test('switching an idle session uses reset-agent-context and updates its pinned backend', async () => {

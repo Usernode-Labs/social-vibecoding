@@ -5,7 +5,8 @@
 // before the model process starts. The runner unsets the raw tokens
 // immediately afterward; MCP receives only the cookie/local-storage state in
 // a private file and the model has no filesystem or shell tool in shots
-// mode.
+// mode. The guest browser is never signed in: its state is empty, so it
+// sees what a visitor who is not signed in sees.
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -13,8 +14,11 @@ const { SessionBootstrapError, bootstrapInternalSession } = require('./session-b
 const { loadTrustedHostedAppOrigins } = require('./shots-hosted-origins');
 
 const reportedPersona = (persona) => (
-  persona === 'member' ? 'member' : persona === 'full_admin' ? 'full_admin' : 'admin'
+  persona === 'member' ? 'member' : persona === 'full_admin' ? 'full_admin'
+    : persona === 'guest' ? 'guest' : 'admin'
 );
+// What the guest browser starts from: no cookie and no storage on any origin.
+const SIGNED_OUT_STATE = '{"cookies":[],"origins":[]}\n';
 
 function reportAuth(persona, side, bootstrap, sessionCookiePresent) {
   // Only fixed booleans and status cross the worker boundary. The token,
@@ -31,6 +35,57 @@ function reportAuth(persona, side, bootstrap, sessionCookiePresent) {
   })}\n`);
 }
 
+// THE DEMO DATA HOMEROOM'S OWN COPIES MAKE ON FIRST VIEW. A copy of Homeroom
+// writes the staging Messages fixture for a person the first time they list
+// their conversations with ?demo=1 (routes/conversations.js, staging-
+// messages.ensureFixtures): its conversations, their unread messages and a
+// dozen bell notifications. Opening the Homeroom bot's DM then adds a card
+// the bot is working on, and one more (ensureDemoUnderWayCard). Made by the
+// shots agent's own first such views, they landed on each side at a
+// different moment of the walk, or on one side only, so one side's bell
+// counted them and the other's did not (15 and 16 in #4460's shots, 27 on a
+// phone screen). Each signed-in persona asks for them here instead, in the
+// client's order, on both sides, before the agent starts, so both copies
+// hold them from the first shot. Each side's own server makes them, from its
+// own revision. Best effort: a revision without a route answers with an
+// error, and nothing else happens.
+const DEMO_DATA_REQUESTS = Object.freeze([
+  Object.freeze({ method: 'GET', path: '/api/conversations?demo=1' }),
+  Object.freeze({ method: 'POST', path: '/api/conversations/homeroom-bot/activity?demo=1' }),
+]);
+
+// Only on the platform's own pairs (SHOTS_PLATFORM_ASSETS is '0' exactly
+// there: services/worker.js; the shots proxy reads it the same way), and only
+// for a run whose paths can show the demo: a start path, testing path or
+// declared check with ?demo=1 (SHOTS_NAVIGATION_HINTS). A child app's server
+// never sees these requests, and a run with no demo path anywhere keeps the
+// bell as quiet as the demo states keep it.
+const DEMO_PATH = /[?&]demo=1(?:[&#]|$)/;
+function warmsDemoData(env = process.env) {
+  if (env.SHOTS_PLATFORM_ASSETS !== '0') return false;
+  let hints;
+  try { hints = JSON.parse(env.SHOTS_NAVIGATION_HINTS || '{}') || {}; } catch { return false; }
+  return ['intentPaths', 'testingPaths', 'declaredPaths'].some((key) => Array.isArray(hints[key])
+    && hints[key].some((route) => typeof route === 'string' && DEMO_PATH.test(route)));
+}
+
+async function warmDemoData(context, origin, report = () => {}) {
+  for (const { method, path: route } of DEMO_DATA_REQUESTS) {
+    let response = null;
+    try {
+      response = await context.request.fetch(new URL(route, origin).href, {
+        method, failOnStatusCode: false, maxRedirects: 0, timeout: 10_000,
+      });
+      const status = response.status();
+      report({ outcome: status >= 200 && status < 300 ? 'ok' : 'http_error', httpStatus: status });
+    } catch {
+      report({ outcome: 'network_error' });
+    } finally {
+      await response?.dispose?.().catch(() => {});
+    }
+  }
+}
+
 // Where the bootstrap was when it failed. A failure used to reach the run as
 // one generic line, "shots browser authentication failed", which three
 // production runs on 2026-09-30 carried and nothing more: the success event
@@ -43,7 +98,7 @@ const FAILURE_STAGES = Object.freeze({
   navigate: 'opening the app',
   cookie: 'keeping the session cookie',
   hosted_catalog: 'listing hosted apps',
-  storage_state: 'saving the signed-in browser state',
+  storage_state: 'saving the browser state',
   allowlist: 'writing the hosted-app allowlist',
 });
 
@@ -93,6 +148,8 @@ async function main(progress) {
   const origins = JSON.parse(process.env.SHOTS_ALLOWED_ORIGINS || '[]').map((value) => new URL(value).origin);
   const outputDir = String(process.env.SHOTS_BROWSER_STATE_DIR || '');
   const proxy = String(process.env.SHOTS_PROXY_SERVER || '');
+  // The personas that sign in. The guest has no token to exchange (its
+  // optional guest token is the proxy's alone), so none is required for it.
   const personas = {
     member: String(process.env.SHOTS_MEMBER_TOKEN || ''),
     read_only_admin: String(process.env.SHOTS_ADMIN_TOKEN || ''),
@@ -108,6 +165,7 @@ async function main(progress) {
   }
   await fs.mkdir(outputDir, { recursive: true, mode: 0o700 });
   const memberCatalogs = [];
+  const warmDemo = warmsDemoData();
   progress.stage = 'launch';
   const browser = await chromium.launch({
     channel: 'chromium', headless: true, proxy: { server: proxy },
@@ -153,6 +211,14 @@ async function main(progress) {
               })}\n`);
             }, process.env.SHOTS_RUN_ID));
           }
+          if (warmDemo) {
+            const side = index === 0 ? 'base' : 'head';
+            await warmDemoData(context, origin, (result) => {
+              process.stdout.write(`__USERNODE_SHOTS_BROWSER__ ${JSON.stringify({
+                kind: 'demo_data', persona: reportedPersona(persona), side, ...result,
+              })}\n`);
+            });
+          }
         }
         progress.stage = 'storage_state';
         progress.side = null;
@@ -162,6 +228,11 @@ async function main(progress) {
         await fs.chmod(target, 0o600);
       } finally { await context.close(); }
     }
+    progress.persona = 'guest';
+    progress.stage = 'storage_state';
+    const guestState = path.join(outputDir, 'guest.json');
+    await fs.writeFile(guestState, SIGNED_OUT_STATE, { mode: 0o600 });
+    await fs.chmod(guestState, 0o600);
     progress.stage = 'allowlist';
     progress.persona = null;
     const hostedApps = [...(memberCatalogs[0] || new Map())]
@@ -201,4 +272,6 @@ async function run() {
 
 if (require.main === module) run();
 
-module.exports = { FAILURE_STAGES, errorClass, failureEvent, failureSummary };
+module.exports = {
+  FAILURE_STAGES, SIGNED_OUT_STATE, DEMO_DATA_REQUESTS, errorClass, failureEvent, failureSummary, warmsDemoData, warmDemoData,
+};

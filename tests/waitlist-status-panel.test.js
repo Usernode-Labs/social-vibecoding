@@ -20,6 +20,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -81,7 +82,8 @@ test('the confirmed panel branches on the response, not on a constant', () => {
   const panel = WAITLIST.slice(WAITLIST.indexOf('id="waitlist-confirmed"'));
   const body = panel.slice(0, panel.indexOf('id="waitlist-more-offer"'));
   // Headline, body copy and the action all move with the row.
-  assert.match(body, /admitted \? "You\\u2019re in/);
+  assert.match(body, /admitted \? t\('auth:waitlist\.status\.titleIn'\) : t\('auth:waitlist\.status\.titleListed'\)/);
+  assert.match(message('auth:waitlist.status.titleIn'), /^You\u2019re in/);
   assert.match(body, /status\?\.has_account/);
   assert.match(body, /id="waitlist-status-pill"/);
   assert.match(body, /id="waitlist-status-since"/);
@@ -103,7 +105,8 @@ test('the panel offers a date, never a queue position', () => {
   // services/waitlist-signals.js computes no rank on purpose. A position is a
   // promise, and it can go backwards.
   assert.match(WAITLIST, /function formatJoinedOn\(/);
-  assert.match(WAITLIST, /'On the list since '/);
+  assert.match(WAITLIST, /t\('auth:waitlist\.status\.since', \{ date: joinedOn \}\)/);
+  assert.equal(message('auth:waitlist.status.since', { date: '3 October 2026' }), 'On the list since 3 October 2026');
   const panel = WAITLIST.slice(WAITLIST.indexOf('id="waitlist-confirmed"'));
   // Comments in here explain WHY there is no rank, so scan what renders:
   // block comments out, then the remaining source.
@@ -112,6 +115,10 @@ test('the panel offers a date, never a queue position', () => {
   for (const word of ['position', 'in line', 'ahead of', 'you are #']) {
     assert.doesNotMatch(body.toLowerCase(), new RegExp(word),
       `the panel implies a rank via "${word}"`);
+    // The panel's words are catalog entries now: the same goes for them.
+    for (const id of body.match(/auth:waitlist\.status\.[A-Za-z.]+/g) || []) {
+      assert.doesNotMatch(message(id).toLowerCase(), new RegExp(word), `${id} implies a rank via "${word}"`);
+    }
   }
 });
 
@@ -149,7 +156,8 @@ test('the landing card offers the way in, and only to a visitor', () => {
   const block = LANDING.slice(Math.max(0, at - 400), at + 400);
   assert.match(block, /hiddenLast\(\s*session,/, 'a signed-in visitor is shown it anyway');
   assert.match(block, /href="#waitlist\?confirm=1"/);
-  assert.match(block, /Check your status/);
+  assert.match(block, /<RichMessage id="auth:landing\.alreadyJoined"/);
+  assert.match(message('auth:landing.alreadyJoined'), /Check your status/);
 });
 
 test('the confirm step is reachable without a join, on any device', () => {
@@ -182,8 +190,13 @@ test('the declared checks cover the states the panel can be in', () => {
   }
   // The offer must be gone in that state, and a check says so.
   assert.match(selectors, /#waitlist-more-offer\.hidden/);
-  // And the landing way in is checked too, or it can vanish silently.
-  assert.ok(DAPP.tests.some((t) => (t.expectSelector || '').includes('landing-status-link')),
+  // And the landing way in is checked too, or it can vanish silently. The
+  // landing's default is the first session's story now
+  // (services/first-session.js), where somebody already on the list signs
+  // in from the story's sheet with their address; the "Check your status"
+  // line is the waitlist landing's, drawn only when the story is switched
+  // off, and a declared check reads rendered text, so it checks the story's.
+  assert.ok(DAPP.tests.some((t) => (t.expectSelector || '').includes('data-landing-story-signin')),
     'the landing entry point is unchecked');
 
   // #2201's settled arrival. Plain navigation cannot reach it — it needs a

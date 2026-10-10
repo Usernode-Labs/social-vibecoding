@@ -28,6 +28,13 @@
 //     read a host's innerHTML renders those components against what
 //     `HomePanels.render()` pushed.
 //
+//   * both import the language runtime (frontend/src/lib/i18n/runtime) for
+//     their text, as `message` (its `t`) and, in home.js, `htmlText`. Those
+//     two names are bound here, to the sandbox's own `PlatformI18n`, which is
+//     what the runtime publishes in the shell. They are read when a text is
+//     asked for, so only a test that reaches text gives its sandbox
+//     `PlatformI18n: englishPlatformI18n()` (tests/lib/platform-i18n.js).
+//
 // home-layout.js is still a plain script with no import at all.
 
 const fs = require('node:fs');
@@ -44,9 +51,28 @@ const HOME_RAW = fs.readFileSync(HOME_PATH, 'utf8');
 const PANELS_RAW = fs.readFileSync(PANELS_PATH, 'utf8');
 const LAYOUT_SRC = fs.readFileSync(LAYOUT_PATH, 'utf8');
 
+// #4053: home.js also imports the build line's tile words
+// (frontend/src/features/first-session/build-line-words.js), a module with no
+// import of its own. Its text, `export` stripped, stands in for that one
+// import line, so every test that runs home.js runs the shipped words.
+const BUILD_LINE_WORDS_PATH = path.join(FEATURE_DIR, '..', 'first-session', 'build-line-words.js');
+const BUILD_LINE_WORDS_SRC = fs.readFileSync(BUILD_LINE_WORDS_PATH, 'utf8').replace(/^export\s+/gm, '');
+
+// What the language runtime's import binds, for a sandbox: the same calls,
+// answered by the sandbox's `PlatformI18n` at the time a text is read. `var`,
+// so the two modules can share one sandbox.
+const I18N_IMPORT = /^import \{[^}]*\} from '\.\.\/\.\.\/lib\/i18n\/runtime';$/m;
+const I18N_BINDINGS = 'var message = (...args) => PlatformI18n.t(...args);'
+  + ' var htmlText = (...args) => PlatformI18n.htmlText(...args);';
+
 // Classic-script form: the `import` lines removed. See the note above.
-const HOME_SRC = HOME_RAW.replace(/^import .*;$/gm, '');
-const PANELS_SRC = PANELS_RAW.replace(/^import .*;$/gm, '');
+const HOME_SRC = HOME_RAW
+  .replace(I18N_IMPORT, () => I18N_BINDINGS)
+  .replace(/^import .* from '\.\.\/first-session\/build-line-words\.js';$/m, () => BUILD_LINE_WORDS_SRC)
+  .replace(/^import .*;$/gm, '');
+const PANELS_SRC = PANELS_RAW
+  .replace(I18N_IMPORT, () => I18N_BINDINGS)
+  .replace(/^import .*;$/gm, '');
 
 module.exports = {
   HOME_PATH, PANELS_PATH, LAYOUT_PATH,

@@ -131,6 +131,8 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     assert.ok(est.estimatedMs > 0);
     assert.ok(est.likelyUsd > 0 && est.likelyUsd <= est.estimateUsd, 'likely is never more than the most it could cost');
     assert.ok(est.suggestedCapUsd >= Math.ceil(est.likelyUsd), 'the suggested cap covers the likely cost');
+    assert.ok(est.lowUsd <= est.highUsd && est.highUsd >= est.estimateUsd - 0.02, 'a range, up to at least the most it could cost');
+    assert.ok(['triage', 'build'].every((st) => typeof est.byStage[st].basis === 'string'), 'each stage says what its part rests on');
     assert.equal(est.capUsd, 50);
     assert.equal(est.suiteFrozen, false);
     assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM bench_runs')).rows[0].n, runsBefore, 'no run');
@@ -189,6 +191,21 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     const { rows: [r] } = await pool.query('SELECT status, spent_usd::float8 AS spent FROM bench_runs WHERE id = $1', [run.id]);
     assert.equal(r.status, 'capped');
     assert.ok(r.spent <= 3, `spent ${r.spent} is inside the $3 cap`);
+  });
+
+  // The launcher's range, after trials have run: each stage says what it
+  // rests on (catalog.costRange), and one with nothing behind it is a guess.
+  await t.test('the estimate is a range that says what each stage rests on', async () => {
+    const est = await lane.estimateRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage', 'build'], repeats: 1 });
+    assert.equal(est.ok, true);
+    assert.deepEqual({ basis: est.byStage.triage.basis, low: est.byStage.triage.lowUsd, high: est.byStage.triage.highUsd },
+      { basis: 'own', low: 3.75, high: 3.75 }, 'three triage tasks at the $1.25 its trials cost');
+    assert.equal(est.byStage.build.basis, 'fixed', 'no build has run and the model has no price here: a fixed guess, and said so');
+    assert.ok(Math.abs(est.lowUsd - (est.byStage.triage.lowUsd + est.byStage.build.lowUsd)) < 0.02);
+    assert.ok(est.lowUsd <= est.highUsd);
+    assert.ok(est.suggestedCapUsd >= Math.ceil(est.lowUsd), 'the suggested cap covers the low end at least');
+    const another = await lane.estimateRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash', 'x/fresh'], stages: ['triage'], repeats: 1 });
+    assert.equal(another.byStage.triage.basis, 'stage', 'a model with no triage of its own is priced from the other model\'s');
   });
 
   await t.test('a trial a dead process left running is retried once, then failed', async () => {
@@ -303,6 +320,96 @@ test('the benchmark lane against the full PostgreSQL schema', { timeout: 180000 
     assert.equal(row.interrupted, 0.3);
     assert.equal(await spent(run.id), 0.8, 'the run paid for both attempts, each once');
     await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
+  });
+
+  await t.test('a trial records the looks its turns took beside what its build could see; one that never looked records none', async () => {
+    lane._resetForTests();
+    const { run } = await lane.launchRun(pool, { suiteId: suite.id, models: ['z-ai/glm-5.3-flash'], stages: ['triage'], repeats: 2 });
+    const [looked, never] = await trials(run.id);
+    runner.runStage = async (ctx) => {
+      if (ctx.trial.id === looked.id) {
+        for (const line of ['Using browser_navigate', 'Using browser_take_screenshot', 'Using browser_take_screenshot', 'Using mcp__playwright__browser_snapshot']) ctx.onActivity(line);
+        return { status: 'ok', parsed: { verdict: 'ready', sight: { told: true, passed: true } }, duration_ms: 5 };
+      }
+      ctx.onActivity('Editing public/app.js');
+      return { status: 'ok', parsed: { verdict: 'ready' }, duration_ms: 5 };
+    };
+    const parsedOf = async (id) => (await pool.query('SELECT parsed FROM bench_trials WHERE id = $1', [id])).rows[0].parsed;
+    try {
+      // One trial at a time, as the run's concurrency has it.
+      for (let i = 0; i < 6 && (!(await parsedOf(looked.id)) || !(await parsedOf(never.id))); i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await lane.tick(pool, {}, deps);
+        // eslint-disable-next-line no-await-in-loop
+        await lane._awaitTrialsForTests();
+      }
+      assert.deepEqual((await parsedOf(looked.id)).sight, { told: true, passed: true, screenshots: 2, snapshots: 1, navigations: 1 });
+      assert.equal((await parsedOf(never.id)).sight, undefined, 'no build and no look: nothing to say');
+    } finally {
+      await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
+      await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE run_id = $1 AND status IN ('pending', 'running')", [run.id]);
+    }
+  });
+
+  await t.test('a first version keeps its looks on the trial as its turns run; the claim after a restart counts the kept ones once', async () => {
+    lane._resetForTests();
+    const token = () => crypto.randomBytes(8).toString('hex');
+    const { rows: [snap] } = await pool.query('SELECT id FROM homeroom_bot_run_snapshots ORDER BY id LIMIT 1');
+    const { rows: [task] } = await pool.query(
+      `INSERT INTO bench_tasks (suite_id, stage, app_id, snapshot_id, reference_source, label_token)
+       VALUES ($1, 'first_version', $2, $3, 'authored', $4) RETURNING id`,
+      [suite.id, app.id, snap.id, token()],
+    );
+    const { rows: [run] } = await pool.query(
+      `INSERT INTO bench_runs (suite_id, models, baseline_model, stages, repeats, cap_usd, concurrency, status, kind)
+       VALUES ($1, ARRAY['z-ai/glm-5.3-flash'], 'z-ai/glm-5.3-flash', ARRAY['first_version'], 1, 50, 1, 'running', 'studio') RETURNING id`,
+      [suite.id],
+    );
+    // What the claim before a restart kept: what its build could see, and its
+    // looks, recovery's followed turn included.
+    const sight = { told: true, passed: false };
+    const earlier = { screenshots: 4, snapshots: 1, navigations: 3 };
+    const { rows: [trial] } = await pool.query(
+      `INSERT INTO bench_trials (run_id, task_id, model, attempt, status, item_token, checkpoint)
+       VALUES ($1, $2, 'z-ai/glm-5.3-flash', 1, 'pending', $3, $4::jsonb) RETURNING id`,
+      [run.id, task.id, token(), JSON.stringify({ sight, looks: earlier, handBacks: 1 })],
+    );
+    await claimAs(trial.id, null);
+    const checkpointOf = async () => (await pool.query('SELECT checkpoint FROM bench_trials WHERE id = $1', [trial.id])).rows[0].checkpoint;
+    const seen = {};
+    runner.runStage = async (ctx) => {
+      seen.given = ctx.checkpoint;
+      await ctx.onStep('build');
+      seen.atStep = await checkpointOf();
+      ctx.onActivity('Using browser_take_screenshot');
+      for (let i = 0; i < 100 && (await checkpointOf()).looks.screenshots < 5; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => { setTimeout(r, 10); });
+      }
+      seen.afterLook = await checkpointOf();
+      // Within the interval: held back, not written on every line.
+      ctx.onActivity('Using browser_navigate');
+      await new Promise((r) => { setTimeout(r, 50); });
+      seen.afterSecond = await checkpointOf();
+      // As firstVersionStage reads it back from the checkpoint for a kept build.
+      return { status: 'ok', parsed: { built: true, sight: ctx.checkpoint.sight }, duration_ms: 5 };
+    };
+    try {
+      assert.equal(await lane.executeTrial(pool, {}, { id: trial.id, run_id: run.id }, deps), 'ok');
+      assert.deepEqual(seen.given.looks, earlier, 'the claim is handed what the last one kept');
+      assert.deepEqual(seen.atStep.stepLooks, { step: 'build', ...earlier }, 'a step keeps the counts its turn starts from');
+      assert.deepEqual(seen.atStep.looks, earlier, 'starting from the kept counts, not adding them again');
+      assert.deepEqual(seen.atStep.sight, sight);
+      assert.deepEqual(seen.afterLook.looks, { ...earlier, screenshots: 5 }, 'a look is kept while the turn runs');
+      assert.deepEqual(seen.afterSecond.looks, { ...earlier, screenshots: 5 }, 'the next, within the interval, waits');
+      const { rows: [done] } = await pool.query('SELECT status, parsed FROM bench_trials WHERE id = $1', [trial.id]);
+      assert.equal(done.status, 'ok');
+      assert.deepEqual(done.parsed.sight, { told: true, passed: false, screenshots: 5, snapshots: 1, navigations: 4 },
+        'what it could see, and every look of both claims, each once');
+    } finally {
+      await pool.query("UPDATE bench_runs SET status = 'cancelled' WHERE id = $1", [run.id]);
+      await pool.query("UPDATE bench_trials SET status = 'cancelled' WHERE run_id = $1 AND status IN ('pending', 'running')", [run.id]);
+    }
   });
 
   await t.test('a second interruption fails the trial; a cancelled run\'s trial is cancelled; both still charged', async () => {

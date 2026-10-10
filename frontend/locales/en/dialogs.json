@@ -1,0 +1,2830 @@
+{
+  "report.title.app": {
+    "text": "Report app",
+    "description": "Heading of the report dialog when the thing being reported to the moderators is an app. \"Report\" is a verb."
+  },
+  "report.title.user": {
+    "text": "Report user",
+    "description": "Heading of the report dialog when the thing being reported to the moderators is a person's account. \"Report\" is a verb."
+  },
+  "report.title.message": {
+    "text": "Report message",
+    "description": "Heading of the report dialog when the thing being reported to the moderators is one chat message. \"Report\" is a verb."
+  },
+  "report.title.received": {
+    "text": "Report received",
+    "description": "Heading of the report dialog after the report was sent. \"Report\" is a noun here: the moderators now have it."
+  },
+  "report.received": {
+    "text": "Report #{{number}} received. We’ll review it and notify you when review finishes.",
+    "description": "Confirmation in the report dialog after a report was sent. {{number}} is the report's reference number; keep the # before it."
+  },
+  "report.blockAppNote": {
+    "text": "Blocking hides this app and stops its notifications for you. It does not block any contributors. You can unblock it in Settings → Blocked apps.",
+    "description": "Explanation above the \"Block app\" button, shown after reporting an app. \"Settings → Blocked apps\" is the path to a Settings screen."
+  },
+  "report.block.app": {
+    "text": "Block app",
+    "description": "Button shown after reporting an app: hides that app from the person who reported it. \"Block\" is a verb."
+  },
+  "report.block.appDone": {
+    "text": "App blocked",
+    "description": "Text of the same button after the app was blocked; the button is then disabled."
+  },
+  "report.block.user": {
+    "text": "Block @{{username}}",
+    "description": "Button shown after reporting a person or their message: blocks that person. \"Block\" is a verb. {{username}} is their username; keep the @ before it."
+  },
+  "report.block.userDone": {
+    "text": "@{{username}} blocked",
+    "description": "Text of the same button after the person was blocked; the button is then disabled. {{username}} is their username; keep the @ before it."
+  },
+  "report.privateMessageNote": {
+    "text": "Moderators will receive this message and its attachments. Your other private messages are not included.",
+    "description": "Note in the report dialog when the reported message is from a private conversation: says what the moderators will be able to read."
+  },
+  "report.reason.label": {
+    "text": "Reason",
+    "description": "Label of the drop-down in the report dialog where the person picks why they are reporting."
+  },
+  "report.reason.choose": {
+    "text": "Choose a reason",
+    "description": "Empty first option of the reason drop-down in the report dialog, shown until a reason is picked."
+  },
+  "report.reason.spam": {
+    "text": "Spam",
+    "description": "Reason for a report, in the report dialog's drop-down: unwanted advertising or repeated junk."
+  },
+  "report.reason.scam": {
+    "text": "Scam or fraud",
+    "description": "Reason for a report, in the report dialog's drop-down: an attempt to trick people out of money or accounts."
+  },
+  "report.reason.harassment": {
+    "text": "Harassment",
+    "description": "Reason for a report, in the report dialog's drop-down: someone is being targeted or bullied."
+  },
+  "report.reason.hate": {
+    "text": "Hate",
+    "description": "Reason for a report, in the report dialog's drop-down: hateful content aimed at a group of people."
+  },
+  "report.reason.threats": {
+    "text": "Threats",
+    "description": "Reason for a report, in the report dialog's drop-down: threats of violence or harm."
+  },
+  "report.reason.sexualContent": {
+    "text": "Sexual or unsafe content",
+    "description": "Reason for a report, in the report dialog's drop-down: sexual material or content that is dangerous to people."
+  },
+  "report.reason.impersonation": {
+    "text": "Impersonation",
+    "description": "Reason for a report, in the report dialog's drop-down: an account pretending to be someone else. Offered only when a person is reported."
+  },
+  "report.reason.other": {
+    "text": "Other",
+    "description": "Last reason for a report, in the report dialog's drop-down: none of the listed reasons. Picking it makes the details box required."
+  },
+  "report.details.optional": {
+    "text": "Details (optional)",
+    "description": "Label of the free-text box in the report dialog when the person may leave it empty."
+  },
+  "report.details.required": {
+    "text": "Details (required)",
+    "description": "Label of the free-text box in the report dialog when the reason is \"Other\", so the person must explain."
+  },
+  "report.identityNote": {
+    "text": "Your identity is visible to moderators, not to the reported person or app owner.",
+    "description": "Small note at the bottom of the report form: who will know who sent the report."
+  },
+  "report.submit": {
+    "text": "Submit report",
+    "description": "Button at the bottom of the report form: sends the report to the moderators."
+  },
+  "report.sending": {
+    "text": "Sending…",
+    "description": "Text of the \"Submit report\" button while the report is being sent."
+  },
+  "report.error.send": {
+    "text": "Could not send your report. Try again.",
+    "description": "Error in the report dialog when sending the report failed and the server gave no reason."
+  },
+  "report.error.block": {
+    "text": "Could not block. Try again.",
+    "description": "Error in the report dialog when blocking the reported app or person failed and the server gave no reason."
+  },
+  "share.title": {
+    "text": "Share this app",
+    "description": "Heading of the dialog that shows an app's link so it can be copied and sent to someone. \"Share\" is a verb."
+  },
+  "share.close": {
+    "text": "Close share",
+    "description": "Accessible name of the X button that closes the share dialog."
+  },
+  "share.audience.members": {
+    "text": "Only members can open it. Invite people to let them in.",
+    "description": "Line under the share dialog's heading when the app is private: its link works only for members of its community. \"it\" is the app."
+  },
+  "share.audience.public": {
+    "text": "Anyone with a Homeroom account can open it.",
+    "description": "Line under the share dialog's heading when the app is public. \"it\" is the app. Homeroom is the product's name."
+  },
+  "share.urlLabel": {
+    "text": "Share URL",
+    "description": "Accessible name of the read-only field in the share dialog that holds the app's link."
+  },
+  "share.copied": {
+    "text": "Copied!",
+    "description": "Shown for a moment on the share dialog's Copy button after the link was copied to the clipboard."
+  },
+  "share.copyFailed": {
+    "text": "Copy failed",
+    "description": "Shown for a moment on the share dialog's Copy button when the link could not be copied to the clipboard."
+  },
+  "share.invite": {
+    "text": "Invite people",
+    "description": "Button in the share dialog of a private app: closes it and opens the pane for inviting people to the app's community."
+  },
+  "share.openInNewTab": {
+    "text": "Open in new tab",
+    "description": "Link in the share dialog: opens the app's address in a new browser tab. \"Open\" is a verb."
+  },
+  "share.alsoAt": {
+    "text": "Also at {{address}}",
+    "description": "Small line under the link field in the Share dialog when the link offered is the project's own custom domain: the project's Homeroom address also works. {{address}} is that address without https://."
+  },
+  "appDomain.title": {
+    "text": "Custom domain",
+    "description": "Heading of the dialog in which a project's managers give the project a web address of its own, beside its Homeroom address. The project's name is shown under it."
+  },
+  "appDomain.loading": {
+    "text": "Loading…",
+    "description": "Shown in the Custom domain dialog, where a project's managers give the project a web address of its own, while the project's current address settings are being fetched."
+  },
+  "appDomain.error.load": {
+    "text": "Could not load the custom domain.",
+    "description": "Error in the Custom domain dialog, where a project's managers give the project a web address of its own, when the current settings could not be fetched and the server gave no message of its own."
+  },
+  "appDomain.error.generic": {
+    "text": "Something went wrong. Try again.",
+    "description": "Error in the Custom domain dialog, where a project's managers give the project a web address of its own, when adding, checking or removing the address failed and the server gave no message of its own."
+  },
+  "appDomain.error.empty": {
+    "text": "Enter a web address, for example app.example.com.",
+    "description": "Error in the Custom domain dialog, where a project's managers give the project a web address of its own, when \"Add domain\" was pressed with the address box empty. app.example.com is a sample address; leave it as it is."
+  },
+  "appDomain.error.copy": {
+    "text": "Could not copy. Select the value and copy it yourself.",
+    "description": "Error in the Custom domain dialog, where a project's managers give the project a web address of its own, when a DNS record's value could not be copied to the clipboard. \"The value\" is the text in the table's Value column."
+  },
+  "appDomain.add.intro": {
+    "text": "Give this project a web address you own, beside {{host}}.",
+    "description": "First line of the Custom domain dialog, where a project's managers give the project a web address of its own, when no address has been added yet. {{host}} is the project's Homeroom address, for example recipes.homeroom.example, which keeps working."
+  },
+  "appDomain.add.label": {
+    "text": "Web address",
+    "description": "Label of the text box in the Custom domain dialog, where a project's managers give the project a web address of its own: the hostname to use, such as app.example.com."
+  },
+  "appDomain.add.hint": {
+    "text": "A subdomain, for example app.example.com or www.example.com. Apex domains like example.com are not supported yet.",
+    "description": "Help text under the address box in the Custom domain dialog, where a project's managers give the project a web address of its own. A subdomain has a name in front of the domain; an apex domain is the bare domain with nothing in front. The three example addresses stay as they are."
+  },
+  "appDomain.add.submit": {
+    "text": "Add domain",
+    "description": "Main button of the Custom domain dialog, where a project's managers give the project a web address of its own, when none has been added yet: registers the address that was typed. Add is a verb."
+  },
+  "appDomain.add.adding": {
+    "text": "Adding…",
+    "description": "Replaces \"Add domain\" on the button in the Custom domain dialog, where a project's managers give the project a web address of its own while the address is being registered."
+  },
+  "appDomain.status.pending.plain": {
+    "text": "Waiting for DNS. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet, and it has not been checked so far. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedJustNow": {
+    "text": "Waiting for DNS. Checked just now. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet, and Homeroom looked for them less than a minute ago. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedMinutes_one": {
+    "text": "Waiting for DNS. Checked {{count}} minute ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many minutes ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedMinutes_other": {
+    "text": "Waiting for DNS. Checked {{count}} minutes ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many minutes ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedHours_one": {
+    "text": "Waiting for DNS. Checked {{count}} hour ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many hours ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedHours_other": {
+    "text": "Waiting for DNS. Checked {{count}} hours ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many hours ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedDays_one": {
+    "text": "Waiting for DNS. Checked {{count}} day ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many days ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pending.checkedDays_other": {
+    "text": "Waiting for DNS. Checked {{count}} days ago. DNS changes can take up to an hour to show.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records the person must add have not been seen yet. {{count}} is how many days ago Homeroom last looked for them. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.pendingReason": {
+    "text": "Waiting for DNS. {{reason}}",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records have not been seen yet. {{reason}} is a whole sentence from the server saying what it found, already worded. DNS is the internet's system of domain records; keep the abbreviation."
+  },
+  "appDomain.status.verified": {
+    "text": "Getting a certificate. This usually takes a minute or two.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records were found, and Homeroom is now obtaining the security certificate that lets the address be served over https."
+  },
+  "appDomain.status.verifiedReason": {
+    "text": "Getting a certificate. {{reason}}",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: the DNS records were found and Homeroom is obtaining the security certificate for the address. {{reason}} is a whole sentence from the server saying what happened, already worded."
+  },
+  "appDomain.status.live": {
+    "text": "Live.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own, after a check mark: the address works and shows the project. An adjective describing the address."
+  },
+  "appDomain.status.liveSince": {
+    "text": "Live since {{date}}.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own, after a check mark: the address works and shows the project. \"Live\" is an adjective describing the address. {{date}} is the day it started working, formatted for the reader's region."
+  },
+  "appDomain.status.failed": {
+    "text": "Not working.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: setting the address up failed and no reason was recorded."
+  },
+  "appDomain.status.failedReason": {
+    "text": "Not working. {{reason}}",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: setting the address up failed. {{reason}} is a whole sentence from the server saying why, already worded."
+  },
+  "appDomain.status.disabled": {
+    "text": "Disabled by an admin.",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: a Homeroom administrator switched the address off."
+  },
+  "appDomain.status.disabledReason": {
+    "text": "Disabled by an admin. {{reason}}",
+    "description": "Status line under the address in the Custom domain dialog, where a project's managers give the project a web address of its own: a Homeroom administrator switched the address off. {{reason}} is a whole sentence from the server saying why, already worded."
+  },
+  "appDomain.records.add": {
+    "text": "Add these two records where you manage DNS for {{zone}}:",
+    "description": "Line over the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own, while the address is being set up. {{zone}} is the domain the address belongs to, for example example.com. \"Where you manage DNS\" is the website of the company the domain is registered with. Keep the colon: the table follows."
+  },
+  "appDomain.records.keep": {
+    "text": "Keep these two records where you manage DNS for {{zone}}:",
+    "description": "Line over the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own, once the address works: the records must stay in place. {{zone}} is the domain the address belongs to, for example example.com. Keep the colon: the table follows."
+  },
+  "appDomain.records.type": {
+    "text": "Type",
+    "description": "Column heading of the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own: the kind of record, CNAME or TXT. A noun."
+  },
+  "appDomain.records.name": {
+    "text": "Name",
+    "description": "Column heading of the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own: the record's name, the part typed in front of the domain. A noun."
+  },
+  "appDomain.records.value": {
+    "text": "Value",
+    "description": "Column heading of the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own: what the record must contain. A noun."
+  },
+  "appDomain.records.copy": {
+    "text": "Copy",
+    "description": "Small button after a DNS record's value in the Custom domain dialog, where a project's managers give the project a web address of its own: copies that value to the clipboard. A verb."
+  },
+  "appDomain.records.copied": {
+    "text": "Copied",
+    "description": "Replaces \"Copy\" for a moment after a DNS record's value was copied to the clipboard, in the Custom domain dialog, where a project's managers give the project a web address of its own."
+  },
+  "appDomain.records.staysChecking": {
+    "text": "Homeroom checks every minute. The project stays at {{host}} as well.",
+    "description": "Note under the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own, while the address is being set up: Homeroom looks for the records by itself once a minute. {{host}} is the project's Homeroom address, which keeps working. Homeroom is the product's name."
+  },
+  "appDomain.records.staysLive": {
+    "text": "The project stays at {{host}} as well.",
+    "description": "Note under the table of DNS records in the Custom domain dialog, where a project's managers give the project a web address of its own, once the address works. {{host}} is the project's Homeroom address, which keeps working."
+  },
+  "appDomain.check.submit": {
+    "text": "Check now",
+    "description": "Main button of the Custom domain dialog, where a project's managers give the project a web address of its own, while the address is being set up or has failed: looks for the DNS records straight away instead of waiting for the next automatic check."
+  },
+  "appDomain.check.checking": {
+    "text": "Checking…",
+    "description": "Replaces \"Check now\" on the button in the Custom domain dialog, where a project's managers give the project a web address of its own while the check is running."
+  },
+  "appDomain.open": {
+    "text": "Open",
+    "description": "Link in the Custom domain dialog, where a project's managers give the project a web address of its own, once the address works: opens the project at that address in a new tab. A verb."
+  },
+  "appDomain.remove": {
+    "text": "Remove domain",
+    "description": "Quiet red button in the Custom domain dialog, where a project's managers give the project a web address of its own: takes the custom address off the project, which stays at its Homeroom address. Remove is a verb."
+  },
+  "rename.title": {
+    "text": "Rename app",
+    "description": "Heading of the dialog for proposing a new display name for an app."
+  },
+  "rename.current": {
+    "text": "Current app name:<0>{{name}}</0>",
+    "description": "Line under the rename dialog's heading. {{name}} is the app's present name; the numbered tag sets it in a different typeface and must stay around it."
+  },
+  "rename.newName": {
+    "text": "New app name",
+    "description": "Label of the text field in the rename dialog where the new name is typed."
+  },
+  "rename.placeholder": {
+    "text": "a better name",
+    "description": "Greyed example text inside the empty new-name field of the rename dialog."
+  },
+  "rename.hint": {
+    "text": "3–64 characters. This is the app's display name, and the URL won't change. Opens a PR that edits<0>dapp.json</0>; the rename applies once the PR is voted in and merged.",
+    "description": "Help text under the new-name field of the rename dialog. PR means a pull request on GitHub. dapp.json is a file name and stays as it is, inside its numbered tag."
+  },
+  "rename.submit": {
+    "text": "Open PR",
+    "description": "Button in the rename dialog: opens the pull request (PR) that proposes the new name. \"Open\" is a verb."
+  },
+  "rename.submitting": {
+    "text": "Opening PR...",
+    "description": "Text of the rename dialog's button while the pull request (PR) is being opened."
+  },
+  "rename.error.tooShort": {
+    "text": "Name must be at least 3 characters",
+    "description": "Error in the rename dialog when the new app name is shorter than 3 characters."
+  },
+  "rename.error.tooLong": {
+    "text": "Name must be 64 characters or fewer",
+    "description": "Error in the rename dialog when the new app name is longer than 64 characters."
+  },
+  "rename.error.same": {
+    "text": "New app name must differ from the current one",
+    "description": "Error in the rename dialog when the typed name is the name the app already has."
+  },
+  "rename.error.failed": {
+    "text": "Failed to open rename PR",
+    "description": "Error in the rename dialog when the server refused to open the pull request (PR) and gave no reason."
+  },
+  "rename.error.network": {
+    "text": "Network error while opening rename PR",
+    "description": "Error in the rename dialog when the request to open the pull request (PR) could not reach the server."
+  },
+  "closeIssue.title": {
+    "text": "Propose closing issue<0>#{{number}}</0>?",
+    "description": "Heading of the dialog that asks whether to put closing an issue to a group vote. {{number}} is the issue's number; keep the # before it and the numbered tag around both."
+  },
+  "closeIssue.explanation": {
+    "text": "This opens a group vote. If it passes, the issue is closed here and on GitHub.",
+    "description": "Line under the heading of the close-issue dialog: what pressing \"Propose close\" does."
+  },
+  "closeIssue.reason.label": {
+    "text": "Why should this issue be closed?<0>(optional)</0>",
+    "description": "Label of the reason box in the close-issue dialog. The numbered tag sets \"(optional)\" in a lighter weight."
+  },
+  "closeIssue.reason.placeholder": {
+    "text": "e.g. obsolete, duplicate, already fixed…",
+    "description": "Greyed example text inside the empty reason box of the close-issue dialog: typical reasons for closing an issue."
+  },
+  "closeIssue.reason.hint": {
+    "text": "Posted publicly on the GitHub issue when the vote passes.",
+    "description": "Help text under the reason box of the close-issue dialog: where the typed reason will appear."
+  },
+  "closeIssue.submit": {
+    "text": "Propose close",
+    "description": "Button in the close-issue dialog: starts the group vote on closing the issue. \"close\" is the act of closing the issue."
+  },
+  "closeIssue.error.http": {
+    "text": "Proposal failed (HTTP {{status}}).",
+    "description": "Error in the close-issue dialog when the server refused and gave no reason. {{status}} is the numeric HTTP status code."
+  },
+  "closeIssue.error.detail": {
+    "text": "Proposal failed: {{reason}}",
+    "description": "Error in the close-issue dialog when the request could not be sent. {{reason}} is the browser's own description of what went wrong."
+  },
+  "allowance.title": {
+    "text": "App allowance",
+    "description": "Label at the left of the allowance box shown in the create-app, import and remix forms: how many apps this person may still create."
+  },
+  "allowance.checking": {
+    "text": "Checking…",
+    "description": "Shown at the right of the allowance box while the person's allowance is being fetched."
+  },
+  "allowance.serverFull": {
+    "text": "Server is full",
+    "description": "Shown at the right of the allowance box when the whole server has reached its limit of apps, so nobody can create one."
+  },
+  "allowance.headline.noLimit": {
+    "text": "No app limit",
+    "description": "Summary at the right of the allowance box for an account that may create any number of apps, when how many it has is not known."
+  },
+  "allowance.headline.usedNoLimit_one": {
+    "text": "{{count}} app · no limit",
+    "description": "Summary at the right of the allowance box for an account with no limit. {{count}} is how many apps it has created. Keep the middle dot as a separator."
+  },
+  "allowance.headline.usedNoLimit_other": {
+    "text": "{{count}} apps · no limit",
+    "description": "Summary at the right of the allowance box for an account with no limit. {{count}} is how many apps it has created. Keep the middle dot as a separator."
+  },
+  "allowance.headline.slots_one": {
+    "text": "{{count}} app slots",
+    "description": "Summary at the right of the allowance box when only the limit is known. {{count}} is how many app slots the person has in total. An app slot is one unit of the allowance: each app a person creates, imports or remixes uses one."
+  },
+  "allowance.headline.slots_other": {
+    "text": "{{count}} app slots",
+    "description": "Summary at the right of the allowance box when only the limit is known. {{count}} is how many app slots the person has in total. An app slot is one unit of the allowance: each app a person creates, imports or remixes uses one."
+  },
+  "allowance.headline.used_one": {
+    "text": "{{used}} of {{count}} app slot used",
+    "description": "Summary at the right of the allowance box. {{count}} is how many app slots the person has in total and {{used}} how many are taken. An app slot is one unit of the allowance: each app a person creates, imports or remixes uses one."
+  },
+  "allowance.headline.used_other": {
+    "text": "{{used}} of {{count}} app slots used",
+    "description": "Summary at the right of the allowance box. {{count}} is how many app slots the person has in total and {{used}} how many are taken. An app slot is one unit of the allowance: each app a person creates, imports or remixes uses one."
+  },
+  "allowance.headline.slotsRequested_one": {
+    "text": "{{count}} app slots · more requested",
+    "description": "Line on the account panel of the profile, when only the limit is known and the person has asked the admins for more. {{count}} is how many app slots they have in total. Keep the middle dot as a separator."
+  },
+  "allowance.headline.slotsRequested_other": {
+    "text": "{{count}} app slots · more requested",
+    "description": "Line on the account panel of the profile, when only the limit is known and the person has asked the admins for more. {{count}} is how many app slots they have in total. Keep the middle dot as a separator."
+  },
+  "allowance.headline.usedRequested_one": {
+    "text": "{{used}} of {{count}} app slot used · more requested",
+    "description": "Line on the account panel of the profile after the person asked the admins for more app slots. {{count}} is how many slots they have in total and {{used}} how many are taken. Keep the middle dot as a separator."
+  },
+  "allowance.headline.usedRequested_other": {
+    "text": "{{used}} of {{count}} app slots used · more requested",
+    "description": "Line on the account panel of the profile after the person asked the admins for more app slots. {{count}} is how many slots they have in total and {{used}} how many are taken. Keep the middle dot as a separator."
+  },
+  "allowance.detail.admin": {
+    "text": "Admin accounts can create apps without a slot limit.",
+    "description": "Explanation in the allowance box for an administrator's account, which has no limit on apps."
+  },
+  "allowance.detail.unavailable": {
+    "text": "Current usage is unavailable.",
+    "description": "Explanation in the allowance box when the number of free app slots could not be worked out."
+  },
+  "allowance.detail.unavailableSpent": {
+    "text": "Current usage is unavailable. Request more slots to create another app.",
+    "description": "Explanation in the allowance box when the number of free app slots could not be worked out and every slot is known to be taken."
+  },
+  "allowance.detail.available_one": {
+    "text": "{{count}} slot available. Creating, importing and remixing share this allowance.",
+    "description": "Explanation in the allowance box. {{count}} is how many app slots the person still has free. Creating, importing and remixing are the three ways of making an app."
+  },
+  "allowance.detail.available_other": {
+    "text": "{{count}} slots available. Creating, importing and remixing share this allowance.",
+    "description": "Explanation in the allowance box. {{count}} is how many app slots the person still has free. Creating, importing and remixing are the three ways of making an app."
+  },
+  "allowance.detail.availableSpent_one": {
+    "text": "{{count}} slot available. Creating, importing and remixing share this allowance. Request more slots to create another app.",
+    "description": "Explanation in the allowance box when every app slot is taken. {{count}} is how many slots are free, normally 0. The last sentence points at the \"Request more\" button below."
+  },
+  "allowance.detail.availableSpent_other": {
+    "text": "{{count}} slots available. Creating, importing and remixing share this allowance. Request more slots to create another app.",
+    "description": "Explanation in the allowance box when every app slot is taken. {{count}} is how many slots are free, normally 0. The last sentence points at the \"Request more\" button below."
+  },
+  "allowance.server.fullNoLimit": {
+    "text": "This server is at its app limit ({{limit}}). Ask an admin to remove an app or raise the limit. Your own allowance: no limit.",
+    "description": "Red line in the allowance box when the whole server cannot take another app, for an account that itself has no limit. {{limit}} is the server's maximum number of apps."
+  },
+  "allowance.server.fullSlotsFree_one": {
+    "text": "This server is at its app limit ({{limit}}). Ask an admin to remove an app or raise the limit. Your own allowance: {{count}} slot free.",
+    "description": "Red line in the allowance box when the whole server cannot take another app. {{limit}} is the server's maximum number of apps; {{count}} is how many app slots this person still has free."
+  },
+  "allowance.server.fullSlotsFree_other": {
+    "text": "This server is at its app limit ({{limit}}). Ask an admin to remove an app or raise the limit. Your own allowance: {{count}} slots free.",
+    "description": "Red line in the allowance box when the whole server cannot take another app. {{limit}} is the server's maximum number of apps; {{count}} is how many app slots this person still has free."
+  },
+  "allowance.server.room_one": {
+    "text": "This server has room for {{count}} more app (limit {{limit}}).",
+    "description": "Line in the allowance box when the server is nearly full and that is the limit this person will meet first. {{count}} is how many more apps the server can take; {{limit}} is its maximum."
+  },
+  "allowance.server.room_other": {
+    "text": "This server has room for {{count}} more apps (limit {{limit}}).",
+    "description": "Line in the allowance box when the server is nearly full and that is the limit this person will meet first. {{count}} is how many more apps the server can take; {{limit}} is its maximum."
+  },
+  "allowance.request.more": {
+    "text": "Request more",
+    "description": "Button in the allowance box: asks the admins for more app slots. \"Request\" is a verb."
+  },
+  "allowance.request.sending": {
+    "text": "Sending…",
+    "description": "Text of the \"Request more\" button in the allowance box while the request for more app slots is being sent."
+  },
+  "allowance.request.pending": {
+    "text": "Request pending",
+    "description": "Text of the disabled button in the allowance box once the person has asked for more app slots and the admins have not answered. \"Request\" is a noun here."
+  },
+  "allowance.request.note": {
+    "text": "Admins have your request. You’ll be notified when it is reviewed.",
+    "description": "Note under the disabled \"Request pending\" button in the allowance box."
+  },
+  "allowance.refresh": {
+    "text": "Refresh allowance",
+    "description": "Button in the allowance box, shown after the allowance failed to load: fetches it again."
+  },
+  "allowance.error.load": {
+    "text": "Could not load your app allowance.",
+    "description": "Error in the allowance box when the person's allowance could not be fetched and the server gave no reason."
+  },
+  "allowance.error.request": {
+    "text": "Could not send your request.",
+    "description": "Error in the allowance box when asking the admins for more app slots failed and the server gave no reason."
+  },
+  "appNotifications.title": {
+    "text": "Notifications",
+    "description": "Heading of the dialog where a person chooses which of one app's notifications they receive."
+  },
+  "appNotifications.intro.named": {
+    "text": "What {{app}} can tell you about. Each of these covers the bell here and a notification on your phone, together.",
+    "description": "Line under the heading of an app's notification settings. {{app}} is the app's name. \"The bell\" is the notification bell in Homeroom's header."
+  },
+  "appNotifications.intro.unnamed": {
+    "text": "What this app can tell you about.",
+    "description": "Line under the heading of an app's notification settings while the app's name is still loading."
+  },
+  "appNotifications.followDefault": {
+    "text": "Follow my default",
+    "description": "Link under one kind of notification in an app's notification settings: drops the choice made for this app and uses the person's setting for all apps again."
+  },
+  "appNotifications.source.account": {
+    "text": "Your default for all apps",
+    "description": "Small note under one kind of notification in an app's notification settings: its switch shows the person's own setting for all apps, not a choice made for this app."
+  },
+  "appNotifications.source.default": {
+    "text": "Default",
+    "description": "Small note under one kind of notification in an app's notification settings: its switch shows the built-in setting, because the person has not chosen anything."
+  },
+  "appNotifications.note": {
+    "text": "Turning something off stops the notification, not the thing itself. New issues and proposals still appear on this app's board.",
+    "description": "Footnote of an app's notification settings. The board is the app's list of issues and proposals."
+  },
+  "appNotifications.error.load": {
+    "text": "Could not load notification settings.",
+    "description": "Error in an app's notification settings when they could not be fetched and the server gave no reason."
+  },
+  "appNotifications.error.save": {
+    "text": "Could not save that.",
+    "description": "Error in an app's notification settings when flipping a switch could not be saved and the server gave no reason."
+  },
+  "appSettings.title": {
+    "text": "App settings",
+    "description": "Heading of the dialog with an app's access setting and its delete form."
+  },
+  "appSettings.loading": {
+    "text": "Loading app settings…",
+    "description": "Shown in the app settings dialog while the app's settings are being fetched."
+  },
+  "appSettings.error.load": {
+    "text": "Could not load app settings.",
+    "description": "Error in the app settings dialog when the settings could not be fetched and the server gave no reason."
+  },
+  "appSettings.demo.notice": {
+    "text": "This app is in demo mode. Proposals and votes from <0>@{{partner}}</0> are synthetic: the app’s creator made them to record how a change is proposed, previewed and merged.",
+    "description": "Notice at the top of the app settings dialog of an app in demo mode. {{partner}} is the username of the made-up second member; keep the @ before it and the numbered tag, which makes it bold."
+  },
+  "appSettings.demo.noticeUnnamed": {
+    "text": "This app is in demo mode. Proposals and votes from <0>@its demo partner</0> are synthetic: the app’s creator made them to record how a change is proposed, previewed and merged.",
+    "description": "The same demo-mode notice when the made-up second member's username is not known. Keep the numbered tag, which makes the words bold, and the @ at its start."
+  },
+  "appSettings.demo.noticeApprovals_one": {
+    "text": "This app is in demo mode. Proposals and votes from <0>@{{partner}}</0> are synthetic: the app’s creator made them to record how a change is proposed, previewed and merged. While demo mode is on, a proposal here merges on {{count}} approval rather than on the app’s usual timed rules; switching demo mode off puts that back.",
+    "description": "Demo-mode notice at the top of the app settings dialog, with the approval rule that applies meanwhile. {{partner}} is the made-up second member's username (keep the @ and the numbered tag); {{count}} is how many approvals merge a proposal."
+  },
+  "appSettings.demo.noticeApprovals_other": {
+    "text": "This app is in demo mode. Proposals and votes from <0>@{{partner}}</0> are synthetic: the app’s creator made them to record how a change is proposed, previewed and merged. While demo mode is on, a proposal here merges on {{count}} approvals rather than on the app’s usual timed rules; switching demo mode off puts that back.",
+    "description": "Demo-mode notice at the top of the app settings dialog, with the approval rule that applies meanwhile. {{partner}} is the made-up second member's username (keep the @ and the numbered tag); {{count}} is how many approvals merge a proposal."
+  },
+  "appSettings.demo.noticeUnnamedApprovals_one": {
+    "text": "This app is in demo mode. Proposals and votes from <0>@its demo partner</0> are synthetic: the app’s creator made them to record how a change is proposed, previewed and merged. While demo mode is on, a proposal here merges on {{count}} approval rather than on the app’s usual timed rules; switching demo mode off puts that back.",
+    "description": "Demo-mode notice with the approval rule, when the made-up second member's username is not known. Keep the numbered tag and the @ at its start. {{count}} is how many approvals merge a proposal."
+  },
+  "appSettings.demo.noticeUnnamedApprovals_other": {
+    "text": "This app is in demo mode. Proposals and votes from <0>@its demo partner</0> are synthetic: the app’s creator made them to record how a change is proposed, previewed and merged. While demo mode is on, a proposal here merges on {{count}} approvals rather than on the app’s usual timed rules; switching demo mode off puts that back.",
+    "description": "Demo-mode notice with the approval rule, when the made-up second member's username is not known. Keep the numbered tag and the @ at its start. {{count}} is how many approvals merge a proposal."
+  },
+  "appSettings.access.heading": {
+    "text": "Access",
+    "description": "Heading of the section of the app settings dialog that sets who may use the app and who may build changes for it."
+  },
+  "appSettings.access.intro": {
+    "text": "Choose who can use this app and who can build changes for it.",
+    "description": "First line of the Access section of the app settings dialog."
+  },
+  "appSettings.access.codePublic": {
+    "text": "The code is public on GitHub either way.",
+    "description": "Second line of the Access section of the app settings dialog: even a private app's source code can be read on GitHub."
+  },
+  "appSettings.access.groupLabel": {
+    "text": "App access",
+    "description": "Accessible name of the group of three access choices (Public; Public, invite-only building; Private) in the app settings dialog."
+  },
+  "appSettings.access.mode.public.title": {
+    "text": "Public",
+    "description": "Access choice in the app settings dialog: anyone may use the app and build changes for it."
+  },
+  "appSettings.access.mode.public.description": {
+    "text": "Everyone can use and build this app.",
+    "description": "Explanation under the \"Public\" access choice in the app settings dialog. \"Build\" means writing changes to the app."
+  },
+  "appSettings.access.mode.publicInvite.title": {
+    "text": "Public, invite-only building",
+    "description": "Access choice in the app settings dialog: anyone may use the app, but only invited collaborators may build changes for it."
+  },
+  "appSettings.access.mode.publicInvite.description": {
+    "text": "Everyone can use it. Only collaborators can build it.",
+    "description": "Explanation under the \"Public, invite-only building\" access choice in the app settings dialog. \"it\" is the app; \"build\" means writing changes to it."
+  },
+  "appSettings.access.mode.private.title": {
+    "text": "Private",
+    "description": "Access choice in the app settings dialog: only invited collaborators may use the app or build changes for it."
+  },
+  "appSettings.access.mode.private.description": {
+    "text": "Only collaborators can use or build this app.",
+    "description": "Explanation under the \"Private\" access choice in the app settings dialog. \"Build\" means writing changes to the app."
+  },
+  "appSettings.access.current": {
+    "text": "Current",
+    "description": "Small tag on the access choice that is in force for the app now, in the app settings dialog."
+  },
+  "appSettings.access.noRepository": {
+    "text": "This app has no GitHub repository, so its access setting is read-only.",
+    "description": "Note under the access choices in the app settings dialog when they cannot be changed."
+  },
+  "appSettings.access.changeNote": {
+    "text": "Changing access opens a proposal. The new setting applies after the group votes it in and the app redeploys.",
+    "description": "Note under the access choices in the app settings dialog. A proposal is a change the app's members vote on."
+  },
+  "appSettings.access.alreadyWaiting": {
+    "text": "A visibility change is already waiting for approval. See it in the Workshop.",
+    "description": "Status in the app settings dialog when an earlier proposal to change the app's access has not been decided yet. The Workshop is the tab of the app's page that lists proposals; keep it as a name."
+  },
+  "appSettings.access.opened": {
+    "text": "Proposal opened (PR #{{number}}). It needs the group's vote before the new access applies.",
+    "description": "Status in the app settings dialog after the access change was put up as a proposal. {{number}} is the number of its pull request (PR) on GitHub; keep the # before it."
+  },
+  "appSettings.access.error": {
+    "text": "Could not open the visibility proposal.",
+    "description": "Error in the app settings dialog when the proposal to change the app's access could not be created and the server gave no reason."
+  },
+  "appSettings.access.propose": {
+    "text": "Propose access change",
+    "description": "Button in the app settings dialog: puts the chosen access setting up as a proposal for the group to vote on."
+  },
+  "appSettings.access.proposing": {
+    "text": "Opening proposal…",
+    "description": "Text of the \"Propose access change\" button while the proposal is being created."
+  },
+  "appSettings.access.proposalOpen": {
+    "text": "Proposal open",
+    "description": "Text of the disabled \"Propose access change\" button once a proposal to change the access exists and is waiting for votes. \"Open\" is an adjective: the proposal is not decided yet."
+  },
+  "appSettings.delete.blocked.core": {
+    "text": "This is a core platform app. It cannot be deleted from the UI.",
+    "description": "Shown in the app settings dialog instead of the delete form, for an app that is part of Homeroom itself."
+  },
+  "appSettings.delete.blocked.shared_one": {
+    "text": "This app has {{count}} other contributor, so no one person can delete it. Deleting a shared app needs the group's agreement.",
+    "description": "Shown in the app settings dialog instead of the delete form, for an app other people have contributed to. {{count}} is how many contributors there are besides the viewer."
+  },
+  "appSettings.delete.blocked.shared_other": {
+    "text": "This app has {{count}} other contributors, so no one person can delete it. Deleting a shared app needs the group's agreement.",
+    "description": "Shown in the app settings dialog instead of the delete form, for an app other people have contributed to. {{count}} is how many contributors there are besides the viewer."
+  },
+  "appSettings.delete.blocked.notOwner": {
+    "text": "You do not have permission to delete this app.",
+    "description": "Shown in the app settings dialog instead of the delete form, for someone who is not allowed to delete the app."
+  },
+  "appSettings.danger.heading": {
+    "text": "Danger zone",
+    "description": "Red heading of the section of the app settings dialog that holds the delete form."
+  },
+  "appSettings.danger.explanation.named": {
+    "text": "Deleting {{app}} removes it for everyone, including its app data. This cannot be undone. It does not just remove the icon from your home page.",
+    "description": "Warning above the delete form in the app settings dialog. {{app}} is the app's name."
+  },
+  "appSettings.danger.explanation.unnamed": {
+    "text": "Deleting this app removes it for everyone, including its app data. This cannot be undone. It does not just remove the icon from your home page.",
+    "description": "Warning above the delete form in the app settings dialog, while the app's name is not loaded."
+  },
+  "appSettings.danger.confirmLabel": {
+    "text": "Type <0>{{app}}</0> to confirm deletion.",
+    "description": "Label of the text field in the delete form of the app settings dialog. {{app}} is the app's name, which the person must type exactly; the numbered tag makes it bold."
+  },
+  "appSettings.danger.sharedAck_one": {
+    "text": "This app has {{count}} other contributor who have not agreed to this. Delete it anyway as a platform admin. They will be notified.",
+    "description": "Label of a checkbox in the delete form, shown to a platform administrator deleting an app others contributed to. {{count}} is how many contributors there are besides the viewer."
+  },
+  "appSettings.danger.sharedAck_other": {
+    "text": "This app has {{count}} other contributors who have not agreed to this. Delete it anyway as a platform admin. They will be notified.",
+    "description": "Label of a checkbox in the delete form, shown to a platform administrator deleting an app others contributed to. {{count}} is how many contributors there are besides the viewer."
+  },
+  "appSettings.danger.submit": {
+    "text": "Delete app for everyone",
+    "description": "Red button at the end of the delete form in the app settings dialog: deletes the app and its data for all its users."
+  },
+  "appSettings.danger.deleting": {
+    "text": "Deleting…",
+    "description": "Text of the \"Delete app for everyone\" button while the app is being deleted."
+  },
+  "appSettings.danger.error": {
+    "text": "Could not delete the app. Try again.",
+    "description": "Error in the app settings dialog when deleting the app failed and the server gave no reason."
+  },
+  "appSettings.danger.deleted": {
+    "text": "App deleted for everyone.",
+    "description": "Brief message shown at the bottom of the screen after an app was deleted from the app settings dialog."
+  },
+  "boardFilters.title": {
+    "text": "Filters",
+    "description": "Heading of the dialog that narrows which items an app's board shows."
+  },
+  "boardFilters.subtitle": {
+    "text": "All conditions apply together.",
+    "description": "Line under the heading of the board filters dialog: an item must match every filter that is set."
+  },
+  "boardFilters.priority.label": {
+    "text": "Priority",
+    "description": "Label of the drop-down in the board filters dialog that filters items by their priority."
+  },
+  "boardFilters.priority.any": {
+    "text": "Any priority",
+    "description": "First option of the priority drop-down in the board filters dialog: do not filter by priority."
+  },
+  "boardFilters.priority.high": {
+    "text": "High",
+    "description": "Option of the priority drop-down in the board filters dialog: only items of high priority."
+  },
+  "boardFilters.priority.medium": {
+    "text": "Medium",
+    "description": "Option of the priority drop-down in the board filters dialog: only items of medium priority."
+  },
+  "boardFilters.priority.low": {
+    "text": "Low",
+    "description": "Option of the priority drop-down in the board filters dialog: only items of low priority."
+  },
+  "boardFilters.category.label": {
+    "text": "Category",
+    "description": "Label of the drop-down in the board filters dialog that filters items by their category."
+  },
+  "boardFilters.category.any": {
+    "text": "Any category",
+    "description": "First option of the category drop-down in the board filters dialog: do not filter by category."
+  },
+  "boardFilters.assignee.label": {
+    "text": "Assignee",
+    "description": "Label of the drop-down in the board filters dialog that filters items by the person they are assigned to."
+  },
+  "boardFilters.assignee.anyone": {
+    "text": "Anyone",
+    "description": "First option of the assignee drop-down in the board filters dialog: do not filter by who an item is assigned to."
+  },
+  "boardFilters.assignee.nobody": {
+    "text": "Nobody yet",
+    "description": "Option of the assignee drop-down in the board filters dialog: only items that are not assigned to anyone."
+  },
+  "boardFilters.waiting.title": {
+    "text": "Waiting on you",
+    "description": "Label of a switch in the board filters dialog: show only proposals that still need this person's vote."
+  },
+  "boardFilters.waiting.description": {
+    "text": "Only proposals you haven’t weighed in on yet",
+    "description": "Explanation under the \"Waiting on you\" switch in the board filters dialog. To weigh in is to vote."
+  },
+  "boardFilters.assigned.title": {
+    "text": "Assigned to you",
+    "description": "Label of a switch in the board filters dialog: show only items assigned to this person."
+  },
+  "boardFilters.assigned.description": {
+    "text": "Only items the group voted onto you",
+    "description": "Explanation under the \"Assigned to you\" switch in the board filters dialog: the group assigns an item to a person by vote."
+  },
+  "boardFilters.created.title": {
+    "text": "Created by you",
+    "description": "Label of a switch in the board filters dialog: show only items this person opened."
+  },
+  "boardFilters.created.description": {
+    "text": "Only items you opened yourself",
+    "description": "Explanation under the \"Created by you\" switch in the board filters dialog. To open an item is to file it."
+  },
+  "createProgress.title.creating": {
+    "text": "Creating {{app}}",
+    "description": "Heading of the progress panel shown after an app was asked for, while a new app is being set up. {{app}} is the app's name."
+  },
+  "createProgress.title.importing": {
+    "text": "Importing {{app}}",
+    "description": "Heading of the progress panel shown after an app was asked for, while an app is being imported from an existing repository. {{app}} is the app's name."
+  },
+  "createProgress.title.remixing": {
+    "text": "Remixing {{app}}",
+    "description": "Heading of the progress panel shown after an app was asked for, while the person's own copy (a remix) of someone else's app is being made. {{app}} is the copy's name."
+  },
+  "createProgress.title.live": {
+    "text": "{{app}} is live",
+    "description": "Heading of the progress panel shown after an app was asked for, once the app is running and can be opened. {{app}} is the app's name."
+  },
+  "createProgress.title.almost": {
+    "text": "Almost there",
+    "description": "Heading of the progress panel shown after an app was asked for, when the app is built but cannot start until its required secrets (keys it needs) are set."
+  },
+  "createProgress.title.failed": {
+    "text": "Couldn’t finish {{app}}",
+    "description": "Heading of the progress panel shown after an app was asked for, when setting the app up failed. {{app}} is the app's name."
+  },
+  "createProgress.step.database": {
+    "text": "Setting up your database",
+    "description": "First of four steps listed in the app-creation progress panel, each with a tick, a spinner or a cross beside it."
+  },
+  "createProgress.step.repository": {
+    "text": "Preparing the repository",
+    "description": "Second of four steps listed in the app-creation progress panel: the app's code repository is being made."
+  },
+  "createProgress.step.build": {
+    "text": "Building your app",
+    "description": "Third of four steps listed in the app-creation progress panel: the app's code is being compiled into something that can run."
+  },
+  "createProgress.step.deploy": {
+    "text": "Going live",
+    "description": "Last of four steps listed in the app-creation progress panel: the built app is being started so people can open it."
+  },
+  "createProgress.status.pending": {
+    "text": "This usually takes under a minute. You can close this and keep going. We’ll finish in the background and your app will appear in your apps.",
+    "description": "Status line under the steps of the app-creation progress panel while the app is still being set up. \"Close this\" is closing the panel."
+  },
+  "createProgress.status.live": {
+    "text": "Your app is running. Open it to see what it shipped with.",
+    "description": "Status line under the steps of the app-creation progress panel once the app is running. \"What it shipped with\" is the starter content every new app has."
+  },
+  "createProgress.status.liveBot": {
+    "text": "{{app}} is set up. Homeroom bot is building its first version from your description and will message you when it’s ready to try.",
+    "description": "Status line under the steps of the app-creation progress panel once the app is running and the assistant is writing its first version. {{app}} is the app's name. \"Homeroom bot\" is the assistant's name and stays as it is."
+  },
+  "createProgress.status.liveRequest": {
+    "text": "Your project is ready. Its first request is waiting on its page.",
+    "description": "Status line under the steps of the app-creation progress panel once the project is running and the person's description was filed as its first request (a request is an item asking for a change)."
+  },
+  "createProgress.status.needsNamedSecrets": {
+    "text": "Set {{secrets}} and your app will finish starting.",
+    "description": "Status line under the steps of the app-creation progress panel when the app needs secrets before it can start. {{secrets}} is the list of the missing variables' names, such as OPENAI_API_KEY, STRIPE_KEY."
+  },
+  "createProgress.status.needsSecrets": {
+    "text": "Set the required secrets and your app will finish starting.",
+    "description": "Status line under the steps of the app-creation progress panel when the app needs secrets (keys and passwords it uses) before it can start and their names are not known."
+  },
+  "createProgress.status.stopped": {
+    "text": "Setup stopped before your app was running. Retrying usually clears a transient failure.",
+    "description": "Status line under the steps of the app-creation progress panel, in red, when setting the app up failed and no reason was recorded."
+  },
+  "createProgress.status.buildFailed": {
+    "text": "The build didn’t finish. Try again, or ask an admin.",
+    "description": "Status line under the steps of the app-creation progress panel, in red, when the step that builds the app's code failed. \"Build\" is a noun."
+  },
+  "createProgress.status.setupFailed": {
+    "text": "Setup didn’t finish. Try again, or ask an admin.",
+    "description": "Status line under the steps of the app-creation progress panel, in red, when a step other than the build failed."
+  },
+  "createProgress.details": {
+    "text": "Details",
+    "description": "Label of the fold in the app-creation progress panel that, opened, shows the technical reason the setup failed."
+  },
+  "createProgress.next.heading": {
+    "text": "What happens next",
+    "description": "Small heading above three numbered lines in the app-creation progress panel that say what follows once the app exists."
+  },
+  "createProgress.next.open": {
+    "text": "Open your app and try what it shipped with.",
+    "description": "One of three numbered lines under \"What happens next\" in the app-creation progress panel. \"What it shipped with\" is the starter content every new app has."
+  },
+  "createProgress.next.describe": {
+    "text": "Describe a change in chat, and a coding agent writes it.",
+    "description": "One of three numbered lines under \"What happens next\" in the app-creation progress panel. A coding agent is the AI that writes the code."
+  },
+  "createProgress.next.collaboratorsVote": {
+    "text": "Collaborators vote it in, and it goes live.",
+    "description": "One of three numbered lines under \"What happens next\" in the app-creation progress panel, when it is not known who the app is for. \"it\" is the change the coding agent wrote."
+  },
+  "createProgress.next.membersVote": {
+    "text": "Members vote it in, and it goes live.",
+    "description": "One of three numbered lines under \"What happens next\" in the app-creation progress panel, for an app that belongs to a community. \"it\" is the change the coding agent wrote."
+  },
+  "createProgress.next.soloApprove": {
+    "text": "You approve it, and it goes live.",
+    "description": "One of three numbered lines under \"What happens next\" in the app-creation progress panel, for an app only this person uses. \"it\" is the change the coding agent wrote."
+  },
+  "createProgress.next.botBuilds": {
+    "text": "Homeroom bot builds the first version from your description.",
+    "description": "One of three numbered lines under \"What happens next\" in the app-creation progress panel, when the assistant writes the first version. \"Homeroom bot\" is the assistant's name and stays as it is."
+  },
+  "createProgress.next.botMessages": {
+    "text": "It messages you in your chat when it’s ready, and asks there if anything is unclear.",
+    "description": "One of three numbered lines under \"What happens next\" in the app-creation progress panel, after \"Homeroom bot builds the first version from your description.\" \"It\" is the bot."
+  },
+  "createProgress.next.firstRequest": {
+    "text": "Your description is the project’s first request.",
+    "description": "One of three numbered lines under \"What happens next\" in the app-creation progress panel, when the person's description was filed as a request (an item asking for a change)."
+  },
+  "createProgress.next.startChange": {
+    "text": "Start a change from it, and a coding agent writes it.",
+    "description": "One of three numbered lines under \"What happens next\" in the app-creation progress panel, after \"Your description is the project’s first request.\" The first \"it\" is that request; the second is the change."
+  },
+  "createProgress.openApp": {
+    "text": "Open app",
+    "description": "Button in the app-creation progress panel once the app is running: opens the new app. \"Open\" is a verb."
+  },
+  "createProgress.viewApp": {
+    "text": "Open app",
+    "description": "Second, quieter button in the app-creation progress panel, shown while the assistant is still building the first version and the main button leads to its chat: opens the new app as it is now. \"Open\" is a verb."
+  },
+  "createProgress.setSecrets": {
+    "text": "Set secrets",
+    "description": "Button in the app-creation progress panel when the app needs secrets before it can start: opens the dialog where they are entered."
+  },
+  "createApp.error.network": {
+    "text": "Network error. Try again.",
+    "description": "Error on a create-project form when the request could not reach the server."
+  },
+  "createApp.error.status": {
+    "text": "Homeroom couldn’t create the project ({{status}}). Try again in a moment.",
+    "description": "Error on a create-project form when the server refused and gave no reason. {{status}} is the numeric HTTP status code. Homeroom is the product's name."
+  },
+  "fork.title.named": {
+    "text": "Remix <0>{{app}}</0>",
+    "description": "Heading of the dialog for making one's own copy of an app. \"Remix\" is a verb. {{app}} is the name of the app being copied; keep the numbered tag around it."
+  },
+  "fork.title.unnamed": {
+    "text": "Remix <0>this app</0>",
+    "description": "Heading of the remix dialog when the name of the app being copied is not known. \"Remix\" is a verb. Keep the numbered tag around \"this app\"."
+  },
+  "fork.intro": {
+    "text": "Make your own copy. You get the code and the look, and it starts as Just you.",
+    "description": "Line under the heading of the remix dialog. \"Just you\" is the name of the audience setting for an app only its maker can use; keep it as a name."
+  },
+  "fork.nameLabel": {
+    "text": "Name for your copy",
+    "description": "Label of the text field in the remix dialog where the copy's name is typed."
+  },
+  "fork.namePlaceholder": {
+    "text": "My copy",
+    "description": "Greyed example text inside the empty name field of the remix dialog."
+  },
+  "fork.defaultName.named": {
+    "text": "{{app}} (remix)",
+    "description": "Name the remix dialog suggests for the copy, filled into the name field. {{app}} is the name of the app being copied."
+  },
+  "fork.defaultName.unnamed": {
+    "text": "App (remix)",
+    "description": "Name the remix dialog suggests for the copy when the name of the app being copied is not known."
+  },
+  "fork.info.copied": {
+    "text": "<0>Copied:</0> the code, the look and the icon.",
+    "description": "First line of the box in the remix dialog that says what a copy holds. The numbered tag makes the lead-in bold."
+  },
+  "fork.info.fresh": {
+    "text": "<0>Starts fresh:</0> it’s Just you, with an empty database. Invite people or open it up later.",
+    "description": "Second line of the box in the remix dialog. \"Just you\" is the name of the audience setting for an app only its maker can use. The numbered tag makes the lead-in bold."
+  },
+  "fork.info.notCopied": {
+    "text": "<0>Not copied:</0> anyone’s data, keys, chat or members. If the app needs a key, you’ll add your own before it goes live.",
+    "description": "Third line of the box in the remix dialog. A key is a secret such as an API key. The numbered tag makes the lead-in bold."
+  },
+  "fork.info.public": {
+    "text": "Its code is public on GitHub.",
+    "description": "Last line of the box in the remix dialog: the copy's source code can be read by anyone on GitHub."
+  },
+  "fork.submit": {
+    "text": "Remix",
+    "description": "Button in the remix dialog: makes the copy. A verb."
+  },
+  "fork.submitting": {
+    "text": "Remixing…",
+    "description": "Text of the remix dialog's button while the copy is being requested."
+  },
+  "fork.error.nameShort": {
+    "text": "Name must be at least 3 characters.",
+    "description": "Error in the remix dialog when the copy's name is shorter than 3 characters."
+  },
+  "fork.error.failed": {
+    "text": "Could not make your copy.",
+    "description": "Error in the remix dialog when the server refused to make the copy and gave no reason."
+  },
+  "fork.error.network": {
+    "text": "Network error. Please try again.",
+    "description": "Error in the remix dialog when the request could not reach the server."
+  },
+  "fork.beingMade": {
+    "text": "Your copy is being made. It will appear in your apps when it is ready.",
+    "description": "Brief message at the bottom of the screen after a remix was accepted but its progress cannot be shown; the dialog closes and Home opens."
+  },
+  "fork.retry.http": {
+    "text": "Retry failed (HTTP {{status}}).",
+    "description": "Shown under \"Details\" in the progress panel when asking the server to retry a failed remix was refused without a reason. {{status}} is the numeric HTTP status code."
+  },
+  "fork.retry.unreachable": {
+    "text": "Could not reach the server to retry. Try again from the app tile.",
+    "description": "Shown under \"Details\" in the progress panel when the retry of a failed remix could not be sent. The app tile is the app's icon on Home."
+  },
+  "importPr.title": {
+    "text": "Import a pull request",
+    "description": "Heading of the dialog that brings an existing GitHub pull request into the app's board."
+  },
+  "importPr.intro": {
+    "text": "Pick an open pull request to add to In progress. It stays there until you ask for approval.",
+    "description": "Line under the heading of the import dialog. \"In progress\" is the name of a column of the app's board; keep it as a name."
+  },
+  "importPr.previewNote": {
+    "text": "A staging preview is built from the pull request's head commit, so it takes a few minutes to appear, and automated checks stay pending until it does. Rows marked <0>from a fork</0> are branches in someone else's repository: review the changes on GitHub before importing.",
+    "description": "Second paragraph of the import dialog. The numbered tag colours \"from a fork\" like the mark on those rows; translate it the same way as that mark."
+  },
+  "importPr.list.loading": {
+    "text": "Loading open pull requests…",
+    "description": "Shown in the list of the import dialog while the app's open pull requests are being fetched."
+  },
+  "importPr.list.loadFailed": {
+    "text": "Couldn’t load pull requests. Please try again.",
+    "description": "Error in place of the list in the import dialog when the request for the pull requests could not be sent."
+  },
+  "importPr.list.notConfigured": {
+    "text": "GitHub isn’t configured for this app, so there’s nothing to import.",
+    "description": "Note in place of the list in the import dialog when the app has no usable GitHub repository."
+  },
+  "importPr.list.empty": {
+    "text": "No open pull requests are available to import right now.",
+    "description": "Note in place of the list in the import dialog when the repository has no pull request that could be imported."
+  },
+  "importPr.row.unknownAuthor": {
+    "text": "unknown",
+    "description": "Stands in for the author's GitHub username on a row of the import dialog when the pull request has none recorded. Lower case, like a username."
+  },
+  "importPr.row.fromFork": {
+    "text": "from a fork: <0>{{repository}}</0>",
+    "description": "Amber mark on a row of the import dialog whose branch lives in another repository. {{repository}} is that repository's name, such as someone/app; keep the numbered tag around it."
+  },
+  "importPr.row.fromUnknownFork": {
+    "text": "from a fork: <0>unknown fork</0>",
+    "description": "Amber mark on a row of the import dialog whose branch lives in another repository whose name is not known. Keep the numbered tag around \"unknown fork\"."
+  },
+  "importPr.row.forkTooltip": {
+    "text": "This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing.",
+    "description": "Tooltip of the \"from a fork\" mark on a row of the import dialog."
+  },
+  "importPr.row.viewOnGitHub": {
+    "text": "View on GitHub ↗",
+    "description": "Link on a row of the import dialog: opens that pull request on GitHub in a new tab. Keep the arrow at the end."
+  },
+  "importPr.progress": {
+    "text": "Importing PR #{{number}}: checking it on GitHub and adding it to In progress…",
+    "description": "Shown beside a spinner in the import dialog while the chosen pull request (PR) is imported. {{number}} is its number; keep the # before it. \"In progress\" is the name of a board column."
+  },
+  "importPr.slow": {
+    "text": "Still working. GitHub is being slow, so don’t close this window.",
+    "description": "Shown under the progress line of the import dialog when the import has taken more than a few seconds."
+  },
+  "importPr.submit": {
+    "text": "Import",
+    "description": "Button in the import dialog: imports the selected pull request. A verb."
+  },
+  "importPr.submitting": {
+    "text": "Importing…",
+    "description": "Text of the import dialog's button while the pull request is being imported."
+  },
+  "importPr.imported": {
+    "text": "PR #{{number}} was imported. Its preview is being built now. Find it in Dev under In progress.",
+    "description": "Brief message at the bottom of the screen after an import succeeded but its page could not be opened. {{number}} is the pull request's number; keep the # before it. \"Dev\" is the name of a tab and \"In progress\" of a board column."
+  },
+  "importPr.error.pick": {
+    "text": "Pick a pull request to import.",
+    "description": "Error in the import dialog when Import was pressed with no pull request selected."
+  },
+  "importPr.error.network": {
+    "text": "Network error. Please try again.",
+    "description": "Error in the import dialog when the import request could not reach the server."
+  },
+  "importPr.error.notFound": {
+    "text": "PR #{{number}} wasn’t found on GitHub. It may have been deleted.",
+    "description": "Error in the import dialog when GitHub no longer has the chosen pull request (PR). {{number}} is its number; keep the # before it."
+  },
+  "importPr.error.conflict": {
+    "text": "PR #{{number}} can’t be imported right now.",
+    "description": "Error in the import dialog when the chosen pull request (PR) cannot be imported in its present state. {{number}} is its number; keep the # before it."
+  },
+  "importPr.error.restarting": {
+    "text": "The platform is restarting. Try the import again in a few seconds.",
+    "description": "Error in the import dialog when the server is briefly unavailable. \"The platform\" is Homeroom."
+  },
+  "importPr.error.generic": {
+    "text": "Something went wrong importing this PR. Please try again.",
+    "description": "Error in the import dialog when the import failed and the server gave no reason. PR is a pull request."
+  },
+  "walletRecovery.title": {
+    "text": "Connect your existing wallet",
+    "description": "Heading of a dialog in the mobile app, shown when no new wallet can be made for the person: they can attach the wallet of an account they made earlier with an email address."
+  },
+  "walletRecovery.intro": {
+    "text": "No new mobile wallet is available. If you previously joined with email, prove that address to connect its current-season wallet.",
+    "description": "Line under the heading of the wallet recovery dialog. A season is a period of the programme; each account has one wallet per season."
+  },
+  "walletRecovery.emailLabel": {
+    "text": "Previous account email",
+    "description": "Label of the email field in the wallet recovery dialog: the address of the account the person made earlier."
+  },
+  "walletRecovery.emailPlaceholder": {
+    "text": "you@example.com",
+    "description": "Greyed example inside the empty email field of the wallet recovery dialog. Keep it a made-up address at example.com."
+  },
+  "walletRecovery.sendCode": {
+    "text": "Send code",
+    "description": "Button beside the email field in the wallet recovery dialog: emails a six-digit code to that address."
+  },
+  "walletRecovery.sending": {
+    "text": "Sending…",
+    "description": "Text of the \"Send code\" button in the wallet recovery dialog while the code is being sent."
+  },
+  "walletRecovery.codeLabel": {
+    "text": "Email code",
+    "description": "Label of the field in the wallet recovery dialog where the six-digit code from the email is typed."
+  },
+  "walletRecovery.connect": {
+    "text": "Connect wallet",
+    "description": "Main button of the wallet recovery dialog: checks the code and attaches the earlier account's wallet."
+  },
+  "walletRecovery.connecting": {
+    "text": "Connecting…",
+    "description": "Text of the main button of the wallet recovery dialog while the wallet is being attached or sign-in is finishing."
+  },
+  "walletRecovery.retrySignIn": {
+    "text": "Try again",
+    "description": "Text of the main button of the wallet recovery dialog after the wallet was attached but signing in to the app did not finish: retries the sign-in."
+  },
+  "walletRecovery.status.checkEmail": {
+    "text": "Check that email for a six-digit code.",
+    "description": "Status in the wallet recovery dialog after the code was sent. \"That email\" is the address the person typed."
+  },
+  "walletRecovery.status.connected": {
+    "text": "Wallet connected. Finishing app sign-in…",
+    "description": "Status in the wallet recovery dialog after the wallet was attached, while the mobile app signs in."
+  },
+  "walletRecovery.error.email": {
+    "text": "Enter the email address used by your previous account.",
+    "description": "Error in the wallet recovery dialog when the email field is empty or is not an address."
+  },
+  "walletRecovery.error.code": {
+    "text": "Enter the six-digit code from the email.",
+    "description": "Error in the wallet recovery dialog when the code field does not hold six digits."
+  },
+  "walletRecovery.error.send": {
+    "text": "Could not send a code. Please try again.",
+    "description": "Error in the wallet recovery dialog when the code could not be emailed and the server gave no reason."
+  },
+  "walletRecovery.error.rotation": {
+    "text": "That wallet was already installed elsewhere. Moving it safely requires key rotation, which is not available yet.",
+    "description": "Error in the wallet recovery dialog when the wallet is in use on another device. Key rotation is replacing the wallet's cryptographic key."
+  },
+  "walletRecovery.error.claim": {
+    "text": "Could not connect that wallet. Check the email and code, then try again.",
+    "description": "Error in the wallet recovery dialog when the server refused to attach the wallet and gave no reason."
+  },
+  "walletRecovery.error.connect": {
+    "text": "Could not connect that wallet. Please try again.",
+    "description": "Error in the wallet recovery dialog when the request to attach the wallet could not reach the server."
+  },
+  "walletRecovery.error.update": {
+    "text": "Update the Homeroom app to finish connecting this wallet.",
+    "description": "Error in the wallet recovery dialog when the installed mobile app is too old to finish. Homeroom is the product's name."
+  },
+  "walletRecovery.error.signIn": {
+    "text": "The wallet is connected, but app sign-in did not finish. Try again.",
+    "description": "Error in the wallet recovery dialog when the wallet was attached but the mobile app could not sign in."
+  },
+  "feedback.heading": {
+    "text": "Suggest an improvement",
+    "description": "Heading of the dialog where a person writes a request for a change to an app or to Homeroom."
+  },
+  "feedback.intro": {
+    "text": "Members can see it, vote on it and pick it up.",
+    "description": "Line under the heading of the \"Suggest an improvement\" dialog. \"it\" is the request being written; to pick it up is to start working on it."
+  },
+  "feedback.dropLabel": {
+    "text": "Drop images or a clip to attach",
+    "description": "Shown over the \"Suggest an improvement\" dialog while files are dragged over it. A clip is a short video."
+  },
+  "feedback.target.label": {
+    "text": "Where should this go?",
+    "description": "Question above the two choices in the \"Suggest an improvement\" dialog: whether the request is about the app that is open or about Homeroom itself."
+  },
+  "feedback.target.thisApp": {
+    "text": "This app",
+    "description": "First line of the app choice in the \"Suggest an improvement\" dialog when the open app has no name to show."
+  },
+  "feedback.target.noApp": {
+    "text": "No app open",
+    "description": "First line of the app choice in the \"Suggest an improvement\" dialog when no app is open, so the choice is greyed out."
+  },
+  "feedback.target.appSub": {
+    "text": "This app",
+    "description": "Second, smaller line of the app choice in the \"Suggest an improvement\" dialog, under the app's name: says the name above is the app that is open."
+  },
+  "feedback.target.platformSub": {
+    "text": "The platform itself",
+    "description": "Second, smaller line of the Homeroom choice in the \"Suggest an improvement\" dialog, under the name Homeroom: the request is about Homeroom, not about one app."
+  },
+  "feedback.target.choose": {
+    "text": "Choose where this goes.",
+    "description": "Red line under the two choices in the \"Suggest an improvement\" dialog when \"Post request\" was pressed before either was picked."
+  },
+  "feedback.title.label": {
+    "text": "Title<0> optional</0>",
+    "description": "Label of the title field in the \"Suggest an improvement\" dialog. The numbered tag sets \"optional\" in grey; keep the space at the start of it."
+  },
+  "feedback.title.placeholder": {
+    "text": "Suggested as you type",
+    "description": "Greyed text inside the empty title field of the \"Suggest an improvement\" dialog: a title is proposed automatically while the description is typed."
+  },
+  "feedback.title.generating": {
+    "text": "Generating title…",
+    "description": "Greyed text inside the empty title field of the \"Suggest an improvement\" dialog while a title is being worked out from the description."
+  },
+  "feedback.description.label": {
+    "text": "What should change?",
+    "description": "Label of the large text box in the \"Suggest an improvement\" dialog, where the request is described."
+  },
+  "feedback.description.placeholder": {
+    "text": "Describe the change, or the problem you hit",
+    "description": "Greyed text inside the empty description box of the \"Suggest an improvement\" dialog."
+  },
+  "feedback.description.required": {
+    "text": "Please say what should change.",
+    "description": "Red line under the description box of the \"Suggest an improvement\" dialog when \"Post request\" was pressed with nothing written."
+  },
+  "feedback.screenshot.attach": {
+    "text": "Attach screenshot",
+    "description": "Button in the \"Suggest an improvement\" dialog on a computer: lets the person mark an area of the page to attach as a picture."
+  },
+  "feedback.screenshot.attachAnother": {
+    "text": "Attach another",
+    "description": "The same button in the \"Suggest an improvement\" dialog once at least one picture is attached: attaches another screenshot."
+  },
+  "feedback.screenshot.take": {
+    "text": "Take screenshot",
+    "description": "Button in the \"Suggest an improvement\" dialog in the mobile app: captures the screen behind the dialog and attaches it."
+  },
+  "feedback.screenshot.takeAnother": {
+    "text": "Take another",
+    "description": "The same button in the \"Suggest an improvement\" dialog in the mobile app once at least one picture is attached: takes another screenshot."
+  },
+  "feedback.screenshot.limit_one": {
+    "text": "You can attach up to {{count}} images.",
+    "description": "Small line under the attach buttons of the \"Suggest an improvement\" dialog while nothing is attached. {{count}} is the most images one request may carry."
+  },
+  "feedback.screenshot.limit_other": {
+    "text": "You can attach up to {{count}} images.",
+    "description": "Small line under the attach buttons of the \"Suggest an improvement\" dialog while nothing is attached. {{count}} is the most images one request may carry."
+  },
+  "feedback.screenshot.attached_one": {
+    "text": "{{attached}} of {{count}} images attached.",
+    "description": "Small line under the attach buttons of the \"Suggest an improvement\" dialog. {{attached}} is how many images are attached and {{count}} the most a request may carry."
+  },
+  "feedback.screenshot.attached_other": {
+    "text": "{{attached}} of {{count}} images attached.",
+    "description": "Small line under the attach buttons of the \"Suggest an improvement\" dialog. {{attached}} is how many images are attached and {{count}} the most a request may carry."
+  },
+  "feedback.screenshot.attachedFull_one": {
+    "text": "{{attached}} of {{count}} images attached. Remove one to add another.",
+    "description": "Small line under the attach buttons of the \"Suggest an improvement\" dialog when no more images fit. {{attached}} is how many are attached and {{count}} the most a request may carry."
+  },
+  "feedback.screenshot.attachedFull_other": {
+    "text": "{{attached}} of {{count}} images attached. Remove one to add another.",
+    "description": "Small line under the attach buttons of the \"Suggest an improvement\" dialog when no more images fit. {{attached}} is how many are attached and {{count}} the most a request may carry."
+  },
+  "feedback.screenshot.previewAlt": {
+    "text": "Image {{number}} preview",
+    "description": "Text alternative of an attached image's thumbnail in the \"Suggest an improvement\" dialog. {{number}} is its position among the attached images, starting at 1."
+  },
+  "feedback.screenshot.remove": {
+    "text": "Remove image {{number}}",
+    "description": "Accessible name of the X button on an attached image's thumbnail in the \"Suggest an improvement\" dialog. {{number}} is its position among the attached images, starting at 1."
+  },
+  "feedback.screenshot.uploading": {
+    "text": "Uploading…",
+    "description": "Shown on an attached image's thumbnail in the \"Suggest an improvement\" dialog while the image is being uploaded."
+  },
+  "feedback.screenshot.savedOffline": {
+    "text": "Saved with your feedback. It'll upload when you're back online",
+    "description": "Shown on an attached image's thumbnail in the \"Suggest an improvement\" dialog when it could not be uploaded because there is no connection."
+  },
+  "feedback.screenshot.uploadFailed": {
+    "text": "Screenshot upload failed",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the server refused an attached image and gave no reason."
+  },
+  "feedback.screenshot.uploadLater": {
+    "text": "Couldn't upload the screenshot yet. It'll be sent along with your feedback.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when an attached image could not be uploaded because there is no connection."
+  },
+  "feedback.screenshot.stillUploading": {
+    "text": "Screenshot is still uploading, one moment…",
+    "description": "Status line of the \"Suggest an improvement\" dialog when \"Post request\" was pressed while an attached image is still uploading."
+  },
+  "feedback.screenshot.lost": {
+    "text": "The screenshot didn't make it, but your feedback is safe. Here it is again.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the dialog reopens after a screen capture that was interrupted: the typed text was kept and is shown again."
+  },
+  "feedback.capture.waiting": {
+    "text": "Still waiting for your browser to share the screen. If you already chose what to share and nothing happened, restart the browser, or choose an image instead. Your feedback is safe.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the browser's screen-sharing prompt has not answered for a while. \"Your feedback is safe\" reassures the person that what they typed is not lost."
+  },
+  "feedback.capture.declined": {
+    "text": "Screen capture was declined. Nothing was attached, and your feedback is safe.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the person refused the browser's screen-sharing prompt. \"Your feedback is safe\" reassures the person that what they typed is not lost."
+  },
+  "feedback.capture.blank": {
+    "text": "The shared window came through blank. On a Mac, allow your browser under System Settings, Privacy & Security, Screen & System Audio Recording, then try again. Your feedback is safe.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the captured picture is empty. The three names after \"under\" are the path to a macOS setting; use the names macOS shows in the translator's language. \"Your feedback is safe\" reassures the person that what they typed is not lost."
+  },
+  "feedback.capture.smallWindow": {
+    "text": "That was a small window, not this page. Try again and share the window showing this page, or your whole screen. Your feedback is safe.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the person shared the wrong window with the browser's screen-sharing prompt. \"Your feedback is safe\" reassures the person that what they typed is not lost."
+  },
+  "feedback.capture.notFound": {
+    "text": "Couldn't locate this page in the shared window. Keep it fully visible and try again. Your feedback is safe.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the page could not be found in what the person shared. \"it\" is this page. \"Your feedback is safe\" reassures the person that what they typed is not lost."
+  },
+  "feedback.capture.tooLarge": {
+    "text": "That screenshot is larger than 4 MB. Your feedback is safe, attach a smaller one.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a captured picture is too big to attach. \"Your feedback is safe\" reassures the person that what they typed is not lost."
+  },
+  "feedback.capture.failedPickPhoto": {
+    "text": "Couldn't take a screenshot, but your feedback is safe. Choose one from Photos, or just send it as it is.",
+    "description": "Status line of the \"Suggest an improvement\" dialog in the mobile app when capturing the screen failed. Photos is the phone's picture library. \"it\" in the last part is the request."
+  },
+  "feedback.capture.failed": {
+    "text": "Screenshot capture failed, but your feedback is safe. Try again, or send it without one.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when capturing the screen failed for an unknown reason. \"it\" is the request."
+  },
+  "feedback.image.wrongType": {
+    "text": "Choose a PNG or JPEG image.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a file picked or dropped as an image is in a format that cannot be attached."
+  },
+  "feedback.image.tooLarge": {
+    "text": "That image is larger than 4 MB.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a picked or dropped image is too big to attach."
+  },
+  "feedback.image.failed": {
+    "text": "Couldn't attach that image. Please try another.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a picked or dropped image could not be read."
+  },
+  "feedback.image.onlyFirst_one": {
+    "text": "You can attach up to {{max}} images, so only the first one was added.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when more images were picked than still fit. {{max}} is the most a request may carry; {{count}} is how many were added. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
+  },
+  "feedback.image.onlyFirst_other": {
+    "text": "You can attach up to {{max}} images, so only the first {{count}} were added.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when more images were picked than still fit. {{max}} is the most a request may carry; {{count}} is how many were added."
+  },
+  "feedback.image.dropLimit_one": {
+    "text": "You can attach up to {{count}} images.",
+    "description": "Status line of the \"Suggest an improvement\" dialog, in red, when an image was dropped on the dialog although no more fit. {{count}} is the most images one request may carry."
+  },
+  "feedback.image.dropLimit_other": {
+    "text": "You can attach up to {{count}} images.",
+    "description": "Status line of the \"Suggest an improvement\" dialog, in red, when an image was dropped on the dialog although no more fit. {{count}} is the most images one request may carry."
+  },
+  "feedback.drop.wrongType": {
+    "text": "Drop an image or a video clip.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when files dropped on the dialog are neither images nor video."
+  },
+  "feedback.attach.button": {
+    "text": "Attach a photo or video",
+    "description": "Accessible name and tooltip of the paperclip button in the \"Suggest an improvement\" dialog: opens a small menu with Photo and Video."
+  },
+  "feedback.attach.menu": {
+    "text": "Attach",
+    "description": "Accessible name of the small menu the paperclip button of the \"Suggest an improvement\" dialog opens. A verb."
+  },
+  "feedback.attach.photo": {
+    "text": "Photo",
+    "description": "Row of the paperclip menu in the \"Suggest an improvement\" dialog: picks one or more pictures from the device to attach."
+  },
+  "feedback.video.add": {
+    "text": "Video",
+    "description": "Row of the paperclip menu in the \"Suggest an improvement\" dialog: picks a video clip from the device to attach."
+  },
+  "feedback.video.replace": {
+    "text": "Replace video",
+    "description": "The Video row of the paperclip menu in the \"Suggest an improvement\" dialog once a clip is attached: picks a different clip in its place."
+  },
+  "feedback.video.remove": {
+    "text": "Remove video",
+    "description": "Accessible name of the X button on the attached video's thumbnail in the \"Suggest an improvement\" dialog."
+  },
+  "feedback.video.checking": {
+    "text": "Checking…",
+    "description": "Shown on the attached video's thumbnail in the \"Suggest an improvement\" dialog while its length and format are being read."
+  },
+  "feedback.video.uploading": {
+    "text": "Uploading…",
+    "description": "Shown on the attached video's thumbnail in the \"Suggest an improvement\" dialog while the clip is being uploaded."
+  },
+  "feedback.video.savedOffline": {
+    "text": "Saved with your feedback. It'll upload when you're back online",
+    "description": "Shown on the attached video's thumbnail in the \"Suggest an improvement\" dialog when it could not be uploaded because there is no connection."
+  },
+  "feedback.video.tooLarge": {
+    "text": "Clips can be up to 50 MB.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a chosen video file is too big. A clip is a short video."
+  },
+  "feedback.video.unreadable": {
+    "text": "Couldn't read that clip. Try an MP4, WebM or MOV recording.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a chosen video cannot be played by the browser. MP4, WebM and MOV are file formats."
+  },
+  "feedback.video.tooLong": {
+    "text": "Clips can be up to 60 seconds long. Trim it and try again.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a chosen video is longer than a minute."
+  },
+  "feedback.video.uploadFailed": {
+    "text": "Video upload failed",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the server refused the attached video and gave no reason."
+  },
+  "feedback.video.uploadLater": {
+    "text": "Couldn't upload the video yet. It'll be sent along with your feedback.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the attached video could not be uploaded because there is no connection."
+  },
+  "feedback.video.failed": {
+    "text": "Couldn't attach that clip. Please try another.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a chosen video could not be attached for an unknown reason."
+  },
+  "feedback.video.stillUploading": {
+    "text": "Video is still uploading, one moment…",
+    "description": "Status line of the \"Suggest an improvement\" dialog when \"Post request\" was pressed while the attached video is still uploading."
+  },
+  "feedback.state.label": {
+    "text": "<0>Include app state:</0>this app can attach a snapshot of its current state to help debugging",
+    "description": "Label of a checkbox in the \"Suggest an improvement\" dialog, shown when the open app offers to describe what it is showing. The numbered tag makes the lead-in darker."
+  },
+  "feedback.state.filingWithout": {
+    "text": "Couldn't collect app state, filing without it…",
+    "description": "Status line of the \"Suggest an improvement\" dialog while the request is being posted, when the app did not hand over its state snapshot."
+  },
+  "feedback.state.filedWithout": {
+    "text": "Couldn't collect app state, so it was filed without it.",
+    "description": "Sentence added to the confirmation after a request was posted, when the app did not hand over its state snapshot. The first \"it\" is the request."
+  },
+  "feedback.bounty.label": {
+    "text": "<0>Put a kudos on this</0> to thank whoever solves it",
+    "description": "Label of a checkbox in the \"Suggest an improvement\" dialog: attaches one kudos (a token of thanks, of which a person has a weekly allowance) to the request as a reward. Keep \"kudos\" as the product uses it. The numbered tag makes the first part darker."
+  },
+  "feedback.bounty.cost": {
+    "text": "Costs 1 kudos",
+    "description": "Note under the kudos checkbox in the \"Suggest an improvement\" dialog when the person's remaining weekly allowance is not known."
+  },
+  "feedback.bounty.costRemaining_one": {
+    "text": "Costs 1 kudos. {{count}} of {{limit}} left this week",
+    "description": "Note under the kudos checkbox in the \"Suggest an improvement\" dialog. {{count}} is how many kudos the person can still give this week and {{limit}} their weekly allowance."
+  },
+  "feedback.bounty.costRemaining_other": {
+    "text": "Costs 1 kudos. {{count}} of {{limit}} left this week",
+    "description": "Note under the kudos checkbox in the \"Suggest an improvement\" dialog. {{count}} is how many kudos the person can still give this week and {{limit}} their weekly allowance."
+  },
+  "feedback.bounty.usedAll_one": {
+    "text": "You've used all {{count}} kudos this week. Resets {{day}} at {{time}}.",
+    "description": "Note under the disabled kudos checkbox in the \"Suggest an improvement\" dialog. {{count}} is the weekly allowance; the second sentence says when it is renewed. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
+  },
+  "feedback.bounty.usedAll_other": {
+    "text": "You've used all {{count}} kudos this week. Resets {{day}} at {{time}}.",
+    "description": "Note under the disabled kudos checkbox in the \"Suggest an improvement\" dialog. {{count}} is the weekly allowance; the second sentence says when it is renewed. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
+  },
+  "feedback.bounty.usedAllUtc_one": {
+    "text": "You've used all {{count}} kudos this week. Resets Monday 00:00 UTC.",
+    "description": "The same note when the renewal time cannot be shown in the person's own time zone. {{count}} is the weekly allowance. UTC is the time standard and stays as it is."
+  },
+  "feedback.bounty.usedAllUtc_other": {
+    "text": "You've used all {{count}} kudos this week. Resets Monday 00:00 UTC.",
+    "description": "The same note when the renewal time cannot be shown in the person's own time zone. {{count}} is the weekly allowance. UTC is the time standard and stays as it is."
+  },
+  "feedback.bounty.pledged_one": {
+    "text": "Pledged 1 kudos as a bounty. {{count}} left this week.",
+    "description": "Sentence added to the confirmation after a request was posted with the kudos checkbox ticked. {{count}} is how many kudos the person can still give this week. A bounty is a reward for whoever solves the request."
+  },
+  "feedback.bounty.pledged_other": {
+    "text": "Pledged 1 kudos as a bounty. {{count}} left this week.",
+    "description": "Sentence added to the confirmation after a request was posted with the kudos checkbox ticked. {{count}} is how many kudos the person can still give this week. A bounty is a reward for whoever solves the request."
+  },
+  "feedback.bounty.failedReason": {
+    "text": "Couldn't add the bounty: {{reason}}.",
+    "description": "Sentence added to the confirmation after a request was posted but its kudos reward was refused. {{reason}} is the server's own explanation, a clause without a final full stop."
+  },
+  "feedback.bounty.failed": {
+    "text": "Couldn't add the bounty: the bounty could not be placed.",
+    "description": "Sentence added to the confirmation after a request was posted but its kudos reward was refused without an explanation."
+  },
+  "feedback.queue.retry": {
+    "text": "Try again",
+    "description": "Button under the status line of the \"Suggest an improvement\" dialog while a message saved on this device has not been sent: tries to send it now."
+  },
+  "feedback.queue.retrying": {
+    "text": "Sending…",
+    "description": "Text of that \"Try again\" button while the saved messages are being sent."
+  },
+  "feedback.queue.offline": {
+    "text": "You're offline. Your message will be saved on this device and sent automatically when you're back online.",
+    "description": "Status line of the \"Suggest an improvement\" dialog while there is no connection and nothing is waiting to be sent."
+  },
+  "feedback.queue.offlineWaiting_one": {
+    "text": "You're offline. {{count}} message saved on this device is waiting to send. This one will be saved too.",
+    "description": "Status line of the \"Suggest an improvement\" dialog while there is no connection. {{count}} is how many earlier messages are saved and unsent. \"This one\" is the message being written."
+  },
+  "feedback.queue.offlineWaiting_other": {
+    "text": "You're offline. {{count}} messages saved on this device are waiting to send. This one will be saved too.",
+    "description": "Status line of the \"Suggest an improvement\" dialog while there is no connection. {{count}} is how many earlier messages are saved and unsent. \"This one\" is the message being written."
+  },
+  "feedback.queue.waiting_one": {
+    "text": "{{count}} message saved on this device hasn't been sent yet.",
+    "description": "Status line of the \"Suggest an improvement\" dialog while connected. {{count}} is how many messages saved earlier are still unsent."
+  },
+  "feedback.queue.waiting_other": {
+    "text": "{{count}} messages saved on this device haven't been sent yet.",
+    "description": "Status line of the \"Suggest an improvement\" dialog while connected. {{count}} is how many messages saved earlier are still unsent."
+  },
+  "feedback.queue.saved": {
+    "text": "Saved on this device. We'll send it as soon as you're back online.",
+    "description": "Green status line of the \"suggest an improvement\" dialog after a message was saved because there is no connection."
+  },
+  "feedback.queue.savedWithoutVideo": {
+    "text": "Saved on this device without the video, which needs a connection to upload. We'll send the rest as soon as you're back online.",
+    "description": "Green status line of the \"suggest an improvement\" dialog after a message was saved because there is no connection and its video had to be left out."
+  },
+  "feedback.queue.refused.duplicate": {
+    "text": "You've already saved this message. It'll send once you're back online.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the same message is already saved on this device and waiting to be sent."
+  },
+  "feedback.queue.refused.full_one": {
+    "text": "Only {{count}} messages can wait offline at once. The earlier ones send first.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when no more messages can be saved on this device. {{count}} is the most that can wait."
+  },
+  "feedback.queue.refused.full_other": {
+    "text": "Only {{count}} messages can wait offline at once. The earlier ones send first.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when no more messages can be saved on this device. {{count}} is the most that can wait."
+  },
+  "feedback.queue.refused.tooLarge": {
+    "text": "There isn't room to keep another screenshot offline. Remove it and save the text.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when the device has no room to keep the attached image until there is a connection. \"it\" is the screenshot."
+  },
+  "feedback.queue.refused.failed": {
+    "text": "Couldn't save this message on this device.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a message could not be saved for sending later."
+  },
+  "feedback.queue.rejectedReason": {
+    "text": "This message couldn't be sent: {{reason}}. Your text is back, so edit it and try again.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a saved message was refused by the server and its text was put back in the form. {{reason}} is the server's own explanation, a clause without a final full stop."
+  },
+  "feedback.queue.rejected": {
+    "text": "This message couldn't be sent: the server rejected it. Your text is back, so edit it and try again.",
+    "description": "Status line of the \"Suggest an improvement\" dialog when a saved message was refused by the server without an explanation and its text was put back in the form."
+  },
+  "feedback.queue.stillWaiting_one": {
+    "text": "Still couldn't send it. It's kept on this device and will try again by itself.",
+    "description": "Status line of the \"Suggest an improvement\" dialog after \"Try again\" failed. {{count}} is how many saved messages are still unsent; this form is for exactly one. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
+  },
+  "feedback.queue.stillWaiting_other": {
+    "text": "Still couldn't send them. All {{count}} are kept on this device and will try again by themselves.",
+    "description": "Status line of the \"Suggest an improvement\" dialog after \"Try again\" failed. {{count}} is how many saved messages are still unsent."
+  },
+  "feedback.queue.flushed_one": {
+    "text": "Your saved feedback has been sent.",
+    "description": "Brief message at the bottom of the screen when a message saved while offline was sent. {{count}} is how many were sent; this form is for exactly one. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
+  },
+  "feedback.queue.flushed_other": {
+    "text": "Your {{count}} saved feedback messages have been sent.",
+    "description": "Brief message at the bottom of the screen when messages saved while offline were sent. {{count}} is how many."
+  },
+  "feedback.draftSaved": {
+    "text": "Your request draft was saved. Reopen Suggest an improvement to finish it.",
+    "description": "Brief message at the bottom of the screen after the page reloaded while a request was being written. \"Suggest an improvement\" is the dialog's name; translate it as its heading is translated."
+  },
+  "feedback.submit.post": {
+    "text": "Post request",
+    "description": "Text of the main button of the \"Suggest an improvement\" dialog: posts the request. \"Post\" is a verb; a request is an item asking for a change."
+  },
+  "feedback.submit.saveForLater": {
+    "text": "Save for later",
+    "description": "Text of the main button of the \"Suggest an improvement\" dialog while there is no connection: keeps the request on this device and sends it when the connection returns."
+  },
+  "feedback.submit.posting": {
+    "text": "Posting…",
+    "description": "Text of the main button of the \"Suggest an improvement\" dialog while the request is being sent."
+  },
+  "feedback.submit.saved": {
+    "text": "Saved",
+    "description": "Text of the main button of the \"Suggest an improvement\" dialog, disabled, after the request was saved on this device for sending later."
+  },
+  "feedback.submit.posted": {
+    "text": "Posted",
+    "description": "Text of the main button of the \"Suggest an improvement\" dialog, disabled, after the request was posted."
+  },
+  "feedback.error.file": {
+    "text": "Couldn't file this right now. Please try again later.",
+    "description": "Red status line of the \"suggest an improvement\" dialog when the server failed to post the request. To file is to post it."
+  },
+  "feedback.error.network": {
+    "text": "Network error",
+    "description": "Red status line of the \"suggest an improvement\" dialog when the server's answer could not be read or the request could not be saved for later."
+  },
+  "feedback.fix.failedRequest": {
+    "text": "Could not open a fix just now. You can try again from the request on the board.",
+    "description": "Brief message at the bottom of the screen when \"Build it now with a coding agent\" could not start a change. A fix is a change that solves the request; the board is the app's list of requests."
+  },
+  "feedback.fix.failedIssue": {
+    "text": "Could not open a fix just now. You can try again from the issue on the board.",
+    "description": "Brief message at the bottom of the screen when \"Try a fix yourself\" could not start a change. A fix is a change that solves the issue; the board is the app's list of issues."
+  },
+  "feedback.notice.pair": {
+    "text": "{{first}} {{second}}",
+    "description": "How two complete sentences are joined when the confirmation of a posted request says several things on one line, for example \"Posted to Run Club. Pledged 1 kudos as a bounty. 4 left this week.\" {{first}} is everything said so far and {{second}} the next sentence. Only what goes between them is translated."
+  },
+  "feedback.posted.app": {
+    "text": "Posted to {{app}}.",
+    "description": "Green status line of the \"suggest an improvement\" dialog after a request was posted to an app. {{app}} is the app's name. A full sentence, with its full stop."
+  },
+  "feedback.posted.thisApp": {
+    "text": "Posted to this app.",
+    "description": "Green status line of the \"suggest an improvement\" dialog after a request was posted to the open app, when its name is not known. A full sentence, with its full stop."
+  },
+  "feedback.posted.platform": {
+    "text": "Posted to Homeroom.",
+    "description": "Green status line of the \"suggest an improvement\" dialog after a request was posted to Homeroom itself. Homeroom is the product's name."
+  },
+  "feedback.first.title": {
+    "text": "Congratulations on your first request!",
+    "description": "Heading shown in place of the form after a person posted their very first request."
+  },
+  "feedback.first.intro": {
+    "text": "You’ve helped make this app better. Want to take the next step?",
+    "description": "Line under the first-request heading, above buttons offering what to do next."
+  },
+  "feedback.first.posted": {
+    "text": "Your request has been posted.",
+    "description": "Green line of the first-request moment: confirms the request was posted."
+  },
+  "feedback.first.savedPosted": {
+    "text": "Your saved request has been posted.",
+    "description": "Green line of the first-request moment when the request had been saved while offline and was posted when the dialog was opened again."
+  },
+  "feedback.first.savedSent": {
+    "text": "Your saved feedback has been sent.",
+    "description": "Green line of the first-request moment when the request had been saved while offline and was sent in the background."
+  },
+  "feedback.first.fix": {
+    "text": "Try a fix yourself",
+    "description": "Button of the first-request moment: starts a change that solves the request, written with the coding agent."
+  },
+  "feedback.first.fixNote.default": {
+    "text": "Start with a draft you can edit before sending it to the coding agent.",
+    "description": "Note under the \"Try a fix yourself\" button of the first-request moment. The coding agent is the AI that writes the code."
+  },
+  "feedback.first.fixNote.needAccess": {
+    "text": "You need collaborator access to try a fix. You can still explore the board.",
+    "description": "Note under the disabled \"Try a fix yourself\" button when the person may not build changes for this app. The board is the app's list of requests."
+  },
+  "feedback.first.fixNote.noBoard": {
+    "text": "This repository does not have an app board you can access here.",
+    "description": "Note under the disabled \"Try a fix yourself\" button when the request went somewhere that has no board to open."
+  },
+  "feedback.first.board": {
+    "text": "See this app’s board",
+    "description": "Button of the first-request moment: opens the app's board, its list of requests and proposals."
+  },
+  "feedback.first.mine": {
+    "text": "See your requests",
+    "description": "Button of the first-request moment: opens the list of this person's own requests on their profile."
+  },
+  "feedback.sent.title": {
+    "text": "Request posted",
+    "description": "Heading of the confirmation shown in place of the form after a request was posted, before the place it went to is known."
+  },
+  "feedback.sent.postedApp": {
+    "text": "Posted to {{app}}",
+    "description": "Heading of the confirmation after a request was posted to an app and the assistant is building it. {{app}} is the app's name. No full stop."
+  },
+  "feedback.sent.postedThisApp": {
+    "text": "Posted to this app",
+    "description": "Heading of the confirmation after a request was posted to the open app, when its name is not known. No full stop."
+  },
+  "feedback.sent.postedPlatform": {
+    "text": "Posted to Homeroom",
+    "description": "Heading of the confirmation after a request was posted to Homeroom itself. Homeroom is the product's name. No full stop."
+  },
+  "feedback.sent.thanksApp": {
+    "text": "Thanks! Posted to {{app}}",
+    "description": "Heading of the confirmation after a request was posted to an app. {{app}} is the app's name."
+  },
+  "feedback.sent.thanksThisApp": {
+    "text": "Thanks! Posted to this app",
+    "description": "Heading of the confirmation after a request was posted to the open app, when its name is not known."
+  },
+  "feedback.sent.thanksPlatform": {
+    "text": "Thanks! Posted to Homeroom",
+    "description": "Heading of the confirmation after a request was posted to Homeroom itself. Homeroom is the product's name."
+  },
+  "feedback.sent.thanksGroup": {
+    "text": "Thanks! Sent to {{app}}'s group",
+    "description": "Heading of the confirmation after a request went to the people who run an app rather than to the assistant. {{app}} is the app's name; the group is that app's members."
+  },
+  "feedback.sent.thanksThisGroup": {
+    "text": "Thanks! Sent to this app's group",
+    "description": "Heading of the confirmation after a request went to the people who run the open app, when its name is not known. The group is the app's members."
+  },
+  "feedback.sent.botTitle": {
+    "text": "Your idea is underway!",
+    "description": "Heading of the confirmation after a request was posted and the assistant (Homeroom bot) has started building it."
+  },
+  "feedback.sent.line": {
+    "text": "Your idea is on the board now. Find it on your profile, under Your requests.",
+    "description": "Line of the confirmation after a request was posted. The board is the app's list of requests; \"Your requests\" is the name of a list on the profile screen."
+  },
+  "feedback.sent.botLine_one": {
+    "text": "Homeroom bot is building it now, usually about {{count}} minutes. You'll get a message when it's ready to try.",
+    "description": "Line of the confirmation when the assistant is building the request. {{count}} is the usual number of minutes a build takes. \"Homeroom bot\" is the assistant's name and stays as it is."
+  },
+  "feedback.sent.botLine_other": {
+    "text": "Homeroom bot is building it now, usually about {{count}} minutes. You'll get a message when it's ready to try.",
+    "description": "Line of the confirmation when the assistant is building the request. {{count}} is the usual number of minutes a build takes. \"Homeroom bot\" is the assistant's name and stays as it is."
+  },
+  "feedback.sent.firstTitle": {
+    "text": "Your first request!",
+    "description": "Bold line in a green box of the confirmation when this was the person's very first request and the assistant is building it."
+  },
+  "feedback.sent.firstLine.named": {
+    "text": "You just helped shape {{app}}.",
+    "description": "Line under \"Your first request!\" in the confirmation. {{app}} is the name of the app the request was for."
+  },
+  "feedback.sent.firstLine.unnamed": {
+    "text": "You just helped shape this app.",
+    "description": "Line under \"Your first request!\" in the confirmation, when the app's name is not known."
+  },
+  "feedback.sent.chat": {
+    "text": "Open chat",
+    "description": "Main button of the confirmation when the assistant is building the request: opens the chat with Homeroom bot. \"Open\" is a verb."
+  },
+  "feedback.sent.mine": {
+    "text": "See your requests",
+    "description": "Button of the confirmation after a request was posted: opens the list of this person's own requests on their profile."
+  },
+  "feedback.sent.fix": {
+    "text": "Build it now with a coding agent",
+    "description": "Small link at the foot of the confirmation when the assistant is building the request: lets the person write the change themselves with the AI coding agent instead. \"Build\" is a verb."
+  },
+  "members.title.full": {
+    "text": "Members & approvals",
+    "description": "Heading of the dialog that lists an app's collaborators, approvers and admins and sets how its proposals are approved."
+  },
+  "members.title.approvals": {
+    "text": "Proposal approvals",
+    "description": "Heading of the same dialog for Homeroom's own app, where it holds only the approval settings."
+  },
+  "members.error.appLoading": {
+    "text": "This app is still loading. Open Members & approvals again in a moment.",
+    "description": "Error at the top of the \"Members & approvals\" dialog of an app when it was opened before the app's details had loaded. \"Members & approvals\" is the dialog's name."
+  },
+  "members.invite.label": {
+    "text": "Invite a user",
+    "description": "Label of the username field at the top of the \"Members & approvals\" dialog of an app: the person typed there is invited to collaborate on the app."
+  },
+  "members.invite.placeholder": {
+    "text": "username",
+    "description": "Greyed text inside the empty invite field of the \"Members & approvals\" dialog of an app. Lower case, like a username."
+  },
+  "members.invite.sending": {
+    "text": "Inviting…",
+    "description": "Shown under the invite field of the \"Members & approvals\" dialog of an app while the invitation is being sent."
+  },
+  "members.invite.sent": {
+    "text": "✓ Invited @{{username}}",
+    "description": "Shown under the invite field of the \"Members & approvals\" dialog of an app after the invitation was sent. {{username}} is the invited person's username; keep the check mark and the @."
+  },
+  "members.collaborators.heading": {
+    "text": "Collaborators",
+    "description": "Label above the list of people who may build changes for the app, in the \"Members & approvals\" dialog of an app."
+  },
+  "members.collaborators.empty": {
+    "text": "No collaborators yet.",
+    "description": "Shown in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app when nobody has been invited."
+  },
+  "members.collaborators.loadFailed": {
+    "text": "Failed to load members: {{reason}}",
+    "description": "Error in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app. {{reason}} is a short technical reason such as \"HTTP 500\"."
+  },
+  "members.collaborators.tag.creator": {
+    "text": "creator",
+    "description": "Small tag after a username in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: this person created the app. Lower case."
+  },
+  "members.collaborators.tag.invited": {
+    "text": "invited",
+    "description": "Small tag after a username in the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: this person was invited and has not accepted yet. Lower case."
+  },
+  "members.collaborators.revoke": {
+    "text": "Revoke",
+    "description": "Button on a row of the \"Collaborators\" list of the \"Members & approvals\" dialog of an app for someone who has not accepted yet: withdraws their invitation."
+  },
+  "members.collaborators.revokeTitle": {
+    "text": "Revoke invite",
+    "description": "Tooltip of the \"Revoke\" button on a row of the \"Collaborators\" list of the \"Members & approvals\" dialog of an app."
+  },
+  "members.collaborators.leave": {
+    "text": "Leave",
+    "description": "Button on the viewer's own row of the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: stops being a collaborator of the app. A verb."
+  },
+  "members.collaborators.leaveTitle": {
+    "text": "Leave app",
+    "description": "Tooltip of the \"Leave\" button on the viewer's own row of the \"Collaborators\" list of the \"Members & approvals\" dialog of an app. \"Leave\" is a verb."
+  },
+  "members.collaborators.remove": {
+    "text": "Remove",
+    "description": "Button on another person's row of the \"Collaborators\" list of the \"Members & approvals\" dialog of an app: removes them as a collaborator."
+  },
+  "members.collaborators.removeTitle": {
+    "text": "Remove",
+    "description": "Tooltip of the \"Remove\" button on another person's row of the \"Collaborators\" list of the \"Members & approvals\" dialog of an app."
+  },
+  "members.collaborators.removeFailed": {
+    "text": "Remove failed: {{reason}}",
+    "description": "Brief message at the bottom of the screen when removing a collaborator or withdrawing an invitation failed. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "members.governance.heading": {
+    "text": "Proposal approvals",
+    "description": "Heading of the section of the \"Members & approvals\" dialog of an app that sets who may approve proposals and how many approvals one needs."
+  },
+  "members.governance.who": {
+    "text": "Who can approve proposals",
+    "description": "Label above the two choices \"Everyone\" and \"Invited approvers\" in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app."
+  },
+  "members.governance.policy.everyone": {
+    "text": "Everyone",
+    "description": "Choice under \"Who can approve proposals\" in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app: any member may approve."
+  },
+  "members.governance.policy.invited": {
+    "text": "Invited approvers",
+    "description": "Choice under \"Who can approve proposals\" in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app: only people invited as approvers may approve."
+  },
+  "members.governance.howMany": {
+    "text": "How many approvals are needed",
+    "description": "Label above the two choices \"Time & majority\" and \"At least\" in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app."
+  },
+  "members.governance.mode.default": {
+    "text": "Time & majority",
+    "description": "Choice under \"How many approvals are needed\" in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app: the usual rule, where a proposal passes after a waiting time with a majority in favour."
+  },
+  "members.governance.mode.atLeast": {
+    "text": "At least",
+    "description": "Choice under \"How many approvals are needed\" in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app: a fixed minimum number of approvals. A number field follows it, so it reads \"At least 3\"."
+  },
+  "members.governance.propose": {
+    "text": "Propose",
+    "description": "Button beside the number field in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app: puts the new number of approvals up as a proposal. A verb."
+  },
+  "members.governance.note": {
+    "text": "Changes open a proposal that is voted on under the current rules.",
+    "description": "Small note in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app: changing the approval settings is itself decided by a vote."
+  },
+  "members.governance.noRepository": {
+    "text": "Approval-settings changes are proposed as a dapp.json pull request, and this app has no GitHub repository, so they're unavailable.",
+    "description": "Note in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app when the settings cannot be changed. dapp.json is a file name and stays as it is."
+  },
+  "members.governance.setNumber": {
+    "text": "Set the number of approvals, then tap Propose.",
+    "description": "Hint in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app after \"At least\" was chosen. \"Propose\" is the button beside the number field; translate it as that button."
+  },
+  "members.governance.review": {
+    "text": "Review the initial approvers, then tap Propose.",
+    "description": "Hint in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app after \"Invited approvers\" was chosen and the list of first approvers is shown. \"Propose\" is the button under that list."
+  },
+  "members.governance.confirm.title": {
+    "text": "Open an approval-settings proposal?",
+    "description": "Title of the confirmation asked before a change to an app's approval settings is put up as a proposal. \"Open\" is a verb."
+  },
+  "members.governance.confirm.message": {
+    "text": "Changing the approval settings opens a proposal that is voted on under the current rules. The change applies after the vote passes and the app redeploys.",
+    "description": "Body of the confirmation asked before a change to an app's approval settings is put up as a proposal."
+  },
+  "members.governance.confirm.open": {
+    "text": "Open proposal",
+    "description": "Confirming button of that confirmation: creates the proposal. \"Open\" is a verb."
+  },
+  "members.governance.alreadyWaiting": {
+    "text": "A change to who runs this app is already waiting for approval. See it in the Workshop.",
+    "description": "Status in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app when an earlier proposal about the app's approvers or admins is undecided. The Workshop is a tab of the app's page; keep it as a name."
+  },
+  "members.governance.opened": {
+    "text": "Proposal opened (PR #{{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply.",
+    "description": "Status in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); keep the # before it. \"Dev\" is the name of a tab."
+  },
+  "members.governance.openedWithWarnings": {
+    "text": "Proposal opened (PR #{{number}}). It needs the group's vote in the Dev tab's vote panel before the new settings apply. Some approver invites could not be sent: {{warnings}}.",
+    "description": "The same status when some of the first approvers could not be invited. {{number}} is the pull request's number; {{warnings}} is the server's list of what went wrong, without a final full stop."
+  },
+  "members.governance.failed": {
+    "text": "Could not open the governance proposal: {{reason}}",
+    "description": "Error in the \"Proposal approvals\" section of the \"Members & approvals\" dialog of an app when the proposal could not be created. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "members.initialApprovers.heading": {
+    "text": "Initial approvers",
+    "description": "Heading of the step in the \"Members & approvals\" dialog of an app shown after choosing \"Invited approvers\": who will be the first approvers."
+  },
+  "members.initialApprovers.placeholder": {
+    "text": "add approvers to invite (optional)",
+    "description": "Greyed text inside the empty username field of the \"Initial approvers\" step of the \"Members & approvals\" dialog of an app."
+  },
+  "members.initialApprovers.propose": {
+    "text": "Propose",
+    "description": "Button of the \"Initial approvers\" step of the \"Members & approvals\" dialog of an app: puts the switch to invited approvers, with the listed people, up as a proposal. A verb."
+  },
+  "members.initialApprovers.willBeInvited": {
+    "text": "will be invited",
+    "description": "Small tag after a username in the \"Initial approvers\" step of the \"Members & approvals\" dialog of an app: this person will be invited as an approver once the proposal passes. Lower case."
+  },
+  "members.initialApprovers.remove": {
+    "text": "Remove",
+    "description": "Button on a row of the \"Initial approvers\" step of the \"Members & approvals\" dialog of an app: takes that person off the list of people to invite."
+  },
+  "members.initialApprovers.status.current": {
+    "text": "Current approvers stay in place: {{approvers}}. Add more people to invite below (optional).",
+    "description": "First line of the \"Initial approvers\" step of the \"Members & approvals\" dialog of an app when the app already has approvers. {{approvers}} is the list of their usernames, each with an @."
+  },
+  "members.initialApprovers.status.platformAdmins": {
+    "text": "Platform admins can approve proposals until invited approvers are added. Pick some below.",
+    "description": "First line of the \"Initial approvers\" step of the \"Members & approvals\" dialog of an app for Homeroom's own app, which has no approvers yet."
+  },
+  "members.initialApprovers.status.creatorFirst": {
+    "text": "The app's creator will automatically become the first approver. Add more people to invite below (optional).",
+    "description": "First line of the \"Initial approvers\" step of the \"Members & approvals\" dialog of an app when someone other than the app's creator is making the change."
+  },
+  "members.initialApprovers.status.youFirst": {
+    "text": "You'll automatically become this app's first approver. Add more people to invite below (optional).",
+    "description": "First line of the \"Initial approvers\" step of the \"Members & approvals\" dialog of an app when the app's creator is making the change."
+  },
+  "members.approvers.heading": {
+    "text": "Approvers",
+    "description": "Label above the list of people who may approve the app's proposals, in the \"Members & approvals\" dialog of an app."
+  },
+  "members.approvers.dormantNote": {
+    "text": "Approvers only take effect when “Who can approve proposals” is set to Invited approvers.",
+    "description": "Note under the list in the \"Approvers\" section of the \"Members & approvals\" dialog of an app when approvers exist but the app lets everyone approve. The quoted words are the label and \"Invited approvers\" the choice in the same dialog; translate them the same way."
+  },
+  "members.approvers.invitePlaceholder": {
+    "text": "invite an approver by username",
+    "description": "Greyed text inside the empty username field of the \"Approvers\" section of the \"Members & approvals\" dialog of an app."
+  },
+  "members.approvers.empty": {
+    "text": "No approvers yet. Platform admins can approve proposals until an approver is added.",
+    "description": "Shown in the \"Approvers\" section of the \"Members & approvals\" dialog of an app when nobody has been invited as an approver."
+  },
+  "members.approvers.loadFailed": {
+    "text": "Failed to load approvers: {{reason}}",
+    "description": "Error in the \"Approvers\" section of the \"Members & approvals\" dialog of an app. {{reason}} is a short technical reason such as \"HTTP 500\"."
+  },
+  "members.approvers.tag.invited": {
+    "text": "invited",
+    "description": "Small tag after a username in the \"Approvers\" section of the \"Members & approvals\" dialog of an app: this person was invited as an approver and has not accepted yet. Lower case."
+  },
+  "members.approvers.tag.approver": {
+    "text": "approver",
+    "description": "Small tag after a username in the \"Approvers\" section of the \"Members & approvals\" dialog of an app: this person may approve proposals. Lower case."
+  },
+  "members.approvers.revoke": {
+    "text": "Revoke",
+    "description": "Button on a row of the \"Approvers\" section of the \"Members & approvals\" dialog of an app for someone who has not accepted yet: withdraws their invitation."
+  },
+  "members.approvers.revokeTitle": {
+    "text": "Revoke invite",
+    "description": "Tooltip of the \"Revoke\" button on a row of the \"Approvers\" section of the \"Members & approvals\" dialog of an app."
+  },
+  "members.approvers.leave": {
+    "text": "Leave",
+    "description": "Button on the viewer's own row of the \"Approvers\" section of the \"Members & approvals\" dialog of an app: stops being an approver of this app. A verb."
+  },
+  "members.approvers.leaveTitle": {
+    "text": "Stop being an approver",
+    "description": "Tooltip of the \"Leave\" button on the viewer's own row of the \"Approvers\" section of the \"Members & approvals\" dialog of an app."
+  },
+  "members.approvers.remove": {
+    "text": "Remove",
+    "description": "Button on another person's row of the \"Approvers\" section of the \"Members & approvals\" dialog of an app: removes them as an approver."
+  },
+  "members.approvers.removeTitle": {
+    "text": "Remove",
+    "description": "Tooltip of the \"Remove\" button on another person's row of the \"Approvers\" section of the \"Members & approvals\" dialog of an app."
+  },
+  "members.approvers.removeFailed": {
+    "text": "Remove failed: {{reason}}",
+    "description": "Brief message at the bottom of the screen when removing an approver or withdrawing their invitation failed. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "members.approvers.inviting": {
+    "text": "Inviting…",
+    "description": "Shown under the username field of the \"Approvers\" section of the \"Members & approvals\" dialog of an app while the invitation is being sent."
+  },
+  "members.approvers.invited": {
+    "text": "✓ Invited @{{username}} as an approver",
+    "description": "Shown under the username field of the \"Approvers\" section of the \"Members & approvals\" dialog of an app after the invitation was sent. {{username}} is the invited person's username; keep the check mark and the @."
+  },
+  "members.appAdmins.heading": {
+    "text": "App admins",
+    "description": "Label above the list of people who administer the app, in the \"Members & approvals\" dialog of an app."
+  },
+  "members.appAdmins.placeholder": {
+    "text": "add an admin by username",
+    "description": "Greyed text inside the empty username field of the \"App admins\" section of the \"Members & approvals\" dialog of an app."
+  },
+  "members.appAdmins.propose": {
+    "text": "Propose",
+    "description": "Button in the \"App admins\" section of the \"Members & approvals\" dialog of an app: puts the edited list of admins up as a proposal. A verb."
+  },
+  "members.appAdmins.empty": {
+    "text": "No app admins yet. App admins can manage this app's settings and force-merge its proposals.",
+    "description": "Shown in the \"App admins\" section of the \"Members & approvals\" dialog of an app when the app has no admins. To force-merge is to apply a proposal without waiting for the vote."
+  },
+  "members.appAdmins.loadFailed": {
+    "text": "Failed to load app admins: {{reason}}",
+    "description": "Error in the \"App admins\" section of the \"Members & approvals\" dialog of an app. {{reason}} is a short technical reason such as \"HTTP 500\"."
+  },
+  "members.appAdmins.remove": {
+    "text": "Remove",
+    "description": "Button on a row of the \"App admins\" section of the \"Members & approvals\" dialog of an app: marks that admin for removal in the proposal being prepared."
+  },
+  "members.appAdmins.undo": {
+    "text": "Undo",
+    "description": "Button on a row of the \"App admins\" section of the \"Members & approvals\" dialog of an app marked \"will be removed\": keeps that admin after all."
+  },
+  "members.appAdmins.tag.admin": {
+    "text": "Admin",
+    "description": "Small tag on a row of the \"App admins\" section of the \"Members & approvals\" dialog of an app: this person is an admin of the app now."
+  },
+  "members.appAdmins.tag.unregistered": {
+    "text": "not a registered user",
+    "description": "Small tag on a row of the \"App admins\" section of the \"Members & approvals\" dialog of an app: the username is listed as an admin but nobody has an account with it. Lower case."
+  },
+  "members.appAdmins.tag.unregisteredTitle": {
+    "text": "Declared in dapp.json but no account with this username exists yet",
+    "description": "Tooltip of the \"not a registered user\" tag in the \"App admins\" section of the \"Members & approvals\" dialog of an app. dapp.json is a file name and stays as it is."
+  },
+  "members.appAdmins.tag.willBeRemoved": {
+    "text": "will be removed",
+    "description": "Small red tag on a row of the \"App admins\" section of the \"Members & approvals\" dialog of an app: this admin is removed by the proposal being prepared. Lower case."
+  },
+  "members.appAdmins.tag.willBeAdded": {
+    "text": "will be added",
+    "description": "Small tag on a row of the \"App admins\" section of the \"Members & approvals\" dialog of an app: this person is added as an admin by the proposal being prepared. Lower case."
+  },
+  "members.appAdmins.tag.noAccount": {
+    "text": "no account yet",
+    "description": "Small tag beside \"will be added\" in the \"App admins\" section of the \"Members & approvals\" dialog of an app: nobody has an account with the username typed. Lower case."
+  },
+  "members.appAdmins.tag.noAccountTitle": {
+    "text": "No account with this username yet. They'll become an admin once they sign up and the app next deploys",
+    "description": "Tooltip of the \"no account yet\" tag in the \"App admins\" section of the \"Members & approvals\" dialog of an app."
+  },
+  "members.appAdmins.note.editable": {
+    "text": "Changes are proposed as a pull request editing <0>dapp.json</0>’s <1>admins</1> list. It needs real Yes votes and won’t merge on a timer.",
+    "description": "Note under the \"App admins\" section of the \"Members & approvals\" dialog of an app for someone who may edit the list. dapp.json is a file name and \"admins\" a setting in it: both stay as they are, inside their numbered tags. \"Yes\" is the name of the vote in favour."
+  },
+  "members.appAdmins.note.readOnly": {
+    "text": "Set in <0>dapp.json</0>. To change them, open a pull request that edits the <1>admins</1> list. That proposal needs real Yes votes and won’t merge on a timer.",
+    "description": "Note under the \"App admins\" section of the \"Members & approvals\" dialog of an app for someone who may not edit the list. dapp.json is a file name and \"admins\" a setting in it: both stay as they are, inside their numbered tags. \"Yes\" is the name of the vote in favour."
+  },
+  "members.appAdmins.alreadyWaiting": {
+    "text": "A change to the app's admins is already waiting for approval. See it in the Workshop.",
+    "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app when an earlier proposal about the admins is undecided. The Workshop is a tab of the app's page; keep it as a name."
+  },
+  "members.appAdmins.noRepository": {
+    "text": "Admin changes are proposed as a dapp.json pull request, and this app has no GitHub repository, so they're unavailable.",
+    "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app when the list cannot be changed. dapp.json is a file name and stays as it is."
+  },
+  "members.appAdmins.tooMany": {
+    "text": "An app can declare at most 20 admins.",
+    "description": "Error in the \"App admins\" section of the \"Members & approvals\" dialog of an app when a twenty-first admin is added."
+  },
+  "members.appAdmins.confirm.title": {
+    "text": "Open an app-admins proposal?",
+    "description": "Title of the confirmation asked before a change to an app's admins is put up as a proposal. \"Open\" is a verb."
+  },
+  "members.appAdmins.confirm.message": {
+    "text": "Changing who administers this app opens a proposal. Because it grants app-level power, it will not merge on a timer: it needs real Yes votes to reach the app's normal threshold, and only a platform admin can force-merge it.",
+    "description": "Body of the confirmation asked before a change to an app's admins is put up as a proposal. \"Yes\" is the name of the vote in favour; to force-merge is to apply a proposal without waiting for the vote."
+  },
+  "members.appAdmins.confirm.messageEmptying": {
+    "text": "This removes every app admin. Only the creator and platform admins will be able to manage the app. The change opens a proposal that needs real Yes votes and won't merge on a timer.",
+    "description": "Body of that confirmation when the change removes all of the app's admins. \"Yes\" is the name of the vote in favour."
+  },
+  "members.appAdmins.confirm.open": {
+    "text": "Open proposal",
+    "description": "Confirming button of that confirmation: creates the proposal. \"Open\" is a verb."
+  },
+  "members.appAdmins.opened": {
+    "text": "Proposal opened (PR #{{number}}). It needs the group's vote in the Dev tab before the new admins apply.",
+    "description": "Status in the \"App admins\" section of the \"Members & approvals\" dialog of an app after the change was put up as a proposal. {{number}} is the number of its pull request (PR); keep the # before it. \"Dev\" is the name of a tab."
+  },
+  "members.appAdmins.failed": {
+    "text": "Could not open the admins proposal: {{reason}}",
+    "description": "Error in the \"App admins\" section of the \"Members & approvals\" dialog of an app when the proposal could not be created. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "secrets.title.app": {
+    "text": "App secrets",
+    "description": "Heading of the secrets dialog for an ordinary app. The dialog lists the environment variables an app declares (its secrets: keys and passwords it needs) and lets admins set them; for Homeroom itself it is titled \"Platform variables\"."
+  },
+  "secrets.title.platform": {
+    "text": "Platform variables",
+    "description": "Heading of the secrets dialog when it shows Homeroom's own environment variables."
+  },
+  "secrets.subtitle.initial": {
+    "text": "Environment variables this app declares in<0>dapp.json</0>.",
+    "description": "Line under the heading of the secrets dialog while its contents load. dapp.json is a file name and stays as it is, inside its numbered tag."
+  },
+  "secrets.subtitle.app": {
+    "text": "Environment variables this app declares in <0>dapp.json</0>.",
+    "description": "Line under the heading of the secrets dialog for an ordinary app. dapp.json is a file name and stays as it is, inside its numbered tag."
+  },
+  "secrets.subtitle.platform": {
+    "text": "The platform's own environment variables, declared in its <0>dapp.json</0>. <1>A change here is not live immediately: it is applied by the platform's next deploy.</1>",
+    "description": "Line under the heading of the secrets dialog for Homeroom itself (\"the platform\"). dapp.json is a file name and stays as it is, inside tag 0; tag 1 makes the warning bold."
+  },
+  "secrets.footer": {
+    "text": "Changes apply on the next deploy. Admins can<0>redeploy now</0>.",
+    "description": "Footer of the secrets dialog. The numbered tag is a link-like button that restarts the app with the new values at once."
+  },
+  "secrets.redeploy.triggering": {
+    "text": "Triggering redeploy…",
+    "description": "Status line at the bottom of the secrets dialog after \"redeploy now\" was pressed, while the request is sent."
+  },
+  "secrets.redeploy.started": {
+    "text": "Redeploy started. Watch the version pill.",
+    "description": "Status line at the bottom of the secrets dialog once the redeploy began. The version pill is the small label on the app's page that shows which version is running."
+  },
+  "secrets.redeploy.failed": {
+    "text": "Redeploy failed: {{reason}}",
+    "description": "Status line at the bottom of the secrets dialog, in red, when the redeploy could not be started. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "secrets.loadFailed": {
+    "text": "Failed to load: {{reason}}",
+    "description": "Error in place of the list in the secrets dialog. {{reason}} is a short technical reason such as \"HTTP 500\"."
+  },
+  "secrets.noManifest": {
+    "text": "No manifest snapshot yet. Once this app's first deploy completes the declared secrets show up here.",
+    "description": "Note at the top of the list in the secrets dialog for an app that has never been deployed. The manifest is the app's dapp.json file."
+  },
+  "secrets.empty.platform": {
+    "text": "No platform variables are declared yet. Use “New variable” below to declare the first one.",
+    "description": "Shown in place of the list in the secrets dialog for Homeroom itself. “New variable” is the button under the list; translate it as that button."
+  },
+  "secrets.empty.app": {
+    "text": "This app's <0>dapp.json</0> doesn't declare any secrets yet. Use “New secret” below to declare the first one.",
+    "description": "Shown in place of the list in the secrets dialog for an app. dapp.json is a file name and stays as it is, inside its numbered tag. “New secret” is the button under the list."
+  },
+  "secrets.state.set": {
+    "text": "Set",
+    "description": "Badge on a variable's row in the secrets dialog: the variable has a value. An adjective, not a command."
+  },
+  "secrets.state.unset": {
+    "text": "Not set",
+    "description": "Badge on a variable's row in the secrets dialog: the variable has no value, so any default applies."
+  },
+  "secrets.state.managed": {
+    "text": "Deploy-managed",
+    "description": "Badge on a variable's row in the secrets dialog: the value is written by the deploy process and cannot be set here."
+  },
+  "secrets.state.orphan": {
+    "text": "No longer declared",
+    "description": "Badge on a variable's row in the secrets dialog: a value is still stored but dapp.json no longer lists the variable."
+  },
+  "secrets.state.proposed": {
+    "text": "Waiting for approval",
+    "description": "Badge on a variable's row in the secrets dialog: adding this variable is a proposal that has not been voted in yet."
+  },
+  "secrets.badge.required": {
+    "text": "required",
+    "description": "Small upper-cased tag on a variable's row in the secrets dialog: the app cannot deploy without a value for it."
+  },
+  "secrets.badge.sensitive": {
+    "text": "sensitive",
+    "description": "Small upper-cased tag on a variable's row in the secrets dialog: the value is secret and is hidden once saved."
+  },
+  "secrets.badge.sensitiveTitle": {
+    "text": "value never shown after save",
+    "description": "Tooltip of the \"sensitive\" tag on a variable's row in the secrets dialog."
+  },
+  "secrets.badge.orphan": {
+    "text": "orphan",
+    "description": "Small upper-cased tag on a variable's row in the secrets dialog: a value is stored for a variable the app no longer declares."
+  },
+  "secrets.github.note": {
+    "text": "Read-only. Change these in the repo's <0>Settings → Secrets and variables → Actions</0> on GitHub. GitHub never returns a secret's value to anyone, so only the name and when it last changed can be shown here.",
+    "description": "Note under the \"GitHub Actions secrets\" heading in the secrets dialog. The numbered tag holds the path to a page of GitHub's settings; use the names GitHub shows."
+  },
+  "secrets.github.noteStaged": {
+    "text": "Read-only. Change these in the repo's <0>Settings → Secrets and variables → Actions</0> on GitHub. GitHub never returns a secret's value to anyone, so only the name and when it last changed can be shown here. <1>(Staging preview: this list is demo data.)</1>",
+    "description": "The same note on a staging preview, where the list is made up. Tag 0 holds the path to a page of GitHub's settings; tag 1 sets the last remark in italics."
+  },
+  "secrets.github.noteNone": {
+    "text": "No Actions secrets on this repo. Read-only. Change these in the repo's <0>Settings → Secrets and variables → Actions</0> on GitHub. GitHub never returns a secret's value to anyone, so only the name and when it last changed can be shown here.",
+    "description": "Note under the \"GitHub Actions secrets\" heading in the secrets dialog when the repository has none. The numbered tag holds the path to a page of GitHub's settings; use the names GitHub shows."
+  },
+  "secrets.github.unavailable": {
+    "text": "Couldn't read the platform repo's Actions secrets.",
+    "description": "Amber note under the \"GitHub Actions secrets\" heading in the secrets dialog when GitHub could not be asked and gave no reason. \"Platform repo\" is Homeroom's own code repository."
+  },
+  "secrets.value.github": {
+    "text": "Set on GitHub",
+    "description": "In place of a value on a variable's row in the secrets dialog for a GitHub Actions secret: it exists on GitHub and its value cannot be read."
+  },
+  "secrets.value.githubUpdated": {
+    "text": "Set on GitHub · updated {{date}}",
+    "description": "In place of a value on a variable's row in the secrets dialog for a GitHub Actions secret. {{date}} is when it last changed, already formatted, such as Oct 8, 2026. Keep the middle dot as a separator."
+  },
+  "secrets.value.proposed": {
+    "text": "value included, applied when the proposal merges",
+    "description": "In place of a value on a variable's row in the secrets dialog whose declaration is waiting for approval: a value was sent with the proposal. Lower case."
+  },
+  "secrets.value.proposedEnding": {
+    "text": "value included (…{{ending}}), applied when the proposal merges",
+    "description": "The same, showing the end of the proposed value. {{ending}} is its last four characters; keep the ellipsis before it."
+  },
+  "secrets.value.declarationOnly": {
+    "text": "declaration only, no value proposed",
+    "description": "In place of a value on a variable's row in the secrets dialog whose declaration is waiting for approval and came without a value. Lower case."
+  },
+  "secrets.value.private": {
+    "text": "•••••••• (private, never displayed)",
+    "description": "In place of a value on a variable's row in the secrets dialog marked private. Keep the dots, which stand for the hidden value."
+  },
+  "secrets.value.unreadable": {
+    "text": "set, but the stored value could not be read",
+    "description": "In place of a value on a variable's row in the secrets dialog when a value is stored but could not be decrypted. Lower case."
+  },
+  "secrets.value.setEnding": {
+    "text": "set …{{ending}}",
+    "description": "In place of a value on a variable's row in the secrets dialog that has one. {{ending}} is the value's last four characters; keep the ellipsis before it. \"set\" is an adjective, lower case."
+  },
+  "secrets.value.setHidden": {
+    "text": "set ••••••••",
+    "description": "In place of a value on a variable's row in the secrets dialog that has one of which nothing may be shown. Keep the dots. \"set\" is an adjective, lower case."
+  },
+  "secrets.value.missing": {
+    "text": "missing, deploys are blocked",
+    "description": "In red, in place of a value on a variable's row in the secrets dialog that is required and has none. Lower case."
+  },
+  "secrets.value.default": {
+    "text": "default: {{fallback}}",
+    "description": "In place of a value on a variable's row in the secrets dialog with no value of its own. {{fallback}} is the default value written in dapp.json, shown as it is."
+  },
+  "secrets.value.notSet": {
+    "text": "not set",
+    "description": "In place of a value on a variable's row in the secrets dialog with neither a value nor a default. Lower case."
+  },
+  "secrets.action.set": {
+    "text": "set",
+    "description": "Small lower-case button on a variable's row in the secrets dialog for an admin: asks for a value and stores it at once. A verb."
+  },
+  "secrets.action.replace": {
+    "text": "replace",
+    "description": "Small lower-case button on a variable's row in the secrets dialog that already has a value, for an admin: asks for a new value and stores it at once. A verb."
+  },
+  "secrets.action.clear": {
+    "text": "clear",
+    "description": "Small lower-case button on a variable's row in the secrets dialog for an admin: deletes the stored value. A verb."
+  },
+  "secrets.action.proposeSet": {
+    "text": "propose set",
+    "description": "Small lower-case button on a variable's row in the secrets dialog: puts setting a value up for the group's vote instead of storing it at once."
+  },
+  "secrets.action.proposeReplace": {
+    "text": "propose replace",
+    "description": "Small lower-case button on a variable's row in the secrets dialog that already has a value: puts replacing it up for the group's vote."
+  },
+  "secrets.action.proposeClear": {
+    "text": "propose clear",
+    "description": "Small lower-case button on a variable's row in the secrets dialog: puts deleting the stored value up for the group's vote."
+  },
+  "secrets.action.viewProposal": {
+    "text": "View proposal",
+    "description": "Link on a variable's row in the secrets dialog whose declaration is waiting for approval: opens the app's page where that proposal is."
+  },
+  "secrets.action.viewProposalNumbered": {
+    "text": "View proposal #{{number}}",
+    "description": "The same link when the proposal's pull request number is known. {{number}} is that number; keep the # before it."
+  },
+  "secrets.row.githubStored": {
+    "text": "Stored as an Actions secret on the platform repo. Its value can't be shown, because GitHub's API never returns one. Change it in the repo's Settings → Secrets and variables → Actions.",
+    "description": "Note on a GitHub Actions secret's row in the secrets dialog. The last three names are the path to a page of GitHub's settings; use the names GitHub shows."
+  },
+  "secrets.row.deployManaged": {
+    "text": "Set by the deploy from a GitHub secret. It can't be edited here.",
+    "description": "Note on a variable's row in the secrets dialog whose value the deploy process writes."
+  },
+  "secrets.row.alsoGithub": {
+    "text": "Also a GitHub Actions secret on the platform repo.",
+    "description": "Note on a variable's row in the secrets dialog that also exists as a secret on GitHub."
+  },
+  "secrets.row.alsoGithubUpdated": {
+    "text": "Also a GitHub Actions secret on the platform repo · updated {{date}}.",
+    "description": "Note on a variable's row in the secrets dialog that also exists as a secret on GitHub. {{date}} is when that one last changed, already formatted. Keep the middle dot as a separator."
+  },
+  "secrets.row.proposed": {
+    "text": "Not declared yet. A change adding it to <0>dapp.json</0> is waiting for approval.",
+    "description": "Note on a variable's row in the secrets dialog that is only proposed. dapp.json is a file name and stays as it is, inside its numbered tag."
+  },
+  "secrets.row.proposedBy": {
+    "text": "Not declared yet. A change adding it to <0>dapp.json</0> is waiting for approval (opened by {{person}}).",
+    "description": "The same note naming who proposed it. {{person}} is their username. dapp.json stays as it is, inside its numbered tag."
+  },
+  "secrets.row.pendingDeclaration": {
+    "text": "Value set · its declaration is waiting for approval.",
+    "description": "Note on a variable's row in the secrets dialog whose value is stored while the proposal that declares it is undecided. Keep the middle dot as a separator."
+  },
+  "secrets.row.pendingDeclarationNumbered": {
+    "text": "Value set · its declaration is waiting for approval (PR #{{number}}).",
+    "description": "The same note with the proposal's pull request (PR) number. {{number}} is that number; keep the # before it."
+  },
+  "secrets.row.orphan": {
+    "text": "No longer declared in <0>dapp.json</0>. Its value is kept so a rollback still works, so clear it once you're sure.",
+    "description": "Note on a variable's row in the secrets dialog the app no longer declares. dapp.json stays as it is, inside its numbered tag. A rollback is returning to an earlier version of the app."
+  },
+  "secrets.declare.open.variable": {
+    "text": "+ New variable",
+    "description": "Button under the list in the secrets dialog for Homeroom itself: opens the form that declares a new variable. Keep the plus sign."
+  },
+  "secrets.declare.open.secret": {
+    "text": "+ New secret",
+    "description": "Button under the list in the secrets dialog for an app: opens the form that declares a new secret. Keep the plus sign."
+  },
+  "secrets.declare.unavailable": {
+    "text": "Unavailable right now.",
+    "description": "Beside the \"+ New variable\" button in the secrets dialog when declaring is switched off and the server gave no reason."
+  },
+  "secrets.declare.hint.direct": {
+    "text": "Declares it in dapp.json (a proposal) and stores your value now.",
+    "description": "Beside the \"+ New variable\" button in the secrets dialog, for an admin. dapp.json is a file name and stays as it is."
+  },
+  "secrets.declare.hint.proposal": {
+    "text": "Declaration and value wait for approval together.",
+    "description": "Beside the \"+ New variable\" button in the secrets dialog, for someone who is not an admin."
+  },
+  "secrets.declare.heading.platform": {
+    "text": "New platform variable",
+    "description": "Heading of the \"New variable\" form of the secrets dialog for Homeroom itself."
+  },
+  "secrets.declare.heading.app": {
+    "text": "New app secret",
+    "description": "Heading of the form in the secrets dialog that declares a new secret, for an ordinary app."
+  },
+  "secrets.declare.blocked": {
+    "text": "New variables can't be declared right now.",
+    "description": "Amber note at the top of the \"New variable\" form of the secrets dialog when declaring is switched off and the server gave no reason."
+  },
+  "secrets.declare.blockedStatus": {
+    "text": "New variables can't be declared right now.",
+    "description": "Status line at the bottom of the secrets dialog, in red, when the form was submitted while declaring is switched off and the server gave no reason."
+  },
+  "secrets.declare.key.label": {
+    "text": "Key",
+    "description": "Label of the field in the \"New variable\" form of the secrets dialog for the variable's name, such as STRIPE_API_KEY. \"Key\" as in key and value, not a key that opens something."
+  },
+  "secrets.declare.key.help": {
+    "text": "UPPER_SNAKE_CASE: the name your code reads from the environment.",
+    "description": "Help under the Key field in the \"New variable\" form of the secrets dialog. UPPER_SNAKE_CASE shows the required spelling (capitals joined by underscores) and stays as it is."
+  },
+  "secrets.declare.description.label": {
+    "text": "Description",
+    "description": "Label of the field in the \"New variable\" form of the secrets dialog for a short explanation of the variable."
+  },
+  "secrets.declare.description.placeholder": {
+    "text": "What this value is and where to get it",
+    "description": "Greyed text inside the empty Description field of the \"New variable\" form of the secrets dialog."
+  },
+  "secrets.declare.value.label": {
+    "text": "Value",
+    "description": "Label of the field in the \"New variable\" form of the secrets dialog for the variable's value."
+  },
+  "secrets.declare.value.placeholder": {
+    "text": "leave blank to declare only",
+    "description": "Greyed text inside the empty Value field of the \"New variable\" form of the secrets dialog: with no value, only the declaration is made."
+  },
+  "secrets.declare.value.helpDirect": {
+    "text": "Stored as soon as you submit. Optional if you give a default below.",
+    "description": "Help under the Value field in the \"New variable\" form of the secrets dialog, for an admin."
+  },
+  "secrets.declare.value.helpProposal": {
+    "text": "Held encrypted and stored when the proposal merges. Optional if you give a default below.",
+    "description": "Help under the Value field in the \"New variable\" form of the secrets dialog, for someone who is not an admin."
+  },
+  "secrets.declare.required": {
+    "text": "Required",
+    "description": "Checkbox in the \"New variable\" form of the secrets dialog: the app cannot deploy until this variable has a value."
+  },
+  "secrets.declare.private": {
+    "text": "Private",
+    "description": "Checkbox in the \"New variable\" form of the secrets dialog: the value is encrypted and never shown again."
+  },
+  "secrets.declare.flagsHelp.platform": {
+    "text": "Required blocks deploys until it has a value. Private means encrypted at rest and never displayed again.",
+    "description": "Help under the Required and Private checkboxes in the \"New variable\" form of the secrets dialog, for Homeroom itself. Translate \"Required\" and \"Private\" as the checkboxes are."
+  },
+  "secrets.declare.flagsHelp.app": {
+    "text": "Required blocks deploys until it has a value. Private means encrypted at rest and never displayed again, and never copied into PR previews.",
+    "description": "Help under the Required and Private checkboxes in the \"New variable\" form of the secrets dialog, for an app. A PR preview is a test copy of the app built for a proposal."
+  },
+  "secrets.declare.default.label": {
+    "text": "Default",
+    "description": "Label of the field in the \"New variable\" form of the secrets dialog for the value used when none is set. A noun."
+  },
+  "secrets.declare.default.placeholder": {
+    "text": "optional",
+    "description": "Greyed text inside the empty Default field of the \"New variable\" form of the secrets dialog."
+  },
+  "secrets.declare.default.helpPlatform": {
+    "text": "Documents the fallback your code already uses. The platform's deploy does not apply it, so set a value above if the variable really needs one.",
+    "description": "Help under the Default field in the \"New variable\" form of the secrets dialog, for Homeroom itself."
+  },
+  "secrets.declare.default.helpApp": {
+    "text": "Used at deploy time when no value is stored.",
+    "description": "Help under the Default field in the \"New variable\" form of the secrets dialog, for an app."
+  },
+  "secrets.declare.group.label": {
+    "text": "Group",
+    "description": "Label of the field in the \"New variable\" form of the secrets dialog for the heading the variable is listed under."
+  },
+  "secrets.declare.group.help": {
+    "text": "The heading this row files under in this panel.",
+    "description": "Help under the Group field in the \"New variable\" form of the secrets dialog. \"This panel\" is the secrets dialog."
+  },
+  "secrets.declare.stagingDefault.label": {
+    "text": "Staging default",
+    "description": "Label of the field in the \"New variable\" form of the secrets dialog for the value test copies (PR previews) of the app use."
+  },
+  "secrets.declare.stagingDefault.placeholder": {
+    "text": "optional",
+    "description": "Greyed text inside the empty Staging default field of the \"New variable\" form of the secrets dialog."
+  },
+  "secrets.declare.stagingDefault.help": {
+    "text": "What PR previews use. A required + private secret needs one (or a default), otherwise no preview of this app can boot.",
+    "description": "Help under the Staging default field in the \"New variable\" form of the secrets dialog. A PR preview is a test copy of the app built for a proposal."
+  },
+  "secrets.declare.submit.direct": {
+    "text": "Add & set value",
+    "description": "Submit button of the \"New variable\" form of the secrets dialog, for an admin: declares the variable and stores its value."
+  },
+  "secrets.declare.submit.variable": {
+    "text": "Propose new variable",
+    "description": "Submit button of the \"New variable\" form of the secrets dialog for Homeroom itself, for someone who is not an admin: puts the declaration up for a vote."
+  },
+  "secrets.declare.submit.secret": {
+    "text": "Propose new secret",
+    "description": "Submit button of the same form for an app, for someone who is not an admin: puts the declaration up for a vote."
+  },
+  "secrets.declare.error.key": {
+    "text": "Key must be UPPER_SNAKE_CASE (letters, digits and underscores).",
+    "description": "Status line at the bottom of the secrets dialog, in red, when the typed name is not capitals, digits and underscores. UPPER_SNAKE_CASE stays as it is."
+  },
+  "secrets.declare.error.requiredValue": {
+    "text": "A required variable needs either a value or a default.",
+    "description": "Status line at the bottom of the secrets dialog, in red, when Required is ticked and both Value and Default are empty."
+  },
+  "secrets.declare.error.stagingDefault": {
+    "text": "PR previews of this app won't boot without a staging default for a required private secret.",
+    "description": "Status line at the bottom of the secrets dialog, in red, when a required private secret has neither a staging default nor a default."
+  },
+  "secrets.declare.error.quote": {
+    "text": "Values can't contain a single quote or a carriage return. They wouldn't survive being written to the platform's .env file.",
+    "description": "Status line at the bottom of the secrets dialog, in red, when a value for Homeroom itself contains a character that cannot be stored. .env is a file name."
+  },
+  "secrets.declare.opening": {
+    "text": "Opening a proposal for {{key}}…",
+    "description": "Status line at the bottom of the secrets dialog while the proposal declaring a new variable is created. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.declare.opened.stored": {
+    "text": "Proposal opened for {{key}}. Your value is stored; the declaration still needs a merge vote.",
+    "description": "Status line at the bottom of the secrets dialog after an admin declared a new variable. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.declare.opened.storedNumbered": {
+    "text": "Proposal opened for {{key}} (PR #{{number}}). Your value is stored; the declaration still needs a merge vote.",
+    "description": "Status line at the bottom of the secrets dialog after an admin declared a new variable. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; keep the # before it."
+  },
+  "secrets.declare.opened.pending": {
+    "text": "Proposal opened for {{key}}. Vote on it in the group chat panel. The value applies when it merges.",
+    "description": "Status line at the bottom of the secrets dialog after a new variable was proposed. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.declare.opened.pendingNumbered": {
+    "text": "Proposal opened for {{key}} (PR #{{number}}). Vote on it in the group chat panel. The value applies when it merges.",
+    "description": "Status line at the bottom of the secrets dialog after a new variable was proposed. {{key}} is the variable's name, such as STRIPE_API_KEY. {{number}} is the pull request's number; keep the # before it."
+  },
+  "secrets.declare.failed": {
+    "text": "Failed: {{reason}}",
+    "description": "Status line at the bottom of the secrets dialog, in red, when the proposal declaring a new variable could not be created. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "secrets.set.title": {
+    "text": "Set {{key}}",
+    "description": "Title of the small dialog that asks an admin for a variable's value. \"Set\" is a verb. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.set.sensitive": {
+    "text": "This value is sensitive: it is encrypted at rest and never shown again.",
+    "description": "Message in the small dialog that asks an admin for the value of a variable marked sensitive."
+  },
+  "secrets.set.placeholder": {
+    "text": "value",
+    "description": "Greyed text inside the empty field of the small dialog that asks an admin for a variable's value."
+  },
+  "secrets.set.setting": {
+    "text": "Setting {{key}}…",
+    "description": "Status line at the bottom of the secrets dialog while a value is being stored. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.set.saved": {
+    "text": "Saved {{key}}.",
+    "description": "Status line at the bottom of the secrets dialog after a value was stored. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.set.failed": {
+    "text": "Failed to set {{key}}: {{reason}}",
+    "description": "Status line at the bottom of the secrets dialog, in red, when a value could not be stored. {{key}} is the variable's name, such as STRIPE_API_KEY. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "secrets.clear.title": {
+    "text": "Clear {{key}}?",
+    "description": "Title of the confirmation asked before an admin deletes a variable's stored value. \"Clear\" is a verb. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.clear.confirm": {
+    "text": "Clear",
+    "description": "Confirming button of that confirmation: deletes the stored value. A verb."
+  },
+  "secrets.clear.clearing": {
+    "text": "Clearing {{key}}…",
+    "description": "Status line at the bottom of the secrets dialog while a stored value is being deleted. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.clear.cleared": {
+    "text": "Cleared {{key}}.",
+    "description": "Status line at the bottom of the secrets dialog after a stored value was deleted. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.clear.failed": {
+    "text": "Failed to clear {{key}}: {{reason}}",
+    "description": "Status line at the bottom of the secrets dialog, in red, when a stored value could not be deleted. {{key}} is the variable's name, such as STRIPE_API_KEY. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "secrets.proposeSet.title": {
+    "text": "Propose setting {{key}}",
+    "description": "Title of the small dialog that asks for a value to put up for the group's vote. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.proposeSet.message": {
+    "text": "A majority of active users must vote up before this applies.",
+    "description": "Message in the small dialog that asks for a value to put up for the group's vote. To vote up is to vote in favour."
+  },
+  "secrets.proposeSet.messageSensitive": {
+    "text": "This value is sensitive. A majority of active users must vote up before this applies.",
+    "description": "The same message for a variable marked sensitive."
+  },
+  "secrets.proposeSet.placeholder": {
+    "text": "value",
+    "description": "Greyed text inside the empty field of the small dialog that asks for a value to put up for the group's vote."
+  },
+  "secrets.proposeSet.confirm": {
+    "text": "Propose",
+    "description": "Confirming button of that small dialog: creates the proposal. A verb."
+  },
+  "secrets.proposeSet.opening": {
+    "text": "Opening proposal for {{key}}…",
+    "description": "Status line at the bottom of the secrets dialog while the proposal to set a value is created. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.proposeSet.opened": {
+    "text": "Proposal opened. Vote in the group chat tab.",
+    "description": "Status line at the bottom of the secrets dialog after the proposal to set a value was created."
+  },
+  "secrets.proposeSet.failed": {
+    "text": "Failed: {{reason}}",
+    "description": "Status line at the bottom of the secrets dialog, in red, when the proposal to set a value could not be created. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "secrets.proposeClear.title": {
+    "text": "Propose removing {{key}}?",
+    "description": "Title of the confirmation asked before deleting a variable's value is put up for the group's vote. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.proposeClear.confirm": {
+    "text": "Propose",
+    "description": "Confirming button of that confirmation: creates the proposal. A verb."
+  },
+  "secrets.proposeClear.opening": {
+    "text": "Opening proposal for {{key}}…",
+    "description": "Status line at the bottom of the secrets dialog while the proposal to delete a value is created. {{key}} is the variable's name, such as STRIPE_API_KEY."
+  },
+  "secrets.proposeClear.opened": {
+    "text": "Proposal opened. Vote in the group chat tab.",
+    "description": "Status line at the bottom of the secrets dialog after the proposal to delete a value was created."
+  },
+  "secrets.proposeClear.failed": {
+    "text": "Failed: {{reason}}",
+    "description": "Status line at the bottom of the secrets dialog, in red, when the proposal to delete a value could not be created. {{reason}} is the server's explanation or a short technical reason."
+  },
+  "screenshot.hint": {
+    "text": "Drag to select the area to capture. Esc to cancel",
+    "description": "Instruction at the top of the screenshot overlay of the \"Suggest an improvement\" dialog, where the person drags a rectangle over a frozen picture of the page to choose what to attach. Esc is the Escape key and stays as it is."
+  },
+  "screenshot.attach": {
+    "text": "Attach selected area",
+    "description": "Accessible name of the check-mark button in the screenshot overlay of the \"Suggest an improvement\" dialog, where the person drags a rectangle over a frozen picture of the page to choose what to attach: attaches the marked area as a picture."
+  },
+  "screenshot.cancel": {
+    "text": "Cancel screenshot",
+    "description": "Accessible name of the X button in the screenshot overlay of the \"Suggest an improvement\" dialog, where the person drags a rectangle over a frozen picture of the page to choose what to attach: leaves without attaching anything."
+  },
+  "feedback.mode.label": {
+    "text": "How to suggest it",
+    "description": "Accessible name of the Form / Comment switch at the top of the \"Suggest an improvement\" dialog, shown when comment mode is turned on in Settings: the two ways to suggest an improvement."
+  },
+  "feedback.mode.formTitle": {
+    "text": "Suggest it with this form",
+    "description": "Tooltip of the Form side of the switch at the top of the \"Suggest an improvement\" dialog, the side that is on: suggesting the improvement with this form."
+  },
+  "feedback.mode.form": {
+    "text": "Form",
+    "description": "Form side of the Form / Comment switch at the top of the \"Suggest an improvement\" dialog, the side that is on: this written form. A noun."
+  },
+  "feedback.mode.commentTitle": {
+    "text": "Comment on the page",
+    "description": "Tooltip of the Comment side of the switch at the top of the \"Suggest an improvement\" dialog: closes the form and opens comment mode, where a click on the page leaves a comment pinned there."
+  },
+  "feedback.mode.comment": {
+    "text": "Comment",
+    "description": "Comment side of the Form / Comment switch at the top of the \"Suggest an improvement\" dialog: switches to comment mode, where a click on the page leaves a comment pinned there. A noun or a verb, as fits a switch."
+  },
+  "feedback.mode.hint": {
+    "text": "Click on the page to comment",
+    "description": "Small line beside the Form / Comment switch at the top of the \"Suggest an improvement\" dialog: in comment mode a click on the page leaves the comment there."
+  },
+  "topics.title": {
+    "text": "Topics",
+    "description": "Title of the Topics dialog, opened from a project's Settings & rules. A topic is one of the lasting conversations a project is organised by: a channel and a category of requests at once."
+  },
+  "topics.intro": {
+    "text": "Each change is a proposal the group votes on. It applies once voted in.",
+    "description": "Line under the title of the Topics dialog: adding, renaming, merging or archiving a topic opens a proposal that the project's members vote on, and nothing changes until it passes."
+  },
+  "topics.row.mergedInto": {
+    "text": "#{{handle}} · merged into #{{into}}",
+    "description": "Second line of a retired topic's row in the Topics dialog: its channel handle, then the topic it was merged into. {{handle}} and {{into}} are channel handles (for example signup, onboarding); keep the # before each and the middle dot."
+  },
+  "topics.row.mergedIntoAnother": {
+    "text": "#{{handle}} · merged into another topic",
+    "description": "Second line of a retired topic's row in the Topics dialog, when the topic it was merged into is not known: its channel handle, then what became of it. {{handle}} is the channel handle (for example signup); keep the # and the middle dot."
+  },
+  "topics.row.archived": {
+    "text": "#{{handle}} · archived",
+    "description": "Second line of an archived topic's row in the Topics dialog: its channel handle, then that it was archived (its channel stays, read only). {{handle}} is the channel handle (for example signup); keep the # and the middle dot."
+  },
+  "topics.row.requests_one": {
+    "text": "#{{handle}} · {{count}} request",
+    "description": "Second line of a topic's row in the Topics dialog: its channel handle, then how many open requests are filed under it ({{count}}, here 1). {{handle}} is the channel handle (for example onboarding); keep the # and the middle dot."
+  },
+  "topics.row.requests_other": {
+    "text": "#{{handle}} · {{count}} requests",
+    "description": "Second line of a topic's row in the Topics dialog: its channel handle, then how many open requests are filed under it ({{count}}). {{handle}} is the channel handle (for example onboarding); keep the # and the middle dot."
+  },
+  "topics.row.more": {
+    "text": "Change {{topic}}",
+    "description": "Accessible name of the ⋯ button on a topic's row in the Topics dialog: opens the actions that change that topic (rename, merge, archive). {{topic}} is the topic's name."
+  },
+  "topics.row.actions": {
+    "text": "Change {{topic}}",
+    "description": "Accessible name of the group of buttons (Rename, Merge into…, Archive) that opens under a topic's row in the Topics dialog. {{topic}} is the topic's name."
+  },
+  "topics.action.rename": {
+    "text": "Rename",
+    "description": "Button under a topic's row in the Topics dialog: opens the form to propose a new name, channel handle or line for that topic."
+  },
+  "topics.action.merge": {
+    "text": "Merge into…",
+    "description": "Button under a topic's row in the Topics dialog: opens the form to propose merging that topic into another one, chosen next. The ellipsis says a choice follows."
+  },
+  "topics.action.archive": {
+    "text": "Archive",
+    "description": "Button under a topic's row in the Topics dialog: opens the form to propose archiving that topic (its channel stays, read only)."
+  },
+  "topics.empty": {
+    "text": "No topics yet. Propose the first below.",
+    "description": "Shown in the Topics dialog in place of the list when the project has no topics; the form to propose a new topic is right below it."
+  },
+  "topics.form.rename": {
+    "text": "Rename #{{handle}}",
+    "description": "Small heading over the Topics dialog's form while proposing a rename. {{handle}} is the topic's channel handle (for example onboarding); keep the #."
+  },
+  "topics.form.merge": {
+    "text": "Merge #{{handle}} into…",
+    "description": "Small heading over the Topics dialog's form while proposing to merge a topic into another one, chosen in the form below. {{handle}} is the channel handle of the topic being merged (for example signup); keep the #."
+  },
+  "topics.form.archive": {
+    "text": "Archive #{{handle}}",
+    "description": "Small heading over the Topics dialog's form while proposing to archive a topic. {{handle}} is the topic's channel handle (for example signup); keep the #."
+  },
+  "topics.field.nameNew": {
+    "text": "New topic",
+    "description": "Label of the name field in the Topics dialog's form for proposing a new topic."
+  },
+  "topics.field.name": {
+    "text": "Name",
+    "description": "Label of the name field in the Topics dialog's form for renaming a topic: the topic's display name."
+  },
+  "topics.field.namePlaceholder": {
+    "text": "What it is about, in a few words",
+    "description": "Placeholder of the name field in the Topics dialog: a topic's name says in a few words what its conversation is about."
+  },
+  "topics.field.channel": {
+    "text": "Channel",
+    "description": "Label of the field in the Topics dialog for the topic's channel handle (the short #name its chat channel is reached by)."
+  },
+  "topics.field.channelPlaceholder": {
+    "text": "Made from the name",
+    "description": "Placeholder of the channel handle field in the Topics dialog: left empty, the handle is made from the topic's name."
+  },
+  "topics.field.channelRenameHint": {
+    "text": "Links to the old name keep working.",
+    "description": "Hint under the channel handle field in the Topics dialog while renaming a topic: links that use the old channel handle still lead to the channel."
+  },
+  "topics.field.about": {
+    "text": "What it is for",
+    "description": "Label of the field in the Topics dialog for the one line that says what a topic is for, shown at the top of its channel."
+  },
+  "topics.field.aboutPlaceholder": {
+    "text": "One line people see at the top of the channel",
+    "description": "Placeholder of the \"What it is for\" field in the Topics dialog: the line people see at the top of the topic's channel."
+  },
+  "topics.field.into": {
+    "text": "Merge into",
+    "description": "Label of the menu in the Topics dialog for choosing the topic another topic is merged into."
+  },
+  "topics.field.intoPlaceholder": {
+    "text": "Choose a topic",
+    "description": "First, unselectable choice of the menu in the Topics dialog for the topic another topic is merged into: asks the person to pick one."
+  },
+  "topics.merge.hint": {
+    "text": "Its requests and their votes move to the topic you choose. Its channel stays, read only, with its history.",
+    "description": "Hint under the \"Merge into\" menu in the Topics dialog: what merging a topic does to its requests and to its chat channel."
+  },
+  "topics.archive.hint": {
+    "text": "Its channel stays, read only, with its history. Its requests are sorted into the other topics again.",
+    "description": "Text of the Topics dialog's form for archiving a topic: what archiving does to its chat channel and to the requests filed under it."
+  },
+  "topics.submit.idle": {
+    "text": "Open PR",
+    "description": "Submit button of the Topics dialog's form: opens a pull request (a proposal) with the topic change for the group's vote. PR is short for pull request."
+  },
+  "topics.submit.busy": {
+    "text": "Opening PR…",
+    "description": "Submit button of the Topics dialog's form while the pull request (proposal) with the topic change is being opened. PR is short for pull request."
+  },
+  "topics.status.opened": {
+    "text": "\"{{title}}\" is up for a vote. It applies once voted in.",
+    "description": "Confirmation in the Topics dialog after a topic change was proposed. {{title}} is the proposal's title, for example Add the topic Onboarding; keep the quotation marks as the language writes them."
+  },
+  "topics.status.openedUntitled": {
+    "text": "\"Topic change\" is up for a vote. It applies once voted in.",
+    "description": "Confirmation in the Topics dialog after a topic change was proposed, when the proposal's title is not known: \"Topic change\" stands in for the title, in quotation marks."
+  },
+  "topics.proposals.heading": {
+    "text": "Waiting for a vote",
+    "description": "Small heading in the Topics dialog over the list of topic changes that were proposed and are not voted in yet."
+  },
+  "topics.proposals.untitled": {
+    "text": "Topic change",
+    "description": "Title of a row in the Topics dialog's \"Waiting for a vote\" list when the proposed topic change has no title of its own."
+  },
+  "topics.proposals.number": {
+    "text": "Change #{{number}}",
+    "description": "Second line of a row in the Topics dialog's \"Waiting for a vote\" list: the proposal's number. {{number}} is the pull request number, for example 4417; keep the #."
+  },
+  "topics.archived.heading": {
+    "text": "Archived",
+    "description": "Small heading in the Topics dialog over the list of topics that were archived or merged into another topic."
+  },
+  "topics.error.nameShort": {
+    "text": "A topic needs a name of at least 3 characters.",
+    "description": "Error in the Topics dialog when the topic's name is shorter than 3 characters."
+  },
+  "topics.error.nameLong": {
+    "text": "A topic's name is 48 characters at most.",
+    "description": "Error in the Topics dialog when the topic's name is longer than 48 characters."
+  },
+  "topics.error.aboutLong": {
+    "text": "What it is for is one line: 140 characters at most.",
+    "description": "Error in the Topics dialog when the \"What it is for\" line is longer than 140 characters. \"What it is for\" is that field's label."
+  },
+  "topics.error.notLive": {
+    "text": "That topic is not live any more.",
+    "description": "Error in the Topics dialog when the topic being renamed was archived or merged in the meantime."
+  },
+  "topics.error.unchanged": {
+    "text": "Change the name, the channel or what it is for first.",
+    "description": "Error in the Topics dialog when a rename is submitted without changing the name, the channel handle or the \"What it is for\" line."
+  },
+  "topics.error.chooseInto": {
+    "text": "Choose the topic to merge it into.",
+    "description": "Error in the Topics dialog when a merge is submitted before a topic to merge into was chosen."
+  },
+  "topics.error.open": {
+    "text": "Could not open the proposal. Try again.",
+    "description": "Error in the Topics dialog when the server refused to open the topic change's proposal and gave no reason of its own."
+  },
+  "topics.error.network": {
+    "text": "Network error while opening the proposal.",
+    "description": "Error in the Topics dialog when the request to open the topic change's proposal did not reach the server."
+  },
+  "appSettings.access.notChangedVerify": {
+    "text": "Access not changed. Verify your account to make this app public, then propose again.",
+    "description": "Status line under the Access section of an app's settings when the person chose Not now on the verify sheet that making an app public needs: the access stays as it was."
+  },
+  "appSettings.access.hint": {
+    "text": "Pick a different access level above, then propose the change.",
+    "description": "Small line under the Access section's Propose button while it is switched off because the chosen access is the app's current one: what to do to make the button work."
+  }
+}

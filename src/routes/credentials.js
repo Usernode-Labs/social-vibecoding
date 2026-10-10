@@ -93,6 +93,12 @@ function credentialRoutes(config) {
       isDefaultFavorite: !overrides.has(model.id) && model.isRecommended === true,
       // #3296: which CLI a turn on this model runs in ('claude' or 'codex').
       harness: registry.openRouterHarnessForModel(model.id, config),
+      // What a prompt-cache read and write cost, where the catalog lists
+      // them. agent-models.js keeps them off the shared catalog's own JSON;
+      // the picker reads them here to price a typical change's cached share
+      // on a model it derives an estimate for (model-choice.ts modelCost).
+      ...(model.cacheReadPricePerMillion != null ? { cacheReadPricePerMillion: model.cacheReadPricePerMillion } : {}),
+      ...(model.cacheWritePricePerMillion != null ? { cacheWritePricePerMillion: model.cacheWritePricePerMillion } : {}),
     }));
     return { ...catalog, totalModels: models.length, models };
   }

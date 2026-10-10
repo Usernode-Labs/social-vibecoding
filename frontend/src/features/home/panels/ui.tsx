@@ -20,6 +20,8 @@ import type { ReactNode } from 'react';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
+import { t as message } from '../../../lib/i18n/runtime';
 import type { PanelStamps } from '../panels-store';
 
 export function panels(): any {
@@ -119,9 +121,25 @@ const TINT_CLASS: Record<LegacyTint, string> = {
   1: 'home-tint-1', 2: 'home-tint-2', 3: 'home-tint-3', 4: 'home-tint-4', 5: 'home-tint-5',
 };
 
-/** A tone's own name, title-cased for a label. */
+/** Each tone's name as a swatch is labelled: a message id per tone. */
+const TONE_LABEL: Record<Tone, string> = {
+  cream: 'home:tone.cream',
+  yellow: 'home:tone.yellow',
+  orange: 'home:tone.orange',
+  coral: 'home:tone.coral',
+  pink: 'home:tone.pink',
+  purple: 'home:tone.purple',
+  indigo: 'home:tone.indigo',
+  blue: 'home:tone.blue',
+  teal: 'home:tone.teal',
+  mint: 'home:tone.mint',
+  sage: 'home:tone.sage',
+  gray: 'home:tone.gray',
+};
+
+/** A tone's own name, for a swatch's label. */
 export function toneLabel(tone: Tone): string {
-  return tone.charAt(0).toUpperCase() + tone.slice(1);
+  return message(TONE_LABEL[tone]);
 }
 
 /**
@@ -215,13 +233,14 @@ export function SectionHeading({ children, action }: {
  * hash navigation: `#home-browse-btn` is selected on from dapp.json.
  */
 export function BrowseLink() {
+  const t = useMessages('home');
   return (
     <button
       type="button"
       id="home-browse-btn"
       className="home-panel-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-      title="Browse every app in the directory"
-      aria-label="Browse all apps"
+      title={t('home:discover.browseAll.tip')}
+      aria-label={t('home:discover.browseAll.label')}
       onClick={(e) => {
         e.stopPropagation();
         // Through the hash, so the browse screen gets a real history entry and
@@ -229,7 +248,7 @@ export function BrowseLink() {
         window.location.hash = '#apps';
       }}
     >
-      <span className="whitespace-nowrap">Browse all apps</span>
+      <span className="whitespace-nowrap">{t('home:discover.browseAll.label')}</span>
     </button>
   );
 }
@@ -307,18 +326,19 @@ export function PanelShell({
  * way out: the footer's second "Open challenges" is gone (see `PanelFooter`).
  */
 export function LeaderboardLink() {
+  const t = useMessages('home');
   return (
     <button
       type="button"
       className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-      title="Go to the Challenges tab on the Leaderboard screen"
-      aria-label="Open challenges"
+      title={t('home:challenges.open.tip')}
+      aria-label={t('home:challenges.open.label')}
       onClick={(e) => {
         e.stopPropagation();
         panels()?.goToChallenges?.();
       }}
     >
-      <span className="whitespace-nowrap">Open challenges</span>
+      <span className="whitespace-nowrap">{t('home:challenges.open.label')}</span>
     </button>
   );
 }
@@ -344,9 +364,10 @@ export function LeaderboardLink() {
 export function PanelFooter({
   panelKey, total, expanded,
 }: { panelKey: string; total: number; expanded: boolean }) {
+  const t = useMessages('home');
   const label = expanded
-    ? 'Show less'
-    : (total ? `See all ${total} challenges` : 'See all challenges');
+    ? t('home:challenges.fold.showLess')
+    : (total ? t('home:challenges.fold.seeAllCount', { count: total }) : t('home:challenges.fold.seeAll'));
   // No side inset and no rule above: the block sits on the page ground, so
   // the toggle starts at the heading's left edge like the cards above it, and
   // `pt-2` is the second half of the 14px step from the body's `pb-1.5`.
@@ -357,7 +378,7 @@ export function PanelFooter({
         className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap un-touch-target"
         data-panel-key={panelKey}
         aria-expanded={expanded}
-        title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
+        title={expanded ? t('home:challenges.fold.collapseTip') : t('home:challenges.fold.expandTip')}
         onClick={(e) => {
           e.stopPropagation();
           panels()?.toggleExpanded?.(panelKey);

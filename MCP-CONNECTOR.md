@@ -158,6 +158,7 @@ issue, a build — and the platform merges none of it without a group vote:
 | `submit_work` | Opens or advances a proposal, for the group to vote on |
 | `create_request` | Files on the app's board and as a GitHub issue |
 | `prepare_work` | Claims the request on the app's board; mints a work order |
+| `close_work_order` | Puts away one of the user's own unsubmitted work orders, freeing its slot; touches no branch, proposal or vote |
 | `start_platform_build` | Spends the user's daily Homeroom credits |
 | `submit_platform_build` | Puts that build to a group vote |
 | `recheck_change` | Re-runs a proposal's checks on the commit it already has; no code or vote moves |
@@ -208,6 +209,120 @@ voter on the demo app alone, the app's settings say it is in demo mode and
 name the partner, and the read-only `get_demo_status` lists what would spoil
 a take. In the permission model they are acting tools like the others: out of
 the setup hint, out of the shipped allow rules, prompted like any other write.
+
+### Admin only: test accounts
+
+First-time-user testing needs a genuinely new account each run, and "Reset
+first run" on an old one keeps its memberships, votes and history. A full
+platform admin's connector (and nobody else's) gets five tools for that, over
+`routes/test-accounts.js` and `services/test-accounts.js`:
+
+| Tool | What it actually does |
+|---|---|
+| `create_test_account` | Makes a new account flagged as a test account and returns its username and a one-time password, with the sign-in steps. Inputs, all optional: `username` (omitted: a placeholder and the real "choose your username" step), `platformAccess` (default `true`; `false` leaves it in the waiting room), `welcomeDm` (default `false`), `note` (≤ 200 characters) |
+| `create_test_phone_sign_in` | A one-time phone sign-in for the flows that ask for a phone (an invite's Join sheet): a fictional test number (`+1 415 555 01xx` unless `phoneNumber` names another `+1 … 555 0100–0199` number) and a random six-digit code that works once, within 30 minutes and five tries, in any environment. No text is sent. The account it makes is a test account; naming a live test account's number signs in to it again |
+| `send_test_release_email` | Sends the waitlist's real "You're in. Welcome to Homeroom" email to a test address, so the flow from that email can be walked, and the email itself checked, in any environment. Inputs, all optional: `email` (omitted: a fresh `+test` alias of the admin's own confirmed address, such as `you+test1a2b3c@example.com`), `welcomeDm` (default `false`), `note` (≤ 200 characters). The account its link makes is a test account. Returns the address and the delivery's own status (`sent`, `suppressed_rate_limit`, `skipped_staging`, …) with the steps to follow. Refuses an address that belongs to a real account or a real waitlist signup |
+| `list_test_accounts` | The live ones: id, username, address, who made it and when, last active, note, and the apps it made with their status; and the test release emails nobody has signed up from yet. Read-only |
+| `retire_test_account` | With `confirm: "RETIRE"`: takes down every app the account made (the same teardown as deleting the app), then deletes the account. Refuses an account that is not a test account, and stops without deleting it if an app cannot be taken down |
+
+Username plus a generated password, typed into the ordinary sign-in form, is
+the one sign-in that works on the web and in the iOS app (which signs in
+through the same form) against local, staging and production alike. A device
+that is already signed in must sign out first. No endpoint mints a sign-in
+link or token: that would be a new credential type with a larger blast radius
+than a random password on a flagged account.
+
+The invite's Join sheet signs a newcomer up with a phone, which a password
+cannot stand in for, so `create_test_phone_sign_in` mints the one other
+credential: a code for one fictional number (`+1 … 555 0100–0199`, reserved
+for fiction, so no person holds it). It is random, works once within 30
+minutes and five tries, is kept only as a bcrypt hash, and adds its number only
+to a test account. A local stack can instead set `PHONE_TEST_CODE`, one fixed
+code for every test number, which production refuses.
+
+The waitlist's "you're in" email is reached only from a released waitlist
+row, so `send_test_release_email` makes one: the address becomes a waitlist
+row, confirmed and released like an admitted signup, marked in
+`test_waitlist_releases`, and the mail goes through the same sender, mobile
+steps and throttle as Admit (three a day per address, a minute apart, which a
+fresh alias avoids). Its link is Admit's too: a freshly minted one-time
+sign-in link, or the email code once that is spent. The NEW account either
+makes is marked a test account before it is let in
+(`waitlist.linkUserByEmail` with `newAccount`, then
+`testAccounts.adoptReleasedAccount`), without the invite-tree skips a release
+by hand gives. An account that already existed is never let in by a test
+release. Test releases are kept out of Admin → Waitlist and the Journey's
+admitted cohorts; one nobody signed up from is withdrawn a week after its last
+send, and retiring the account deletes its row.
+
+A test account is a real account, so it is fenced from real outcomes rather
+than trusted not to use them:
+
+- **Vote thresholds.** It is left out of the active-member denominator.
+- **Votes.** Its vote on an app a real person made is recorded and shown, with
+  "Test account: this vote won't count." in the vote picker, and left out of
+  every tally. On an app a test account made, it counts, so one tester can take
+  a project through a vote end to end. One SQL predicate,
+  `counts_toward_outcome(voter, app)`, decides both.
+- **Rankings and Journey.** `exclude_podium`, and a `test` entry on the Journey
+  page's left-out list.
+- **People.** No welcome DM unless `welcomeDm` is set. What it posts in a
+  shared space is still seen by everyone there.
+- **Wallets.** A native sign-in never assigns it a season wallet.
+- **Scale.** At most 25 live at once, unused phone sign-ins included (refused
+  as `at_capacity`, and a release email whose link would make one more);
+  10 creates, 10 phone sign-ins, 10 release emails and 10 retires an hour per
+  admin.
+
+The password is in the tool result, so it lands in the client's transcript.
+That is accepted for a throwaway account that can do nothing a full admin
+cannot, is flagged, and is fenced as above; the platform keeps only its hash
+and logs it nowhere. The routes sit at `/api/test-accounts` (a connector can
+reach neither `/api/admin` nor `/api/auth`), each gated `requireAdminWrite,
+testAccountLimiter, sameOriginBrowserOnly`, and no path has a `password`
+segment. `create_test_account`, `create_test_phone_sign_in`,
+`send_test_release_email` and `retire_test_account` are acting tools;
+`list_test_accounts` is a `list_` read.
+
+### Admin only: the App bench studio, the benchmark, the bot and recent shots
+
+A full platform admin's connector also drives the **App bench studio**
+(`services/bench/studio.js`): a brand-new app's first version built from a
+brief the way a new project's is built today (the starter and its sketch card
+as the first commit, the Homeroom bot's triage, the plan approved as a creator
+tapping Build it, the spec, the build, then 16 screenshots), on any model,
+with or without a **context pack** (guidance added to the bot's first-version
+prompts, and files such as a theme skill added to the first commit), beside
+**reference builds** a Claude Code session makes from the same inputs and
+hands back. The same connector reads and curates the rest of the Homeroom bot
+benchmark, the live bot, and the platform's recent before/after screenshots.
+The charter's `app-bench-studio` section is the procedure a session follows.
+
+| Tool | What it actually does |
+|---|---|
+| `get_bench_studio` | The studio's recent runs, its packs, its host app, the starter briefs and its limits. Read-only |
+| `launch_bench_studio` | Launches a studio run: briefs (`briefSet: "starter"`, new `{ name, brief }`, `{ ref }` or `{ taskId }`) × `models` (`"today"` is the live bot's own per stage) × `contextPackIds` (0 for none) × `repeats`, with `references` planned per brief. `capUsd` is required; over $100 needs `confirmLargeCap` |
+| `get_bench_studio_run` | A run as it moves: each build's arm, step, time, spend, last activity lines, skills invoked or read, screenshots, code and preview. `since` takes the previous call's cursor and returns only what changed. Read-only |
+| `get_bench_reference_order` | The work order for one reference: the brief, the start commit (the same first commit the bot's builds start from, on a public branch of the host repository), the pack, how builds are judged and how to hand back. Given, alone, to a fresh Claude Code session. Read-only |
+| `submit_bench_reference` | Hands a reference in with a `label`, as a branch on a repository the admin's linked GitHub account owns or a patch (≤ 256 KB). It is copied into the host repository and captured like the bot's builds, at no model cost; the same label again is its next attempt |
+| `rerun_bench_trial`, `cancel_bench_trial`, `keep_bench_trial` | One build: run again as the arm's next attempt, stop, or keep its branch past the seven-day sweep |
+| `deploy_bench_preview` | Puts a studio build up for 24 hours through the platform's own preview path, on the host app with a fresh, empty database; at most four at once |
+| `get_bench_gallery` | Every studio brief with its builds across runs. Read-only |
+| `list_bench_context_packs`, `get_bench_context_pack`, `create_bench_context_pack` | The packs; one in full with its diff from its parent; save the next version of one |
+| `list_bench_suites`, `get_bench_suite`, `add_bench_task`, `edit_bench_task` | The benchmark's suites and tasks; add a task (a brief, a capture, a bot run at a stage, a merged pull request) or edit a taste task's brief while its suite is open |
+| `list_bench_trials`, `get_bench_trial` | Any run's trials one by one, and one in full with its screenshots as images. Refused for a run that is not a studio run while any of its trials waits for the judge, so blind grading stays blind |
+| `get_homeroom_bot`, `rate_homeroom_bot_run` | The bot as its console section shows it (settings, spend, queue, a page of its runs) and a run's rating |
+| `list_recent_shots`, `get_recent_shots` | Merged proposals' before/after screenshots as the console's Screenshot gallery lists them, and one proposal's stills as images |
+
+The studio's builds run in one private host app the benchmark user owns,
+made once through app creation's own path, so a preview's database is that
+app's own empty one and never an app's real data. A studio run is open by
+design (its watch names the model of every build); a session that grades
+blind items should never have watched. The routes sit at `/api/bot-studio`
+(`routes/bench-studio.js`), each gated `requireAdminWrite` first, reads
+included, and every write then `benchStudioLimiter` (a launch
+`benchRunLimiter`) and `sameOriginBrowserOnly`. The writes are acting tools;
+everything else is a `get_`/`list_` read.
 
 ---
 

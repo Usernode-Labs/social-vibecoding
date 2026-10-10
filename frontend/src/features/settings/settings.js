@@ -38,6 +38,19 @@
 (function () {
   'use strict';
 
+  // Interface text is read from the language catalogs (frontend/locales/en,
+  // namespace `settings`) through the global the language runtime publishes:
+  // this file is import-free. Always at render time, never at load.
+  const tr = (id, values) => PlatformI18n.t(id, values);
+
+  // Short independent facts on one line ("Free · New · verified"). Each part
+  // is a whole message; what joins two of them is a message too
+  // (settings:list.dot), so a language can use its own separator.
+  const dotText = (parts) => {
+    const said = parts.filter((part) => typeof part === 'string' && part !== '');
+    return said.length ? said.reduce((first, second) => tr('settings:list.dot', { first, second })) : '';
+  };
+
   // ── Status lines ──────────────────────────────────────────────────────
   //
   // Seven sections report the result of the user's last action in a status
@@ -80,9 +93,14 @@
   // allowance, 'daily' for older ones until they are re-limited, whatever
   // OpenRouter says for a personal key, which may be nothing), never from a
   // hard-coded word, so the copy stays truthful for every key it describes.
-  function limitNoun(reset, noun = 'limit') {
+  //
+  // Each sentence that names the allowance has one whole message per cadence
+  // OpenRouter is known to report, one for a key with no cadence, and one that
+  // carries any other cadence word as the server wrote it. This answers which.
+  function limitCadence(reset) {
     const cadence = typeof reset === 'string' ? reset.trim().toLowerCase() : '';
-    return cadence ? `${cadence} ${noun}` : noun;
+    if (!cadence) return { key: 'none', cadence };
+    return { key: ['daily', 'weekly', 'monthly'].includes(cadence) ? cadence : 'other', cadence };
   }
 
   // ── Post-logout landing (#1524) ───────────────────────────────────────
@@ -101,14 +119,43 @@
   // would be destroyed by that navigation, so it is handed to the anonymous
   // boot instead: App.enterAnonymous reads this key once and toasts it.
   const LOGOUT_NOTICE_KEY = 'sv:logout_notice';
-  const NATIVE_SHUTDOWN_NOTICE =
-    'Signed out. Close and reopen the app to finish shutting down Homeroom.';
+  const NATIVE_SHUTDOWN_NOTICE = 'settings:signOut.nativeShutdownNotice';
 
   // A successful native logout replaces the WebView, so nothing below it in
   // this document normally runs. This bounded net covers the case where the
   // replacement does not arrive: rather than leave a signed-out user looking
   // at the Settings screen forever, land them on the landing page.
   const NATIVE_LOGOUT_SAFETY_MS = 5000;
+
+  // #3915: the net above was armed only once native ANSWERED, so a phone
+  // whose app never answered (or answered late) sat on an unchanged Settings
+  // screen until the bridge gave up twelve seconds later, and on iOS a person
+  // force-quit it first. Once the SERVER has revoked the session this second
+  // net is armed the moment the native call is issued, so the page leaves
+  // within this bound whatever the app does. It is safe to leave early:
+  //
+  //   - Nothing can sign back in. /api/auth/logout deleted the web session
+  //     and, in the same transaction, revoked the native credential tied to
+  //     it (src/routes/auth.js), and its response cleared the cookie.
+  //   - Native cleanup does not need this document once it has started: the
+  //     app holds its lifecycle queue until it has deleted the WebView's
+  //     cookies, storage and cache, then replaces the WebView itself, so a
+  //     landing page that arrived first is simply replaced again.
+  //   - Native gets a fair chance first. Its whole teardown normally takes a
+  //     second or two; eight is several times that. If the app has not even
+  //     admitted the call by then, its credential is already revoked server
+  //     side, and the app retires it the first time the server refuses it.
+  //
+  // The offline path (remote revocation FAILED) never arms it: there only
+  // native can delete the live cookie, so leaving before native confirms
+  // would boot the signed-in shell again.
+  const NATIVE_LOGOUT_ISSUED_SAFETY_MS = 8000;
+
+  // What the button says, at rest (the markup's own words, restored after a
+  // failure) and while a sign-out is running (#3915). Message ids, read when
+  // the button is painted.
+  const SIGN_OUT_LABEL = 'settings:screen.signOut';
+  const SIGNING_OUT_LABEL = 'settings:signOut.signingOut';
 
   // How long the sign-out POST may take before it is abandoned. Two budgets,
   // because the two paths fail differently (#2078):
@@ -137,12 +184,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    // `devFlowPreference` is the "remember my option" answer from the
-    // dev-chat flow picker (#1049): null = ask every time (the default),
-    // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
-    // says whether this deployment can offer the Claude Code / Codex
-    // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -256,38 +298,36 @@
       // Who you are and how you sign in, on one page, with Delete account at
       // its foot, apart from everything harmless above it (GitHub's and
       // Apple's placement: easy to find, never next to a routine control).
-      { key: 'profile', label: 'Profile', group: 'Account', page: 'account' },
-      { key: 'username', label: 'Username', group: 'Account', page: 'account' },
-      { key: 'email', label: 'Email & recovery', group: 'Account', page: 'account' },
-      { key: 'password', label: 'Password', group: 'Account', page: 'account' },
-      { key: 'delete-account', label: 'Delete account', group: 'Account', page: 'account' },
+      { key: 'profile', label: 'settings:nav.part.profile', group: 'settings:nav.group.account', page: 'account' },
+      { key: 'username', label: 'settings:nav.part.username', group: 'settings:nav.group.account', page: 'account' },
+      { key: 'email', label: 'settings:nav.part.email', group: 'settings:nav.group.account', page: 'account' },
+      { key: 'password', label: 'settings:nav.part.password', group: 'settings:nav.group.account', page: 'account' },
+      { key: 'delete-account', label: 'settings:nav.part.deleteAccount', group: 'settings:nav.group.account', page: 'account' },
       // GitHub and X, which decide the daily credits and can be shown on the
       // public page. They shared a pane with the chat connectors, which have
       // nothing to do with identity.
-      { key: 'linked-accounts', label: 'Linked accounts', group: 'Account' },
-      { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
+      { key: 'linked-accounts', label: 'settings:nav.part.linkedAccounts', group: 'settings:nav.group.account' },
+      { key: 'wallet', label: 'settings:nav.part.wallet', group: 'settings:nav.group.account', gate: 'wallet-section' },
 
       // ── AI & building ───────────────────────────────────────────────────
       // The allowance leads: it is the figure most builders open Settings to
       // find. OpenRouter follows it — the included key and the default
       // session model — and the Anthropic key, the one you add when the
       // allowance runs out, comes last.
-      { key: 'usage', label: 'Usage', group: 'AI & building', page: 'ai' },
-      { key: 'openrouter', label: 'OpenRouter', group: 'AI & building', page: 'ai' },
-      { key: 'api-key', label: 'Anthropic API key', group: 'AI & building', page: 'ai' },
+      { key: 'usage', label: 'settings:nav.part.usage', group: 'settings:nav.group.aiBuilding', page: 'ai' },
+      { key: 'openrouter', label: 'settings:nav.part.openrouter', group: 'settings:nav.group.aiBuilding', page: 'ai' },
+      { key: 'api-key', label: 'settings:nav.part.apiKey', group: 'settings:nav.group.aiBuilding', page: 'ai' },
       // Everything about building from outside Homeroom: the chat connectors
-      // (Claude, ChatGPT, Codex), the default hand-off they make possible, and
-      // the CLI credentials. The out-of-credits card deep-links
-      // #settings/connectors and #settings/cli; both land on this page
-      // (public/js/credit-options.js). Connectors leads because the page is
+      // (Claude, ChatGPT, Codex) and the CLI credentials. The out-of-credits
+      // card deep-links #settings/connectors and #settings/cli; both land on
+      // this page (public/js/credit-options.js). Connectors leads because the page is
       // keyed by it: a page key that named a LATER part would open the page
       // scrolled past everything above that part.
-      { key: 'connectors', label: 'Connectors', group: 'AI & building', page: 'connectors' },
-      { key: 'build-venue', label: 'Where changes get built', group: 'AI & building', page: 'connectors' },
-      { key: 'cli', label: 'CLI & coding-agent access', group: 'AI & building', page: 'connectors' },
-      { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & building' },
-      { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & building' },
-      { key: 'experimental', label: 'Experimental', group: 'AI & building' },
+      { key: 'connectors', label: 'settings:nav.part.connectors', group: 'settings:nav.group.aiBuilding', page: 'connectors' },
+      { key: 'cli', label: 'settings:nav.part.cli', group: 'settings:nav.group.aiBuilding', page: 'connectors' },
+      { key: 'agent-files', label: 'settings:nav.part.agentFiles', group: 'settings:nav.group.aiBuilding' },
+      { key: 'global-chat', label: 'settings:nav.part.globalChat', group: 'settings:nav.group.aiBuilding' },
+      { key: 'experimental', label: 'settings:nav.part.experimental', group: 'settings:nav.group.aiBuilding' },
 
       // ── Preferences ─────────────────────────────────────────────────────
       // THE UI OVERHAUL moved Theme here out of the hamburger drawer. The
@@ -297,80 +337,73 @@
       // wrapper is empty and the page is Theme and the console switch. It had
       // a group of its own, which put an "Admin" heading directly above the
       // footer's own Admin block.
-      { key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' },
-      { key: 'dev-console', label: 'Developer console', group: 'Preferences', page: 'theme' },
-      { key: 'admin-preview', label: 'Admin preview', group: 'Preferences', page: 'theme', gate: 'settings-admin-section' },
-      // #1556: GATED, and the gate is "this user already picked a language".
-      // The value is app-facing only (the iframe JWT `locale` claim and
-      // usernode.getUserLocale) and the platform shell is English-only, so a
-      // "Language" row in Preferences reads as a UI language switch that does
-      // nothing — which is exactly what the feedback reported. Hiding it from
-      // everyone who never set one, while keeping it for anyone who did, is
-      // what stops a stored preference becoming unreachable. The read paths
-      // are untouched; to re-launch the picker, drop this `gate` and the two
-      // gate lines in _renderLanguageSection.
-      { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
-      { key: 'alerts', label: 'Notifications', group: 'Preferences' },
+      { key: 'theme', label: 'settings:nav.part.theme', group: 'settings:nav.group.preferences', page: 'theme' },
+      { key: 'dev-console', label: 'settings:nav.part.devConsole', group: 'settings:nav.group.preferences', page: 'theme' },
+      { key: 'admin-preview', label: 'settings:nav.part.adminPreview', group: 'settings:nav.group.preferences', page: 'theme', gate: 'settings-admin-section' },
+      // Offered to everyone: Auto and the languages Homeroom ships
+      // (sections/language.tsx). #1556 had gated it on an already-saved
+      // locale while the row could not say what it did.
+      { key: 'language', label: 'settings:nav.part.language', group: 'settings:nav.group.preferences' },
+      { key: 'alerts', label: 'settings:nav.part.alerts', group: 'settings:nav.group.preferences' },
       // What each app may do: the device access and AI spending you granted,
       // and the apps you blocked. They were split between Preferences and the
       // collapsed Advanced group, which hid two privacy controls from the
       // people they protect.
-      { key: 'app-permissions', label: 'App device permissions', group: 'Preferences', page: 'app-permissions' },
-      { key: 'app-ai', label: 'App AI permissions', group: 'Preferences', page: 'app-permissions' },
-      { key: 'blocked-apps', label: 'Blocked apps', group: 'Preferences', page: 'app-permissions' },
+      { key: 'app-permissions', label: 'settings:nav.part.appPermissions', group: 'settings:nav.group.preferences', page: 'app-permissions' },
+      { key: 'app-ai', label: 'settings:nav.part.appAi', group: 'settings:nav.group.preferences', page: 'app-permissions' },
+      { key: 'blocked-apps', label: 'settings:nav.part.blockedApps', group: 'settings:nav.group.preferences', page: 'app-permissions' },
 
       // ── Help & about ────────────────────────────────────────────────────
       // Panes you come to read or replay rather than configure. The welcome
       // tour's own Skip promises its row exists (#2255). About is last among
       // them — the Improve panel is where the same facts turn into something
       // to act on (a build in flight, a reload waiting). See sections/about.tsx.
-      { key: 'tour', label: 'Welcome tour', group: 'Help & about' },
-      { key: 'usernode', label: 'Homeroom app', group: 'Help & about', gate: 'settings-usernode-section' },
-      { key: 'about', label: 'About', group: 'Help & about' },
+      { key: 'tour', label: 'settings:nav.part.tour', group: 'settings:nav.group.helpAbout' },
+      { key: 'usernode', label: 'settings:nav.part.usernode', group: 'settings:nav.group.helpAbout', gate: 'settings-usernode-section' },
+      { key: 'about', label: 'settings:nav.part.about', group: 'settings:nav.group.helpAbout' },
     ],
 
     // The label of each page that holds more than one part. A page of one
     // part is labelled by that part; the label here is also the title the
     // phone's header shows inside the page.
     PAGES: {
-      account: 'Account',
-      ai: 'AI usage & models',
-      connectors: 'Connectors & CLI',
-      theme: 'Appearance',
-      'app-permissions': 'App permissions',
+      account: 'settings:nav.page.account',
+      ai: 'settings:nav.page.ai',
+      connectors: 'settings:nav.page.connectors',
+      theme: 'settings:nav.page.theme',
+      'app-permissions': 'settings:nav.page.appPermissions',
     },
 
     // Extra words the nav's filter box matches for each part, beyond its own
     // label and its page's. Lower case, space separated: the words people
     // type for a thing, not the words the pane uses for it.
     KEYWORDS: {
-      profile: 'name display photo avatar picture bio public page',
-      username: 'handle rename at',
-      email: 'address verify verification recovery',
-      password: 'sign in login security',
-      'delete-account': 'close remove deactivate anonymise anonymize',
-      'linked-accounts': 'github x twitter social verified daily credits connect',
-      wallet: 'crypto link qr',
-      usage: 'allowance limit credits budget spend remaining weekly',
-      'api-key': 'claude byok key sk-ant billing',
-      openrouter: 'model glm deepseek reasoning default coding agent key',
-      'build-venue': 'claude code codex hand off handoff default build',
-      connectors: 'mcp claude chatgpt codex chat connector',
-      cli: 'terminal token credentials revoke local agent opencode claude code',
-      'agent-files': 'instructions skills agents md claude md prompt files',
-      'global-chat': 'model cap chat',
-      experimental: 'beta labs progress estimate session bridge local agent',
-      theme: 'dark light mode appearance sidebar',
-      'dev-console': 'bug icon logs errors debug developer',
-      language: 'locale translate',
-      alerts: 'notifications sound push phone mute bell chime',
-      'app-permissions': 'camera microphone location screen device',
-      'app-ai': 'ai spending cap grants budget',
-      'blocked-apps': 'block hide unblock',
-      tour: 'walkthrough help onboarding',
-      usernode: 'mobile phone native diagnostics block production',
-      about: 'version build terms',
-      'admin-preview': 'non-admin view as',
+      profile: 'settings:nav.keywords.profile',
+      username: 'settings:nav.keywords.username',
+      email: 'settings:nav.keywords.email',
+      password: 'settings:nav.keywords.password',
+      'delete-account': 'settings:nav.keywords.deleteAccount',
+      'linked-accounts': 'settings:nav.keywords.linkedAccounts',
+      wallet: 'settings:nav.keywords.wallet',
+      usage: 'settings:nav.keywords.usage',
+      'api-key': 'settings:nav.keywords.apiKey',
+      openrouter: 'settings:nav.keywords.openrouter',
+      connectors: 'settings:nav.keywords.connectors',
+      cli: 'settings:nav.keywords.cli',
+      'agent-files': 'settings:nav.keywords.agentFiles',
+      'global-chat': 'settings:nav.keywords.globalChat',
+      experimental: 'settings:nav.keywords.experimental',
+      theme: 'settings:nav.keywords.theme',
+      'dev-console': 'settings:nav.keywords.devConsole',
+      language: 'settings:nav.keywords.language',
+      alerts: 'settings:nav.keywords.alerts',
+      'app-permissions': 'settings:nav.keywords.appPermissions',
+      'app-ai': 'settings:nav.keywords.appAi',
+      'blocked-apps': 'settings:nav.keywords.blockedApps',
+      tour: 'settings:nav.keywords.tour',
+      usernode: 'settings:nav.keywords.usernode',
+      about: 'settings:nav.keywords.about',
+      'admin-preview': 'settings:nav.keywords.adminPreview',
     },
 
     DEFAULT_SECTION: 'account',
@@ -445,8 +478,8 @@
           const field = document.getElementById('connector-url');
           return field ? field.value : null;
         },
-        successMessage: 'MCP server URL copied',
-        failureMessage: 'Could not copy the MCP server URL',
+        successMessage: 'settings:connectors.copy.urlCopied',
+        failureMessage: 'settings:connectors.copy.urlFailed',
         selectOnFail: () => {
           const field = document.getElementById('connector-url');
           if (field) field.select();
@@ -463,12 +496,12 @@
       // over it anyway.
       const RULE_BLOCKS = {
         'connector-allow-rules': {
-          success: 'Copied. Paste it into ~/.claude/settings.json',
-          failure: 'Could not copy the allow rules',
+          success: 'settings:connectors.copy.personalRulesCopied',
+          failure: 'settings:connectors.copy.personalRulesFailed',
         },
         'connector-repo-allow-rules': {
-          success: 'Copied. Commit it as .claude/settings.json in your app repo',
-          failure: 'Could not copy the allow rules',
+          success: 'settings:connectors.copy.repoRulesCopied',
+          failure: 'settings:connectors.copy.repoRulesFailed',
         },
       };
       for (const id of ['connector-allow-rules', 'connector-repo-allow-rules']) {
@@ -499,12 +532,12 @@
       // the live connector URL after this wiring runs.
       const CODEX_BLOCKS = {
         'connector-codex-add': {
-          success: 'Copied. Run it in a terminal where Codex is installed',
-          failure: 'Could not copy the Codex command',
+          success: 'settings:connectors.copy.codexCommandCopied',
+          failure: 'settings:connectors.copy.codexCommandFailed',
         },
         'connector-codex-config': {
-          success: 'Copied. Paste it into ~/.codex/config.toml',
-          failure: 'Could not copy the Codex config entry',
+          success: 'settings:connectors.copy.codexConfigCopied',
+          failure: 'settings:connectors.copy.codexConfigFailed',
         },
       };
       for (const id of Object.keys(CODEX_BLOCKS)) {
@@ -586,6 +619,17 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
+      // #4289: Press C to comment on the page. Kept on this device, not
+      // the account (features/improve/suggest-shortcut.ts), so there is no
+      // request to fail: the change is the save.
+      const shortcutToggle = document.getElementById('suggest-shortcut-enabled');
+      if (shortcutToggle) {
+        shortcutToggle.addEventListener('change', (e) => {
+          const pref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
+          pref?.setEnabled(e.target.checked);
+        });
+      }
+
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -624,19 +668,30 @@
           alertsTest.disabled = true;
           if (status) {
             status.classList.remove('hidden');
-            status.textContent = 'Queueing test alert…';
+            status.textContent = tr('settings:alerts.test.queueing');
           }
           try {
             const result = await DevAlerts.testAlert();
             if (!status) return;
-            const pushStatus = result.queued
-              ? 'Phone push queued. Background or close the mobile app to check for a notification.'
-              : result.reason === 'preference_disabled'
-                ? 'Phone push was not queued. Enable Developer sessions under Mobile push categories and try again.'
-                : 'Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server.';
+            // What happened to the phone push: each outcome has its own
+            // whole countdown sentence, and its own line once the countdown
+            // ends.
+            const outcome = result.queued
+              ? 'queued'
+              : result.reason === 'preference_disabled' ? 'preferenceDisabled' : 'unavailable';
+            const COUNTDOWN = {
+              queued: 'settings:alerts.test.countdown.queued',
+              preferenceDisabled: 'settings:alerts.test.countdown.preferenceDisabled',
+              unavailable: 'settings:alerts.test.countdown.unavailable',
+            };
+            const AFTER = {
+              queued: 'settings:alerts.test.after.queued',
+              preferenceDisabled: 'settings:alerts.test.after.preferenceDisabled',
+              unavailable: 'settings:alerts.test.after.unavailable',
+            };
             let remaining = Math.ceil(result.delayMs / 1000);
             const render = () => {
-              status.textContent = `Alert in ${remaining}s. ${pushStatus} Stay here for the chime if sound is enabled.`;
+              status.textContent = tr(COUNTDOWN[outcome], { count: remaining });
             };
             render();
             this._alertsTestTimer = setInterval(() => {
@@ -646,12 +701,10 @@
                 return;
               }
               this._clearAlertsTestCountdown();
-              status.textContent = result.queued
-                ? 'The test push is queued for delivery. Check your phone; delivery may take a few more seconds.'
-                : pushStatus;
+              status.textContent = tr(AFTER[outcome]);
             }, 1000);
           } catch (err) {
-            if (status) status.textContent = err.message || 'Could not queue the test push. Please try again.';
+            if (status) status.textContent = err.message || tr('settings:alerts.test.failed');
           } finally {
             alertsTest.disabled = false;
           }
@@ -723,8 +776,6 @@
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.locale = j.user?.locale || null;
-        this.state.devFlowPreference = j.user?.devFlowPreference || null;
-        this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
         // Same payload the CLI-credentials gate needs, so prime its memo
         // rather than let it issue a second /api/auth/me. (It still
         // fetches on its own when it runs first — the two orders both
@@ -735,13 +786,9 @@
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
         this._renderWalletSection();
-        // The preference lands here too, and its page may already be
-        // painted (a cold-boot deep link to #settings/build-venue renders
-        // before this resolves). Same reasoning as the wallet row above.
-        this._renderDevFlowSection();
-        // #1556: `locale` decides whether the Language row is in the menu at
-        // all, and it lands here too — a cold-boot deep link paints before
-        // this resolves. Same reasoning as the two rows above.
+        // `locale` is what the Language select shows, and it lands here
+        // too: a cold-boot deep link to #settings/language paints before
+        // this resolves. Same reasoning as the wallet row above.
         this._renderLanguageSection();
         this._renderNavIfOpen();
       } catch {}
@@ -823,7 +870,6 @@
       this._loadGithubLink();
       this._renderAgentFilesSection();
       this._renderWalletSection();
-      this._renderDevFlowSection();
       this._renderChangeUsernameSection();
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
@@ -1130,8 +1176,8 @@
         if (!p) {
           p = {
             key,
-            label: Settings.PAGES[key] || s.label,
-            group: s.group || 'Other',
+            label: tr(Settings.PAGES[key] || s.label),
+            group: s.group || 'settings:nav.group.other',
             parts: [],
           };
           pages.push(p);
@@ -1161,7 +1207,7 @@
     _groupedSections() {
       const groups = [];
       for (const p of Settings._visiblePages()) {
-        const name = p.group || 'Other';
+        const name = p.group || 'settings:nav.group.other';
         let g = groups.find((x) => x.name === name);
         if (!g) { g = { name, items: [] }; groups.push(g); }
         g.items.push(p);
@@ -1183,8 +1229,8 @@
         terms: Settings.str(p.label).toLowerCase(),
         parts: p.parts.map((s) => ({
           key: s.key,
-          label: Settings.str(s.label),
-          terms: `${Settings.str(s.label)} ${Settings.KEYWORDS[s.key] || ''}`.toLowerCase(),
+          label: tr(s.label),
+          terms: `${tr(s.label)} ${Settings.KEYWORDS[s.key] ? tr(Settings.KEYWORDS[s.key]) : ''}`.toLowerCase(),
         })),
       };
     },
@@ -1216,7 +1262,7 @@
         ...Settings._filterTerms(p),
       });
       return Settings._groupedSections().map((g, i) => ({
-        name: Settings.str(g.name),
+        name: tr(g.name),
         first: i === 0,
         items: g.items.map(item),
       }));
@@ -1231,7 +1277,7 @@
     // module's, shared with _navView through _groupedSections().
     _menuView() {
       return Settings._groupedSections().map((g) => ({
-        name: Settings.str(g.name),
+        name: tr(g.name),
         items: g.items.map((p) => ({
           key: p.key,
           label: Settings.str(p.label),
@@ -1480,9 +1526,9 @@
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const p = Settings._visiblePages().find((x) => x.key === Settings._section);
-        App.setHeaderTitle(p ? p.label : 'Settings');
+        App.setHeaderTitle(p ? p.label : tr('settings:screen.title'));
       } else {
-        App.setHeaderTitle('Settings');
+        App.setHeaderTitle(tr('settings:screen.title'));
       }
     },
 
@@ -1528,6 +1574,9 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
+      const shortcut = document.getElementById('suggest-shortcut-enabled');
+      const shortcutPref = typeof window !== 'undefined' ? window.UsernodeReact?.suggestShortcut : null;
+      if (shortcut) shortcut.checked = !!shortcutPref?.enabled();
       this._renderLocalAgentsSection();
     },
 
@@ -1570,7 +1619,7 @@
         });
       }
       if (status && agents.some((a) => a.demo)) {
-        status.textContent = 'Demo data: changes are not saved.';
+        status.textContent = tr('settings:localAgents.demoData');
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
@@ -1584,12 +1633,14 @@
     // collapse into the one fact the row needs, which is whether there is a
     // lease to release at all.
     _localAgentView(agent) {
-      const app = agent.appName || agent.appSlug || 'an app';
+      const app = agent.appName || agent.appSlug || tr('settings:localAgents.unknownApp');
       return {
         leaseId: agent.leaseId || null,
         label: agent.label || null,
-        title: agent.label || 'Unnamed machine',
-        where: agent.sessionTitle ? `${app} · ${agent.sessionTitle}` : String(app),
+        title: agent.label || tr('settings:localAgents.unnamedMachine'),
+        where: agent.sessionTitle
+          ? tr('settings:localAgents.appAndSession', { app, session: agent.sessionTitle })
+          : String(app),
         runtime: agent.runtime || 'claude-code',
         // #1808: the raw instant, NOT a formatted time. This was
         // `toLocaleTimeString()`, so a machine last seen in March read
@@ -1611,8 +1662,10 @@
     // case is a laptop that was closed or lost its network, and the whole
     // point is to get the session's turns back without waiting out the lease.
     async _detachLocalAgent(agent, button) {
-      const label = agent.label || 'this machine';
-      if (!window.confirm(`Detach ${label}?\n\nIts session's coding turns go back to running on Homeroom. Anything it already committed stays on the branch.`)) return;
+      const question = agent.label
+        ? tr('settings:localAgents.detach.confirmNamed', { machine: agent.label })
+        : tr('settings:localAgents.detach.confirmUnnamed');
+      if (!window.confirm(question)) return;
       const status = document.getElementById('settings-local-agents-status');
       button.disabled = true;
       try {
@@ -1622,12 +1675,12 @@
         });
         // 404 means it already went away (it detached itself, or the sweeper
         // expired it) — the user's intent is satisfied either way.
-        if (r.status !== 204 && r.status !== 404) throw new Error('Could not detach that machine.');
+        if (r.status !== 204 && r.status !== 404) throw new Error(tr('settings:localAgents.detach.failed'));
         await this._renderLocalAgentsSection();
       } catch (err) {
         button.disabled = false;
         if (status) {
-          status.textContent = err.message || 'Could not detach that machine.';
+          status.textContent = err.message || tr('settings:localAgents.detach.failed');
           status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
@@ -1640,52 +1693,19 @@
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');
       if (!select) return;
-      // #1556 capability gate, read back by _visibleSections(). Offered only
-      // to a user who already has a preference saved — see the SECTIONS note.
-      const section = document.getElementById('settings-language-section');
       const value = this.state.locale || '';
-      if (section) {
-        if (!value) { section.classList.add('hidden'); return; }
-        section.classList.remove('hidden');
-      }
-      // A saved value outside the curated list (set via the API, or a
-      // future wider picker) still needs to render truthfully — inject
-      // an option for it so the select doesn't silently show "Auto".
+      // A saved value outside the shipped list (chosen when the picker
+      // listed more, or set via the API) still needs to render truthfully:
+      // inject an option for it, under the language's own name, so the
+      // select doesn't silently show "Auto".
       if (value && ![...select.options].some((o) => o.value === value)) {
         const opt = document.createElement('option');
         opt.value = value;
-        opt.textContent = value;
+        opt.textContent = window.PlatformI18n?.languageName?.(value) || value;
         select.appendChild(opt);
       }
       select.value = value;
       const status = document.getElementById('settings-locale-status');
-      if (status) { status.classList.add('hidden'); status.textContent = ''; }
-    },
-
-    // "Preferred build flow" (#1049). The BLOCK is markup now
-    // (sections/connectors.tsx) — it was injected here at runtime until
-    // #1191, because the shell's body was a hand-written document pinned
-    // id-for-id and a new settings control had nowhere else to go. What is
-    // left is what this module does for every other control on the screen:
-    // bind the change, reflect the stored value, and gate the two hand-off
-    // options on whether this deployment has the external flows at all.
-    //
-    // Idempotent — _renderAllSections and refresh() both call it, and the
-    // listener is attached once, to an element React keeps.
-    _renderDevFlowSection() {
-      const select = document.getElementById('settings-dev-flow');
-      if (!select) return;
-      if (!select.__devFlowWired) {
-        select.__devFlowWired = true;
-        select.addEventListener('change', (e) => this._saveDevFlow(e.target.value));
-      }
-      // A deployment without the external flows can still express "always
-      // build on Homeroom" vs "ask me" — just not the two hand-offs.
-      select.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
-        opt.disabled = !this.state.externalFlowsAvailable;
-      });
-      select.value = this.state.devFlowPreference || '';
-      const status = document.getElementById('settings-dev-flow-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
@@ -1789,12 +1809,13 @@
      *
      * textContent only, never innerHTML: these buttons are rendered by
      * Shell.tsx and a glyph would need markup React owns.
+     *
+     * `successMessage` and `failureMessage` are message ids, read at click
+     * time.
      */
     _wireCopyControl(buttonId, { read, successMessage, failureMessage, selectOnFail }) {
       const btn = document.getElementById(buttonId);
       if (!btn) return;
-      // The label React rendered, restored rather than a hardcoded 'Copy'.
-      const restLabel = btn.textContent;
       let resetTimer = null;
       btn.addEventListener('click', async () => {
         const text = read();
@@ -1814,14 +1835,15 @@
           try { selectOnFail(); } catch {}
         }
         if (window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(ok ? successMessage : failureMessage,
+          PlatformUI.toast(tr(ok ? successMessage : failureMessage),
             ok ? {} : { error: true });
         }
-        btn.textContent = ok ? 'Copied' : 'Copy failed';
+        btn.textContent = ok ? tr('core:common.copied') : tr('settings:copyControl.failed');
         if (resetTimer) clearTimeout(resetTimer);
         resetTimer = setTimeout(() => {
           resetTimer = null;
-          btn.textContent = restLabel;
+          // The label React rendered for it, in the language now on screen.
+          btn.textContent = tr('core:common.copy');
         }, 1500);
       });
     },
@@ -1881,6 +1903,14 @@
       const connectorUrl = `${window.location.origin}/mcp`;
       if (urlField) urlField.value = connectorUrl;
 
+      // The ChatGPT walkthrough states the URL in its own step rather than
+      // pointing back at #connector-url. It carries the same derived origin
+      // the field shows, filled here the way the Codex blocks below are:
+      // the prerendered interior ships a fill-in placeholder, and a fork or
+      // a config change cannot leave a stale host behind.
+      const stepUrl = document.querySelector('[data-connector-step-url]');
+      if (stepUrl) stepUrl.textContent = connectorUrl;
+
       // #1607: the "set it up in <product>" links open a new chat pre-loaded
       // with the job. Built HERE, from the same derived origin the field
       // shows, so a fork or a config change cannot leave a hardcoded URL
@@ -1897,9 +1927,7 @@
       // Deliberately short. It is a query string, and nothing secret is in
       // it: the connector URL is a public endpoint and the authorisation
       // happens through OAuth inside the product, not in this link.
-      const chatPrompt = `I want to add a custom MCP connector. The server URL is ${connectorUrl}`
-        + ' and it uses dynamic client registration, so there is no client ID or secret to enter.'
-        + ' Name it exactly "homeroom". Walk me through it one step at a time and tell me what to click.';
+      const chatPrompt = tr('settings:connectors.setupPrompt', { url: connectorUrl });
       const chatLinks = [
         ['connector-open-claude', 'https://claude.ai/new?q='],
         ['connector-open-chatgpt', 'https://chatgpt.com/?q='],
@@ -1941,10 +1969,10 @@
           section.classList.add('hidden');
           return;
         }
-        if (!response.ok) throw new Error('Could not load your connections.');
+        if (!response.ok) throw new Error(tr('settings:connectors.load.failed'));
         const data = await response.json();
         if (!data || !Array.isArray(data.connectors)) {
-          throw new Error('The connections response was invalid.');
+          throw new Error(tr('settings:connectors.load.invalid'));
         }
         section.classList.remove('hidden');
         this._connectors = data.connectors;
@@ -1953,7 +1981,7 @@
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
         this._publishConnectors({ phase: 'idle', connectors: [] });
-        status.textContent = err.message || 'Could not load your connections.';
+        status.textContent = err.message || tr('settings:connectors.load.failed');
         status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
         status.classList.add('text-red-700', 'dark:text-red-400');
       }
@@ -2017,13 +2045,14 @@
 
       let text;
       if (!shown) {
-        text = 'Homeroom has not sent you this tip in chat yet. It rides along on the first read it answers in a new conversation.';
+        text = tr('settings:connectors.hint.notSentYet');
       } else {
-        const when = Number.isFinite(Date.parse(hint.lastShownAt))
-          ? new Date(hint.lastShownAt).toLocaleString()
-          : 'recently';
-        const times = shown === 1 ? 'once' : `${shown} times`;
-        text = `Homeroom sent you this tip in chat ${times} in the last ${days} days, most recently ${when}. `;
+        // Two whole sentences: how often the tip was sent, then why it is not
+        // showing now. Each is one message; hint.summaryAndAdvice orders them.
+        const summary = Number.isFinite(Date.parse(hint.lastShownAt))
+          ? tr('settings:connectors.hint.sent', { count: shown, days, when: new Date(hint.lastShownAt).toLocaleString() })
+          : tr('settings:connectors.hint.sentWhenUnknown', { count: shown, days });
+        let advice;
         // Three different answers to "why am I not seeing it", and they are
         // not interchangeable: the budget is spent (comes back next week),
         // the hour since the last one has not passed (comes back shortly), or
@@ -2036,7 +2065,7 @@
           ? shownAt + cooldown * 60 * 1000
           : 0;
         if (cap && shown >= cap) {
-          text += `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`;
+          advice = tr('settings:connectors.hint.limitReached', { limit: cap, days });
         } else if (quietUntil > Date.now()) {
           // #1808: a bare "12:20 AM" here can be TOMORROW's. The cooldown
           // runs from the last tip, so one sent late in the evening puts the
@@ -2044,14 +2073,13 @@
           // concludes the window has already passed. A day word settles it,
           // and anything further out gets the whole stamp.
           const end = new Date(quietUntil);
-          const deadline = end.toDateString() === new Date().toDateString()
-            ? `today at ${end.toLocaleTimeString()}`
-            : end.toLocaleString();
-          text += `It stays quiet for ${cooldown} minutes after each one, so a conversation opened before `
-            + `${deadline} will not carry it. One opened after that will.`;
+          advice = end.toDateString() === new Date().toDateString()
+            ? tr('settings:connectors.hint.quietUntilToday', { minutes: cooldown, time: end.toLocaleTimeString() })
+            : tr('settings:connectors.hint.quietUntilDate', { minutes: cooldown, when: end.toLocaleString() });
         } else {
-          text += 'Open a new conversation to see it again.';
+          advice = tr('settings:connectors.hint.openNewConversation');
         }
+        text = tr('settings:connectors.hint.summaryAndAdvice', { summary, advice });
       }
       line.textContent = text;
       line.classList.remove('hidden');
@@ -2077,16 +2105,23 @@
       this._publishConnectors({
         phase: 'ready',
         connectors: connectors.map((connector) => {
+          // One whole line per combination of what is known: when it was
+          // connected, and whether it was ever used.
           const connected = Number.isFinite(Date.parse(connector.connected_at))
-            ? new Date(connector.connected_at).toLocaleString() : 'unknown date';
-          const used = connector.last_used_at
+            ? new Date(connector.connected_at).toLocaleString() : null;
+          const lastUsed = connector.last_used_at
             && Number.isFinite(Date.parse(connector.last_used_at))
-            ? ` · last used ${new Date(connector.last_used_at).toLocaleString()}`
-            : ' · never used';
+            ? new Date(connector.last_used_at).toLocaleString()
+            : null;
+          let detail;
+          if (connected && lastUsed) detail = tr('settings:connectors.row.connectedUsed', { connected, lastUsed });
+          else if (connected) detail = tr('settings:connectors.row.connectedNeverUsed', { connected });
+          else if (lastUsed) detail = tr('settings:connectors.row.unknownDateUsed', { lastUsed });
+          else detail = tr('settings:connectors.row.unknownDateNeverUsed');
           return {
             id: String(connector.id),
-            title: connector.client_name || 'Connected client',
-            detail: `connected ${connected}${used}`,
+            title: connector.client_name || tr('settings:connectors.row.unnamedClient'),
+            detail,
           };
         }),
       });
@@ -2102,18 +2137,18 @@
           cache: 'no-store',
         });
         if (!response.ok && response.status !== 404) {
-          throw new Error('Could not disconnect. Try again.');
+          throw new Error(tr('settings:connectors.disconnect.failedRetry'));
         }
         await this._loadConnectors();
         if (status) {
-          status.textContent = 'Disconnected.';
+          status.textContent = tr('settings:connectors.disconnect.done');
           status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
           status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
-          status.textContent = err.message || 'Could not disconnect.';
+          status.textContent = err.message || tr('settings:connectors.disconnect.failed');
           status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
@@ -2138,7 +2173,7 @@
       const section = document.getElementById('github-link-section');
       if (!section) return;
       this._publishSocialIdentity({
-        phase: 'loading', message: 'Loading…', tier: null, providers: [],
+        phase: 'loading', message: tr('core:common.loading'), tier: null, providers: [],
       });
       try {
         const response = await fetch(`/api/me/social-identities${this._socialIdentityDemoQuery()}`, {
@@ -2163,7 +2198,7 @@
       } catch {
         this._publishSocialIdentity({
           phase: 'error',
-          message: 'Could not load social accounts. Try again shortly.',
+          message: tr('settings:socialIdentity.load.failed'),
           tier: null,
           providers: [],
         });
@@ -2243,7 +2278,7 @@
     // be a false promise with a Connect button under it.
     _socialIdentityMoney(cents) {
       const value = Math.max(0, Number(cents) || 0) / 100;
-      return `$${Number.isInteger(value) ? value : value.toFixed(2)} / day`;
+      return tr('settings:socialIdentity.perDay', { amount: Number.isInteger(value) ? value : value.toFixed(2) });
     },
 
     _socialIdentityTierView(entitlement) {
@@ -2253,35 +2288,35 @@
         return {
           tone: 'warn',
           done: false,
-          title: 'Daily credits unavailable',
+          title: tr('settings:socialIdentity.tier.unavailable.title'),
           amount: null,
-          note: 'We could not check your credits, so calls we pay for are paused. Your own API key still works.',
+          note: tr('settings:socialIdentity.tier.unavailable.note'),
         };
       }
       if (e.policy === 'legacy') {
         return {
           tone: 'plain',
           done: true,
-          title: 'Your credits',
+          title: tr('settings:socialIdentity.tier.legacy.title'),
           amount,
-          note: 'Your credits do not depend on a connected account yet.',
+          note: tr('settings:socialIdentity.tier.legacy.note'),
         };
       }
       if (e.tier === 'override') {
         return {
           tone: 'plain',
           done: true,
-          title: 'Your credits',
+          title: tr('settings:socialIdentity.tier.override.title'),
           amount,
-          note: 'An administrator set this amount. A connected account does not change it.',
+          note: tr('settings:socialIdentity.tier.override.note'),
         };
       }
       return {
         tone: 'plain',
         done: true,
-        title: 'Signed in',
+        title: tr('settings:socialIdentity.tier.signedIn.title'),
         amount: this._socialIdentityMoney(0),
-        note: 'Either one is enough. Connecting both does not add more.',
+        note: tr('settings:socialIdentity.tier.signedIn.note'),
       };
     },
 
@@ -2310,7 +2345,7 @@
       // The figure limits.js calls TIER_ONE_LIMIT_CENTS. A literal, as the
       // sentence it replaces had it: the status payload reports the CURRENT
       // limit, not what the next tier would be.
-      const unlock = '$10 / day';
+      const unlock = tr('settings:socialIdentity.perDay', { amount: 10 });
       const firstLinked = provider === 'github' || !(others && others.github
         && others.github.linked && !others.github.reconnectRequired);
       let state;
@@ -2318,17 +2353,17 @@
       if (link.reconnectRequired) {
         state = {
           tone: 'amber',
-          text: 'Linked for GitHub attribution. Reconnect once to count it toward daily credits.',
+          text: tr('settings:socialIdentity.row.reconnectRequired'),
         };
       } else if (link.linked && tiered) {
-        state = { tone: 'muted', text: firstLinked ? '' : 'No extra credits' };
+        state = { tone: 'muted', text: firstLinked ? '' : tr('settings:socialIdentity.row.noExtraCredits') };
         amount = firstLinked ? unlock : null;
       } else if (link.linked) {
         state = { tone: 'muted', text: '' };
       } else if (link.available === false) {
-        state = { tone: 'muted', text: 'Not set up on this server.' };
+        state = { tone: 'muted', text: tr('settings:socialIdentity.row.notSetUp') };
       } else {
-        state = { tone: 'muted', text: tiered && entitlement.verificationRequired ? '' : 'Not connected.' };
+        state = { tone: 'muted', text: tiered && entitlement.verificationRequired ? '' : tr('settings:socialIdentity.row.notConnected') };
         amount = tiered && entitlement.verificationRequired ? unlock : null;
       }
       const offersConnect = (!link.linked || link.reconnectRequired) && link.available !== false;
@@ -2356,23 +2391,23 @@
         // it is linked for attribution and not yet credit-eligible, which is
         // the distinction the amber state text spells out.
         badge: link.reconnectRequired
-          ? { text: 'Reconnect needed', tone: 'amber' }
-          : (link.linked ? { text: 'Connected', tone: 'emerald' } : null),
+          ? { text: tr('settings:socialIdentity.badge.reconnectNeeded'), tone: 'amber' }
+          : (link.linked ? { text: tr('settings:socialIdentity.badge.connected'), tone: 'emerald' } : null),
         state,
         linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
-          ? `linked ${new Date(link.linkedAt).toLocaleString()}`
+          ? tr('settings:socialIdentity.row.linkedAt', { when: new Date(link.linkedAt).toLocaleString() })
           : null,
         noToken: link.linked && link.access === 'identity'
           ? (provider === 'github'
-            ? 'Homeroom holds no GitHub access token for your account.'
-            : 'Homeroom stores no X access token for your account.')
+            ? tr('settings:socialIdentity.row.noTokenGithub')
+            : tr('settings:socialIdentity.row.noTokenX'))
           : null,
         connect: offersConnect
           ? {
             // The row's own title already says which provider, so the
             // control is the verb alone; `name` keeps the long form for
             // the accessible name (see social-identity.tsx).
-            label: link.reconnectRequired ? 'Reconnect' : 'Connect',
+            label: link.reconnectRequired ? tr('settings:socialIdentity.action.reconnect') : tr('settings:socialIdentity.action.connect'),
             // A demo fixture gets the control inert rather than absent: the
             // real flow would navigate straight out of the fixture.
             href: actionHref('connect'),
@@ -2380,10 +2415,10 @@
           }
           : null,
         refresh: link.linked && !link.reconnectRequired && link.available !== false
-          ? { label: 'Refresh handle', href: actionHref('refresh'), intent: 'refresh' }
+          ? { label: tr('settings:socialIdentity.action.refreshHandle'), href: actionHref('refresh'), intent: 'refresh' }
           : null,
         replace: link.linked && !link.reconnectRequired && link.available !== false
-          ? { label: 'Change account', href: actionHref('replace'), intent: 'replace' }
+          ? { label: tr('settings:socialIdentity.action.changeAccount'), href: actionHref('replace'), intent: 'replace' }
           : null,
         visibility: link.linked && !link.reconnectRequired
           ? { checked: link.publicVisible !== false, disabled: !!demo }
@@ -2398,9 +2433,7 @@
           : null,
         unlink: link.linked ? { disabled: !!demo } : null,
         strandedNote: link.pendingAttemptAt
-          ? `Your last ${name} connection attempt didn't complete. `
-            + 'Try Connect again. This can happen if the browser did not reach the sign-in page or the flow was cancelled. '
-            + `If ${name} reports a callback or redirect address error, ask an administrator to check its OAuth settings.`
+          ? tr('settings:socialIdentity.row.strandedAttempt', { provider: name })
           : null,
         diagnostics: link.diagnostics
           ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)
@@ -2418,21 +2451,20 @@
       const name = provider === 'github' ? 'GitHub' : 'X';
       let source;
       if (diagnostics.credentialSource === 'waitlist') {
-        source = `Reusing the waitlist ${name} app’s credentials.`;
+        source = tr('settings:socialIdentity.diagnostics.sourceWaitlist', { provider: name });
       } else if (diagnostics.credentialSource === 'dedicated') {
         source = diagnostics.sameAppAsWaitlist
-          ? `Dedicated ${name} credentials, same app as the waitlist pair.`
-          : `Dedicated ${name} app credentials.`;
+          ? tr('settings:socialIdentity.diagnostics.sourceDedicatedSameApp', { provider: name })
+          : tr('settings:socialIdentity.diagnostics.sourceDedicated', { provider: name });
       } else {
-        source = `No complete ${name} credential pair is configured.`;
+        source = tr('settings:socialIdentity.diagnostics.sourceMissing', { provider: name });
       }
       return {
         provider,
         name,
         source,
         callbackUrl: diagnostics.callbackUrl || '',
-        warning: `If this address isn’t registered as a callback URI on the ${name} developer app, `
-          + `${name} shows "Something went wrong" before sign-in and never redirects back here.`,
+        warning: tr('settings:socialIdentity.diagnostics.callbackWarning', { provider: name }),
         demo: !!demo,
       };
     },
@@ -2456,23 +2488,25 @@
       } catch { return; }
       if (!result) return;
       const name = provider === 'x' ? 'X' : 'GitHub';
+      // The result the OAuth round trip carried back, as a message id.
       const messages = {
-        linked: `${name} connected.`,
-        refreshed: `${name} handle refreshed.`,
-        confirm: `Another ${name} account was verified. Review the replacement below before anything changes.`,
-        in_use: `That ${name} account is already linked to another Homeroom account. Your current connection is unchanged.`,
-        different_account: `That is a different ${name} account. Use Change account instead; your current connection is unchanged.`,
-        conflict: `That ${name} account could not be used. Your current connection is unchanged.`,
-        denied: `${name} connection was cancelled.`,
+        linked: 'settings:socialIdentity.callback.linked',
+        refreshed: 'settings:socialIdentity.callback.refreshed',
+        confirm: 'settings:socialIdentity.callback.confirm',
+        in_use: 'settings:socialIdentity.callback.inUse',
+        different_account: 'settings:socialIdentity.callback.differentAccount',
+        conflict: 'settings:socialIdentity.callback.conflict',
+        denied: 'settings:socialIdentity.callback.denied',
         // #3044: the provider bounced the trip before any sign-in page because
         // Homeroom's callback address is not the one registered on its OAuth
         // app. Not something the viewer did, and not fixed by retrying.
-        callback_mismatch: `${name} did not accept Homeroom’s callback address, so nothing changed. `
-          + `Ask an administrator to register this site’s callback URL (${window.location.origin}) on the ${name} OAuth app.`,
-        error: `${name} could not be connected. Try again.`,
-        account_mismatch: 'This browser is signed into a different Homeroom account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
+        callback_mismatch: 'settings:socialIdentity.callback.callbackMismatch',
+        error: 'settings:socialIdentity.callback.error',
+        account_mismatch: 'settings:socialIdentity.callback.accountMismatch',
       };
-      status.textContent = messages[result] || '';
+      status.textContent = Object.prototype.hasOwnProperty.call(messages, result)
+        ? tr(messages[result], { provider: name, origin: window.location.origin })
+        : '';
       if (!status.textContent) return;
       status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       status.classList.add(...(['linked', 'refreshed', 'confirm'].includes(result)
@@ -2484,9 +2518,9 @@
       const status = document.getElementById('github-link-status');
       const name = provider === 'x' ? 'X' : 'GitHub';
       const confirmed = await PlatformUI.confirm({
-        title: `Disconnect ${name}?`,
-        message: `This removes ${name} from your public profile and may change your daily credit eligibility.`,
-        confirmLabel: 'Disconnect',
+        title: tr('settings:socialIdentity.unlink.confirmTitle', { provider: name }),
+        message: tr('settings:socialIdentity.unlink.confirmMessage', { provider: name }),
+        confirmLabel: tr('settings:socialIdentity.unlink.confirmButton'),
         danger: true,
       });
       if (!confirmed) return;
@@ -2497,12 +2531,12 @@
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (!response.ok) throw new Error(`Could not disconnect ${name}.`);
+        if (!response.ok) throw new Error(tr('settings:socialIdentity.unlink.failedProvider', { provider: name }));
         await this._refreshSocialIdentitySurfaces();
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
-          status.textContent = err.message || 'Could not disconnect this account.';
+          status.textContent = err.message || tr('settings:socialIdentity.unlink.failed');
           status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
@@ -2570,11 +2604,11 @@
         if (response.status === 404) {
           return;
         }
-        if (!response.ok) throw new Error('Could not load CLI credentials.');
+        if (!response.ok) throw new Error(tr('settings:cliTokens.load.failed'));
         const data = await response.json();
         if (!data || !Array.isArray(data.tokens)
             || (data.next_cursor != null && typeof data.next_cursor !== 'string')) {
-          throw new Error('The credential list response was invalid.');
+          throw new Error(tr('settings:cliTokens.load.invalid'));
         }
         section.classList.remove('hidden');
         this._cliTokens.push(...data.tokens);
@@ -2583,7 +2617,7 @@
       } catch (err) {
         if (loadId !== this._cliTokenLoadId) return;
         if (!this._cliTokens.length) this._publishCliTokens({ phase: 'idle', tokens: [] });
-        status.textContent = err.message || 'Could not load CLI credentials.';
+        status.textContent = err.message || tr('settings:cliTokens.load.failed');
         status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
         status.classList.add('text-red-700', 'dark:text-red-400');
       } finally {
@@ -2607,14 +2641,22 @@
       this._publishCliTokens({
         phase: 'ready',
         tokens: this._cliTokens.map((token) => {
+          // One whole line per combination of what is known. `status` is the
+          // server's own word for the credential's state.
           const created = Number.isFinite(Date.parse(token.created_at))
-            ? new Date(token.created_at).toLocaleString() : 'unknown date';
-          const used = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
-            ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : '';
+            ? new Date(token.created_at).toLocaleString() : null;
+          const lastUsed = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
+            ? new Date(token.last_used_at).toLocaleString() : null;
+          const state = token.status || tr('settings:cliTokens.row.statusUnknown');
+          let detail;
+          if (created && lastUsed) detail = tr('settings:cliTokens.row.createdUsed', { status: state, created, lastUsed });
+          else if (created) detail = tr('settings:cliTokens.row.created', { status: state, created });
+          else if (lastUsed) detail = tr('settings:cliTokens.row.unknownDateUsed', { status: state, lastUsed });
+          else detail = tr('settings:cliTokens.row.unknownDate', { status: state });
           return {
             id: typeof token.id === 'string' ? token.id : null,
-            hint: typeof token.token_hint === 'string' ? token.token_hint : 'CLI credential',
-            detail: `${token.status || 'unknown'} · created ${created}${used}`,
+            hint: typeof token.token_hint === 'string' ? token.token_hint : tr('settings:cliTokens.row.unnamed'),
+            detail,
             revocable: token.status === 'valid'
               && typeof token.id === 'string' && !token.demo,
           };
@@ -2625,7 +2667,7 @@
       // three writers (revoke succeeded, revoke failed, demo data).
       more.classList.toggle('hidden', !this._cliTokenCursor);
       if (this._cliTokensDemo() && this._cliTokens.some((t) => t.demo)) {
-        status.textContent = 'Demo data: changes are not saved.';
+        status.textContent = tr('settings:cliTokens.demoData');
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
@@ -2638,16 +2680,16 @@
           method: 'DELETE',
           credentials: 'same-origin',
         });
-        if (response.status !== 204) throw new Error('Could not revoke the credential.');
+        if (response.status !== 204) throw new Error(tr('settings:cliTokens.revoke.failed'));
         if (status) {
-          status.textContent = 'Credential revoked.';
+          status.textContent = tr('settings:cliTokens.revoke.done');
           status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
           status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
         await this._loadCliTokens(true);
       } catch (err) {
         if (status) {
-          status.textContent = err.message || 'Could not revoke the credential.';
+          status.textContent = err.message || tr('settings:cliTokens.revoke.failed');
           status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
@@ -2666,67 +2708,27 @@
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
+      // The language runtime (frontend/src/lib/i18n) loads the language,
+      // then saves, then switches, so a failed save leaves this screen as it
+      // was. Its saveAccountLocale is the POST /api/me/locale: it also keeps
+      // App.user, this.state.locale and any open app iframe
+      // (AppView.notifyLocaleChanged, `usernode:locale-changed`) in step.
+      const i18n = window.PlatformI18n;
+      let saving = false;
       try {
-        const r = await fetch('/api/me/locale', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ locale: value || null }),
+        const applied = await i18n.changeLanguage(value || null, async (next) => {
+          saving = true;
+          await i18n.saveAccountLocale(next);
         });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) return fail(j.error || 'Failed to save.');
-        this.state.locale = j.locale || null;
-        // Keep the shell's cached user in sync so the bridge's
-        // getUserLocale answers (app-view.js) reflect the new value
-        // without a re-fetch. Bare `App` — app.js declares it with
-        // `const`, so `window.App` is undefined (see _renderAdminSection).
-        if (typeof App !== 'undefined' && App.user) App.user.locale = this.state.locale;
-        // Live-update any open app iframe (usernode:locale-changed).
-        if (window.AppView && typeof AppView.notifyLocaleChanged === 'function') {
-          try { AppView.notifyLocaleChanged(this.state.locale); } catch {}
-        }
-        if (status) {
-          status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
-        }
+        // A newer choice replaced this one, and reports for itself.
+        if (!applied) return;
       } catch (err) {
-        fail(`Network error: ${err.message}`);
+        return fail(saving ? (err.message || i18n.t('settings:language.saveFailed')) : i18n.t('settings:language.loadFailed'));
       }
-    },
-
-    // Same shape as _saveLocale: POST on change, revert the select and paint
-    // the status line on failure, mirror onto App.user so anything reading
-    // the cached user (the dev-chat picker) sees the new value immediately.
-    async _saveDevFlow(value) {
-      const select = document.getElementById('settings-dev-flow');
-      const status = document.getElementById('settings-dev-flow-status');
-      const fail = (msg) => {
-        if (select) select.value = this.state.devFlowPreference || '';
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
-      };
-      try {
-        const r = await fetch('/api/me/dev-flow', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ flow: value || null }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) return fail(j.error || 'Failed to save.');
-        this.state.devFlowPreference = j.flow || null;
-        if (typeof App !== 'undefined' && App.user) App.user.devFlowPreference = this.state.devFlowPreference;
-        if (status) {
-          status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
-        }
-      } catch (err) {
-        fail(`Network error: ${err.message}`);
+      if (status) {
+        status.textContent = i18n.t('settings:language.saved');
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
+        status.classList.add('text-emerald-700', 'dark:text-emerald-400');
       }
     },
 
@@ -2750,12 +2752,12 @@
         });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          return fail(j.error || 'Failed to save.');
+          return fail(j.error || tr('settings:experimental.progressEstimate.saveFailed'));
         }
         this.state.aiProgressEstimate = !!enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
-        fail(`Network error: ${err.message}`);
+        fail(tr('settings:experimental.progressEstimate.networkError', { reason: err.message }));
       }
     },
 
@@ -2783,7 +2785,7 @@
         });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          return fail(j.error || 'Failed to save.');
+          return fail(j.error || tr('settings:experimental.sessionBridge.saveFailed'));
         }
         this.state.sessionBridgeEnabled = !!enabled;
         // The venue pickers read App.user, not Settings.state, so the live
@@ -2792,7 +2794,7 @@
         if (typeof App !== 'undefined' && App.user) App.user.sessionBridgeEnabled = !!enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
-        fail(`Network error: ${err.message}`);
+        fail(tr('settings:experimental.sessionBridge.networkError', { reason: err.message }));
       }
     },
 
@@ -2865,18 +2867,18 @@
     },
 
     _setMobilePushPreferences(preferences) {
-      if (!Array.isArray(preferences)) throw new Error('Invalid preferences response.');
+      if (!Array.isArray(preferences)) throw new Error(tr('settings:mobilePush.invalidResponse'));
       const next = {};
       for (const preference of preferences) {
         if (!preference || typeof preference.key !== 'string'
             || typeof preference.enabled !== 'boolean') {
-          throw new Error('Invalid preferences response.');
+          throw new Error(tr('settings:mobilePush.invalidResponse'));
         }
         next[preference.key] = preference.enabled;
       }
       for (const row of this._mobilePushRows()) {
         if (typeof next[row.dataset.mobilePushCategory] !== 'boolean') {
-          throw new Error('Incomplete preferences response.');
+          throw new Error(tr('settings:mobilePush.incompleteResponse'));
         }
       }
       this._mobilePushPreferences = next;
@@ -2897,7 +2899,7 @@
         '#settings-mobile-push-preferences [data-mobile-push-status]'
       );
       if (!status) return;
-      status.textContent = message || (disabled ? 'Loading mobile push preferences…' : 'Saved to your account.');
+      status.textContent = message || (disabled ? tr('settings:alerts.push.loading') : tr('settings:mobilePush.saved'));
       status.className = 'text-xs mt-3 ' + (error
         ? 'text-red-700 dark:text-red-400'
         : 'text-zinc-500 dark:text-zinc-400');
@@ -2906,7 +2908,7 @@
     async _loadMobilePushPreferences() {
       const token = ++this._mobilePushLoadToken;
       this._mobilePushLoading = true;
-      this._renderMobilePushPreferences('Loading mobile push preferences…');
+      this._renderMobilePushPreferences(tr('settings:alerts.push.loading'));
       try {
         const response = await fetch('/api/me/mobile-push-preferences', {
           credentials: 'same-origin',
@@ -2917,13 +2919,13 @@
         if (token !== this._mobilePushLoadToken) return;
         this._setMobilePushPreferences(body.preferences);
         this._mobilePushLoading = false;
-        this._renderMobilePushPreferences('Saved to your account.');
+        this._renderMobilePushPreferences(tr('settings:mobilePush.saved'));
       } catch (err) {
         if (token !== this._mobilePushLoadToken) return;
         this._mobilePushLoading = false;
         this._mobilePushPreferences = null;
         this._renderMobilePushPreferences(
-          `Could not load mobile push preferences: ${err.message}`, true
+          tr('settings:mobilePush.loadFailed', { reason: err.message }), true
         );
       }
     },
@@ -2937,7 +2939,7 @@
       const previous = this._mobilePushPreferences[category];
       this._mobilePushPreferences[category] = !!enabled;
       this._mobilePushSaving = true;
-      this._renderMobilePushPreferences('Saving…');
+      this._renderMobilePushPreferences(tr('settings:mobilePush.saving'));
       try {
         const response = await fetch('/api/me/mobile-push-preferences', {
           method: 'PATCH',
@@ -2950,12 +2952,12 @@
         if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
         this._setMobilePushPreferences(body.preferences);
         this._mobilePushSaving = false;
-        this._renderMobilePushPreferences('Saved to your account.');
+        this._renderMobilePushPreferences(tr('settings:mobilePush.saved'));
       } catch (err) {
         this._mobilePushPreferences[category] = previous;
         this._mobilePushSaving = false;
-        this._renderMobilePushPreferences(`Could not save: ${err.message}`, true);
-        if (window.PlatformUI) PlatformUI.toast('Could not save mobile push preferences');
+        this._renderMobilePushPreferences(tr('settings:mobilePush.saveFailed', { reason: err.message }), true);
+        if (window.PlatformUI) PlatformUI.toast(tr('settings:mobilePush.saveFailedToast'));
       }
     },
 
@@ -2970,13 +2972,13 @@
         display.classList.remove('hidden');
         last4.textContent = this.state.keyLast4 || '••••';
         removeBtn.classList.remove('hidden');
-        input.placeholder = 'Paste a new key to replace';
-        saveBtn.textContent = 'Replace';
+        input.placeholder = tr('settings:apiKey.field.replacePlaceholder');
+        saveBtn.textContent = tr('settings:apiKey.button.replace');
       } else {
         display.classList.add('hidden');
         removeBtn.classList.add('hidden');
         input.placeholder = 'sk-ant-...';
-        saveBtn.textContent = 'Save';
+        saveBtn.textContent = tr('core:common.save');
       }
     },
 
@@ -2996,13 +2998,16 @@
         document.getElementById('settings-spend-byok').textContent =
           '$' + ((b.byokSpentCents || 0) / 100).toFixed(2);
         document.getElementById('settings-spend-platform').textContent =
-          '$' + ((b.spentCents || 0) / 100).toFixed(2) + ' of $' + ((b.limitCents || 0) / 100).toFixed(2);
+          tr('settings:usage.spend.platformOfLimit', {
+            spent: '$' + ((b.spentCents || 0) / 100).toFixed(2),
+            limit: '$' + ((b.limitCents || 0) / 100).toFixed(2),
+          });
         // #3230: the weekly reset in the viewer's own clock, UTC on hover.
         const reset = document.getElementById('settings-spend-reset');
         const RT = window.ResetTime;
         if (reset && RT) {
           const cadence = b.capWindow === 'daily' ? 'daily' : 'weekly';
-          reset.textContent = `Resets ${RT.resetWhen(cadence, { at: b.resetsAt })}.`;
+          reset.textContent = tr(cadence === 'daily' ? 'settings:usage.spend.resetsDaily' : 'settings:usage.spend.resetsWeekly', RT.resetMoment(cadence, { at: b.resetsAt }));
           reset.title = RT.resetUtc(cadence, { at: b.resetsAt });
         }
         block.classList.remove('hidden');
@@ -3029,11 +3034,11 @@
         // When replacing but the user hit Save with an empty input,
         // that's almost certainly a misclick — treat as a no-op rather
         // than clearing the existing key.
-        this._setStatus('Paste an API key first.', 'error');
+        this._setStatus(tr('settings:apiKey.status.pasteFirst'), 'error');
         return;
       }
 
-      this._setStatus('Verifying with Anthropic…', 'info');
+      this._setStatus(tr('settings:apiKey.status.verifying'), 'info');
       saveBtn.disabled = true;
       removeBtn.disabled = true;
 
@@ -3046,20 +3051,20 @@
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          this._setStatus(j.error || 'Failed to save key.', 'error');
+          this._setStatus(j.error || tr('settings:apiKey.status.saveFailed'), 'error');
           return;
         }
         this.state.hasApiKey = true;
         this.state.keyLast4 = j.keyLast4 || key.slice(-4);
         this._renderIndicator();
-        this._setStatus('Saved. Your chats now bill to your Anthropic account.', 'ok');
+        this._setStatus(tr('settings:apiKey.status.saved'), 'ok');
         input.value = '';
         this._renderBody();
         this._refreshSpend();
         // Settings is a screen now, not a modal — a successful save leaves
         // the success status visible in place instead of navigating away.
       } catch (err) {
-        this._setStatus(`Network error: ${err.message}`, 'error');
+        this._setStatus(tr('settings:apiKey.status.networkError', { reason: err.message }), 'error');
       } finally {
         saveBtn.disabled = false;
         removeBtn.disabled = false;
@@ -3079,9 +3084,9 @@
         // OpenRouter models in Claude Code, and the model list tags them; the
         // default runner stays unnamed, like every other implementation
         // detail. sections/openrouter.tsx renders this same text statically.
-        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Models marked Claude Code in the model list run in Claude Code. Keys are encrypted at rest and injected only for each turn.';
+        intro.textContent = tr('settings:openrouter.intro');
       }
-      if (modelLabel) modelLabel.textContent = 'OpenRouter model';
+      if (modelLabel) modelLabel.textContent = tr('settings:openrouter.model.label');
     },
 
     _formatOpenRouterPrice(value) {
@@ -3096,35 +3101,45 @@
     },
 
     _openRouterModelCostSummary(model) {
-      const tier = {
-        free: 'Free',
-        low: 'Low cost',
-        medium: 'Medium cost',
-        high: 'High cost',
-        unknown: 'Price unavailable',
-      }[model?.costTier] || 'Price unavailable';
+      const tier = tr({
+        free: 'settings:openrouter.cost.free',
+        low: 'settings:openrouter.cost.low',
+        medium: 'settings:openrouter.cost.medium',
+        high: 'settings:openrouter.cost.high',
+        unknown: 'settings:openrouter.cost.unknown',
+      }[model?.costTier] || 'settings:openrouter.cost.unknown');
       const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
       const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
       if (!input && !output) return tier;
-      return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+      return dotText([
+        tier,
+        tr('settings:openrouter.cost.inputPrice', { price: input || '?' }),
+        tr('settings:openrouter.cost.outputPrice', { price: output || '?' }),
+      ]);
     },
 
     _openRouterModelOptionLabel(model) {
       const badges = [];
       if (model?.isFavorite) badges.push('★');
-      if (model?.isRecommended) badges.push('Recommended');
+      if (model?.isRecommended) badges.push(tr('settings:openrouter.model.badgeRecommended'));
       // #3296: the platform runs some OpenRouter models in Claude Code rather
       // than Codex. Only that exception is named; Codex is every other row.
       if (model?.harness === 'claude') badges.push('Claude Code');
       if (model?.createdAt) {
         const age = Date.now() - Date.parse(model.createdAt);
-        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push(tr('settings:openrouter.model.badgeNew'));
       }
       const compatibility = model?.compatibility === 'verified'
-        ? ' · verified'
-        : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-      const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
-      return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+        ? tr('settings:openrouter.model.compatVerified')
+        : (model?.compatibility === 'blocked'
+          ? tr('settings:openrouter.model.compatLimited')
+          : tr('settings:openrouter.model.compatUnverified'));
+      // "<name · badges>: <cost · compatibility>". Every piece is a whole
+      // message or a name; the two runs of facts are joined by dotText.
+      return tr('settings:openrouter.model.optionLabel', {
+        model: dotText([model?.name || model?.id || tr('settings:openrouter.model.unknown'), ...badges]),
+        details: dotText([this._openRouterModelCostSummary(model), compatibility]),
+      });
     },
 
     _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
@@ -3149,10 +3164,10 @@
       const refreshed = Date.parse(refreshedAt || '');
       if (!Number.isFinite(refreshed)) return '';
       const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
-      if (seconds < 60) return 'Updated just now';
+      if (seconds < 60) return tr('settings:openrouter.catalog.updatedJustNow');
       const minutes = Math.round(seconds / 60);
-      if (minutes < 60) return `Updated ${minutes}m ago`;
-      return `Updated ${Math.round(minutes / 60)}h ago`;
+      if (minutes < 60) return tr('settings:openrouter.catalog.updatedMinutesAgo', { count: minutes });
+      return tr('settings:openrouter.catalog.updatedHoursAgo', { count: Math.round(minutes / 60) });
     },
 
     _renderOpenRouterModelOptions() {
@@ -3185,13 +3200,21 @@
       select.disabled = visibleModels.length === 0;
       if (favoritesOnlyButton) {
         favoritesOnlyButton.setAttribute('aria-pressed', String(this._openRouterFavoritesOnly));
-        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly ? '★ Favorites' : '☆ Favorites';
+        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly
+          ? tr('settings:openrouter.model.favoritesOn')
+          : tr('settings:openrouter.model.favoritesOff');
       }
       if (meta) {
         const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
-        meta.textContent = visibleModels.length
-          ? `${visibleModels.length} of ${this._openRouterCatalogTotal || this._openRouterModels.length} models${age ? ` · ${age}` : ''}`
-          : `No models match. Clear the search or show all models${age ? ` · ${age}` : ''}`;
+        meta.textContent = dotText([
+          visibleModels.length
+            ? tr('settings:openrouter.catalog.shownOfTotal', {
+              shown: visibleModels.length,
+              count: this._openRouterCatalogTotal || this._openRouterModels.length,
+            })
+            : tr('settings:openrouter.catalog.noMatch'),
+          age,
+        ]);
       }
       this._syncOpenRouterModelDetails();
     },
@@ -3204,11 +3227,15 @@
       const select = document.getElementById('settings-openrouter-reasoning');
       const option = Array.from(select?.options || []).find((item) => item.value === '');
       if (!option) return;
-      const names = {
-        minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high',
+      // One whole message per level: "Default (Medium)".
+      const labels = {
+        minimal: 'settings:openrouter.effort.defaultMinimal',
+        low: 'settings:openrouter.effort.defaultLow',
+        medium: 'settings:openrouter.effort.defaultMedium',
+        high: 'settings:openrouter.effort.defaultHigh',
+        xhigh: 'settings:openrouter.effort.defaultExtraHigh',
       };
-      const name = names[String(effort || '')] || null;
-      option.textContent = name ? `Default (${name})` : 'Default';
+      option.textContent = tr(labels[String(effort || '')] || 'settings:openrouter.reasoning.default');
     },
 
     _syncOpenRouterModelDetails() {
@@ -3218,7 +3245,7 @@
       const star = document.getElementById('settings-openrouter-star-model');
       const saveDefault = document.getElementById('settings-openrouter-set-default');
       if (!model) {
-        if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
+        if (select) select.title = tr('settings:openrouter.model.sortHint');
         if (effort) effort.disabled = true;
         if (star) {
           star.disabled = true;
@@ -3234,24 +3261,28 @@
         star.textContent = model.isFavorite ? '★' : '☆';
         star.setAttribute('aria-pressed', String(model.isFavorite === true));
         const label = model.isFavorite
-          ? 'Remove selected model from favorites'
-          : 'Add selected model to favorites';
+          ? tr('settings:openrouter.model.removeFavorite')
+          : tr('settings:openrouter.model.addFavorite');
         star.setAttribute('aria-label', label);
         star.title = label;
       }
-      let compatibility = 'Not yet verified for repository coding.';
-      if (model.compatibility === 'verified') compatibility = 'Verified for repository coding.';
+      let compatibility = tr('settings:openrouter.model.notYetVerified');
+      if (model.compatibility === 'verified') compatibility = tr('settings:openrouter.model.verified');
       else if (!model.meetsCodexMinimums) {
         compatibility = model.compatibilityNote
-          || 'This model may lack repository tools or enough context, so an OpenRouter turn may fail.';
+          || tr('settings:openrouter.model.mayFail');
       }
-      if (select) select.title = `${this._openRouterModelCostSummary(model)}. ${compatibility} Actual spend depends on token usage.`;
+      if (select) {
+        select.title = tr('settings:openrouter.model.tooltip', {
+          cost: this._openRouterModelCostSummary(model), compatibility,
+        });
+      }
       if (effort) {
         effort.disabled = model.supportsReasoning !== true;
         if (effort.disabled) effort.value = '';
         effort.title = effort.disabled
-          ? 'This model does not expose reasoning-effort controls.'
-          : 'How long this model thinks before it answers. Default is the level the platform runs at; your choice overrides it.';
+          ? tr('settings:openrouter.effort.unsupported')
+          : tr('settings:openrouter.effort.hint');
       }
     },
 
@@ -3302,25 +3333,40 @@
             // The key carries the platform's weekly allowance; a key issued
             // before that policy keeps its own limit until it is re-limited.
             const amount = `$${Number(managed.limitUsd || 0).toFixed(2)}`;
-            const carries = managed.limitReset === 'weekly'
-              ? `carries the platform's ${amount} weekly allowance`
-              : `carries a ${amount} ${limitNoun(managed.limitReset)} until it is moved to the platform's weekly allowance`;
-            const tail = managedLast4 ? ` (sk-or-…${managedLast4})` : '';
-            includedStatus.textContent = `Active${tail}. It ${carries}, and you may choose any available model.`;
+            // One whole sentence per cadence, with and without the key's
+            // last four.
+            const { key: cadenceKey, cadence } = limitCadence(managed.limitReset);
+            const ACTIVE = {
+              weekly: ['settings:openrouter.included.activeWeekly', 'settings:openrouter.included.activeWeeklyWithKey'],
+              daily: ['settings:openrouter.included.activeDaily', 'settings:openrouter.included.activeDailyWithKey'],
+              monthly: ['settings:openrouter.included.activeMonthly', 'settings:openrouter.included.activeMonthlyWithKey'],
+              none: ['settings:openrouter.included.activeLimit', 'settings:openrouter.included.activeLimitWithKey'],
+              other: ['settings:openrouter.included.activeOther', 'settings:openrouter.included.activeOtherWithKey'],
+            };
+            includedStatus.textContent = tr(ACTIVE[cadenceKey][managedLast4 ? 1 : 0], {
+              amount, cadence, last4: managedLast4,
+            });
           } else if (managed?.status === 'disabled') {
-            includedStatus.textContent = 'An admin has blocked this included key. Contact the platform admins if it should be enabled again.';
+            includedStatus.textContent = tr('settings:openrouter.included.blocked');
           } else if (managed?.status === 'deleted') {
-            includedStatus.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
+            includedStatus.textContent = tr('settings:openrouter.included.deleted');
           } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
-            includedStatus.textContent = 'This key needs admin review. Homeroom did not retry the provider request, which prevents accidental duplicate keys.';
+            includedStatus.textContent = tr('settings:openrouter.included.needsReview');
           } else if (!provisioning.available) {
-            includedStatus.textContent = 'Included keys are not configured by the platform administrator yet.';
+            includedStatus.textContent = tr('settings:openrouter.included.notConfigured');
           } else if (provisioning.reason === 'no_allowance') {
-            includedStatus.textContent = 'Your account has no included weekly allowance right now, so there is no included key. You can add a personal OpenRouter key below.';
+            includedStatus.textContent = tr('settings:openrouter.included.noAllowance');
           } else if (provisioning.reason === 'personal_key_configured') {
-            includedStatus.textContent = 'You are using your own OpenRouter key. Remove it to fall back to the included one.';
+            includedStatus.textContent = tr('settings:openrouter.included.personalKey');
           } else {
-            includedStatus.textContent = `Your included key is being set up. It carries the platform's $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset, 'allowance')}; reopen this screen in a moment.`;
+            const { key: cadenceKey, cadence } = limitCadence(provisioning.limitReset);
+            includedStatus.textContent = tr({
+              weekly: 'settings:openrouter.included.settingUpWeekly',
+              daily: 'settings:openrouter.included.settingUpDaily',
+              monthly: 'settings:openrouter.included.settingUpMonthly',
+              none: 'settings:openrouter.included.settingUpAllowance',
+              other: 'settings:openrouter.included.settingUpOther',
+            }[cadenceKey], { amount: `$${Number(provisioning.limitUsd || 0).toFixed(2)}`, cadence });
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';
@@ -3329,25 +3375,38 @@
           if (display) display.classList.remove('hidden');
           if (last4) last4.textContent = j.last4 || '••••';
           if (removeBtn) removeBtn.classList.toggle('hidden', managedOwnsCredential);
-          if (input) { input.placeholder = 'Paste a new key to replace'; input.value = ''; }
-          if (saveBtn) saveBtn.textContent = 'Replace';
+          if (input) { input.placeholder = tr('settings:openrouter.key.replacePlaceholder'); input.value = ''; }
+          if (saveBtn) saveBtn.textContent = tr('settings:openrouter.key.replace');
           if (info && (j.keyInfo || managed)) {
             info.classList.remove('hidden');
             const lim = j.keyInfo?.limit != null ? `$${j.keyInfo.limit}` : '';
             const rem = j.keyInfo?.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
-            const owner = managedOwnsCredential ? 'Homeroom-managed' : 'Personal key';
+            const owner = managedOwnsCredential
+              ? tr('settings:openrouter.key.ownerManaged')
+              : tr('settings:openrouter.key.ownerPersonal');
             // The stored managed-key cadence is authoritative; a personal
             // key's comes from OpenRouter's own key-info.
-            const noun = limitNoun((managedOwnsCredential && managed.limitReset) || j.keyInfo?.limitReset);
-            const label = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}`;
-            info.textContent = lim ? `${owner} · ${label}: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
+            const { key: cadenceKey, cadence } = limitCadence((managedOwnsCredential && managed.limitReset) || j.keyInfo?.limitReset);
+            const limitLine = tr({
+              weekly: 'settings:openrouter.key.limitWeekly',
+              daily: 'settings:openrouter.key.limitDaily',
+              monthly: 'settings:openrouter.key.limitMonthly',
+              none: 'settings:openrouter.key.limitPlain',
+              other: 'settings:openrouter.key.limitOther',
+              // An unrecognised cadence is the server's own word, capitalised
+              // because it starts the fact.
+            }[cadenceKey], { limit: lim, cadence: `${cadence.charAt(0).toUpperCase()}${cadence.slice(1)}` });
+            info.textContent = lim
+              ? dotText([owner, limitLine, tr('settings:openrouter.key.remaining', { remaining: rem })])
+              // The key's own label, which may be empty: the separator stays.
+              : tr('settings:list.dot', { first: owner, second: j.keyInfo?.label || '' });
           }
           await this._loadOpenRouterModels();
         } else {
           if (display) display.classList.add('hidden');
           if (removeBtn) removeBtn.classList.add('hidden');
           if (input) input.placeholder = 'sk-or-...';
-          if (saveBtn) saveBtn.textContent = 'Test & save';
+          if (saveBtn) saveBtn.textContent = tr('settings:openrouter.personalKey.testAndSave');
           if (info) info.classList.add('hidden');
           if (modelsWrap) modelsWrap.classList.add('hidden');
         }
@@ -3364,7 +3423,7 @@
           credentials: 'same-origin', cache: 'no-store',
         });
         const errorBody = r.ok ? null : await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(errorBody?.error || 'Could not load OpenRouter models.');
+        if (!r.ok) throw new Error(errorBody?.error || tr('settings:openrouter.catalog.loadFailed'));
         const cat = await r.json();
         const models = Array.isArray(cat.models) ? cat.models : [];
         this._openRouterModels = models;
@@ -3407,15 +3466,15 @@
 
     async _refreshOpenRouterModelsNow() {
       const button = document.getElementById('settings-openrouter-refresh-models');
-      if (button) { button.disabled = true; button.textContent = 'Refreshing…'; }
-      this._setOrStatus('Refreshing the key-visible catalog from OpenRouter…', 'info');
+      if (button) { button.disabled = true; button.textContent = tr('settings:openrouter.catalog.refreshing'); }
+      this._setOrStatus(tr('settings:openrouter.catalog.refreshingStatus'), 'info');
       try {
         await this._loadOpenRouterModels({ forceRefresh: true });
-        this._setOrStatus(`Loaded ${this._openRouterModels.length} current OpenRouter models.`, 'ok');
+        this._setOrStatus(tr('settings:openrouter.catalog.refreshed', { count: this._openRouterModels.length }), 'ok');
       } catch (err) {
-        this._setOrStatus(err.message || 'Could not refresh OpenRouter models.', 'error');
+        this._setOrStatus(err.message || tr('settings:openrouter.catalog.refreshFailed'), 'error');
       } finally {
-        if (button) { button.disabled = false; button.textContent = 'Refresh'; }
+        if (button) { button.disabled = false; button.textContent = tr('settings:openrouter.model.refresh'); }
       }
     },
 
@@ -3434,14 +3493,14 @@
           body: JSON.stringify({ modelId: model.id, favorite }),
         });
         const body = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(body.error || 'Could not update that favorite.');
+        if (!r.ok) throw new Error(body.error || tr('settings:openrouter.favorite.failed'));
         model.isFavorite = favorite;
         this._renderOpenRouterModelOptions();
         this._setOrStatus(favorite
-          ? `${model.name || model.id} added to favorites.`
-          : `${model.name || model.id} removed from favorites.`, 'ok');
+          ? tr('settings:openrouter.favorite.added', { model: model.name || model.id })
+          : tr('settings:openrouter.favorite.removed', { model: model.name || model.id }), 'ok');
       } catch (err) {
-        this._setOrStatus(err.message || 'Could not update that favorite.', 'error');
+        this._setOrStatus(err.message || tr('settings:openrouter.favorite.failed'), 'error');
         if (button) button.disabled = false;
       }
     },
@@ -3450,9 +3509,9 @@
       const input = document.getElementById('settings-openrouter-key');
       const saveBtn = document.getElementById('settings-openrouter-save');
       const key = input?.value?.trim();
-      if (!key) { this._setOrStatus('Paste an OpenRouter API key first.', 'error'); return; }
+      if (!key) { this._setOrStatus(tr('settings:openrouter.key.pasteFirst'), 'error'); return; }
       if (saveBtn) saveBtn.disabled = true;
-      this._setOrStatus('Verifying with OpenRouter…', 'info');
+      this._setOrStatus(tr('settings:openrouter.key.verifying'), 'info');
       try {
         const r = await fetch('/api/me/credentials/openrouter', {
           method: 'PUT', credentials: 'same-origin',
@@ -3460,13 +3519,13 @@
           body: JSON.stringify({ apiKey: key }),
         });
         const j = await r.json();
-        if (!r.ok) { this._setOrStatus(j.error || 'Failed to save key.', 'error'); return; }
-        this._setOrStatus('Saved, encrypted, and selected as your default coding agent.', 'ok');
+        if (!r.ok) { this._setOrStatus(j.error || tr('settings:openrouter.key.saveFailed'), 'error'); return; }
+        this._setOrStatus(tr('settings:openrouter.key.saved'), 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
         input.value = '';
         await this._refreshOpenRouter();
       } catch (err) {
-        this._setOrStatus(`Network error: ${err.message}`, 'error');
+        this._setOrStatus(tr('settings:openrouter.key.networkError', { reason: err.message }), 'error');
       } finally {
         if (saveBtn) saveBtn.disabled = false;
       }
@@ -3478,9 +3537,10 @@
       try {
         const r = await fetch('/api/me/credentials/openrouter', { method: 'DELETE', credentials: 'same-origin' });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setOrStatus(j.error || 'Failed to remove key.', 'error'); return; }
-        const note = j.defaultReset ? ' Key removed; your default agent was reset to Claude Code.' : '';
-        this._setOrStatus('Key removed.' + note, 'ok');
+        if (!r.ok) { this._setOrStatus(j.error || tr('settings:openrouter.key.removeFailed'), 'error'); return; }
+        this._setOrStatus(j.defaultReset
+          ? tr('settings:openrouter.key.removedDefaultReset')
+          : tr('settings:openrouter.key.removed'), 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
         this._openRouterModels = [];
         this._openRouterSelectedModelId = '';
@@ -3489,7 +3549,7 @@
         this._openRouterCatalogTotal = 0;
         await this._refreshOpenRouter();
       } catch {
-        this._setOrStatus('Failed to remove key.', 'error');
+        this._setOrStatus(tr('settings:openrouter.key.removeFailed'), 'error');
       } finally {
         if (removeBtn) removeBtn.disabled = false;
       }
@@ -3497,7 +3557,7 @@
 
     async _saveOpenRouterDefault() {
       const model = document.getElementById('settings-openrouter-model')?.value;
-      if (!model) { this._setOrStatus('Choose an OpenRouter model first.', 'error'); return; }
+      if (!model) { this._setOrStatus(tr('settings:openrouter.default.chooseModelFirst'), 'error'); return; }
       const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
       // Preserve the user's existing cost cap across this save (review P3):
       // include it explicitly so an omission can't drop the safety limit,
@@ -3513,9 +3573,9 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ defaultBackend: 'codex_openrouter', model, reasoningEffort, maxTurnCostUsd }),
         });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
-        this._setOrStatus('OpenRouter saved as your default session AI.', 'ok');
-      } catch { this._setOrStatus('Network error.', 'error'); }
+        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || tr('settings:openrouter.default.saveFailed'), 'error'); return; }
+        this._setOrStatus(tr('settings:openrouter.default.saved'), 'ok');
+      } catch { this._setOrStatus(tr('settings:openrouter.default.networkError'), 'error'); }
     },
 
     async _saveClaudeDefault() {
@@ -3528,9 +3588,9 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ defaultBackend: 'claude_code' }),
         });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
-        this._setOrStatus('Claude Code is now your default coding agent.', 'ok');
-      } catch { this._setOrStatus('Network error.', 'error'); }
+        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || tr('settings:openrouter.claudeDefault.saveFailed'), 'error'); return; }
+        this._setOrStatus(tr('settings:openrouter.claudeDefault.saved'), 'ok');
+      } catch { this._setOrStatus(tr('settings:openrouter.claudeDefault.networkError'), 'error'); }
     },
 
     // ── Change password (issue #282) ─────────────────────────────
@@ -3579,7 +3639,9 @@
         const el = document.getElementById(id);
         if (el) el.classList.toggle('hidden', !on);
       };
-      show('cp-current-row', !wallet);
+      // #4595: an account with no password (it signs in with an email code)
+      // has no current password to give, and sets its first one without.
+      show('cp-current-row', !wallet && !this._noPasswordYet());
       show('cp-save', !wallet);
       show('cp-wallet-save', wallet);
       // Offer the password-creation link only in password mode and only when
@@ -3595,18 +3657,18 @@
       const newPassword = newEl.value;
       const confirm = confirmEl.value;
 
-      if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
-      if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
+      if (newPassword.length < 8) { this._setCpStatus(tr('settings:password.status.tooShort'), 'error'); return; }
+      if (newPassword !== confirm) { this._setCpStatus(tr('settings:password.status.mismatch'), 'error'); return; }
       if (!(window.usernode && window.usernode.isNative) || typeof window.signMessage !== 'function') {
-        this._setCpStatus('Wallet signing is only available in the Homeroom app.', 'error');
+        this._setCpStatus(tr('settings:password.status.walletNativeOnly'), 'error');
         return;
       }
 
       btn.disabled = true;
-      this._setCpStatus('Verifying identity…', 'info');
+      this._setCpStatus(tr('settings:password.status.verifyingIdentity'), 'info');
       try {
         const pubkey = this.state.usernodePubkey || (window.getNodeAddress ? await window.getNodeAddress() : null);
-        if (!pubkey) { this._setCpStatus('Could not read your wallet address.', 'error'); return; }
+        if (!pubkey) { this._setCpStatus(tr('settings:password.status.noWalletAddress'), 'error'); return; }
 
         // Fresh single-use challenge from the shared wallet-check endpoint.
         const checkRes = await fetch('/api/auth/wallet-check', {
@@ -3617,7 +3679,7 @@
         });
         const checkData = await checkRes.json().catch(() => ({}));
         const challenge = checkData.challenge;
-        if (!challenge) { this._setCpStatus('Could not get a challenge from the server.', 'error'); return; }
+        if (!challenge) { this._setCpStatus(tr('settings:password.status.noChallenge'), 'error'); return; }
 
         const sig = await window.signMessage(challenge);
         const r = await fetch('/api/me/wallet-change-password', {
@@ -3627,15 +3689,15 @@
           body: JSON.stringify({ publicKey: sig.publicKey, challenge, signature: sig.signature, newPassword }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
+        if (!r.ok) { this._setCpStatus(j.error || tr('settings:password.status.changeFailed'), 'error'); return; }
         newEl.value = '';
         confirmEl.value = '';
-        this._setCpStatus('Password changed.', 'ok');
+        this._setCpStatus(tr('settings:password.status.changed'), 'ok');
       } catch (err) {
         if (err && err.message && err.message.includes('denied')) {
-          this._setCpStatus('Signature request was denied.', 'error');
+          this._setCpStatus(tr('settings:password.status.signatureDenied'), 'error');
         } else {
-          this._setCpStatus(`Wallet change failed: ${err.message || err}`, 'error');
+          this._setCpStatus(tr('settings:password.status.walletChangeFailed', { reason: String(err.message || err) }), 'error');
         }
       } finally {
         btn.disabled = false;
@@ -3671,8 +3733,8 @@
       const username = nameEl.value.trim();
       const currentPassword = pwEl.value;
 
-      if (!username) { this._setCuStatus('Enter a new username.', 'error'); return; }
-      if (!currentPassword) { this._setCuStatus('Enter your current password.', 'error'); return; }
+      if (!username) { this._setCuStatus(tr('settings:username.status.enterNew'), 'error'); return; }
+      if (!currentPassword) { this._setCuStatus(tr('settings:username.status.enterPassword'), 'error'); return; }
 
       // Everything that can throw goes INSIDE the try, so `finally` is the
       // only exit and the button cannot be stranded disabled under a
@@ -3681,7 +3743,7 @@
       // property write and cannot.
       btn.disabled = true;
       try {
-        this._setCuStatus('Saving…', 'info');
+        this._setCuStatus(tr('settings:username.status.saving'), 'info');
         const r = await fetch('/api/me/username', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3689,7 +3751,7 @@
           body: JSON.stringify({ username, currentPassword }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setCuStatus(j.error || 'Failed to change username.', 'error'); return; }
+        if (!r.ok) { this._setCuStatus(j.error || tr('settings:username.status.changeFailed'), 'error'); return; }
 
         nameEl.value = '';
         pwEl.value = '';
@@ -3708,15 +3770,19 @@
 
         this._setCuStatus(
           j.unchanged
-            ? 'That is already your username.'
-            : `You are now @${j.username}.`,
+            ? tr('settings:username.status.unchanged')
+            : tr('settings:username.status.changed', { username: j.username }),
           'ok',
         );
       } catch (err) {
-        this._setCuStatus(`Network error: ${err.message}`, 'error');
+        this._setCuStatus(tr('settings:username.status.networkError', { reason: err.message }), 'error');
       } finally {
         btn.disabled = false;
       }
+    },
+
+    _noPasswordYet() {
+      return !!(window.App && App.user && App.user.hasPassword === false);
     },
 
     async changePassword() {
@@ -3728,27 +3794,32 @@
       const newPassword = newEl.value;
       const confirm = confirmEl.value;
 
-      if (!currentPassword) { this._setCpStatus('Enter your current password.', 'error'); return; }
-      if (newPassword.length < 8) { this._setCpStatus('New password must be at least 8 characters.', 'error'); return; }
-      if (newPassword !== confirm) { this._setCpStatus('New passwords do not match.', 'error'); return; }
+      const first = this._noPasswordYet();
+      if (!currentPassword && !first) { this._setCpStatus(tr('settings:password.status.enterCurrent'), 'error'); return; }
+      if (newPassword.length < 8) { this._setCpStatus(tr('settings:password.status.tooShort'), 'error'); return; }
+      if (newPassword !== confirm) { this._setCpStatus(tr('settings:password.status.mismatch'), 'error'); return; }
 
       btn.disabled = true;
-      this._setCpStatus('Saving…', 'info');
+      this._setCpStatus(tr('settings:password.status.saving'), 'info');
       try {
         const r = await fetch('/api/me/password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({ currentPassword, newPassword }),
+          body: JSON.stringify(first ? { newPassword } : { currentPassword, newPassword }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setCpStatus(j.error || 'Failed to change password.', 'error'); return; }
+        if (!r.ok) { this._setCpStatus(j.error || tr('settings:password.status.changeFailed'), 'error'); return; }
         currentEl.value = '';
         newEl.value = '';
         confirmEl.value = '';
-        this._setCpStatus('Password changed.', 'ok');
+        if (j.first && window.App && App.user) {
+          App.user.hasPassword = true;
+          this._setChangePasswordMode('password');
+        }
+        this._setCpStatus(j.first ? tr('settings:password.status.set') : tr('settings:password.status.changed'), 'ok');
       } catch (err) {
-        this._setCpStatus(`Network error: ${err.message}`, 'error');
+        this._setCpStatus(tr('settings:password.status.networkError', { reason: err.message }), 'error');
       } finally {
         btn.disabled = false;
       }
@@ -3756,13 +3827,16 @@
 
     async logout({ accountDeleted = false } = {}) {
       const btn = document.getElementById('settings-logout');
-      if (btn) btn.disabled = true;
+      // #3915: say so the moment it starts. A disabled button that still
+      // looked and read exactly like "Sign out" is what made the phone look
+      // frozen while the app shut down.
+      if (btn) { btn.disabled = true; btn.textContent = tr(SIGNING_OUT_LABEL); }
 
       const fail = (error) => {
-        if (btn) btn.disabled = false;
+        if (btn) { btn.disabled = false; btn.textContent = tr(SIGN_OUT_LABEL); }
         if (window.PlatformUI && PlatformUI.toast) {
           PlatformUI.toast(
-            'Could not sign out. Check your connection and try again.',
+            tr('settings:signOut.failed'),
             { error: true }
           );
         }
@@ -3873,19 +3947,33 @@
       // This must remain the final call on the native path: successful native
       // logout replaces the WebView, so the old document normally runs no
       // continuation work at all. The ONE relaxation (#1524) is navigation to
-      // the landing page, on both outcomes below. It cannot re-admit anyone:
+      // the landing page: on both outcomes below, and (#3915) on a bounded
+      // timer armed as the call is issued. It cannot re-admit anyone:
       // App.user is gone, so NativeChrome._webParticipantId() is null and
       // establishCurrentSession() returns without asking the bridge for
       // anything. Nothing else may be added here.
       if (preflight.nativeTerminal) {
+        // Whichever exit comes first wins; a later one finds it done.
+        let left = false;
+        const leave = () => {
+          if (left) return;
+          left = true;
+          window.location.replace(LANDING_URL);
+        };
+        const armLeave = (ms) => {
+          const timer = setTimeout(leave, ms);
+          if (timer && typeof timer.unref === 'function') timer.unref();
+        };
+        // #3915: counted from the call being issued, not answered (no timer
+        // can fire before the terminal call on the next line has been made).
+        // See NATIVE_LOGOUT_ISSUED_SAFETY_MS for why this is safe only once
+        // the server has revoked the session.
+        if (webRevoked) armLeave(NATIVE_LOGOUT_ISSUED_SAFETY_MS);
         return NativeChrome.commitNativeLogout().then((result) => {
           // The WebView should already be gone. If it is not, land this
           // document on the public landing page rather than leave a
           // signed-out user on the Settings screen.
-          const timer = setTimeout(() => {
-            window.location.replace(LANDING_URL);
-          }, NATIVE_LOGOUT_SAFETY_MS);
-          if (timer && typeof timer.unref === 'function') timer.unref();
+          armLeave(NATIVE_LOGOUT_SAFETY_MS);
           return result;
         }, (error) => {
           // If neither boundary completed, do not reload a possibly live
@@ -3896,9 +3984,10 @@
           // advisory across the navigation (the toast itself would not
           // survive it) and go to the landing page like every other surface.
           try {
-            window.sessionStorage?.setItem?.(LOGOUT_NOTICE_KEY, NATIVE_SHUTDOWN_NOTICE);
+            window.sessionStorage?.setItem?.(LOGOUT_NOTICE_KEY, tr(NATIVE_SHUTDOWN_NOTICE));
           } catch (_) {}
           console.warn('[settings] local native shutdown failed:', error);
+          left = true;
           window.location.replace(LANDING_URL);
           return false;
         });
@@ -3933,14 +4022,14 @@
     },
 
     async remove() {
-      if (!await PlatformUI.confirm({ title: 'Remove your API key?', message: 'Future chats will fall back to the shared daily budget.', confirmLabel: 'Remove', danger: true })) return;
+      if (!await PlatformUI.confirm({ title: tr('settings:apiKey.remove.confirmTitle'), message: tr('settings:apiKey.remove.confirmMessage'), confirmLabel: tr('settings:apiKey.remove.confirmButton'), danger: true })) return;
       const removeBtn = document.getElementById('settings-remove');
       removeBtn.disabled = true;
       try {
         const r = await fetch('/api/me/api-key', { method: 'DELETE', credentials: 'same-origin' });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          this._setStatus(j.error || 'Failed to remove key.', 'error');
+          this._setStatus(j.error || tr('settings:apiKey.remove.failed'), 'error');
           return;
         }
         this.state.hasApiKey = false;
@@ -3948,10 +4037,10 @@
         this._renderIndicator();
         this._renderBody();
         this._refreshSpend();
-        this._setStatus('Removed.', 'ok');
+        this._setStatus(tr('settings:apiKey.remove.done'), 'ok');
         setTimeout(() => this.close(), 700);
       } catch (err) {
-        this._setStatus(`Network error: ${err.message}`, 'error');
+        this._setStatus(tr('settings:apiKey.remove.networkError', { reason: err.message }), 'error');
       } finally {
         removeBtn.disabled = false;
       }
@@ -4030,10 +4119,10 @@
 
     async _onGrantCapChange(appId, value) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(tr('settings:grants.status.demoData'), 'info'); return; }
       const cents = Math.round(parseFloat(value) * 100);
       if (!Number.isFinite(cents) || cents <= 0) {
-        status('Enter a valid cap (at least $0.01).', 'error');
+        status(tr('settings:grants.status.invalidCap'), 'error');
         return;
       }
       try {
@@ -4044,17 +4133,17 @@
           body: JSON.stringify({ dailyCapCents: cents }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
-        status('Cap updated.', 'ok');
+        if (!r.ok) { status(j.error || tr('settings:grants.status.capFailed'), 'error'); return; }
+        status(tr('settings:grants.status.capUpdated'), 'ok');
         this._renderLlmGrants();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(tr('settings:grants.status.networkError', { reason: err.message }), 'error');
       }
     },
 
     async _onGrantByokChange(appId, checked) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(tr('settings:grants.status.demoData'), 'info'); return; }
       try {
         const r = await fetch(`/api/me/llm-grants/${appId}`, {
           method: 'PATCH',
@@ -4063,15 +4152,15 @@
           body: JSON.stringify({ allowByok: checked }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to update.', 'error'); return; }
-        status(checked ? 'Spillover enabled.' : 'Spillover disabled.', 'ok');
+        if (!r.ok) { status(j.error || tr('settings:grants.status.spilloverFailed'), 'error'); return; }
+        status(checked ? tr('settings:grants.status.spilloverEnabled') : tr('settings:grants.status.spilloverDisabled'), 'ok');
         // The checkbox is CONTROLLED by the store now, so the failure paths
         // above leave it showing the old value on their own — where the DOM
         // version had to flip `byokInput.checked` back by hand. On success the
         // re-render is what makes the new value stick.
         this._renderLlmGrants();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(tr('settings:grants.status.networkError', { reason: err.message }), 'error');
         this._renderLlmGrants();
       }
     },
@@ -4079,23 +4168,23 @@
     async _onGrantRevoke(appId, appName) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
       const ok = await ConfirmModal.show({
-        title: `Revoke AI access for "${appName}"?`,
-        message: 'Its next AI call will fail immediately. The app can ask for access again later.',
-        confirmLabel: 'Revoke',
+        title: tr('settings:grants.revoke.confirmTitle', { app: appName }),
+        message: tr('settings:grants.revoke.confirmMessage'),
+        confirmLabel: tr('settings:grants.revoke.confirmButton'),
         danger: true,
       });
       if (!ok) return;
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(tr('settings:grants.status.demoData'), 'info'); return; }
       try {
         const r = await fetch(`/api/me/llm-grants/${appId}`, {
           method: 'DELETE', credentials: 'same-origin',
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
-        status('Revoked.', 'ok');
+        if (!r.ok) { status(j.error || tr('settings:grants.status.revokeFailed'), 'error'); return; }
+        status(tr('settings:grants.status.revoked'), 'ok');
         this._renderLlmGrants();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(tr('settings:grants.status.networkError', { reason: err.message }), 'error');
       }
     },
 
@@ -4114,7 +4203,7 @@
     // as the cap editor's errors are.
     async _onGrantReenable(grant) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
-      if (this._isDemoGrant(grant.appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(grant.appId)) { status(tr('settings:grants.status.demoData'), 'info'); return; }
       const post = (body) => fetch('/api/me/llm-grants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4131,12 +4220,14 @@
           j = await r.json().catch(() => ({}));
           atDefault = true;
         }
-        if (!r.ok) { status(j.error || 'Failed to re-enable.', 'error'); return; }
+        if (!r.ok) { status(j.error || tr('settings:grants.status.reenableFailed'), 'error'); return; }
         const cap = ((j.grant && j.grant.dailyCapCents) || 0) / 100;
-        status(atDefault ? `Re-enabled at the default $${cap.toFixed(2)} daily cap.` : 'Re-enabled.', 'ok');
+        status(atDefault
+          ? tr('settings:grants.status.reenabledAtDefault', { cap: `$${cap.toFixed(2)}` })
+          : tr('settings:grants.status.reenabled'), 'ok');
         this._renderLlmGrants();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(tr('settings:grants.status.networkError', { reason: err.message }), 'error');
       }
     },
 
@@ -4260,11 +4351,11 @@
           body: JSON.stringify({ preferences: { [category]: enabled } }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to save.', 'error'); return; }
-        status('Saved.', 'ok');
+        if (!r.ok) { status(j.error || tr('settings:notificationPrefs.status.saveFailed'), 'error'); return; }
+        status(tr('settings:notificationPrefs.status.saved'), 'ok');
         this._renderNotificationPrefs();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(tr('settings:notificationPrefs.status.networkError', { reason: err.message }), 'error');
       }
     },
 
@@ -4275,19 +4366,19 @@
     // default changes later. Writing the values would freeze them.
     async _onNotificationAppReset(appId, appSlug) {
       const status = (t, k) => this._setNotificationPrefsStatus(t, k);
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
-      if (!appSlug) { status('This app could not be identified.', 'error'); return; }
+      if (this._isDemoGrant(appId)) { status(tr('settings:notificationPrefs.status.demoData'), 'info'); return; }
+      if (!appSlug) { status(tr('settings:notificationPrefs.status.unknownApp'), 'error'); return; }
       try {
         const r = await fetch(
           `/api/apps/${encodeURIComponent(appSlug)}/notification-preferences`,
           { method: 'DELETE', credentials: 'same-origin' }
         );
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to reset.', 'error'); return; }
-        status('Following your defaults again.', 'ok');
+        if (!r.ok) { status(j.error || tr('settings:notificationPrefs.status.resetFailed'), 'error'); return; }
+        status(tr('settings:notificationPrefs.status.reset'), 'ok');
         this._renderNotificationPrefs();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(tr('settings:notificationPrefs.status.networkError', { reason: err.message }), 'error');
       }
     },
 
@@ -4302,24 +4393,24 @@
     async _onPermissionRevoke(appId, capability) {
       const status = (t, k) => this._setAppPermissionsStatus(t, k);
       const ok = await ConfirmModal.show({
-        title: 'Revoke this permission?',
-        message: 'The app loses it the next time it opens. It can ask you again later.',
-        confirmLabel: 'Revoke',
+        title: tr('settings:appPermissions.revoke.confirmTitle'),
+        message: tr('settings:appPermissions.revoke.confirmMessage'),
+        confirmLabel: tr('settings:appPermissions.revoke.confirmButton'),
         danger: true,
       });
       if (!ok) return;
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(tr('settings:appPermissions.status.demoData'), 'info'); return; }
       try {
         const r = await fetch(
           `/api/me/permission-grants/${appId}/${encodeURIComponent(capability)}`,
           { method: 'DELETE', credentials: 'same-origin' }
         );
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
-        status('Revoked. It stops the next time the app opens.', 'ok');
+        if (!r.ok) { status(j.error || tr('settings:appPermissions.status.revokeFailed'), 'error'); return; }
+        status(tr('settings:appPermissions.status.revoked'), 'ok');
         this._renderAppPermissions();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(tr('settings:appPermissions.status.networkError', { reason: err.message }), 'error');
       }
     },
 
@@ -4335,10 +4426,10 @@
     // says what the click restores.
     async _onPermissionReenable(appId, appSlug, capability) {
       const status = (t, k) => this._setAppPermissionsStatus(t, k);
-      if (!appSlug) { status('This app could not be identified.', 'error'); return; }
+      if (!appSlug) { status(tr('settings:appPermissions.status.unknownApp'), 'error'); return; }
       // The fabricated ?demo=1 rows name apps that do not exist, so the POST
       // would 404. Same guard the revoke path above has.
-      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status(tr('settings:appPermissions.status.demoData'), 'info'); return; }
       try {
         const r = await fetch('/api/me/permission-grants', {
           method: 'POST',
@@ -4349,14 +4440,14 @@
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
           status(j.code === 'not_declared'
-            ? 'This app no longer asks for that permission.'
-            : (j.error || 'Failed to re-enable.'), 'error');
+            ? tr('settings:appPermissions.status.notDeclared')
+            : (j.error || tr('settings:appPermissions.status.reenableFailed')), 'error');
           return;
         }
-        status('Re-enabled. It applies the next time the app opens.', 'ok');
+        status(tr('settings:appPermissions.status.reenabled'), 'ok');
         this._renderAppPermissions();
       } catch (err) {
-        status('Network error: ' + err.message, 'error');
+        status(tr('settings:appPermissions.status.networkError', { reason: err.message }), 'error');
       }
     },
 
@@ -4396,7 +4487,7 @@
         const file = input.files && input.files[0];
         if (!file) return;
         if (file.size > 48 * 1024) {
-          this._setAgentFilesStatus(`"${file.name}" is too large. The limit is 48 KB per file.`, 'error');
+          this._setAgentFilesStatus(tr('settings:agentFiles.status.tooLarge', { file: file.name }), 'error');
           return;
         }
         const reader = new FileReader();
@@ -4407,7 +4498,7 @@
           };
           this._showAgentFilesForm(file.name);
         };
-        reader.onerror = () => this._setAgentFilesStatus('Could not read that file.', 'error');
+        reader.onerror = () => this._setAgentFilesStatus(tr('settings:agentFiles.status.unreadable'), 'error');
         reader.readAsText(file);
       });
 
@@ -4441,10 +4532,13 @@
       const descInput = document.getElementById('agent-files-desc');
       const kind = this._pendingAgentFile?.kind || 'instruction';
       title.textContent = kind === 'skill'
-        ? `New skill from "${filename}"`
-        : `New instruction file from "${filename}"`;
+        ? tr('settings:agentFiles.form.titleSkill', { file: filename })
+        : tr('settings:agentFiles.form.titleInstruction', { file: filename });
       nameInput.value = this._slugifyAgentFileName(filename);
       descWrap.classList.toggle('hidden', kind !== 'skill');
+      // Return in the name goes on to the description when there is one and
+      // saves when there is not (#3907); the key says which.
+      nameInput.enterKeyHint = kind === 'skill' ? 'next' : 'done';
       descInput.value = '';
       form.classList.remove('hidden');
       this._setAgentFilesStatus('', 'clear');
@@ -4460,13 +4554,13 @@
       const pending = this._pendingAgentFile;
       if (!pending) return;
       if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus('Demo data: changes are not saved.', 'info');
+        this._setAgentFilesStatus(tr('settings:agentFiles.status.demoData'), 'info');
         this._hideAgentFilesForm();
         return;
       }
       const name = document.getElementById('agent-files-name').value.trim();
       if (!name) {
-        this._setAgentFilesStatus('Give the file a name.', 'error');
+        this._setAgentFilesStatus(tr('settings:agentFiles.status.nameRequired'), 'error');
         return;
       }
       const description = document.getElementById('agent-files-desc').value.trim();
@@ -4479,14 +4573,14 @@
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          this._setAgentFilesStatus(j.error || 'Failed to save the file.', 'error');
+          this._setAgentFilesStatus(j.error || tr('settings:agentFiles.status.saveFailed'), 'error');
           return;
         }
         this._hideAgentFilesForm();
-        this._setAgentFilesStatus(`Saved "${j.file?.name || name}". It applies from your next run.`, 'ok');
+        this._setAgentFilesStatus(tr('settings:agentFiles.status.saved', { name: j.file?.name || name }), 'ok');
         this._loadAgentFiles();
       } catch (err) {
-        this._setAgentFilesStatus('Network error: ' + err.message, 'error');
+        this._setAgentFilesStatus(tr('settings:agentFiles.status.networkError', { reason: err.message }), 'error');
       }
     },
 
@@ -4526,14 +4620,14 @@
     // markup, this module owns the confirm dialog, the write and the reload.
     async _onAgentFileDelete(kind, name) {
       const ok = await ConfirmModal.show({
-        title: `Delete "${name}"?`,
-        message: 'The coding agent stops using it from your next run. This cannot be undone.',
-        confirmLabel: 'Delete',
+        title: tr('settings:agentFiles.delete.confirmTitle', { name }),
+        message: tr('settings:agentFiles.delete.confirmMessage'),
+        confirmLabel: tr('settings:agentFiles.delete.confirmButton'),
         danger: true,
       });
       if (!ok) return;
       if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus('Demo data: changes are not saved.', 'info');
+        this._setAgentFilesStatus(tr('settings:agentFiles.status.demoData'), 'info');
         return;
       }
       try {
@@ -4544,11 +4638,11 @@
           body: JSON.stringify({ kind, name }),
         });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setAgentFilesStatus(j.error || 'Failed to delete.', 'error'); return; }
-        this._setAgentFilesStatus(`Deleted "${name}".`, 'ok');
+        if (!r.ok) { this._setAgentFilesStatus(j.error || tr('settings:agentFiles.status.deleteFailed'), 'error'); return; }
+        this._setAgentFilesStatus(tr('settings:agentFiles.status.deleted', { name }), 'ok');
         this._loadAgentFiles();
       } catch (err) {
-        this._setAgentFilesStatus('Network error: ' + err.message, 'error');
+        this._setAgentFilesStatus(tr('settings:agentFiles.status.networkError', { reason: err.message }), 'error');
       }
     },
 
@@ -4601,7 +4695,7 @@
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          this._setWalletStatus(j.error || 'Failed to start linking.', 'error');
+          this._setWalletStatus(j.error || tr('settings:wallet.status.startFailed'), 'error');
           btn.disabled = false;
           return;
         }
@@ -4625,7 +4719,7 @@
         this._startWalletCountdown();
         this._renderWalletSection();
       } catch (err) {
-        this._setWalletStatus('Network error: ' + err.message, 'error');
+        this._setWalletStatus(tr('settings:wallet.status.networkError', { reason: err.message }), 'error');
         btn.disabled = false;
       }
     },
@@ -4640,7 +4734,7 @@
             this.state.usernodePubkey = j.pubkey;
             this._stopWalletPolling();
             this._renderWalletSection();
-            this._setWalletStatus('Wallet linked!', 'ok');
+            this._setWalletStatus(tr('settings:wallet.status.linked'), 'ok');
           }
         } catch {}
       };
@@ -4662,12 +4756,12 @@
         const remaining = Math.max(0, this._walletExpiresAt - Date.now());
         if (remaining <= 0) {
           this._cancelWalletLink();
-          this._setWalletStatus('QR code expired. Try again.', 'error');
+          this._setWalletStatus(tr('settings:wallet.status.qrExpired'), 'error');
           return;
         }
         const m = Math.floor(remaining / 60000);
         const s = Math.floor((remaining % 60000) / 1000);
-        label.textContent = 'Expires in ' + m + ':' + String(s).padStart(2, '0');
+        label.textContent = tr('settings:wallet.link.expiresIn', { time: m + ':' + String(s).padStart(2, '0') });
       };
       tick();
       this._walletCountdownTimer = setInterval(tick, 1000);
@@ -4681,19 +4775,19 @@
     },
 
     async _unlinkWallet() {
-      if (!await PlatformUI.confirm({ title: 'Unlink your Homeroom wallet?', confirmLabel: 'Unlink', danger: true })) return;
+      if (!await PlatformUI.confirm({ title: tr('settings:wallet.unlink.confirmTitle'), confirmLabel: tr('settings:wallet.unlink.confirmButton'), danger: true })) return;
       try {
         const r = await fetch('/api/me/wallet-link', { method: 'DELETE', credentials: 'same-origin' });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
-          this._setWalletStatus(j.error || 'Failed to unlink.', 'error');
+          this._setWalletStatus(j.error || tr('settings:wallet.status.unlinkFailed'), 'error');
           return;
         }
         this.state.usernodePubkey = null;
         this._renderWalletSection();
-        this._setWalletStatus('Wallet unlinked.', 'ok');
+        this._setWalletStatus(tr('settings:wallet.status.unlinked'), 'ok');
       } catch (err) {
-        this._setWalletStatus('Network error: ' + err.message, 'error');
+        this._setWalletStatus(tr('settings:wallet.status.networkError', { reason: err.message }), 'error');
       }
     },
 
@@ -4747,53 +4841,40 @@
     // ever say "something went wrong": the bridge's chrome reads resolve
     // null on a timeout, on a native rejection and on a refused privileged
     // handshake alike, which is exactly what made issue #978 impossible to
-    // diagnose from the device.
+    // diagnose from the device. Message ids, read when the panel is painted.
     USERNODE_READ_ERROR_REASONS: {
-      'timeout': 'The Homeroom app didn’t respond in time. ' +
-        'It may still be starting up.',
-      'rejected': 'The Homeroom app reported an error.',
-      'probe-inconclusive': 'The Homeroom app hasn’t re-established ' +
-        'its secure connection for settings. Reopening the app usually ' +
-        'fixes this.',
-      'no-transport': 'This screen can’t reach the Homeroom app from here.',
-      'not-native': 'This screen can’t reach the Homeroom app from here.',
-      'page-changed': 'The request was cancelled because this page changed.',
-      'privileged-unavailable': 'The Homeroom app refused this screen’s ' +
-        'secure connection. See “Homeroom app: connection” below.',
+      'timeout': 'settings:usernode.readError.timeout',
+      'rejected': 'settings:usernode.readError.rejected',
+      'probe-inconclusive': 'settings:usernode.readError.probeInconclusive',
+      'no-transport': 'settings:usernode.readError.noTransport',
+      'not-native': 'settings:usernode.readError.notNative',
+      'page-changed': 'settings:usernode.readError.pageChanged',
+      'privileged-unavailable': 'settings:usernode.readError.privilegedUnavailable',
     },
-    USERNODE_READ_ERROR_FALLBACK: 'The Homeroom app returned no settings.',
+    USERNODE_READ_ERROR_FALLBACK: 'settings:usernode.readError.fallback',
 
     // ── The connection panel ──────────────────────────────────────────
     //
     // Plain-language reason per privileged-handshake `state` (the record
     // from usernode.getBridgeDiagnostics). The remedies are ordered the
     // way the report that prompted this was: force-close and reopen
-    // FIRST, reinstall only if that doesn't clear it.
+    // FIRST, reinstall only if that doesn't clear it. Message ids, read
+    // when the panel is painted.
     PRIVILEGED_STATE_LABELS: {
-      'ready': 'Connected',
-      'blocked-frame': 'Refused',
-      'unsupported': 'Not in this app build',
-      'inconclusive': 'Unconfirmed',
-      'unattached': 'No answer',
-      'unknown': 'Not needed yet',
+      'ready': 'settings:usernode.connection.state.ready',
+      'blocked-frame': 'settings:usernode.connection.state.blockedFrame',
+      'unsupported': 'settings:usernode.connection.state.unsupported',
+      'inconclusive': 'settings:usernode.connection.state.inconclusive',
+      'unattached': 'settings:usernode.connection.state.unattached',
+      'unknown': 'settings:usernode.connection.state.unknown',
     },
     PRIVILEGED_STATE_REASONS: {
-      'ready': 'This screen can manage the app’s settings.',
-      'blocked-frame': 'The app is refusing this screen’s secure ' +
-        'connection, so app settings and app sign-out can’t be ' +
-        'changed from here. Force-close the app and reopen it, which ' +
-        'usually re-establishes it. If it keeps happening, reinstalling ' +
-        'the app clears the stuck state.',
-      'unsupported': 'This app build predates the secure connection this ' +
-        'screen uses. Update the Homeroom app to manage its settings here.',
-      'inconclusive': 'The app hasn’t answered yet, so we can’t ' +
-        'tell whether the secure connection is up. It may still be ' +
-        'starting, so try again in a moment.',
-      'unattached': 'The app never answered this screen’s secure ' +
-        'connection request. Force-close the app and reopen it; if that ' +
-        'doesn’t help, reinstalling the app clears the stuck state.',
-      'unknown': 'This screen hasn’t needed the app’s secure ' +
-        'connection yet.',
+      'ready': 'settings:usernode.connection.reason.ready',
+      'blocked-frame': 'settings:usernode.connection.reason.blockedFrame',
+      'unsupported': 'settings:usernode.connection.reason.unsupported',
+      'inconclusive': 'settings:usernode.connection.reason.inconclusive',
+      'unattached': 'settings:usernode.connection.reason.unattached',
+      'unknown': 'settings:usernode.connection.reason.unknown',
     },
 
     // Staging/screenshot hook: `?bridgediag=demo`, in the fragment query
@@ -4953,7 +5034,7 @@
       build: { appVersion: '0.0.0-demo', buildNumber: '0' },
       confirmTried: true,
       lastHealAt: 0,
-      lastHealOutcome: 'sent 1',
+      lastHealOutcome: { kind: 'sent', sent: 1 },
       readError: {
         method: 'getBridgeInfo',
         kind: 'timeout',
@@ -5324,8 +5405,7 @@
     // public/usernode-bridge.js.
     _nativeActionMessage(err, fallback) {
       if (err && err.usernodePrivileged === true) {
-        return 'The Homeroom app isn’t accepting changes from this ' +
-          'screen. Force-close and reopen the app, then try again.';
+        return tr('settings:usernode.action.notAccepting');
       }
       return fallback;
     },
@@ -5354,8 +5434,8 @@
       this._unNotifNotice = {
         tone: 'info',
         text: isAndroid
-          ? 'Opening the permission prompt…'
-          : 'Opening the notification prompt…',
+          ? tr('settings:usernode.notif.openingPermissionPrompt')
+          : tr('settings:usernode.notif.openingNotificationPrompt'),
       };
       this._usernodeLoading = false;
       this._publishUsernode();
@@ -5384,8 +5464,7 @@
         // log the diagnostic error the real branches do.
         this._unNotifNotice = {
           tone: 'info',
-          text: 'This is a preview of the in-app row. The notification ' +
-            'permission itself lives in the Homeroom app.',
+          text: tr('settings:usernode.notif.preview'),
         };
         return;
       }
@@ -5393,8 +5472,7 @@
         // Old bundle: fall back to the plain ask rather than refusing.
         if (!hasRequest) {
           this._unNotifDeadEnd('no-bridge', {
-            text: 'Notification permission is only available inside the ' +
-              'Homeroom app.',
+            text: tr('settings:usernode.notif.onlyInApp'),
             settings: false,
           });
           return;
@@ -5419,7 +5497,7 @@
           // that resolves instantly and shows nothing.
           this._unNotifNotice = {
             tone: 'ok',
-            text: 'Notifications are already allowed for Homeroom.',
+            text: tr('settings:usernode.notif.alreadyAllowed'),
           };
           return;
         }
@@ -5436,10 +5514,9 @@
       } catch (err) {
         this._unNotifDeadEnd(err && err.usernodeNoAnswer ? 'no-answer' : 'failed', {
           text: err && err.usernodeNoAnswer
-            ? 'The Homeroom app didn’t respond to the permission request. ' +
-              'Force-close and reopen the app, then try again.'
+            ? tr('settings:usernode.notif.noAnswer')
             : this._nativeActionMessage(err,
-                'The permission request could not be started.'),
+                tr('settings:usernode.notif.requestFailed')),
           settings: this._unCanOpenNotifSettings === true,
           reason: err && err.message,
         });
@@ -5476,8 +5553,8 @@
         this._unNotifNotice = {
           tone: 'ok',
           text: isAndroid
-            ? 'Permission granted.'
-            : 'Notifications are now allowed for Homeroom.',
+            ? tr('settings:usernode.notif.permissionGranted')
+            : tr('settings:usernode.notif.nowAllowed'),
         };
         this._usernodeLoading = false;
       this._publishUsernode();
@@ -5535,26 +5612,19 @@
     _notifDeadEndText(plan, isAndroid) {
       switch (plan.verdict) {
         case 'no-bridge':
-          return 'Notification permission is only available inside the ' +
-            'Homeroom app.';
+          return tr('settings:usernode.notif.onlyInApp');
         case 'unsupported':
-          return 'This version of the Homeroom app can’t open the ' +
-            'notification prompt. Update the app from the App Store.';
+          return tr('settings:usernode.notif.unsupported');
         case 'settings':
           return isAndroid
-            ? 'Permission was denied. Allow notifications in the system ' +
-              'settings for Homeroom.'
-            : 'Notifications are turned off for Homeroom. iOS only shows ' +
-              'its prompt once, so this has to be changed in Settings › ' +
-              'Notifications › Homeroom.';
+            ? tr('settings:usernode.notif.deniedAndroid')
+            : tr('settings:usernode.notif.deniedIos');
         case 'declined':
-          return 'Permission was not granted.';
+          return tr('settings:usernode.notif.declined');
         case 'silent':
-          return 'The Homeroom app closed without showing the notification ' +
-            'prompt. Reopen the app and try again, or allow notifications ' +
-            'in Settings › Notifications › Homeroom.';
+          return tr('settings:usernode.notif.silent');
         default:
-          return 'The notification prompt could not be opened.';
+          return tr('settings:usernode.notif.couldNotOpen');
       }
     },
 
@@ -5568,8 +5638,7 @@
       );
       this._unNotifNotice = {
         tone: 'warn',
-        text: (opts && opts.text) || 'The notification prompt could not be ' +
-          'opened.',
+        text: (opts && opts.text) || tr('settings:usernode.notif.couldNotOpen'),
         settings: !!(opts && opts.settings),
       };
     },
@@ -5644,7 +5713,7 @@
           const body = await res.json().catch(() => ({}));
           if (res.status === 404) {
             // No published terms version — nothing to accept.
-            if (window.PlatformUI) PlatformUI.toast('No terms to review right now');
+            if (window.PlatformUI) PlatformUI.toast(tr('settings:terms.noneToReview'));
             return;
           }
           if (!res.ok || !body.success) {
@@ -5653,7 +5722,7 @@
           payload = body.data;
         } catch (err) {
           console.warn('[settings] terms fetch failed:', err);
-          if (window.PlatformUI) PlatformUI.toast('Could not load the terms');
+          if (window.PlatformUI) PlatformUI.toast(tr('settings:terms.loadFailed'));
           return;
         }
       }
@@ -5669,29 +5738,29 @@
       };
       const panel = el('div', 'px-4 pb-5');
       panel.appendChild(el('div', 'text-lg font-bold py-3',
-        payload.title || 'Terms'));
+        payload.title || tr('settings:terms.fallbackTitle')));
       if (firstRun) {
         panel.appendChild(el('p',
           'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
-          'Reviewing the terms is part of joining the platform. Please ' +
-          'read the full terms, then choose whether to accept.'));
+          tr('settings:terms.firstRunIntro')));
       }
       const meta = [];
-      if (payload.version) meta.push(`Version ${payload.version}`);
+      if (payload.version) meta.push(tr('settings:terms.version', { version: payload.version }));
       if (payload.published_at) {
         try {
-          meta.push('published ' +
-            new Date(payload.published_at).toLocaleDateString());
+          meta.push(tr('settings:terms.published', {
+            date: new Date(payload.published_at).toLocaleDateString(),
+          }));
         } catch (_) {}
       }
       if (meta.length) {
         panel.appendChild(el('p',
-          'text-xs text-zinc-500 dark:text-zinc-400 mb-2', meta.join(' · ')));
+          'text-xs text-zinc-500 dark:text-zinc-400 mb-2', dotText(meta)));
       }
       if (payload.terms_link) {
         const a = el('a',
           'block text-sm text-violet-700 dark:text-violet-400 underline mb-3',
-          'Read the full terms');
+          tr('settings:terms.readFull'));
         a.href = payload.terms_link;
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
@@ -5706,11 +5775,10 @@
         ? 'text-emerald-700 dark:text-emerald-400'
         : 'text-zinc-600 dark:text-zinc-400'),
       accepted
-        ? 'You accepted this version' +
-          (payload.consent.responded_at
-            ? ' on ' + new Date(payload.consent.responded_at).toLocaleDateString()
-            : '') + '.'
-        : 'You have not accepted this version yet.');
+        ? (payload.consent.responded_at
+          ? tr('settings:terms.acceptedOn', { date: new Date(payload.consent.responded_at).toLocaleDateString() })
+          : tr('settings:terms.accepted'))
+        : tr('settings:terms.notAccepted'));
       panel.appendChild(statusEl);
 
       let sheet = null;
@@ -5742,17 +5810,17 @@
             onOk();
           } catch (err) {
             console.warn('[settings] terms consent failed:', err);
-            if (window.PlatformUI) PlatformUI.toast('Could not record your consent');
+            if (window.PlatformUI) PlatformUI.toast(tr('settings:terms.consentFailed'));
             consentButtons.forEach((b) => { b.disabled = false; });
           }
         };
 
         const acceptBtn = el('button',
           'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 ' +
-          'text-sm font-medium text-white', 'Accept the terms');
+          'text-sm font-medium text-white', tr('settings:terms.accept'));
         acceptBtn.addEventListener('click', () => postConsent('accepted',
           () => {
-            if (window.PlatformUI) PlatformUI.toast('Terms accepted');
+            if (window.PlatformUI) PlatformUI.toast(tr('settings:terms.acceptedToast'));
             if (typeof onAccepted === 'function') onAccepted();
           }));
         consentButtons.push(acceptBtn);
@@ -5766,12 +5834,12 @@
           const declineBtn = el('button',
             'w-full rounded-lg border border-zinc-300 dark:border-zinc-700 ' +
             'px-4 py-2 mt-2 text-sm font-medium text-zinc-700 ' +
-            'dark:text-zinc-200', 'Decline');
+            'dark:text-zinc-200', tr('settings:terms.decline'));
           declineBtn.addEventListener('click', () => postConsent('refused',
             () => {
               if (window.PlatformUI) {
                 PlatformUI.toast(
-                  'You can accept the terms later from your profile');
+                  tr('settings:terms.declinedToast'));
               }
             }));
           consentButtons.push(declineBtn);
@@ -5781,7 +5849,7 @@
       if (!blocking) {
         const closeBtn = el('button',
           'w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400',
-        'Close');
+        tr('core:common.close'));
         closeBtn.addEventListener('click', () => {
           if (sheet && sheet.dismiss) sheet.dismiss();
         });
@@ -5858,30 +5926,30 @@
         blockProduction: this._bpView(),
         privacy: s ? {
           facematch: {
-            label: 'Strict facematch',
+            label: tr('settings:usernode.privacy.strictFacematch'),
             checked: s.facematchStrict !== false,
             action: '_setFacematchStrict',
           },
           open: canOpenZkIdentity ? {
             id: 'settings-usernode-open-zk-identity',
-            label: 'Open ZK identity',
+            label: tr('settings:usernode.privacy.openZkIdentity'),
             action: '_openZkIdentityScreen',
           } : null,
-          reset: { label: 'Restart ZK challenge', action: '_resetZkChallenge', danger: true },
+          reset: { label: tr('settings:usernode.privacy.restartZkChallenge'), action: '_resetZkChallenge', danger: true },
         } : null,
         widgetIcons: this._widgetIconsView(),
         diagnostics: {
           debugMode: s ? {
-            label: 'Debug mode', checked: s.debugMode === true, action: '_setDebugMode',
+            label: tr('settings:usernode.diagnostics.debugMode'), checked: s.debugMode === true, action: '_setDebugMode',
           } : null,
           actions: [
-            { label: 'Device benchmark', action: '_openBenchmarkScreen' },
-            { label: 'HTTP debug logs', action: '_openHttpLogsScreen' },
+            { label: tr('settings:usernode.diagnostics.deviceBenchmark'), action: '_openBenchmarkScreen' },
+            { label: tr('settings:usernode.diagnostics.httpLogs'), action: '_openHttpLogsScreen' },
           ],
         },
         about: { notes: this._usernodeBuildNotes(), actions: [{
           label: (s && s.termsAccepted === false)
-            ? 'Review terms (not yet accepted)' : 'Terms',
+            ? tr('settings:usernode.about.reviewTerms') : tr('settings:usernode.about.terms'),
           action: '_openTermsFromUsernode',
         }] },
         account: (s && s.authStatus !== 'authenticated') ? { rows: [], actions: [] } : null,
@@ -5893,11 +5961,13 @@
       const bi = (this._usernodeState && this._usernodeState.buildInfo) || {};
       const bits = [];
       if (bi.appVersion) {
-        bits.push(`App ${bi.appVersion}` + (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
+        bits.push(bi.buildNumber
+          ? tr('settings:usernode.about.appVersionBuild', { version: bi.appVersion, build: bi.buildNumber })
+          : tr('settings:usernode.about.appVersion', { version: bi.appVersion }));
       }
-      if (bi.nodeVersion) bits.push(`Node ${bi.nodeVersion}`);
+      if (bi.nodeVersion) bits.push(tr('settings:usernode.about.nodeVersion', { version: bi.nodeVersion }));
       if (bi.commitHash) bits.push(bi.commitHash);
-      return bits.length ? [{ text: bits.join(' · '), tone: 'mono' }] : [];
+      return bits.length ? [{ text: dotText(bits), tone: 'mono' }] : [];
     },
 
     _usernodeConnectionView() {
@@ -5906,23 +5976,24 @@
       const state = (diag.privileged && diag.privileged.state) || 'unknown';
       const bits = [];
       if (diag.appVersion) {
-        bits.push(`App ${diag.appVersion}` +
-          (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
+        bits.push(diag.buildNumber
+          ? tr('settings:usernode.connection.appVersionBuild', { version: diag.appVersion, build: diag.buildNumber })
+          : tr('settings:usernode.connection.appVersion', { version: diag.appVersion }));
       }
-      bits.push(`Bridge v${diag.bridgeVersion}`);
+      bits.push(tr('settings:usernode.connection.bridgeVersion', { version: diag.bridgeVersion }));
       const demo = !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo();
       return {
         demo: !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo(),
         row: {
-          label: 'Secure app connection',
+          label: tr('settings:usernode.connection.rowLabel'),
           ok: state === 'ready',
-          text: state === 'ready'
+          text: tr(state === 'ready'
             ? this.PRIVILEGED_STATE_LABELS.ready
-            : (this.PRIVILEGED_STATE_LABELS[state] || 'Unavailable'),
+            : (this.PRIVILEGED_STATE_LABELS[state] || 'settings:usernode.connection.state.unavailable')),
         },
-        reason: this.PRIVILEGED_STATE_REASONS[state] ||
-          this.PRIVILEGED_STATE_REASONS.unknown,
-        build: bits.join(' · '),
+        reason: tr(this.PRIVILEGED_STATE_REASONS[state] ||
+          this.PRIVILEGED_STATE_REASONS.unknown),
+        build: dotText(bits),
         message: (diag.privileged && diag.privileged.message) || null,
         // Read-only hook: the buttons render so the screenshot shows the real
         // panel, but they must not touch a bridge or a session.
@@ -5936,7 +6007,7 @@
         // the one way in.
         walletRecovery: this._walletRecoveryAvailable() ? {
           id: 'settings-usernode-connect-wallet',
-          label: 'Connect existing wallet',
+          label: tr('settings:usernode.connection.connectWallet'),
           action: '_openWalletRecovery',
           disabled: demo,
         } : null,
@@ -5992,8 +6063,8 @@
         const kind = readError && readError.kind;
         return {
           kind: 'error',
-          reason: this.USERNODE_READ_ERROR_REASONS[kind] ||
-            this.USERNODE_READ_ERROR_FALLBACK,
+          reason: tr(this.USERNODE_READ_ERROR_REASONS[kind] ||
+            this.USERNODE_READ_ERROR_FALLBACK),
           message: (readError && readError.message) || null,
         };
       }
@@ -6010,24 +6081,27 @@
       return {
         kind: 'permissions',
         demo: !!this._unDemoMode(),
-        heading: 'Homeroom app: device permissions',
+        heading: tr('settings:usernode.permissions.heading'),
         description: isAndroid
-          ? 'Block production needs the app to wake your device at exact slot times.'
-          : 'Notifications let Homeroom alert you about node and account activity.',
+          ? tr('settings:usernode.permissions.descriptionAndroid')
+          : tr('settings:usernode.permissions.descriptionIos'),
         // The row IS the control. It used to be an inert div whose only
         // affordance was a chip below, rendered only when the (iOS-meaningless)
         // exactAlarmGranted boolean said "not granted" — so on a build
         // reporting it `true` there was nothing to tap at all.
         row: {
           id: 'settings-notif-row',
-          label: isAndroid ? 'Exact alarms' : 'Notifications',
+          label: isAndroid ? tr('settings:usernode.permissions.exactAlarms') : tr('settings:usernode.permissions.notifications'),
           ok: notifOk,
-          text: notifOk ? 'Granted' : 'Not granted',
-          hint: isAndroid ? 'request permissions' : 'allow notifications',
+          text: notifOk ? tr('settings:usernode.permissions.granted') : tr('settings:usernode.permissions.notGranted'),
+          // The row's whole accessible name: what it is and what a tap does.
+          actionName: isAndroid
+            ? tr('settings:usernode.permissions.exactAlarmsActionName')
+            : tr('settings:usernode.permissions.notificationsActionName'),
           action: '_requestUsernodePermissions',
         },
         button: notifOk ? null : {
-          label: isAndroid ? 'Request permissions' : 'Allow notifications',
+          label: isAndroid ? tr('settings:usernode.permissions.requestPermissions') : tr('settings:usernode.permissions.allowNotifications'),
           action: '_requestUsernodePermissions',
         },
         notice: n ? {
@@ -6037,14 +6111,18 @@
         } : null,
         android: isAndroid ? {
           row: {
-            label: 'Battery optimization',
+            label: tr('settings:usernode.permissions.batteryOptimization'),
             ok: perms.batteryOptDisabled === true,
-            text: perms.batteryOptDisabled === true ? 'Unrestricted' : 'Restricted',
+            text: perms.batteryOptDisabled === true
+              ? tr('settings:usernode.permissions.batteryUnrestricted')
+              : tr('settings:usernode.permissions.batteryRestricted'),
           },
           button: perms.batteryOptDisabled === true ? null : {
-            label: 'Open battery settings', action: '_openBatterySettings',
+            label: tr('settings:usernode.permissions.openBatterySettings'), action: '_openBatterySettings',
           },
-          device: perms.deviceManufacturer ? `Device: ${perms.deviceManufacturer}` : null,
+          device: perms.deviceManufacturer
+            ? tr('settings:usernode.permissions.device', { manufacturer: perms.deviceManufacturer })
+            : null,
         } : null,
       };
     },
@@ -6072,26 +6150,24 @@
         return {
           kind: 'unavailable',
           reason: stuck
-            ? 'The Homeroom app isn’t accepting this screen’s secure ' +
-              'connection, so notifications can’t be set up. See “Homeroom ' +
-              'app: connection” above.'
+            ? tr('settings:usernode.socialPush.stuck')
             : (admissionPending
-              ? 'Finishing secure app sign-in before enabling notifications…'
-              : 'Notification settings are temporarily unavailable.'),
+              ? tr('settings:usernode.socialPush.finishingSignIn')
+              : tr('settings:usernode.socialPush.unavailable')),
           failure: (failure && failure.message) || null,
           retry: !!(admissionPending && window.NativeChrome &&
             typeof NativeChrome.recoverSessionAdmission === 'function'),
         };
       }
-      let status = 'Off on this device.';
+      let status = tr('settings:usernode.socialPush.statusOff');
       if (state.deliveryActive) {
-        status = 'On. This device is registered for activity notifications.';
+        status = tr('settings:usernode.socialPush.statusOn');
       } else if (state.permissionStatus === 'denied') {
-        status = 'Notification permission is denied in the device settings.';
+        status = tr('settings:usernode.socialPush.statusDenied');
       } else if (state.enabled && state.registrationStatus === 'registering') {
-        status = 'Enabling notifications…';
+        status = tr('settings:usernode.socialPush.statusEnabling');
       } else if (state.enabled) {
-        status = 'Enabled, but delivery is not active yet.';
+        status = tr('settings:usernode.socialPush.statusNotActive');
       }
       return { kind: 'ready', enabled: !!state.enabled, status };
     },
@@ -6107,73 +6183,77 @@
     _bpView() {
       const state = this._bpState;
       if (state === undefined) return { kind: 'checking' };
-      if (!state) return { kind: 'note', text: 'Could not check block-production status right now.' };
+      if (!state) return { kind: 'note', text: tr('settings:usernode.blockProduction.checkFailed') };
       if (state.bp_released) {
         return {
           kind: 'note',
-          text: 'Released. Your node produces blocks when it wins slots. The ongoing ' +
-            '"Evaluating production slots" notification on your phone is block ' +
-            'production checking VRF eligibility and scheduling slots; Android ' +
-            're-shows it while block production runs, so swiping it away does not ' +
-            'dismiss it for good. Quiet just that notification without turning ' +
-            'off Homeroom’s other notifications:',
+          text: tr('settings:usernode.blockProduction.released'),
           action: this._unCanOpenNotifSettings === true
-            ? { label: 'Open notification settings', action: '_openNotifSettings' }
+            ? { label: tr('settings:usernode.body.openNotificationSettings'), action: '_openNotifSettings' }
             : null,
         };
       }
-      if (state.bp_requested) return { kind: 'note', text: 'Request pending. You’ll start producing automatically once an admin releases your keys.' };
-      if (!state.has_platform_access) return { kind: 'note', text: 'Available once your account has platform access.' };
+      if (state.bp_requested) return { kind: 'note', text: tr('settings:usernode.blockProduction.pending') };
+      if (!state.has_platform_access) return { kind: 'note', text: tr('settings:usernode.blockProduction.needsAccess') };
       return { kind: 'ask' };
     },
 
     _widgetIconsView() {
       const diag = this._widgetIconDiagnostics();
       if (!diag) return null;
-      const sending = diag.resolved === true
-        ? 'Light + dark pair'
-        : (diag.resolved === false
-          ? `Single face (${diag.scheme})`
-          : 'Undecided, single face for now');
-      const build = diag.build
-        ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
-        : 'unknown, the verdict is re-confirmed each time';
-      const healedAt = diag.lastHealAt ? this._widgetIconTime(diag.lastHealAt) : 'never';
+      let sending;
+      if (diag.resolved === true) sending = tr('settings:usernode.widgetIcons.sending.pair');
+      else if (diag.resolved !== false) sending = tr('settings:usernode.widgetIcons.sending.undecided');
+      else if (diag.scheme === 'dark') sending = tr('settings:usernode.widgetIcons.sending.singleDark');
+      else if (diag.scheme === 'light') sending = tr('settings:usernode.widgetIcons.sending.singleLight');
+      else sending = tr('settings:usernode.widgetIcons.sending.singleOther', { scheme: diag.scheme });
       const notes = [
-        { text: `Verdict bound to app version: ${build}`, tone: 'muted' },
-        { text: `Last icon check: ${healedAt}` +
-          (diag.lastHealOutcome ? `: ${diag.lastHealOutcome}` : ''), tone: 'muted' },
+        { text: diag.build
+          ? tr('settings:usernode.widgetIcons.verdictBound', {
+            version: diag.build.appVersion, build: diag.build.buildNumber || '?',
+          })
+          : tr('settings:usernode.widgetIcons.verdictUnbound'), tone: 'muted' },
+        { text: this._widgetIconLastCheckText(diag), tone: 'muted' },
       ];
       if (diag.readError) {
         notes.push({
-          text: `${diag.readError.method}: ` +
-            (this.USERNODE_READ_ERROR_REASONS[diag.readError.kind] ||
+          text: tr('settings:usernode.widgetIcons.readError', {
+            method: diag.readError.method,
+            reason: tr(this.USERNODE_READ_ERROR_REASONS[diag.readError.kind] ||
               this.USERNODE_READ_ERROR_FALLBACK),
+          }),
           tone: 'warn',
         });
       }
       return {
         demo: !!this._widgetIconsDemo(),
         rows: [
-          { id: 'settings-widget-mechanism-row', label: 'Widget shortcuts',
+          { id: 'settings-widget-mechanism-row', label: tr('settings:usernode.widgetIcons.mechanism.label'),
             ok: diag.mechanism === 'widget',
-            text: diag.mechanism === 'widget' ? 'Available'
-              : (diag.mechanism ? `Not this device (${diag.mechanism})` : 'Not available') },
-          { id: 'settings-widget-registry-row', label: 'Pinned registry',
+            text: diag.mechanism === 'widget' ? tr('settings:usernode.widgetIcons.mechanism.available')
+              : (diag.mechanism
+                ? tr('settings:usernode.widgetIcons.mechanism.otherDevice', { mechanism: diag.mechanism })
+                : tr('settings:usernode.widgetIcons.mechanism.unavailable')) },
+          { id: 'settings-widget-registry-row', label: tr('settings:usernode.widgetIcons.registry.label'),
             ok: diag.registryLoaded === true,
             text: diag.registryLoaded === true
-              ? `Loaded: ${diag.entries.length} pinned` : 'Could not be read' },
+              ? tr('settings:usernode.widgetIcons.registry.loaded', { count: diag.entries.length })
+              : tr('settings:usernode.widgetIcons.registry.unreadable') },
           // Tri-state, and the third state is the point: `has()` used to
           // collapse "couldn't say" into "no".
-          { id: 'settings-widget-capability-row', label: 'Dark icon capability',
+          { id: 'settings-widget-capability-row', label: tr('settings:usernode.widgetIcons.capability.label'),
             ok: diag.capability === true,
-            text: diag.capability === true ? 'Advertised by the app'
-              : (diag.capability === false ? 'Not advertised' : 'The app couldn’t say') },
-          { id: 'settings-widget-verdict-row', label: 'Confirmed by the widget',
+            text: diag.capability === true ? tr('settings:usernode.widgetIcons.capability.advertised')
+              : (diag.capability === false
+                ? tr('settings:usernode.widgetIcons.capability.notAdvertised')
+                : tr('settings:usernode.widgetIcons.capability.unknown')) },
+          { id: 'settings-widget-verdict-row', label: tr('settings:usernode.widgetIcons.verdict.label'),
             ok: diag.verdict === 'supported',
-            text: diag.verdict === 'supported' ? 'Stores both faces'
-              : (diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet') },
-          { id: 'settings-widget-sending-row', label: 'Sending',
+            text: diag.verdict === 'supported' ? tr('settings:usernode.widgetIcons.verdict.supported')
+              : (diag.verdict === 'unsupported'
+                ? tr('settings:usernode.widgetIcons.verdict.unsupported')
+                : tr('settings:usernode.widgetIcons.verdict.unconfirmed')) },
+          { id: 'settings-widget-sending-row', label: tr('settings:usernode.widgetIcons.sending.label'),
             ok: diag.resolved === true, text: sending },
         ],
         notes,
@@ -6182,23 +6262,60 @@
       };
     },
 
+    // The "Last icon check" note: when Home last ran its icon pass and what
+    // the pass did. Home records the outcome as `{ kind, sent, refused }`
+    // (Home._lastHealOutcome), never as text, so each combination of "when"
+    // and "what" is one whole message here.
+    _widgetIconLastCheckText(diag) {
+      const outcome = diag.lastHealOutcome || null;
+      const kind = outcome && Object.prototype.hasOwnProperty.call(this.WIDGET_ICON_LAST_CHECK, outcome.kind)
+        ? outcome.kind : 'none';
+      const [timed, never] = this.WIDGET_ICON_LAST_CHECK[kind];
+      const values = {
+        count: outcome ? Number(outcome.sent) || 0 : 0,
+        refused: outcome ? Number(outcome.refused) || 0 : 0,
+      };
+      return diag.lastHealAt
+        ? tr(timed, { ...values, when: this._widgetIconTime(diag.lastHealAt) })
+        : tr(never, values);
+    },
+
+    // [checked at a known time, never checked] for each outcome of the pass.
+    WIDGET_ICON_LAST_CHECK: {
+      none: ['settings:usernode.widgetIcons.lastCheck.at', 'settings:usernode.widgetIcons.lastCheck.never'],
+      skippedMechanism: ['settings:usernode.widgetIcons.lastCheck.atSkippedMechanism', 'settings:usernode.widgetIcons.lastCheck.neverSkippedMechanism'],
+      skippedBridge: ['settings:usernode.widgetIcons.lastCheck.atSkippedBridge', 'settings:usernode.widgetIcons.lastCheck.neverSkippedBridge'],
+      nothing: ['settings:usernode.widgetIcons.lastCheck.atNothing', 'settings:usernode.widgetIcons.lastCheck.neverNothing'],
+      sent: ['settings:usernode.widgetIcons.lastCheck.atSent', 'settings:usernode.widgetIcons.lastCheck.neverSent'],
+      sentRefused: ['settings:usernode.widgetIcons.lastCheck.atSentRefused', 'settings:usernode.widgetIcons.lastCheck.neverSentRefused'],
+    },
+
     /** Widget entry rows: dot + name + note, as data. */
     _widgetIconEntryViews(diag) {
       if (!diag.entries.length) {
         return [{ key: 'none', ok: true, name: '', note: '',
-          empty: 'No shortcuts are pinned to the widget.' }];
+          empty: tr('settings:usernode.widgetIcons.entry.none') }];
       }
-      const flag = (v) => (v === true ? 'yes' : (v === false ? 'no' : '—'));
+      // Three facts about a pinned shortcut, each a whole message.
+      const icon = (v) => tr(v === true ? 'settings:usernode.widgetIcons.entry.iconYes'
+        : (v === false ? 'settings:usernode.widgetIcons.entry.iconNo' : 'settings:usernode.widgetIcons.entry.iconUnknown'));
+      const dark = (v) => tr(v === true ? 'settings:usernode.widgetIcons.entry.darkYes'
+        : (v === false ? 'settings:usernode.widgetIcons.entry.darkNo' : 'settings:usernode.widgetIcons.entry.darkUnknown'));
       return diag.entries.map((entry, i) => ({
         key: String(entry.name || i),
         ok: entry.foreign ? true : (entry.hasIcon !== false && entry.matches),
         name: entry.name,
         note: entry.foreign
-          ? 'pinned by another app'
+          ? tr('settings:usernode.widgetIcons.entry.foreign')
           : (entry.unknownApp
-            ? 'app not loaded'
-            : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
-              `sent ${entry.matches ? 'current' : 'stale'}`),
+            ? tr('settings:usernode.widgetIcons.entry.appNotLoaded')
+            : dotText([
+              icon(entry.hasIcon),
+              dark(entry.hasIconDark),
+              entry.matches
+                ? tr('settings:usernode.widgetIcons.entry.sentCurrent')
+                : tr('settings:usernode.widgetIcons.entry.sentStale'),
+            ])),
         empty: null,
       }));
     },
@@ -6217,7 +6334,7 @@
       const ok = window.PlatformUI && PlatformUI.copyText
         ? await PlatformUI.copyText(text) : false;
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(ok ? 'Diagnostics copied' : 'Could not copy',
+        PlatformUI.toast(ok ? tr('settings:usernode.connection.diagnosticsCopied') : tr('settings:usernode.connection.diagnosticsCopyFailed'),
           ok ? {} : { error: true });
       }
     },
@@ -6239,13 +6356,13 @@
     _setFacematchStrict(v) { return this._unApply(window.usernode.setFacematchStrict(v)); },
     _setDebugMode(v) { return this._unApply(window.usernode.setDebugMode(v)); },
     _openZkIdentityScreen() {
-      return this._openNativeScreen('zkIdentity', 'Could not open ZK identity');
+      return this._openNativeScreen('zkIdentity', tr('settings:usernode.privacy.openZkIdentityFailed'));
     },
     _openBenchmarkScreen() {
-      return this._openNativeScreen('benchmark', 'Could not open the benchmark');
+      return this._openNativeScreen('benchmark', tr('settings:usernode.diagnostics.openBenchmarkFailed'));
     },
     _openHttpLogsScreen() {
-      return this._openNativeScreen('httpLogs', 'Could not open the logs');
+      return this._openNativeScreen('httpLogs', tr('settings:usernode.diagnostics.openLogsFailed'));
     },
     _openTermsFromUsernode() {
       return this.showTermsSheet(() => this._renderUsernodeSection());
@@ -6253,14 +6370,14 @@
 
     async _resetZkChallenge() {
       const ok = await PlatformUI.confirm({
-        title: 'Restart the ZK challenge?',
-        message: 'Your in-progress identity registration will be discarded.',
-        confirmLabel: 'Restart',
+        title: tr('settings:usernode.privacy.restart.confirmTitle'),
+        message: tr('settings:usernode.privacy.restart.confirmMessage'),
+        confirmLabel: tr('settings:usernode.privacy.restart.confirmButton'),
         danger: true,
       });
       if (!ok) return;
       await window.usernode.resetZkChallenge();
-      if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
+      if (window.PlatformUI) PlatformUI.toast(tr('settings:usernode.privacy.restart.done'));
     },
 
     async _recheckWidgetIcons() {
@@ -6349,9 +6466,9 @@
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !data || data.success === false) {
-          throw new Error((data && data.error) || 'Request failed');
+          throw new Error((data && data.error) || tr('settings:usernode.blockProduction.requestFailed'));
         }
-        if (window.PlatformUI) PlatformUI.toast('Request sent. An admin will release your keys');
+        if (window.PlatformUI) PlatformUI.toast(tr('settings:usernode.blockProduction.requestSent'));
         this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
         this._publishUsernode();
         // #2960: the Android "Set up your device" sheet (exact alarms +
@@ -6365,7 +6482,7 @@
           NativeChrome.maybeShowFirstRunPermissions({ force: true });
         }
       } catch (e) {
-        if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
+        if (window.PlatformUI) PlatformUI.toast(e.message || tr('settings:usernode.blockProduction.requestFailed'), { error: true });
       }
     },
 
@@ -6394,6 +6511,36 @@
   // isOpen()/close() while this file was still on its way. Take over SHARING
   // that state object — a read still in flight lands in it — and its primed
   // CLI-auth answer, so nothing that consulted the façade observes a reset.
+  // A language change (or this namespace's pack arriving after a first,
+  // English read) repaints what this module painted from state it still
+  // holds: the two navs and the header title, the view models it publishes,
+  // and the lines it derives from a payload it kept. A status line that
+  // reports the result of one action is not repainted: nothing here remembers
+  // which message it showed.
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('homeroom:language-changed', () => {
+      if (!Settings._open) return;
+      const repaint = (fn) => { try { fn(); } catch (err) { /* a pane that is not mounted */ } };
+      repaint(() => Settings._renderNav());
+      repaint(() => Settings._syncChrome());
+      repaint(() => Settings._normalizeOpenRouterCopy());
+      repaint(() => Settings._renderBody());
+      repaint(() => { if (Settings._connectors.length) Settings._renderConnectors(); });
+      repaint(() => { if (Settings._githubLink) Settings._renderGithubLink(); });
+      repaint(() => { if (Settings._cliTokens.length) Settings._renderCliTokens(); });
+      repaint(() => {
+        if (Settings._localAgents.length) {
+          window.UsernodeReact?.settingsLocalAgents?.publish({
+            phase: 'ready',
+            agents: Settings._localAgents.map((agent) => Settings._localAgentView(agent)),
+          });
+        }
+      });
+      repaint(() => { if (Settings._openRouterModels.length) Settings._renderOpenRouterModelOptions(); });
+      repaint(() => Settings._publishUsernode());
+    });
+  }
+
   if (typeof window !== 'undefined') {
     const facade = window.Settings;
     if (facade && facade.__facade) {

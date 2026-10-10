@@ -50,76 +50,108 @@ import { ChatMessageRow } from '@/components/ui/chat';
 import { Avatar } from '@/components/ui/feed';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t } from '../../lib/i18n/runtime';
 import { CardIcon } from '../dev-board/card/dev-card';
 import { swatchFor } from './swatch';
 import type { ProposalEvent, TranscriptMessage } from './transcript-store';
 
 /**
- * "Proposed PR #12 for a vote: Custom tier colors", "PR #12 went live with
- * 2/3 votes: Custom tier colors", "Force-merged PR #12 with 0/2 votes: …".
- * The number always leads; the title follows when the line carried one.
- * A merge on the platform's own app (`liveSoon`, follow-up to #2897) is
- * released after it merges, so it reads "PR #12 merged with 2/3 votes and
- * will be live in a few minutes: …" instead of claiming it is live.
+ * B10d: in the words every screen uses. "Asked for approval: Custom tier
+ * colors", "Custom tier colors went live with 2/3 votes", "An admin made
+ * “Custom tier colors” live (0/2 votes)". The pull request number is not
+ * said; a line with no title names "a change". A change on the platform's own
+ * app (`liveSoon`, follow-up to #2897) goes live after it is approved, so it
+ * reads "“Custom tier colors” was approved with 2/3 votes and will be live in
+ * a few minutes" instead of claiming it is live. These are drawn words: the
+ * stored server lines keep their old wording, and the parser that reads them
+ * (group-chat.js `_proposalEvent`) is unchanged.
  */
 export function eventText(msg: TranscriptMessage): string {
   const ev = msg.event;
   if (!ev) return '';
-  const pr = `PR #${ev.prNumber}`;
-  const title = ev.title ? `: ${ev.title}` : '';
-  const votes = ev.votes ? ` with ${ev.votes} votes` : '';
-  // On the proposal's own page the row names the act, not the proposal:
-  // the number and title are the page's heading.
-  if (ev.type === 'vote') return `Voted ${ev.vote || 'yes'}${ev.reason ? `: “${ev.reason}”` : ''}`;
-  if (ev.type === 'notice') return ev.text || '';
-  if (ev.here && ev.type === 'submitted') return 'Proposed this change for a vote';
-  if (ev.here && ev.type === 'merged') {
-    if (ev.force) return `Force-merged this change${votes}`;
-    if (ev.liveSoon) {
-      if (ev.credits) return `This change merged and will be live in a few minutes. ${creditsSentence(ev.credits)}`;
-      return `This change merged${votes} and will be live in a few minutes`;
+  // `ev.votes` is a tally the server wrote ("2/3"), not a count; '' when
+  // there is none. Each sentence has a wording with it and one without.
+  const tally = ev.votes;
+  const title = ev.title;
+  if (ev.type === 'vote') {
+    if (ev.vote === 'no') {
+      return ev.reason ? t('chat:group.event.votedNoReason', { reason: ev.reason }) : t('chat:group.event.votedNo');
     }
-    if (ev.credits) return `This change is live. ${creditsSentence(ev.credits)}`;
-    return `This change went live${votes}`;
+    return ev.reason ? t('chat:group.event.votedYesReason', { reason: ev.reason }) : t('chat:group.event.votedYes');
   }
-  if (ev.type === 'submitted') return `Proposed ${pr} for a vote${title}`;
-  if (ev.type === 'weekly') return `This week on ${ev.weekly?.app || 'the app'}`;
-  if (ev.force) return `Force-merged ${pr}${votes}${title}`;
-  // #1688: a merge that named its people reads as the sentence it was —
-  // the number and the tally move to the muted tail (see EventRow).
+  if (ev.type === 'notice') return ev.text || '';
+  // On the change's own page the row names the act, not the change: the
+  // title is the page's heading.
+  if (ev.here && ev.type === 'submitted') return t('chat:group.event.here.submitted');
+  if (ev.here && ev.type === 'merged') {
+    if (ev.force) return tally ? t('chat:group.event.here.forcedTally', { tally }) : t('chat:group.event.here.forced');
+    if (ev.liveSoon) {
+      if (ev.credits) return t('chat:group.event.here.liveSoonCredits', { credits: creditsSentence(ev.credits) });
+      return tally ? t('chat:group.event.here.liveSoonTally', { tally }) : t('chat:group.event.here.liveSoon');
+    }
+    if (ev.credits) return t('chat:group.event.here.liveCredits', { credits: creditsSentence(ev.credits) });
+    return tally ? t('chat:group.event.here.wentLiveTally', { tally }) : t('chat:group.event.here.wentLive');
+  }
+  if (ev.type === 'submitted') return title ? t('chat:group.event.submitted', { title }) : t('chat:group.event.submittedUntitled');
+  if (ev.type === 'weekly') return ev.weekly?.app ? t('chat:group.weekly.title', { app: ev.weekly.app }) : t('chat:group.weekly.titleNoApp');
+  if (ev.force) {
+    if (title) return tally ? t('chat:group.event.forcedTally', { title, tally }) : t('chat:group.event.forced', { title });
+    return tally ? t('chat:group.event.forcedUntitledTally', { tally }) : t('chat:group.event.forcedUntitled');
+  }
+  // #1688: a change that named its people reads as the sentence it was;
+  // the tally moves to the muted tail (see EventRow).
   if (ev.liveSoon) {
-    if (ev.credits) return `${ev.title || pr} merged and will be live in a few minutes. ${creditsSentence(ev.credits)}`;
-    return `${pr} merged${votes} and will be live in a few minutes${title}`;
+    if (ev.credits) {
+      const credits = creditsSentence(ev.credits);
+      return title ? t('chat:group.event.liveSoonCredits', { title, credits }) : t('chat:group.event.liveSoonCreditsUntitled', { credits });
+    }
+    if (title) return tally ? t('chat:group.event.liveSoonTally', { title, tally }) : t('chat:group.event.liveSoon', { title });
+    return tally ? t('chat:group.event.liveSoonUntitledTally', { tally }) : t('chat:group.event.liveSoonUntitled');
   }
-  if (ev.credits) return `${ev.title || pr} is live. ${creditsSentence(ev.credits)}`;
-  return `${pr} went live${votes}${title}`;
+  if (ev.credits) {
+    const credits = creditsSentence(ev.credits);
+    return title ? t('chat:group.event.liveCredits', { title, credits }) : t('chat:group.event.liveCreditsUntitled', { credits });
+  }
+  if (title) return tally ? t('chat:group.event.wentLiveTally', { title, tally }) : t('chat:group.event.wentLive', { title });
+  return tally ? t('chat:group.event.wentLiveUntitledTally', { tally }) : t('chat:group.event.wentLiveUntitled');
 }
 
 /** "alice", "alice and bob", "alice, bob and carol". */
 function nameList(names: string[]): string {
   if (names.length <= 1) return names.join('');
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const before = names.slice(0, -1).reduce((listed, name) => t('chat:group.names.next', { names: listed, name }));
+  return t('chat:group.names.last', { names: before, name: names[names.length - 1] });
 }
 
 /** "Built by evan, backed by alice and bob, shaped by carol." — the server's own shape (routes/votes.js creditsSentence). */
 export function creditsSentence(c: { author: string; backers: string[]; shapers: string[] }): string {
-  const parts: string[] = [];
-  if (c.author) parts.push(`Built by ${c.author}`);
-  if (c.backers.length) parts.push(`${parts.length ? 'backed' : 'Backed'} by ${nameList(c.backers)}`);
-  if (c.shapers.length) parts.push(`${parts.length ? 'shaped' : 'Shaped'} by ${nameList(c.shapers)}`);
-  return parts.length ? `${parts.join(', ')}.` : '';
+  const author = c.author;
+  const backers = c.backers.length ? nameList(c.backers) : '';
+  const shapers = c.shapers.length ? nameList(c.shapers) : '';
+  if (author) {
+    if (backers && shapers) return t('chat:group.credits.builtBackedShaped', { author, backers, shapers });
+    if (backers) return t('chat:group.credits.builtBacked', { author, backers });
+    if (shapers) return t('chat:group.credits.builtShaped', { author, shapers });
+    return t('chat:group.credits.built', { author });
+  }
+  if (backers && shapers) return t('chat:group.credits.backedShaped', { backers, shapers });
+  if (backers) return t('chat:group.credits.backed', { backers });
+  if (shapers) return t('chat:group.credits.shaped', { shapers });
+  return '';
 }
 
 /**
- * The muted tail after a named merge: "PR #41 · 3/5 votes". After a vote
+ * The muted tail after a named merge: "3/5 votes" (B10d: no pull request
+ * number). After a vote
  * that no longer counts because the proposal changed since (#3411):
  * "· on an earlier version, not counted", so the line agrees with the tally.
  */
 export function eventTail(msg: TranscriptMessage): string {
   const ev = msg.event;
-  if (ev && ev.type === 'vote' && ev.earlier) return '· on an earlier version, not counted';
+  if (ev && ev.type === 'vote' && ev.earlier) return t('chat:group.event.tail.earlier');
   if (!ev || ev.type !== 'merged' || ev.force || !ev.credits) return '';
-  return [`PR #${ev.prNumber}`, ev.votes ? `${ev.votes} votes` : ''].filter(Boolean).join(' · ');
+  return ev.votes ? t('chat:group.event.tail.tally', { tally: ev.votes }) : '';
 }
 
 /**
@@ -129,51 +161,53 @@ export function eventTail(msg: TranscriptMessage): string {
  * carries — never the whole week when it is long; the totals say the rest.
  */
 function WeeklyBox({ w }: { w: NonNullable<ProposalEvent['weekly']> }) {
+  const t = useMessages('chat');
   const moreMerged = w.mergedTotal - w.merged.length;
   const moreOpen = w.openTotal - w.open.length;
   return (
     <div className="gc-event-box gc-event-weekly">
-      <div className="gc-weekly-title">{`This week on ${w.app}`}</div>
+      <div className="gc-weekly-title">{t('chat:group.weekly.title', { app: w.app })}</div>
       <div className="gc-weekly-section">
         <div className="gc-weekly-head gc-weekly-head-live">
           {w.mergedTotal === 0
-            ? 'Nothing landed this week'
-            : `${w.mergedTotal} ${w.mergedTotal === 1 ? 'change' : 'changes'} went live`}
+            ? t('chat:group.weekly.nothingLanded')
+            : t('chat:group.weekly.wentLive', { count: w.mergedTotal })}
         </div>
         {w.merged.map((m, i) => (
           <div key={m.id ?? `m${i}`} className="gc-weekly-line" data-weekly="merged">
             <span className="gc-weekly-line-title">{m.title}</span>
             {m.author ? (
               <span className="gc-weekly-line-who">
-                {` · ${m.author}${m.backers.length ? `, backed by ${nameList(m.backers)}` : ''}`}
+                {` · ${m.backers.length ? t('chat:group.weekly.authorBacked', { author: m.author, backers: nameList(m.backers) }) : m.author}`}
               </span>
             ) : null}
           </div>
         ))}
-        {moreMerged > 0 ? <div className="gc-weekly-more">{`and ${moreMerged} more`}</div> : null}
+        {moreMerged > 0 ? <div className="gc-weekly-more">{t('chat:group.weekly.moreLive', { count: moreMerged })}</div> : null}
       </div>
       {w.openTotal > 0 ? (
         <div className="gc-weekly-section">
           <div className="gc-weekly-head gc-weekly-head-open">
-            {w.openTotal === 1 ? 'One proposal is waiting for eyes' : `${w.openTotal} proposals are waiting for eyes`}
+            {t('chat:group.weekly.waiting', { count: w.openTotal })}
           </div>
           {w.open.map((o, i) => (
             <div key={o.id ?? `o${i}`} className="gc-weekly-line" data-weekly="open">
               <span className="gc-weekly-line-title">{o.title}</span>
-              {o.prNumber ? <span className="gc-weekly-line-who">{` · PR #${o.prNumber}`}</span> : null}
             </div>
           ))}
-          {moreOpen > 0 ? <div className="gc-weekly-more">{`and ${moreOpen} more`}</div> : null}
+          {moreOpen > 0 ? <div className="gc-weekly-more">{t('chat:group.weekly.moreWaiting', { count: moreOpen })}</div> : null}
         </div>
       ) : null}
       {w.slug ? (
-        <a className="gc-weekly-door" href={`#app/${w.slug}/dev`}>Open the Workshop ›</a>
+        <a className="gc-weekly-door" href={`#app/${w.slug}/dev`}>{t('chat:group.weekly.door')}</a>
       ) : null}
     </div>
   );
 }
 
 export const EventRow = memo(function EventRow({ msg }: { msg: TranscriptMessage }) {
+  // Subscribed: eventText and eventTail are read in the language on screen.
+  const t = useMessages('chat');
   const ev = msg.event;
   if (!ev) return null;
   if (ev.type === 'weekly' && ev.weekly) {
@@ -235,7 +269,7 @@ export const EventRow = memo(function EventRow({ msg }: { msg: TranscriptMessage
       timestamp={<span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>}
     >
       {href
-        ? <a className="gc-event-box" href={href} title="Open this proposal">{box}</a>
+        ? <a className="gc-event-box" href={href} title={t('chat:group.event.open')}>{box}</a>
         : <div className="gc-event-box">{box}</div>}
     </ChatMessageRow>
   );

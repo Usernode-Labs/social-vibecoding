@@ -18,17 +18,63 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const CARD = 'frontend/src/features/dev-board/workshop/community-card.tsx';
 
 test('the approval rule is one sentence per regime, read from the server', () => {
+  // In the page's words (first-session run-through, 5 Oct 2026): a change
+  // "goes live", people "approve" it. It was "Members vote: a change merges
+  // at 2 yes votes (2 active members), or unopposed after a wait."
   const { approvalLine } = loadTsx(CARD);
-  assert.equal(approvalLine({ policy: 'anyone', approvals_required: null, electorate: 12, required: 5 }),
-    'Members vote: a change merges at 5 yes votes (12 active members), or unopposed after a wait.');
-  assert.equal(approvalLine({ policy: 'anyone', approvals_required: null, electorate: 1, required: 1 }),
-    'Members vote: a change merges at 1 yes vote (1 active member), or unopposed after a wait.');
+  const line = (a) => approvalLine({ policy: 'anyone', approvals_required: null, ...a });
+  assert.equal(line({ electorate: 12, required: 5 }),
+    'A change goes live when 5 of the 12 active members approve it, or after a wait if one approves and nobody objects.');
+  assert.equal(line({ electorate: 2, required: 2 }),
+    'A change goes live when both active members approve it, or after a wait if one approves and nobody objects.',
+    'a two-person group: both of them');
+  assert.equal(line({ electorate: 1, required: 1 }),
+    'A change goes live when the only active member approves it.',
+    'no wait to mention: the quiet path needs a Yes short of the threshold, and one Yes is the threshold');
+  const solo = { policy: 'anyone', approvals_required: null, electorate: 1, required: 1 };
+  assert.equal(approvalLine(solo, { audience: 'solo', is_member: true }),
+    'A change goes live when you approve it.', 'Just you: the one approver is the reader (#4246)');
+  assert.equal(approvalLine(solo, { audience: 'solo', is_member: false }),
+    'A change goes live when the only active member approves it.', 'a visitor is not the approver');
+  assert.equal(approvalLine(solo, { audience: 'invited', is_member: true }),
+    'A change goes live when the only active member approves it.', 'a private community keeps the generic line');
+  assert.equal(approvalLine({ ...solo, electorate: 2, required: 1 }, { audience: 'solo', is_member: true }),
+    'A change goes live when 1 of the 2 active members approves it.', 'only when the reader is the whole electorate');
+  assert.equal(line({ electorate: 3, required: 3 }), 'A change goes live when all 3 active members approve it, or after a wait if one approves and nobody objects.');
+  assert.equal(line({ electorate: 3, required: 1 }), 'A change goes live when 1 of the 3 active members approves it.');
   assert.equal(approvalLine({ policy: 'anyone', approvals_required: 2, electorate: 30, required: 2 }),
-    'A change needs 2 yes votes from members to merge.',
-    'a fixed count from dapp.json says the count, not the electorate');
+    'A change goes live once 2 members approve it.',
+    'a fixed count from dapp.json says the count, not the electorate, and has no wait');
+  assert.equal(approvalLine({ policy: 'anyone', approvals_required: 1, electorate: 30, required: 1 }),
+    'A change goes live once 1 member approves it.');
   assert.equal(approvalLine({ policy: 'invited', approvals_required: null, electorate: 3, required: 2 }),
-    'Approvers decide: 2 yes votes from 3 approvers to merge a change.');
+    'A change goes live when 2 of the 3 approvers say yes, or after a wait if one says yes and nobody says no.',
+    'invited approvers: the same math over the approvers, quiet path included');
+  assert.equal(approvalLine({ policy: 'invited', approvals_required: null, electorate: 1, required: 1 }),
+    'A change goes live when the only approver says yes.');
+  assert.equal(approvalLine({ policy: 'invited', approvals_required: 2, electorate: 3, required: 2 }),
+    'A change goes live when 2 of the 3 approvers say yes.', 'at least N approvers: no clock');
+  assert.equal(approvalLine({ policy: 'invited', approvals_required: 3, electorate: 2, required: 3 }),
+    'A change goes live when 3 approvers (there are 2) say yes.', 'a count larger than the roster says so');
   assert.equal(approvalLine(null), '');
+  for (const a of [{ electorate: 12, required: 5 }, { electorate: 2, required: 2 }]) {
+    assert.doesNotMatch(line(a), /merge|unopposed|yes vote/, 'no developer words');
+  }
+  // The card is the rule alone. The note under it, that changing the rules
+  // is a change too and goes live only once approved, went (5 Oct 2026).
+  assert.doesNotMatch(read(CARD), /Changing these rules|dev-ws-rules-sub/);
+  assert.doesNotMatch(read('public/css/app.css'), /\.dev-ws-rules-sub/, 'and its style with it');
+});
+
+test('#4527: the middle step gets room, and the card stacks when the card is narrow', () => {
+  const CSS = read('public/css/app.css');
+  // The faces crowd the middle step's words, so it takes the wider share.
+  assert.match(CSS, /^\.dev-ws-rule-step\[data-ws-rule-people\] \{ flex-grow: 2; \}$/m);
+  // The strip is its own container, so the stack fires when the CARD is too
+  // narrow, not only when the window is (the 640px media query stays).
+  assert.match(CSS, /^\.dev-ws-strip\[data-ws-approval-rules\] \{ container-type: inline-size; \}$/m);
+  assert.match(CSS, /@container \(max-width: 600px\) \{\s*\.dev-ws-rules \{ flex-direction: column; align-items: stretch; \}\s*\.dev-ws-rule-join \{ flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; \}\s*\}/);
+  assert.match(CSS, /@media \(max-width: 640px\) \{\s*\.dev-ws-rules \{ flex-direction: column; align-items: stretch; \}/);
 });
 
 test('the audience line uses the words on screen, and "Just you" counts nobody', () => {
@@ -79,13 +125,18 @@ test('the channel is a hub card at its old address; Join asks under its button a
     'it hangs from the button');
   assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/,
     'from its right edge in the hero, where Join ends the actions row (#852)');
-  assert.match(src, /home\.setMembership\(slug, false\)/, 'Joined leaves through the same call Discover makes');
-  assert.match(src, /data-ws-community-leave=""[\s\S]*Joined/, 'Joined is the leave control, as on Discover');
-  assert.match(src, /\) : data\.is_creator \? null : \(/, 'the creator is never offered Leave');
+  // #4045: Leave is a row of the hub's ⋯ (it was the Joined pill), through
+  // the same call Discover makes, and never the creator's.
+  assert.match(src, /home\.setMembership\(slug, false\)/, 'Leave goes through the same call Discover makes');
+  assert.doesNotMatch(src, /data-ws-community-leave=""|>\s*Joined\s*</, 'no Joined pill on the hero');
+  assert.match(src, /return !!data && !!data\.is_member && !data\.is_creator;/, 'the creator is never offered Leave');
   // #3362: Invite is invite LINKS, which any member can make
   // (services/community-invites.js); Members & approvals stays the ⋯'s, behind
   // its own gate.
-  assert.match(src, /\{data\.is_member && !solo \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
+  // `member` is is_member, except under `?shot=invite-join`, which draws the
+  // hero as an invitee sees it (#3700).
+  assert.match(src, /const member = data\.is_member && !offer\?\.preview;/);
+  assert.match(src, /\{member && !solo \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
     'Invite is offered to members');
   assert.doesNotMatch(src, /_plusMenuShowsMembers/, 'not by the members dialog\'s gate');
 });

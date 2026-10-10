@@ -324,7 +324,7 @@ test('createTileCollapsed: the tile goes behind "Show all" rather than start a r
   assert.equal(bh, 2);
   assert.equal(HomeLayout.createTileCollapsed(holey, 4, bh), true);
 
-  // An empty launcher always shows it (after the "No apps added yet" note).
+  // An empty launcher always shows it: it is all the grid shows.
   assert.equal(HomeLayout.createTileCollapsed([], 4, 1), false);
   assert.equal(HomeLayout.createTileCollapsed(null, 4, 1), false);
 

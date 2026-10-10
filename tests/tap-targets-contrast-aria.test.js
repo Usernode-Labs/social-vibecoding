@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -99,18 +100,14 @@ test('Q20: the card band labels read on the accent tint', () => {
   assert.match(hover, /color: var\(--accent-tint-ink\);/, 'and hover keeps the same ink');
 });
 
-test('Q20: the Workshop count chips and the GitHub tag clear AA', () => {
+test('Q20: the Workshop count chips clear AA', () => {
   // --state-neutral-bg over a dark category card measures #3e3f43.
   const chip = CSS.match(/\n\.dark \.dev-ws-cnt \{ color: (#[0-9a-f]{6}); \}/);
   assert.ok(chip, 'the dark chip label has its own ink');
   assert.ok(contrast(chip[1], '#3e3f43') >= 4.5, `${chip[1]} on #3e3f43`);
-  const tag = block('\n.dev-topic-gh-tag {');
-  assert.match(tag, /background: color-mix\(in srgb, var\(--bg-tertiary\) 60%, transparent\);/);
-  // The tag rides a --bg-primary bubble: 60% of --bg-tertiary over it.
-  const lightBg = over(token(LIGHT, '--bg-tertiary'), 0.6, token(LIGHT, '--bg-primary'));
-  const darkBg = over(token(DARK, '--bg-tertiary'), 0.6, token(DARK, '--bg-primary'));
-  assert.ok(contrast(token(LIGHT, '--text-muted'), lightBg) >= 4.5, `light tag ${lightBg}`);
-  assert.ok(contrast(token(DARK, '--text-muted'), darkBg) >= 4.5, `dark tag ${darkBg}`);
+  // The GitHub tag that rode a request's comment bubbles went with them
+  // (#4453): a GitHub reply says "on GitHub" after its time, in the row's
+  // own muted ink.
 });
 
 test('Q20: the bell badge, the Discover meta line and the list subtitles use the passing shades', () => {
@@ -149,10 +146,12 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   // and Show an earlier week below them steps back a week (#3524 renamed it
   // from "Show older").
   has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-since-card-x ${KIT}"`), 'the summary\'s ×');
-  has(ws, new RegExp(`className="dev-ws-reveal dev-ws-since-more ${KIT}"`), 'Show an earlier week');
-  // #3524: a week's one Show N more sits 4px under its last row, so it takes
-  // the dense 32px slop rather than the kit's 44px, as Your work's does.
-  has(ws, /className="dev-ws-reveal dev-ws-since-week-more touch-target-32"/, 'a week\'s Show N more');
+  // #4457: the reveals under a list (Show all N, Show earlier weeks) sit 4px
+  // under its last row, so they take the dense 32px slop rather than the
+  // kit's 44px, as Your work's does.
+  has(ws, /className="dev-ws-reveal touch-target-32" data-ws-since-more=""/, 'Since your last visit\'s Show all N');
+  has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-weeks-more=""/, 'Show earlier weeks');
+  has('frontend/src/features/dev-board/workshop/week-pages.tsx', /className="dev-ws-reveal touch-target-32" data-ws-week-group-more=""/, 'a week group\'s Show all N');
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Clear');
   // "N more of yours" is gone: the Workshop tab shows your own work in full.
   has(ws, new RegExp(`className="dev-ws-hub-open dev-ws-head-end ${KIT}"`), 'All items\' See all');
@@ -175,8 +174,11 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   // open and which <pre> it opens (tests/agent-files-list-aria.test.js renders it).
   assert.match(files, /aria-expanded=\{open\}/, 'agent files View reports open');
   assert.match(files, /aria-controls=\{contentId\}/, 'agent files View points at its content');
-  assert.match(files, /aria-label=\{`\$\{open \? 'Hide' : 'View'\} \$\{file\.name\}`\}/, 'agent files View names its file');
-  assert.match(files, /aria-label=\{`Delete \$\{file\.name\}`\}/, 'agent files Delete names its file');
+  assert.match(files, /aria-label=\{open\s*\? t\('settings:agentFiles\.file\.hideName', \{ file: file\.name \}\)\s*: t\('settings:agentFiles\.file\.viewName', \{ file: file\.name \}\)\}/, 'agent files View names its file');
+  assert.equal(message('settings:agentFiles.file.viewName', { file: 'notes.md' }), 'View notes.md');
+  assert.equal(message('settings:agentFiles.file.hideName', { file: 'notes.md' }), 'Hide notes.md');
+  assert.match(files, /aria-label=\{t\('settings:agentFiles\.file\.deleteName', \{ file: file\.name \}\)\}/, 'agent files Delete names its file');
+  assert.equal(message('settings:agentFiles.file.deleteName', { file: 'notes.md' }), 'Delete notes.md');
 });
 
 test('Q19: where a slop cannot hang off the control, the control or its row grows on touch', () => {
@@ -209,25 +211,30 @@ test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {
 
 test('Q20: form controls the audit found unnamed have names', () => {
   const waitlist = read('frontend/src/features/auth/waitlist.tsx');
-  assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*Country/,
+  assert.match(waitlist, /<label className=\{SURVEY_LABEL\} htmlFor="waitlist-country">\s*\{t\('auth:waitlist\.country\.label'\)\}/,
     'the Country label points at its select');
+  assert.equal(message('auth:waitlist.country.label'), 'Country');
   assert.match(waitlist, /id="waitlist-country"/);
-  const connectors = read('frontend/src/features/settings/sections/connectors.tsx');
-  assert.match(connectors, /id="settings-dev-flow"\n\s*aria-label="Where changes get built"/,
-    'the dev-flow select is named after its heading');
   // Four text boxes that took focus announcing only "edit text".
   assert.match(read('frontend/src/features/messages/message-row.tsx'),
-    /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
+    /<textarea ref=\{editRef\} aria-label=\{t\('messages:row\.editLabel'\)\}/, 'the message edit box');
+  assert.equal(message('messages:row.editLabel'), 'Edit message');
   assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
-    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? 'Proposal title' : 'Issue title'\}/,
+    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? msg\('project:card\.title\.proposalInput'\) : msg\('project:card\.title\.requestInput'\)\}/,
     'the card title editor, named by kind');
+  assert.deepEqual([message('project:card.title.proposalInput'), message('project:card.title.requestInput')], ['Proposal title', 'Request title']);
   const topicHead = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">About this issue<\/h4>/);
+  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">\{t\('project:topic\.request\.body\.title'\)\}<\/h4>/);
+  assert.equal(message('project:topic.request.body.title'), 'About this request');
   assert.match(topicHead, /id="dev-issue-body-input"\n\s*aria-labelledby="dev-issue-body-heading"/,
     'the issue body editor is named after its heading');
   const wallet = read('frontend/src/features/header/wallet-sheet-body.tsx');
-  assert.match(wallet, /placeholder="Recipient address \(ut1…\)" aria-label="Recipient address"/);
-  assert.match(wallet, /placeholder="Amount" aria-label="Amount"/);
+  assert.match(wallet, /placeholder=\{t\('wallet:send\.recipientPlaceholder'\)\} aria-label=\{t\('wallet:send\.recipientLabel'\)\}/);
+  assert.match(wallet, /placeholder=\{t\('wallet:send\.amountPlaceholder'\)\} aria-label=\{t\('wallet:send\.amountLabel'\)\}/);
+  assert.equal(message('wallet:send.recipientPlaceholder'), 'Recipient address (ut1…)');
+  assert.equal(message('wallet:send.recipientLabel'), 'Recipient address');
+  assert.equal(message('wallet:send.amountPlaceholder'), 'Amount');
+  assert.equal(message('wallet:send.amountLabel'), 'Amount');
 });
 
 test('Q20: the setup guide\'s scrolling code blocks are focusable, named regions', () => {
@@ -242,8 +249,9 @@ test('Q20: the kit modal shell takes its name from the dialog\'s heading', () =>
   const fn = modal.slice(modal.indexOf('function nameKitShell('));
   assert.match(fn, /querySelector\('h1, h2, h3'\)/);
   assert.match(fn, /if \(heading\.id\) shell\.setAttribute\('aria-labelledby', heading\.id\);/);
-  const create = read('frontend/src/features/dialogs/create-app.tsx');
-  assert.match(create, /<h2 id="create-title"/, 'Create app\'s heading has the id the shell points at');
+  // (Create app's heading was the example here; that dialog is retired.)
+  const secrets = read('frontend/src/features/dialogs/app-secrets.tsx');
+  assert.match(secrets, /<h2 id="app-secrets-title"/, 'App secrets\' heading has the id the shell points at');
 });
 
 test('Q20: the app frame is titled with the app\'s name, and keeps it when kept alive', async () => {

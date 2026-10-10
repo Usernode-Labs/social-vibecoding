@@ -14,6 +14,7 @@
  *   app/<slug>/workshop            the app's Workshop (also board, activity,
  *                                  a bare dev)
  *   app/<slug>/dev/proposals/<id>  a proposal (governance/<id> too)
+ *   app/<slug>/dev/changes/<N>     a proposal by its pull request's number
  *   app/<slug>/dev/issues/<n>      an issue
  *   app/<slug>/dev/sessions/<id>   a change — `new` is the unsent one
  *   app/<slug>/dev/shared/<id>     a change's shared page
@@ -48,6 +49,8 @@
  * app's App tab, which is the running app's job and is never started inside
  * the panel.
  */
+
+import { t } from '../../lib/i18n/runtime';
 
 export type PanelKind =
   | 'workshop'
@@ -157,7 +160,7 @@ export function panelPage(route: string): PanelPage | null {
     if (sec === 'issues' && NUMERIC.test(id)) {
       return { kind: 'issue', slug, key: `${base}/dev/issues/${id}` };
     }
-    if ((sec === 'proposals' || sec === 'governance') && NUMERIC.test(id)) {
+    if ((sec === 'proposals' || sec === 'changes' || sec === 'governance') && NUMERIC.test(id)) {
       return { kind: 'proposal', slug, key: `${base}/dev/${sec}/${id}` };
     }
     // dev, dev/issues, dev/proposals, dev/sessions (no id): the card list.
@@ -269,16 +272,17 @@ export function samePage(a: string | null | undefined, b: string | null | undefi
   return pa.key === pb.key;
 }
 
+// Message ids, read when a title is asked for.
 const KIND_TITLE: Record<PanelKind, string> = {
-  workshop: 'Workshop',
-  proposal: 'Proposal',
-  issue: 'Issue',
-  change: 'Change',
-  'new-change': 'New change',
-  thread: 'Messages',
-  chat: 'Chat',
-  agent: 'Agent session',
-  messages: 'Messages',
+  workshop: 'agent:sidePanel.title.workshop',
+  proposal: 'agent:sidePanel.title.proposal',
+  issue: 'agent:sidePanel.title.request',
+  change: 'agent:sidePanel.title.change',
+  'new-change': 'agent:sidePanel.title.newChange',
+  thread: 'agent:sidePanel.title.thread',
+  chat: 'agent:sidePanel.title.chat',
+  agent: 'agent:sidePanel.title.agent',
+  messages: 'agent:sidePanel.title.messages',
 };
 
 /** The pages whose title is their kind, whatever their header says. */
@@ -302,8 +306,8 @@ export function titleFor(route: string | null | undefined, reported?: string | n
   const page = route ? panelPage(route) : null;
   const text = String(reported || '').trim();
   if (!page) return text;
-  if (FIXED_TITLE.has(page.kind)) return KIND_TITLE[page.kind];
-  return text || KIND_TITLE[page.kind];
+  if (FIXED_TITLE.has(page.kind)) return t(KIND_TITLE[page.kind]);
+  return text || t(KIND_TITLE[page.kind]);
 }
 
 /**

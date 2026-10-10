@@ -25,6 +25,8 @@ const { getPool } = require('../db/pool');
 const IMAGE_RECIPE = 'v1';
 const SHOTS_LABEL = 'social.usernode.io/shots-run';
 const SHOTS_SIDE_LABEL = 'social.usernode.io/shots-side';
+// Earlier recovery marked cleanup complete without removing hosted fixtures.
+const RESOURCE_CLEANUP_VERSION = 2;
 
 class ShotsEnvironmentError extends Error {
   constructor(code, message, detail = null) {
@@ -85,12 +87,56 @@ function shotsCapacityEnv(config, app) {
   return app?.slug === config?.selfAppSlug ? { MAX_APPS: '0' } : {};
 }
 
+// Phone sign-in on Homeroom's own pair. The copies run the platform image,
+// whose NODE_ENV is 'production', so PHONE_TEST_CODE is refused there and a
+// change to the Join sheet's phone step could not be shot ("Phone sign-in is
+// not offered on these copies"). Each run gets its own random six-digit
+// code, the same on both sides, as SHOTS_PHONE_TEST_CODE: the fictional
+// test numbers (+1, any area code, 555 0100 to 0199) sign in with it and no
+// text is sent. A copy honours it only because it runs as
+// USERNODE_ENV=staging (config.js shotsPhoneTestCodeFrom); production and an
+// ordinary staging preview are never given it. A child app has no phone
+// sign-in, so its pair gets nothing.
+const PHONE_TEST_CODE_RE = /^[0-9]{6}$/;
+
+function newPhoneTestCode() {
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+}
+
+function shotsPhoneSignInEnv(config, app, code) {
+  return app?.slug === config?.selfAppSlug && PHONE_TEST_CODE_RE.test(String(code || ''))
+    ? { SHOTS_PHONE_TEST_CODE: code } : {};
+}
+
+// The pair's code: made on its first reset and kept for every later one, so
+// both sides and every pass agree. Null for a child app.
+function pairPhoneTestCode(config, pair) {
+  if (pair?.app?.slug !== config?.selfAppSlug) return null;
+  if (!PHONE_TEST_CODE_RE.test(String(pair.phoneTestCode || ''))) pair.phoneTestCode = newPhoneTestCode();
+  return pair.phoneTestCode;
+}
+
 function hostedFixtureApp(runId) {
   return {
     id: shotsFixtures.HOSTED_APP_ID,
     slug: shotsFixtures.hostedAppSlug(runId),
     name: 'Homeroom shots app',
   };
+}
+
+function hostedFixtureRefs(config, runId) {
+  const app = hostedFixtureApp(runId);
+  return [app, { ...app, slug: app.slug.replace(/^homeroom-shots-/, 'homeroom-evidence-') }]
+    .map((fixture) => applicationRuntime.productionRef(config, fixture));
+}
+
+async function removeRuntime(config, ref, options) {
+  const result = await applicationRuntime.remove(config, ref, options);
+  // The Docker adapter reports a surviving container instead of rejecting.
+  if (result?.removed === false) {
+    throw new ShotsEnvironmentError('shots_cleanup_incomplete', result.error || 'Shots runtime is still present.');
+  }
+  return result;
 }
 
 async function hostedFixtureImageRef(config) {
@@ -403,7 +449,7 @@ function runtimeRef(config, pair, side) {
 }
 
 async function stopPair(config, pair, { strict = false } = {}) {
-  const results = await Promise.allSettled(['base', 'head'].map((side) => applicationRuntime.remove(
+  const results = await Promise.allSettled(['base', 'head'].map((side) => removeRuntime(
     config, runtimeRef(config, pair, side), { stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC }
   )));
   const errors = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
@@ -440,6 +486,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       clones.push([side, cloned]);
     }
     const cloneBySide = Object.fromEntries(clones);
+    const phoneTestCode = pairPhoneTestCode(config, pair);
     onProgress?.({ stage: 'deploy_pair' });
     const deployments = await allSettledValues(['base', 'head'].map(async (side) => {
       const spec = pair.sides[side];
@@ -448,6 +495,9 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       // the feature works for a member on a server with capacity. Disable
       // only this self-app limit inside disposable shots runtimes; neither
       // production nor an ordinary staging preview receives the override.
+      // Phone sign-in's test numbers are the same kind of shots-only
+      // override (shotsPhoneSignInEnv), and are left out of the fingerprint
+      // label below: a six-digit value's digest is a million guesses away.
       const shotsEnv = shotsCapacityEnv(config, pair.app);
       const deployed = await deployShotsRuntime(config, {
         app: pair.app,
@@ -461,6 +511,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
           DATABASE_URL: dbManager.connectionUrl(spec.dbName, cloneBySide[side].password),
           ...spec.env,
           ...shotsEnv,
+          ...shotsPhoneSignInEnv(config, pair.app, phoneTestCode),
         },
         port: 3000,
         memory: docker.STAGING_MEMORY,
@@ -478,9 +529,12 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
     let availableFixtures = [];
     if (pair.app.slug === config.selfAppSlug) {
       const fixtureProfiles = [];
+      // One moment for every row written below, on both sides: read once
+      // here, never by either side's own clock (shots-fixtures.pairMoment).
+      const at = shotsFixtures.pairMoment();
       const fixtureInputs = Object.fromEntries(['base', 'head'].map((side) => [side, {
         databaseUrl: dbManager.connectionUrl(pair.sides[side].dbName, cloneBySide[side].password),
-        slug: pair.app.slug, runId: pair.runId, side,
+        slug: pair.app.slug, runId: pair.runId, side, at,
       }]));
       onProgress?.({ stage: 'seed_shots_identities' });
       const admins = await allSettledValues(['base', 'head'].map((side) =>
@@ -554,6 +608,9 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       availableFixtures,
       baseImageDigest: pair.sides.base.imageDigest,
       headImageDigest: pair.sides.head.imageDigest,
+      // For the shots agent's brief only (shots-orchestrator.js shotsBrief),
+      // which masks it out of everything the run stores.
+      phoneTestCode,
     };
   } catch (err) {
     await stopPair(config, pair);
@@ -568,7 +625,7 @@ async function cleanupPair(config, pair) {
   const stopped = await stopPair(config, pair).catch((err) => ({ errors: [err] }));
   errors.push(...(stopped.errors || []));
   if (pair.hostedFixtureRef) {
-    await applicationRuntime.remove(config, pair.hostedFixtureRef)
+    await removeRuntime(config, pair.hostedFixtureRef)
       .catch((err) => errors.push(err));
     pair.hostedFixtureDeployment = null;
   }
@@ -592,6 +649,7 @@ module.exports = {
   IMAGE_RECIPE,
   SHOTS_LABEL,
   SHOTS_SIDE_LABEL,
+  RESOURCE_CLEANUP_VERSION,
   ShotsEnvironmentError,
   allSettledValues,
   exactSha,
@@ -600,7 +658,11 @@ module.exports = {
   legacyRuntimeName,
   dockerImageName,
   shotsCapacityEnv,
+  shotsPhoneSignInEnv,
+  pairPhoneTestCode,
   hostedFixtureApp,
+  hostedFixtureRefs,
+  removeRuntime,
   hostedFixtureImageRef,
   ensureHostedFixtureRuntime,
   CLONE_ATTEMPTS,

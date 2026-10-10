@@ -50,6 +50,7 @@ function makeAppView({ fetchImpl, setTimeoutImpl = setTimeout, clearTimeoutImpl 
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, opened, sandbox };
@@ -284,4 +285,585 @@ test('the placeholder is the primary button, not a hand-written violet fill', ()
 
 test('an empty view renders nothing, so a swept host stays empty', () => {
   assert.equal(html(null), '');
+});
+
+// ── #15: the first version, being built from the description (D9) ──
+//
+// #4053 and #4043: the project's thumbnail with its build line one line under it,
+// and one line under it, for everyone. No step count ("Step 4 of 7: Build
+// it" read as an instruction), no plan with its questions (it is answered in
+// the chat with Homeroom bot), and no "Show the starter for now".
+
+const FIRST = { building: true, mine: true, step: 3, of: 7, line: 'planning', creator: 'ada', ready: false, question: false, conversationId: 42 };
+
+function firstVersionApp(over = {}, fv = {}) {
+  return { slug: 'plant-pal', name: 'Plant Pal', icon_emoji: '🪴', description: 'Know which plants need water today', status: 'running', url: 'https://plant-pal.example.test', ...over, first_version: { ...FIRST, ...fv } };
+}
+
+const THUMB = { name: 'Plant Pal', slug: 'plant-pal', emoji: '🪴', description: 'Know which plants need water today' };
+
+test('#4053: while it is being built, the thumbnail with its build line, and when it opens', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp());
+  assert.deepEqual(v, {
+    dot: null,
+    message: 'Plant Pal',
+    detail: null,
+    thumb: THUMB,
+    buildLine: 'planning',
+    lines: ['It opens here when it’s ready.'],
+    tourSays: true,
+    // The creator's way into their chat, under the card (owner, 8 Oct 2026).
+    action: { key: 'botChat', label: 'Open Homeroom bot', slug: 'plant-pal', conversationId: 42, quiet: true, underCard: true },
+  });
+  const out = html(v);
+  assert.match(out, /data-app-first-version="planning"/);
+  assert.match(out, /data-featured-card="ready"/, 'the description stands in while the sketch is read');
+  assert.match(out, />Plant Pal</);
+  assert.match(out, />Know which plants need water today</);
+  assert.match(out, /data-build-line="planning"[^>]*>.*Homeroom bot is planning it/);
+  assert.match(out, />It opens here when it’s ready\.</);
+  assert.doesNotMatch(out, /status-dot|Step \d of|being built from/, 'no dot, no step count, no title');
+  assert.doesNotMatch(out, /Start a new change|starter/i);
+  // One small button, under the card and its build line and ahead of the note.
+  assert.equal((out.match(/<button/g) || []).length, 1);
+  assert.match(out, /<\/span><\/span><\/div><\/div><\/div><button id="app-first-version-chat"[^>]*>Open Homeroom bot<\/button><p /);
+  assert.match(out, /rounded-full bg-white shadow-sm[^"]*text-violet-600[^"]*min-h-9/, 'secondary and small: raised pill, accent ink');
+  // Members get no way into somebody else's chat.
+  const member = html(view(makeAppView().AppView, firstVersionApp({}, { mine: false, conversationId: null })));
+  assert.doesNotMatch(member, /<button|Open Homeroom bot/);
+});
+
+test('#4053: the build line is one line under the card (8px below it), not a row inside it', () => {
+  const { AppView } = makeAppView();
+  const out = html(view(AppView, firstVersionApp()));
+  assert.match(out, /<div class="flex flex-col gap-2"><div data-featured-card="ready"/);
+  assert.match(out, /<\/p><\/div><\/div><div data-featured-card-line="" class="px-1"><span role="status" data-build-line="planning"/);
+});
+
+test('#4053: "It opens here when it’s ready." hides only while a tour card that says it is on the page', () => {
+  const { AppView } = makeAppView();
+  const out = html(view(AppView, firstVersionApp()));
+  // Hidden by a card that says where the app opens marking itself, not by the
+  // tour being up: a card that says something else leaves the line in place,
+  // so the screen reads right whichever of the tour and this lands first.
+  assert.match(out, /<p data-app-first-version-note="" class="max-w-sm pt-1 text-\[15px\] leading-5 \[body:has\(\[data-tour-says-where-it-opens\]\)_&amp;\]:hidden">It opens here when it’s ready\.<\/p>/);
+  // Outside the tour it stays; the ready view's wait lines never hide.
+  const ready = html(view(AppView, readyApp({}, { mustApprove: true })));
+  assert.match(ready, /<p class="max-w-sm pt-1 text-\[15px\] leading-5">Waiting for your approval\.<\/p>/);
+  assert.doesNotMatch(ready, /first-session-tour|data-app-first-version-note/);
+});
+
+test('#4053: the line is the server\'s for this reader; the plan and the bot\'s questions stay in the chat', () => {
+  const { AppView } = makeAppView();
+  const plan = {
+    bullets: ['A list of your plants'], questions: [{ question: 'How should it remind you?', answers: ['In the app', 'Phone alert'] }],
+    actionId: 7, messageId: 70, conversationId: 42,
+  };
+  const mine = view(AppView, firstVersionApp({}, { line: 'plan', plan }));
+  assert.equal(mine.buildLine, 'plan');
+  assert.deepEqual(mine.lines, ['It opens here when it’s ready.']);
+  // Its plan waits on them: "Review the plan", the primary button, opens their chat with Homeroom bot.
+  assert.deepEqual({ ...mine.action }, { key: 'botChat', label: 'Review the plan', slug: 'plant-pal', conversationId: 42, quiet: false, underCard: true });
+  assert.equal('plan' in mine, false, 'no plan card on the App tab');
+  const out = html(mine);
+  assert.match(out, /data-build-line="plan"[^>]*>.*Your plan is ready to review/);
+  assert.doesNotMatch(out, /data-bot-plan|Build it|Change something/);
+  assert.match(out, /<button[^>]* id="app-first-version-chat"[^>]*>Review the plan<\/button>/);
+  assert.doesNotMatch(out, /Open Homeroom bot/, 'one button, not two to the same chat');
+  // Anyone else, the same moment.
+  const theirs = view(AppView, firstVersionApp({}, { mine: false, conversationId: null, line: 'plan-member' }));
+  assert.equal(theirs.buildLine, 'plan-member');
+  assert.equal(theirs.action, null, 'members get neither button');
+  assert.match(html(theirs), /data-build-line="plan-member"[^>]*>.*Planning it/);
+  // A question waiting on its creator, and the build itself.
+  assert.match(html(view(AppView, firstVersionApp({}, { line: 'question', question: true }))), /Homeroom bot has a question for you/);
+  assert.match(html(view(AppView, firstVersionApp({}, { step: 4, line: 'building' }))), /data-build-line="building"[^>]*>.*Building it/);
+  assert.match(html(view(AppView, firstVersionApp({}, { step: 5, line: 'testing' }))), /Testing it/);
+  // A record from before the line was sent: planning, never a step count.
+  assert.equal(view(AppView, firstVersionApp({}, { line: undefined })).buildLine, 'planning');
+});
+
+test('#4391/#4393: while the first-session tour runs, no "Review the plan": the bot is working on it', () => {
+  const { AppView } = makeAppView();
+  const plan = {
+    bullets: ['A list of your plants'], questions: [], actionId: 7, messageId: 70, conversationId: 42,
+  };
+  const mine = view(AppView, firstVersionApp({}, { line: 'plan', plan }));
+  const m = mod();
+  m.setTourRunning(true);
+  try {
+    const held = m.heldForTour(mine, true);
+    assert.equal(held.buildLine, 'working');
+    assert.equal(held.action, null);
+    const out = html(mine);
+    assert.match(out, /data-build-line="working"[^>]*>.*animate-spin.*Homeroom bot is working on it/);
+    assert.doesNotMatch(out, /Review the plan|plan is ready|app-first-version-chat/);
+    // Only the plan waiting is held: the build's own line and its quiet way in stay.
+    const building = view(AppView, firstVersionApp({}, { step: 4, line: 'building' }));
+    assert.deepEqual(m.heldForTour(building, true), building);
+    assert.match(html(building), /data-build-line="building"/);
+  } finally {
+    m.setTourRunning(false);
+  }
+  // Once it ends, exactly as before.
+  assert.deepEqual(m.heldForTour(mine, false), mine);
+  const after = html(mine);
+  assert.match(after, /<button[^>]* id="app-first-version-chat"[^>]*>Review the plan<\/button>/);
+  assert.match(after, /data-build-line="plan"[^>]*>.*Your plan is ready to review/);
+});
+
+test('#4053: the thumbnail\'s one line is dapp.json\'s, and no project details still draw it, from its name', () => {
+  const { AppView } = makeAppView();
+  const fromManifest = view(AppView, firstVersionApp({ description: undefined, manifest_snapshot: { description: 'Water   the plants\n together' } }));
+  assert.equal(fromManifest.thumb.description, 'Water the plants together');
+  const v = view(AppView, firstVersionApp({ icon_emoji: null, description: '  ', manifest_snapshot: null }));
+  assert.deepEqual(v.thumb, { name: 'Plant Pal', slug: 'plant-pal', emoji: null, description: null });
+  assert.match(html(v), />Plant Pal</);
+});
+
+test('#15: a first version up for its vote says Ready to try, without a word on who approves it', () => {
+  const { AppView } = makeAppView();
+  // Up for its vote with no word on who approves it (a read that failed):
+  // ready to try, and its creator tries it from their chat, as before.
+  const ready = view(AppView, firstVersionApp({}, { step: 6, line: 'ready', ready: true }));
+  assert.equal(ready.buildLine, 'ready');
+  assert.deepEqual(ready.thumb, THUMB);
+  assert.equal(ready.dot, null, 'nothing is being built');
+  assert.deepEqual(ready.lines, ['Try it from your chat.']);
+  assert.equal(ready.action.key, 'botChat');
+  assert.match(html(ready), /data-build-line="ready"[^>]*>.*Ready to try/);
+  const theirs = view(AppView, firstVersionApp({}, { mine: false, step: 6, line: 'ready', ready: true }));
+  assert.deepEqual(theirs.lines, ['Waiting for approval.']);
+  assert.equal(theirs.action, null);
+});
+
+// ── Ready to try: what it waits on, for whoever reads it ──
+
+const DAY = 24 * 60 * 60 * 1000;
+const READY = { step: 6, line: 'ready', ready: true };
+const APPROVAL = { sessionId: 31, mustApprove: false, approved: false, waitingOn: [], more: 0, missing: 1, goesLiveAt: null, soon: false };
+const readyApp = (fv = {}, approval = {}) => firstVersionApp({}, { ...READY, ...fv, approval: { ...APPROVAL, ...approval } });
+
+test('ready: a member who still has to approve it gets Try it and See the change, under its thumbnail', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, readyApp({ mine: false, conversationId: null }, { mustApprove: true }));
+  assert.deepEqual(v, {
+    dot: null,
+    message: 'Plant Pal',
+    detail: null,
+    thumb: THUMB,
+    buildLine: 'ready',
+    lines: ['Waiting for your approval.'],
+    action: { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 },
+    alt: { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 },
+  });
+  const out = html(v);
+  assert.doesNotMatch(out, /status-dot/);
+  // Owner, 7 Oct (audit): "Ready to try" stays beside Try it. With the title
+  // gone it is the one thing on the screen that says it is ready.
+  assert.match(out, /data-build-line="ready"[^>]*>.*Ready to try/);
+  assert.doesNotMatch(out, /being built|is ready to try/);
+  assert.match(out, /data-featured-card="ready"/);
+  assert.match(out, />Waiting for your approval\.</);
+  assert.match(out, /<button id="app-first-version-try" class="rounded-lg bg-violet-600[^"]*mt-3">Try it<\/button>/);
+  assert.match(out, /<button id="app-first-version-change" class="rounded-lg bg-zinc-100[^"]*">See the change<\/button>/);
+  assert.doesNotMatch(out, /app-first-version-starter|Show the starter/);
+  assert.ok(out.indexOf('app-first-version-try') < out.indexOf('app-first-version-change'), 'in that order');
+  // Its creator, when their own Yes is still needed, reads it the same way.
+  const maker = view(AppView, readyApp({}, { mustApprove: true }));
+  assert.equal(maker.lines[0], 'Waiting for your approval.');
+  assert.equal(maker.action.key, 'tryChange');
+  assert.doesNotMatch(html(maker), /app-first-version-chat/);
+});
+
+test('ready: once they approved it, whom it waits for and the day it goes live anyway', () => {
+  const { AppView } = makeAppView();
+  const at = new Date(Date.now() + 3 * DAY);
+  const v = view(AppView, readyApp({}, { approved: true, waitingOn: ['sam_t1004'], goesLiveAt: at.toISOString() }));
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(at);
+  assert.deepEqual(v.lines, [`You approved it. Waiting for @sam_t1004, or it goes live on ${weekday} if nobody objects.`]);
+  assert.deepEqual(v.action, { key: 'tryChange', label: 'Try it', slug: 'plant-pal', sessionId: 31 });
+  assert.equal(v.alt.key, 'seeChange');
+  assert.equal(v.buildLine, 'ready', '"Ready to try" stays beside Try it');
+  // No clock runs (an "at least N" project): only whom it waits for.
+  const noClock = view(AppView, readyApp({}, { approved: true, waitingOn: ['sam_t1004'] }));
+  assert.equal(noClock.lines[0], 'You approved it. Waiting for @sam_t1004.');
+});
+
+test('ready: a member whose Yes does not count is told it waits for approval, and where the change is', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, readyApp({ mine: false, conversationId: null }, { waitingOn: ['sam_t1004'], goesLiveAt: new Date(Date.now() + DAY).toISOString() }));
+  assert.deepEqual(v.lines, ['Waiting for approval.']);
+  assert.deepEqual(v.action, { key: 'seeChange', label: 'See the change', slug: 'plant-pal', sessionId: 31 });
+  assert.equal(v.alt, undefined);
+  assert.equal(v.buildLine, 'ready', 'no Try it here, so the thumbnail says Ready to try');
+  const out = html(v);
+  assert.match(out, /data-build-line="ready"[^>]*>.*Ready to try/);
+  assert.match(out, /<button id="app-first-version-change" class="rounded-lg bg-violet-600[^"]*mt-3">See the change<\/button>/);
+  assert.doesNotMatch(out, /app-first-version-try|app-first-version-starter/);
+});
+
+test('5 Oct: "Waiting for your approval." is never said to a reader whose own Yes came after the answer', () => {
+  // priya_t1006 had approved Page Turners' first version and was still told
+  // it waited for her approval. The server words it from her own Yes
+  // (firstVersionApproval: mustApprove only while it is not in); an answer
+  // read before that Yes still says it is needed.
+  const { AppView } = makeAppView();
+  const SECOND = 1000;
+  const before = readyApp({ mine: false, conversationId: null }, { mustApprove: true, waitingOn: ['sam_t1004'], missing: 2 });
+  AppView._noteAppRecordRead(before, null, Date.now() - 5 * SECOND);
+  assert.equal(view(AppView, before).lines[0], 'Waiting for your approval.', 'the server\'s word, until she votes');
+
+  AppView.appData = before;
+  AppView._noteOwnVote(31, 'yes');
+  const v = view(AppView, before);
+  assert.equal(v.lines[0], 'You approved it. Waiting for @sam_t1004.', 'whom it waits on instead');
+  assert.deepEqual([v.action.key, v.alt.key], ['tryChange', 'seeChange']);
+  assert.equal(AppView._firstVersionTrusted(before), false, 'and the screen reads the server again before painting it');
+
+  // Hers was the last Yes it needed: nobody to wait for, and no day promised
+  // for a clock the next read will name.
+  const last = readyApp({}, { mustApprove: true, missing: 1, goesLiveAt: new Date(Date.now() + 2 * DAY).toISOString() });
+  AppView._noteAppRecordRead(last, null, Date.now() - 5 * SECOND);
+  assert.equal(view(AppView, last).lines[0], 'You approved it.');
+
+  // The worker's copy is older than her vote, whenever it arrived.
+  const copy = readyApp({}, { mustApprove: true, waitingOn: ['sam_t1004'], missing: 2 });
+  AppView._noteAppRecordRead(copy, { headers: { get: (n) => (n === 'sw-cached-at' ? '1' : null) } }, Date.now() + 5 * SECOND);
+  assert.equal(view(AppView, copy).lines[0], 'You approved it. Waiting for @sam_t1004.');
+
+  // An answer asked for after her vote is the server's word as it stands (a
+  // revised change asks for her Yes again).
+  const after = readyApp({}, { mustApprove: true });
+  AppView._noteAppRecordRead(after, null, Date.now() + 5 * SECOND);
+  assert.equal(view(AppView, after).lines[0], 'Waiting for your approval.');
+
+  // A No, or a Yes on some other change, changes nothing.
+  const { AppView: other } = makeAppView();
+  const asked = readyApp({}, { mustApprove: true });
+  other._noteAppRecordRead(asked, null, Date.now() - 5 * SECOND);
+  other._noteOwnVote(31, 'no');
+  other._noteOwnVote(32, 'yes');
+  assert.equal(view(other, asked).lines[0], 'Waiting for your approval.');
+});
+
+test('ready: the wait line, worded for each state of the gate, in the reader\'s week', () => {
+  const { AppView } = makeAppView();
+  // A Monday at noon, local time, so the days below are the reader's own.
+  const now = new Date(2026, 9, 5, 12, 0, 0);
+  const line = (a) => AppView._firstVersionWaitLine({ ...APPROVAL, approved: true, ...a }, now, 'en-US');
+  const at = (days, hour = 18) => new Date(2026, 9, 5 + days, hour, 0, 0).toISOString();
+  assert.equal(line({ waitingOn: ['sam'], goesLiveAt: at(0) }), 'You approved it. Waiting for @sam, or it goes live later today if nobody objects.');
+  assert.equal(line({ waitingOn: ['sam'], goesLiveAt: at(1, 9) }), 'You approved it. Waiting for @sam, or it goes live tomorrow if nobody objects.');
+  assert.equal(line({ waitingOn: ['sam'], goesLiveAt: at(2) }), 'You approved it. Waiting for @sam, or it goes live on Wednesday if nobody objects.');
+  assert.equal(line({ waitingOn: ['sam'], goesLiveAt: at(7) }), 'You approved it. Waiting for @sam, or it goes live on October 12 if nobody objects.');
+  // Named only when they are exactly who is needed; else how many more.
+  assert.equal(line({ waitingOn: ['sam', 'ada'], missing: 2 }), 'You approved it. Waiting for @sam and @ada.');
+  assert.equal(line({ waitingOn: ['sam', 'ada', 'kim'], more: 2, missing: 5 }), 'You approved it. Waiting for @sam, @ada, @kim and 2 more.');
+  assert.equal(line({ waitingOn: ['sam', 'ada'], missing: 1 }), 'You approved it. Waiting for one more person to approve.');
+  assert.equal(line({ waitingOn: [], missing: 2 }), 'You approved it. Waiting for 2 more people to approve.');
+  // Nothing more needed, or only its clock.
+  assert.equal(line({ soon: true, missing: 0 }), 'You approved it. It goes live in a minute or two.');
+  assert.equal(line({ missing: 0, goesLiveAt: at(1) }), 'You approved it. It goes live tomorrow if nobody objects.');
+  assert.equal(line({ missing: 0 }), 'You approved it.');
+  // Somebody whose Yes is not asked for: the same facts, without "You approved it."
+  const theirs = (a) => AppView._firstVersionWaitLine({ ...APPROVAL, ...a }, now, 'en-US');
+  assert.equal(theirs({ waitingOn: ['sam'], goesLiveAt: at(2) }), 'Waiting for approval.');
+  assert.equal(theirs({ soon: true, missing: 0 }), 'It goes live in a minute or two.');
+  assert.equal(theirs({ missing: 0, goesLiveAt: at(2) }), 'It goes live on Wednesday if nobody objects.');
+  assert.equal(AppView._liveDay('not a date', now, 'en-US'), null);
+  // The day is named, and the message it fills says "on": a day already past is its date.
+  const past = AppView._liveDay(at(-1), now, 'en-US');
+  assert.equal(past.kind, 'date', 'a day already past is its date');
+  assert.equal(past.day, 'October 4');
+  assert.equal(require('./lib/platform-i18n').message('changes:firstVersion.wait.liveDate', { date: past.day }), 'It goes live on October 4 if nobody objects.');
+});
+
+test('ready: Try it opens the change\'s preview on this app; See the change opens its page', () => {
+  const { AppView, sandbox } = makeAppView();
+  const staged = [];
+  AppView.ensureStaging = (...args) => { staged.push(args); };
+  sandbox.location = { hash: '' };
+  AppView.appData = readyApp();
+  AppView.tryFirstVersion('plant-pal', 31);
+  assert.equal(staged.length, 1);
+  assert.equal(staged[0][0], 31);
+  assert.equal(staged[0][1], null);
+  assert.equal(staged[0][2], null);
+  assert.deepEqual({ ...staged[0][3] }, {}, 'the app on screen, as its viewer may see it');
+  assert.equal(sandbox.location.hash, '');
+  AppView.openFirstVersionChange('plant-pal', 31);
+  assert.equal(sandbox.location.hash, '#app/plant-pal/dev/proposals/31');
+  // Off its own screen, Try it goes to the change page instead.
+  sandbox.location.hash = '';
+  AppView.appData = { slug: 'other' };
+  AppView.tryFirstVersion('plant-pal', 31);
+  assert.equal(staged.length, 1);
+  assert.equal(sandbox.location.hash, '#app/plant-pal/dev/proposals/31');
+  // A change with no id opens nothing.
+  sandbox.location.hash = '';
+  AppView.tryFirstVersion('plant-pal', null);
+  AppView.openFirstVersionChange('plant-pal', 0);
+  assert.equal(sandbox.location.hash, '');
+  // The card hands each opener the change's id.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'app-frame', 'app-status.tsx'), 'utf8');
+  assert.match(src, /tryChange: \{ id: 'app-first-version-try', opener: 'tryFirstVersion' \}/);
+  assert.match(src, /seeChange: \{ id: 'app-first-version-change', opener: 'openFirstVersionChange' \}/);
+  assert.match(src, /if \(action\.key === 'tryChange' \|\| action\.key === 'seeChange'\) call\(opener, action\.slug, action\.sessionId \?\? null\);/);
+});
+
+test('#15: while the project is still being set up, the same thumbnail: Homeroom bot is planning it', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({ status: 'creating', url: null }, { step: 1, line: 'planning' }));
+  assert.equal(v.buildLine, 'planning');
+  assert.deepEqual(v.lines, ['It opens here when it’s ready.']);
+  assert.equal(v.action.label, 'Open Homeroom bot');
+  // Not building any more (or never was): the ordinary states, unchanged.
+  assert.deepEqual(view(AppView, { status: 'creating', slug: 'plant-pal', first_version: null }),
+    { dot: 'creating', message: 'App is spinning up...', detail: null, action: null });
+  const failed = view(AppView, { status: 'error', slug: 'plant-pal', first_version: { ...FIRST } });
+  assert.equal(failed.message, 'App failed to start', 'a failed project is the failure, whatever the bot was doing');
+});
+
+test('#15: the chat button opens the DM by its id; nothing frames the starter while it is built', () => {
+  const { AppView, sandbox } = makeAppView();
+  const opened = [];
+  sandbox.UsernodeReact = { messages: { open: (id) => opened.push(id) } };
+  AppView.openBotChat('plant-pal', 42);
+  AppView.openBotChat('plant-pal', null);
+  assert.deepEqual(opened, [42, null], 'no id opens Messages, where the bot DM is');
+  sandbox.UsernodeReact = null;
+  sandbox.location = { hash: '' };
+  AppView.openBotChat('plant-pal', 7);
+  assert.equal(sandbox.location.hash, '#messages/7', 'without the bundle, the address does it');
+
+  // #4053: "Show the starter for now" is gone, so a first version on its way
+  // is pending for the whole visit, until the server says it is not.
+  const app = firstVersionApp();
+  assert.equal(AppView._firstVersionPending(app), true);
+  assert.equal(AppView.showStarter, undefined);
+  assert.equal(AppView.hideStarter, undefined);
+  assert.equal(AppView._firstVersionPending({ ...app, first_version: null }), false);
+});
+
+test('#15: the screen re-asks the server while it is up, past the service worker\'s cache', async () => {
+  const calls = [];
+  let answer = firstVersionApp({}, { step: 4, line: 'building' });
+  const { AppView, sandbox } = makeAppView({
+    fetchImpl: async (...args) => { calls.push(args); return { ok: true, json: async () => ({ app: answer }) }; },
+    setTimeoutImpl: () => 1,
+    clearTimeoutImpl: () => {},
+  });
+  const app = firstVersionApp();
+  sandbox.App.currentApp = 'plant-pal';
+  sandbox.App.currentTab = 'app';
+  AppView.appData = app;
+  let renders = 0;
+  const tokens = [];
+  AppView.renderAppTab = () => { renders += 1; };
+  AppView.refreshToken = async (slug) => { tokens.push(slug); };
+
+  AppView._watchFirstVersion(app);
+  assert.equal(AppView._firstVersionTimer, 1, 'one recheck armed');
+  AppView._watchFirstVersion(app);
+  assert.equal(AppView._firstVersionRecord, app, 'repeated paints keep the one timer');
+
+  await AppView._recheckFirstVersion(app);
+  assert.equal(calls[0][0], '/api/apps/plant-pal?status_recheck=1&manifest=summary');
+  assert.equal(calls[0][1].cache, 'no-store');
+  assert.equal(AppView.appData, answer, 'the newer record replaces the old one');
+  assert.equal(renders, 1, 'a new step is painted');
+  assert.deepEqual(tokens, [], 'still building: no frame, so no token yet');
+
+  // Built: the frame mounts, with a fresh token first.
+  answer = { ...firstVersionApp(), first_version: null };
+  const building = AppView.appData;
+  await AppView._recheckFirstVersion(building);
+  assert.deepEqual(tokens, ['plant-pal']);
+  assert.equal(renders, 2);
+
+  // Gone from the page: nothing is fetched, nothing is painted.
+  const before = calls.length;
+  const again = firstVersionApp();
+  AppView.appData = again;
+  sandbox.App.currentTab = 'dev';
+  await AppView._recheckFirstVersion(again);
+  assert.equal(calls.length, before);
+  AppView._stopFirstVersionWatch();
+  assert.equal(AppView._firstVersionTimer, null);
+});
+
+// #4396: WHILE YOU WAIT. A member who is not its maker, while the first
+// version is not ready, gets one card under the thumbnail: Say hi to the
+// group, See the plan (when there is one) and Suggest something.
+
+const MEMBER = { mine: false, conversationId: null, member: true, creator: 'ada' };
+const MEMBER_PLAN = { bullets: ['A list of your plants', 'Water reminders', 'A photo per plant'], questions: [] };
+
+test('#4396: a member who is not the maker waits with three things to do', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, step: 4, line: 'building', makerNote: 'Help me name the plants!', memberPlan: MEMBER_PLAN }));
+  assert.deepEqual(v.waiting, {
+    slug: 'plant-pal', name: 'Plant Pal', maker: 'ada', makerNote: 'Help me name the plants!', plan: MEMBER_PLAN,
+  });
+  assert.equal(v.action, null, 'no way into the maker\'s chat');
+  assert.deepEqual(v.lines, ['It opens here when it’s ready.'], 'the line stays, and no promise to tell them');
+  const out = html(v);
+  assert.match(out, /data-build-line="building"[^>]*>.*Building it · usually 10 to 25 min/);
+  assert.match(out, /data-app-first-version-waiting=""/);
+  assert.match(out, /<h2 class="[^"]*uppercase[^"]*">While you wait<\/h2>/);
+  assert.match(out, /data-waiting-row="discussion"[\s\S]*Say hi to the group[\s\S]*ada: “Help me name the plants!”/);
+  assert.match(out, /data-waiting-row="plan"[\s\S]*See the plan[\s\S]*3 things it will do/);
+  assert.match(out, /data-waiting-row="suggest"[\s\S]*Suggest something[\s\S]*Homeroom bot starts on it once it’s live/);
+  assert.equal((out.match(/<button/g) || []).length, 3);
+  // The card, then the line under it.
+  assert.ok(out.indexOf('While you wait') < out.indexOf('It opens here when it’s ready.'));
+  assert.doesNotMatch(out, /let you know|notify/i);
+});
+
+test('#4396: no note says Introduce yourself; no plan, no plan row; planning has no time note', () => {
+  const { AppView } = makeAppView();
+  const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, line: 'plan-member', makerNote: null, memberPlan: null })));
+  assert.match(out, /Say hi to the group[\s\S]*Introduce yourself/);
+  assert.doesNotMatch(out, /See the plan|data-waiting-row="plan"/);
+  assert.doesNotMatch(out, /usually 10 to 25 min/);
+  assert.equal((out.match(/<button/g) || []).length, 2);
+});
+
+test('#4396: the maker, a reader who is not a member, and a ready version get no card', () => {
+  const { AppView } = makeAppView();
+  assert.equal('waiting' in view(AppView, firstVersionApp({}, { member: true })), false, 'the maker');
+  assert.equal('waiting' in view(AppView, firstVersionApp({}, { ...MEMBER, member: false })), false, 'not a member');
+  const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, member: false })));
+  assert.doesNotMatch(out, /While you wait|<button/);
+  assert.doesNotMatch(out, /usually 10 to 25 min/);
+});
+
+// #4387: what a member watches while it is built. The thumbnail's band shows
+// the first look, then its real screens, and the build line says what it
+// is adding. Pictures only, from the members' route; any missing piece is
+// the thumbnail as it was.
+
+const LOOK = { kind: 'first_look', count: 1, at: '2026-10-08T10:00:00.000Z', v: '1791453600000' };
+
+test('#4387: building, the first look in a phone frame and the caption as the line\'s note', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', caption: 'Adding the tier rows', screens: LOOK }));
+  assert.equal(v.buildNote, 'Adding the tier rows');
+  assert.deepEqual(v.screens, {
+    kind: 'first_look', at: LOOK.at, images: ['/api/apps/plant-pal/first-version/screens/first_look/0?v=1791453600000'],
+  });
+  const out = html(v);
+  assert.match(out, /data-first-version-screens="first_look"/);
+  assert.match(out, /First look · drawn from the plan/);
+  assert.match(out, /<img src="\/api\/apps\/plant-pal\/first-version\/screens\/first_look\/0\?v=1791453600000" alt="A first look at Plant Pal, drawn from the plan"/);
+  assert.match(out, /h-\[340px\]/, 'the band is taller for it');
+  assert.match(out, /data-build-line="building"[^>]*>.*Building it · Adding the tier rows/, 'the caption replaces the time note');
+  assert.doesNotMatch(out, /usually 10 to 25 min/);
+  assert.equal((out.match(/role="status"/g) || []).length, 1, 'one build line');
+  assert.doesNotMatch(out, /data-first-version-dots/, 'one picture, no dots');
+});
+
+test('#4387: the maker gets the same, and keeps their way into the chat', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { mine: true, line: 'building', caption: 'Adding the tier rows', screens: LOOK }));
+  assert.equal(v.action.label, 'Open Homeroom bot');
+  const out = html(v);
+  assert.match(out, /First look · drawn from the plan/);
+  assert.match(out, /Building it · Adding the tier rows/);
+});
+
+test('#4387: from Testing it, up to three real screens with page dots; they stay at Ready to try', () => {
+  const { AppView } = makeAppView();
+  const real = { kind: 'real', count: 3, at: new Date(Date.now() - 4 * 60000).toISOString(), v: '7' };
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, step: 5, line: 'testing', screens: real }));
+  assert.equal(v.screens.images.length, 3);
+  assert.equal('buildNote' in v, false);
+  const out = html(v);
+  assert.match(out, /data-first-version-screens="real"/);
+  assert.match(out, /Real screen · 4 min ago/);
+  assert.equal((out.match(/aria-label="Screen \d of 3"/g) || []).length, 3);
+  assert.match(out, /alt="Plant Pal, real screen 2 of 3"/);
+  const ready = view(AppView, firstVersionApp({}, {
+    ...MEMBER, ready: true, line: 'ready', screens: real,
+    approval: { sessionId: 31, mustApprove: true, approved: false, waitingOn: [], more: 0, missing: 1, goesLiveAt: null, soon: false },
+  }));
+  const readyOut = html(ready);
+  assert.match(readyOut, /data-first-version-screens="real"/);
+  assert.match(readyOut, /Waiting for your approval\./);
+  assert.match(readyOut, /Try it/);
+});
+
+test('#4387: no screens, unknown kinds and a caption off the build line leave the thumbnail as it was', () => {
+  const { AppView } = makeAppView();
+  for (const screens of [undefined, null, { kind: 'html', count: 1 }, { kind: 'real', count: 0 }]) {
+    const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', screens }));
+    assert.equal('screens' in v, false, JSON.stringify(screens));
+    assert.doesNotMatch(html(v), /data-first-version-screens|h-\[340px\]/);
+  }
+  // A caption the server sent for another line is not drawn on it.
+  const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, line: 'testing', caption: 'Adding the tier rows' })));
+  assert.doesNotMatch(out, /Adding the tier rows/);
+  // A real project never takes pictures from the record itself, only from its members' route.
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', screens: { kind: 'first_look', count: 0, images: ['data:image/png;base64,AAAA'] } }));
+  assert.equal('screens' in v, false);
+});
+
+test('#4387: the pill says how long ago the real screens were taken', () => {
+  const m = loadTsx('frontend/src/features/app-frame/first-version-screens.tsx');
+  const now = Date.parse('2026-10-08T12:00:00Z');
+  assert.equal(m.screensPill({ kind: 'first_look', at: null }, now), 'First look · drawn from the plan');
+  assert.equal(m.realScreenPill('2026-10-08T11:56:00Z', now), 'Real screen · 4 min ago');
+  assert.equal(m.realScreenPill('2026-10-08T11:59:50Z', now), 'Real screen · 1 min ago');
+  assert.equal(m.realScreenPill('2026-10-08T09:30:00Z', now), 'Real screen · 2 h ago');
+  assert.equal(m.realScreenPill(null, now), 'Real screen');
+});
+
+// #4449: Live, the app itself taking shape, beside the first look. While it
+// is built, a member's band gets a "Preview | Live" switch (Preview first,
+// and exactly #4387's first look); at Testing it the switch goes.
+
+test('#4449: building with Live offered, the switch over the band with Preview chosen', () => {
+  const { AppView } = makeAppView();
+  const v = view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', caption: 'Adding the tier rows', screens: LOOK, live: true }));
+  assert.deepEqual(v.live, { slug: 'plant-pal', userKey: '1' });
+  const out = html(v);
+  assert.match(out, /data-first-version-live-switch="preview"/);
+  assert.match(out, /<button type="button" aria-pressed="true" data-live-choice="preview"[^>]*>Preview<\/button>/);
+  assert.match(out, /<button type="button" aria-pressed="false" data-live-choice="live"[^>]*>Live<\/button>/);
+  // Preview is exactly the first look, and the build line is unchanged.
+  assert.match(out, /First look · drawn from the plan/);
+  assert.doesNotMatch(out, /data-first-version-live=/, 'the player is not loaded');
+  assert.match(out, /Building it · Adding the tier rows/);
+  assert.equal((out.match(/role="status"/g) || []).length, 1, 'one build line');
+});
+
+test('#4449: no switch without Live, off the build line, or once it is tested', () => {
+  const { AppView } = makeAppView();
+  for (const fv of [
+    { ...MEMBER, line: 'building', screens: LOOK },
+    { ...MEMBER, line: 'testing', screens: LOOK, live: true },
+    { ...MEMBER, line: 'planning', live: true },
+    { ...MEMBER, line: 'building', live: 'yes' },
+  ]) {
+    const v = view(AppView, firstVersionApp({}, fv));
+    assert.equal('live' in v, false, JSON.stringify(fv));
+    assert.doesNotMatch(html(v), /data-first-version-live-switch/);
+  }
+  // Without a first look the switch still shows, on the icon's band.
+  const out = html(view(AppView, firstVersionApp({}, { ...MEMBER, line: 'building', live: true })));
+  assert.match(out, /data-first-version-live-switch="preview"/);
+  assert.doesNotMatch(out, /h-\[340px\]/);
+});
+
+test('#4449: the screenshot state plays a made-up recording and fetches nothing', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.match(src, /'first-version-live': 'live'/);
+  assert.match(SRC, /\.\.\.\(variant === 'live' \? \{ live: true \} : \{\}\)/);
+  assert.match(SRC, /\.\.\.\(appData\.shot \? \{ sample: true \} : \{\}\)/);
+  const band = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'app-frame', 'live-band.tsx'), 'utf8');
+  assert.match(band, /if \(live\.sample\) \{[\s\S]*sampleRecording\(\)/);
+  assert.match(band, /'Sample live stream'/);
+  assert.match(band, /'Not a real app'/);
 });

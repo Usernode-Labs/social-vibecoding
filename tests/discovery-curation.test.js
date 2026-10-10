@@ -109,8 +109,62 @@ test('staging preview fixtures exercise real curation logic without certifying r
   const { catalogFixtures: fixture } = require('../src/services/staging-apps');
   assert.ok(fixture().filter((a) => a.featured).every((a) => a.directory.tier === 'ready'));
   const samples = fixture(true).filter((a) => a.slug.startsWith('directory-sample-'));
-  assert.deepEqual(samples.map((a) => a.directory.tier), ['ready', 'unreviewed', 'more', 'more', 'more']);
+  assert.deepEqual(samples.map((a) => a.directory.tier), ['ready', 'unreviewed', 'more', 'more', 'more', 'unreviewed']);
+  const updated = samples.find((a) => a.slug === 'directory-sample-updated');
+  assert.equal(updated.directory.state, 'outdated', 'Preview has an app reviewed at an older commit (#3911)');
+  assert.equal(updated.directory.label, 'Needs re-review', 'which the API still names in the admin vocabulary');
+  // The stored row has to be outdated too: Preview serves the seeded row, not
+  // this in-memory copy, so the seed reviews it at a different commit.
+  const seed = fs.readFileSync(path.join(__dirname, '../src/services/staging-apps.js'), 'utf8');
+  assert.match(seed, /directory_reviewed_sha === fixture\.main_sha \? sampleSha : priorSha/);
   assert.match(fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8'), /req.query.demo === '1'/);
+});
+
+test('#3911: Discover never says "Needs re-review"; the app reads as not yet reviewed, where it already sat', () => {
+  const { rowDirectoryLabel } = loadTsx('frontend/src/features/apps/browse-list.tsx');
+  const outdated = row('updated', { main_sha: 'b'.repeat(40) });
+  assert.equal(outdated.app.directory.label, 'Needs re-review', 'the API label is unchanged');
+  assert.equal(rowDirectoryLabel(outdated.app.directory), 'Not yet reviewed');
+  for (const r of rows) assert.equal(rowDirectoryLabel(r.app.directory), r.app.directory.label, `${r.slug} keeps its label`);
+  assert.equal(rowDirectoryLabel(null), null);
+  assert.equal(rowDirectoryLabel({ state: 'outdated' }), null, 'no label in, no label out');
+
+  const withOutdated = [rows[0], rows[1], outdated, rows[2], rows[3], rows[4]];
+  // One row's markup: from its root (the only data-slug followed by the
+  // directory state; the Join button carries the slug alone) to the next root.
+  const labelOf = (html, slug) => {
+    const root = `data-slug="${slug}" data-directory-state=`;
+    const start = html.indexOf(root);
+    assert.ok(start >= 0, `${slug} is listed`);
+    const next = html.indexOf(' data-directory-state=', start + root.length);
+    return html.slice(start, next < 0 ? undefined : next);
+  };
+
+  // Recommended: same tier, same place, under "Not yet reviewed", and the
+  // heading's own rule drops the label just as it does for an unreviewed app.
+  const grouped = render({ rows: withOutdated });
+  assert.doesNotMatch(grouped, /re-review/i);
+  const heading = grouped.indexOf('>Not yet reviewed</h2>');
+  assert.ok(heading >= 0 && heading < grouped.indexOf('data-slug="unreviewed"')
+    && grouped.indexOf('data-slug="unreviewed"') < grouped.indexOf('data-slug="updated"'), 'listing and order unchanged');
+  assert.match(labelOf(grouped, 'updated'), /data-directory-state="outdated"/);
+  assert.doesNotMatch(labelOf(grouped, 'updated'), /Not yet reviewed/, 'the heading already says it');
+
+  // A metric sort and a search have no heading, so the row says it itself,
+  // the same words as a never-reviewed app.
+  for (const html of [render({ rows: withOutdated, grouped: false }), render({ rows: withOutdated, curated: false })]) {
+    assert.doesNotMatch(html, /re-review/i);
+    assert.match(labelOf(html, 'updated'), /Not yet reviewed/);
+    assert.match(labelOf(html, 'unreviewed'), /Not yet reviewed/);
+  }
+});
+
+test('#3911: the admin console keeps "Needs re-review"', () => {
+  const { DirectoryReview } = loadTsx('frontend/src/features/admin/admin-featured-apps.tsx');
+  const outdated = { slug: 'updated', name: 'Updated', ...app({ main_sha: 'b'.repeat(40) }) };
+  outdated.directory = curation.describe(outdated);
+  const html = renderToHtml(createElement(DirectoryReview, { apps: [outdated], onSaved: () => {} }));
+  assert.match(html, /Updated: Needs re-review/);
 });
 
 test('admin review explains the manual verification and exposes existing review states', () => {

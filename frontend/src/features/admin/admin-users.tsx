@@ -77,15 +77,22 @@ interface User {
   apps_created?: number | null;
   // All-time programme points, the same total the global leaderboard shows.
   total_points?: number | null;
+  // #3938: whether this account is OUT of the podium (the leaderboard
+  // ranking), the same `users.exclude_podium` flag the details view and the
+  // Programme users card edit. Undefined reads as ranked, the column default.
+  exclude_podium?: boolean;
   daily_limit_cents?: number | null;
   weekly_limit_cents?: number | null;
   usernode_pubkey?: string | null;
   social_verified?: boolean;
   // #838: the identity tier the weekly cap follows, and its three proofs.
-  identity_tier?: 'unverified' | 'social' | 'zkpassport';
+  identity_tier?: 'unverified' | 'phone' | 'social' | 'zkpassport';
   has_github?: boolean;
   has_x?: boolean;
   has_zkpassport?: boolean;
+  has_phone?: boolean;
+  /** Let in before the verified-identity rule was switched on: the phone tier without a phone. */
+  identity_exempt?: boolean;
   openrouter_key_id?: string | null;
   openrouter_key_status?: string | null;
   openrouter_key_hash?: string | null;
@@ -131,11 +138,17 @@ const SMALL_INPUT = 'rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200
 // this account is on and, for the unverified tier, which proofs it holds.
 const TIER_LABEL: Record<string, string> = {
   unverified: 'No verified identity',
+  phone: 'Phone verified',
   social: 'GitHub and X verified',
   zkpassport: 'zkPassport verified',
 };
+// The phone tier without a phone: let in before the verified-identity rule.
+function tierLabel(user: User): string {
+  if (user.identity_tier === 'phone' && !user.has_phone) return 'Let in before the identity rule';
+  return TIER_LABEL[user.identity_tier || 'unverified'];
+}
 function tierDetail(user: User): string {
-  if (user.identity_tier === 'zkpassport' || user.identity_tier === 'social') return '';
+  if (user.identity_tier && user.identity_tier !== 'unverified') return '';
   if (user.has_github && !user.has_x) return 'GitHub only';
   if (user.has_x && !user.has_github) return 'X only';
   return '';
@@ -310,7 +323,7 @@ function Kebab({ user, open, onToggle, onReload }: {
 
 const dollars = (cents?: number | string | null) => (parseFloat(String(cents || 0)) / 100).toFixed(2);
 const roleOf = (u: User) => (!u.is_admin ? 'user' : (u.admin_readonly ? 'view_admin' : 'admin'));
-const tierText = (u: User) => `${TIER_LABEL[u.identity_tier || 'unverified']}${tierDetail(u) ? ` (${tierDetail(u)})` : ''}`;
+const tierText = (u: User) => `${tierLabel(u)}${tierDetail(u) ? ` (${tierDetail(u)})` : ''}`;
 const KEY_BADGE: Record<string, string> = {
   active: 'Key active', disabled: 'Key blocked', needs_review: 'Key needs review',
   provisioning: 'Key provisioning', deleted: 'Key deleted',
@@ -352,8 +365,56 @@ function AppSlotRequest({ user, canWrite, onReload }: { user: User; canWrite: bo
 
 // Fixed columns from md up, so the same value sits in the same place on
 // every row; stacked below md.
-const ROW_GRID = 'p-4 flex flex-col gap-3 md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:items-start md:gap-4';
+const ROW_GRID = 'p-4 flex flex-col gap-3 md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:items-start md:gap-4';
 const CELL_LABEL = 'md:hidden text-xs text-zinc-500 dark:text-zinc-400';
+
+/**
+ * The Podium column (#3938): says yes or no per user, with the switch inline.
+ * "Podium yes" is the normal state (ranked on the public board), so it is
+ * plain text; "No" is the exceptional one and wears the amber the Programme
+ * users card and the details view give the same flag (#1558). The switch is
+ * the same v4 toggle route those two already call; the row reloads the list
+ * afterwards like every other edit in this section. A view-only admin reads
+ * the yes or no and gets no switch, the same gating the row's other controls
+ * follow.
+ */
+function PodiumCell({ user, canWrite, onReload }: { user: User; canWrite: boolean; onReload: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const podium = !user.exclude_podium;
+  const toggle = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const { ok, data } = await send('PATCH', `/api/v4/admin/users/${encodeURIComponent(user.id)}/toggle-exclude-podium`);
+      if (ok && data?.success) { onReload(); return; }
+      console_()._alert((data && data.error) || 'Update failed.');
+    } catch (err: any) {
+      console_()._alert(`Update failed: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="text-sm" data-user-podium-cell={user.id}>
+      <div className={CELL_LABEL}>Podium</div>
+      <span className="flex flex-wrap items-center gap-2" data-user-podium={user.id} data-podium={podium ? 'yes' : 'no'}>
+        {podium
+          ? <span className="text-zinc-700 dark:text-zinc-300">Yes</span>
+          : <span className="text-amber-800 dark:text-amber-400">No</span>}
+        {canWrite ? (
+          <button type="button" className="admin-user-podium-toggle text-xs font-medium text-violet-700 hover:underline dark:text-violet-400 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={busy}
+            title={podium
+              ? 'Exclude from ranking: they keep their points and stay listed, but the board shows a dash instead of a rank, tags them non-podium, and leaves them out of the top three.'
+              : 'Include in ranking: a numbered position on the public leaderboard again.'}
+            onClick={toggle}>
+            {podium ? 'Exclude' : 'Include'}
+          </button>
+        ) : null}
+      </span>
+    </div>
+  );
+}
 
 function UserListRow({ user, canWrite, menuOpen, onMenu, onReload, onMore }: {
   user: User; canWrite: boolean; menuOpen: boolean;
@@ -405,6 +466,7 @@ function UserListRow({ user, canWrite, menuOpen, onMenu, onReload, onMore }: {
           {Number(user.total_points || 0).toLocaleString('en-US')}
         </span>
       </div>
+      <PodiumCell user={user} canWrite={canWrite} onReload={onReload} />
       <div className="flex items-center gap-1 md:justify-end">
         <button type="button" className={AdminUI.btn.outlineSm} data-user-more={user.id} onClick={onMore}>More</button>
         {canWrite ? <Kebab user={user} open={menuOpen} onToggle={onMenu} onReload={onReload} /> : null}
@@ -910,12 +972,13 @@ function UserDetails({ user, allUsers, fullAdminCount, canWrite, notice, onBack,
             ) : <span className="admin-user-weekly-limit-value">{weeklyOverrideDollars ? `$${weeklyOverrideDollars}` : 'Platform default for this tier'}</span>}
           </Row>
           <Row label="Tier">
-            <span>{TIER_LABEL[user.identity_tier || 'unverified']}</span>
+            <span>{tierLabel(user)}</span>
           </Row>
           <Row label="Proofs">
             <span className={user.has_github ? AdminUI.badge.success : AdminUI.badge.outline}>{`GitHub: ${user.has_github ? 'held' : 'not held'}`}</span>
             <span className={user.has_x ? AdminUI.badge.success : AdminUI.badge.outline}>{`X: ${user.has_x ? 'held' : 'not held'}`}</span>
             <span className={user.has_zkpassport ? AdminUI.badge.success : AdminUI.badge.outline}>{`zkPassport: ${user.has_zkpassport ? 'held' : 'not held'}`}</span>
+            <span className={user.has_phone ? AdminUI.badge.success : AdminUI.badge.outline}>{`Phone: ${user.has_phone ? 'held' : 'not held'}`}</span>
           </Row>
           <Row label="Daily cap (no longer enforced)" help="Kept so an existing value is not lost. The weekly cap is the limit that applies.">
             {canWrite ? (
@@ -1177,8 +1240,8 @@ function UsersSection() {
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
-        <div className="hidden md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:gap-4 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-          <span>User</span><span>Spend</span><span>Tier</span><span>Apps</span><span id="admin-users-points-header">Total points</span><span className="w-24" />
+        <div className="hidden md:grid md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto] md:gap-4 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+          <span>User</span><span>Spend</span><span>Tier</span><span>Apps</span><span id="admin-users-points-header">Total points</span><span>Podium</span><span className="w-24" />
         </div>
         <div id="admin-user-list" className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">Admin access required.</p> : null}

@@ -70,7 +70,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    preview, and never a signal your own logic reads ("has this user
    done X?"). Every check runs against staging, so seeding that
    fabricates the answer makes that code path untestable by the gate
-   and different for real users.
+   and different for real users. A project's first version is the one
+   exception, on `?demo=1` only: see "A first version's populated demo".
 4. **Tables are public by default; mark the sensitive ones private.**
    `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
    staging without the rows. Use it for auth material, direct messages,
@@ -115,6 +116,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    degrade. App-directory reads use `USERNODE_PLATFORM_API_V1_URL`,
    never a hardcoded host. Handle checks use `usernode.lookupUser()` /
    `searchUsers()` — never a guess from users your app has already seen.
+   "Everyone in the group" is `GET /members` (see "Members"), which works
+   in previews: never the users who opened the app, never fake people.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
    connections, drains for ~3 seconds, closes the pool and exits. For
    Dockerfile builds, use exec-form `CMD ["node", "server.js"]`.
@@ -311,6 +314,55 @@ appending `'?path=' + encodeURIComponent(req.originalUrl)` to their clean
 chromeless redirect (see the current scaffold's `server.js` for the
 attribute-safe character check used on the landing-page anchor).
 
+### Signed in at the app's own address
+
+Someone signed in to Homeroom who opens the app's own address is signed
+in there too: the platform's edge adds the same identity token as the
+`x-usernode-token` request header on the page load, the app's own
+`fetch` and form requests, and WebSocket handshakes from the app's page.
+So the middleware above sets `req.user` with no `?token=` in the URL.
+Three consequences:
+
+- **Ask the server who is signed in** (for example a `GET /api/me`), not
+  the page URL: at the app's own address there is no `?token=` for the
+  frontend to read, and nothing to forward.
+- **WebSocket auth reads the header too**, not only a `?token=` query on
+  the socket URL.
+- **Writes are POST/PUT/PATCH/DELETE from the app's own page.** The edge
+  adds identity to a write only when its Origin is the app's own address,
+  so a sibling app cannot make a visitor's browser act as them.
+
+### Guests: people without an account (read-only)
+
+Every public app lets people with no Homeroom account look around at its own
+address. Private apps, previews and the app inside Homeroom never have
+guests. Nothing turns it on: write the app so a guest can look around.
+
+- **A guest carries a guest token**, in the same `x-usernode-token` header:
+  `ES256`, signed by a key of its own whose public half is
+  `USERNODE_GUEST_JWT_PUBLIC_KEY`, audience
+  `usernode:app:<USERNODE_APP_ID>:guest`, `pur: 'guest'`, `guest: true`,
+  and no `id` or `username`. Verify it with that key,
+  `algorithms: ['ES256']`, issuer `usernode` and that audience, and set
+  `req.guest = true`. A guest is never `req.user`, and a verifier written
+  for a person's token never accepts it. The scaffold does this.
+- **Guests read; every write needs an account.** Read routes must not
+  assume `req.user` (`req.user ? req.user.id : null`). Answer any write
+  without `req.user` with `401 { "error": "account_required" }`, optionally
+  with `"action": "post a photo"` to name what they tried; the platform's
+  edge already answers a guest's browser writes that way.
+- **Never write on GET, and check WebSocket messages yourself.** The edge
+  refuses a guest's POST, PUT, PATCH and DELETE; a write done on a GET or
+  over a WebSocket slips past it. Refuse guest writes on a socket in your
+  own handler.
+- **Asking them to join.** The bridge turns any `account_required` answer
+  to the app's own requests into a "Make an account to continue" sheet
+  that brings them back to the same page signed in. To ask before they
+  try (a disabled button, say), call
+  `usernode.askForAccount({ action: 'post a photo' })`.
+- Platform services (AI, file storage, the user directory) refuse guest
+  tokens with `account_required`.
+
 ## Database
 
 - Each app gets its own Postgres DB. Schema is applied idempotently
@@ -496,8 +548,12 @@ Seed rules:
   re-run on each boot — use an existence check or
   `ON CONFLICT DO NOTHING`.
 - **Obviously fake.** Give seeded rows a consistent "Staging demo …"
-  prefix so they can't be mistaken for real user content.
+  prefix so they can't be mistaken for real user content. (A first
+  version's `?demo=1` demo is labelled once instead: see "A first
+  version's populated demo" below.)
 - **Small.** A handful of rows — just enough for the testing steps.
+  (A project's first version is the one exception: see "A first
+  version's populated demo" below.)
 - **Never reference real users.** Use fake usernames/IDs
   (e.g. `staging-demo-user`), never rows cloned from prod.
 - **Strictly a no-op outside staging.** The whole block is gated on
@@ -506,6 +562,50 @@ Seed rules:
 Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
+
+### A first version's populated demo
+
+A project's **first version** (the build that replaces the starter's
+placeholder screen) is first seen as its staging preview opened with
+`?demo=1`, and that screen should show the app in use, from the
+viewer's own seat. For that build only, and on `?demo=1` only, four
+seed rules change. Every later change keeps the rules above.
+
+- **Enough to look lived in.** Varied, realistic rows filling about a
+  screen and a half of the main screen at phone width (390×844), not
+  a handful.
+- **Labelled once, not on every row.** The screen says "Staging demo"
+  once, plainly and visibly: a banner or a line at the top of the
+  screen, or the name of the list or collection the rows belong to.
+  Each row needs no label of its own (a "Staging demo" pill or prefix
+  on every row only clutters the screen), and this replaces the
+  "Staging demo …" prefix above for these rows. The rows themselves
+  stay obviously made up: no real people and no real private data.
+- **The viewer's own data too.** What the app keeps for a person
+  (their items, choices, progress, saved things) is shown as the
+  viewer's: a demo where only made-up people have done anything shows
+  the viewer an empty "mine". Either add the viewer's demo rows to the
+  `?demo=1` responses without storing them, or write them for the
+  viewing account on its first `?demo=1` request, once (fixed ids,
+  `ON CONFLICT DO NOTHING`, so a reload changes nothing and what the
+  viewer did to them stays). The viewing account is whoever opened the
+  preview, a reviewer or a test account, and the rows land only in
+  staging's own database: that is not cloning production rows, so
+  "Never reference real users" still holds. Other people in the demo
+  are still fake identities.
+- **Every control the real screen has.** The populated demo is the
+  app, not a read-only tour: the actions a person has on that screen
+  (add, edit, refresh, mark done, reorder, delete) are there and work
+  on the demo rows. A "view only" demo that hides them is not a
+  populated screen.
+
+What does not change: nothing is written outside staging, nothing is
+written by a route without `?demo=1` (the page passes `demo=1` on to
+its own API calls), boot-time seeding stays with fake identities, and
+the plain route keeps its test of the production-shaped answer. The
+viewer's demo rows must never be what makes a check of the form "has
+this user done X" pass (see the next section): keep such checks off
+demo rows, or add the rows to the responses rather than storing them.
 
 ### Seeded data must not fabricate a signal your logic reads
 
@@ -535,7 +635,9 @@ app's own logic. Three habits keep them apart:
   reference real users" seed rule above, and it is the one that bites
   hardest — the visitor is the account every code path checks against,
   so attributing seeded rows to them is handing the preview a
-  credential production won't have.
+  credential production won't have. (A first version's `?demo=1` demo
+  may give the viewer rows of their own, within the limits of "A first
+  version's populated demo" above; nothing else may.)
 - **Request-time seeding only behind `?demo=1`.** Never seed from a
   route the app serves normally. A `GET /api/lists` that writes demo
   rows as a side effect leaves no way to ask the app what production
@@ -605,6 +707,48 @@ Two related notes on `path:` form:
   annotation (`path: /board @mobile`) is still accepted but redundant
   now; just point `path:` at the route where the change is visible.
 
+### Who the before & after shots see
+
+The shots agent signs in as the persona each declared change names, on
+throwaway copies of the app. Four things it cannot do by itself, which
+account for most changes that end up with no shots:
+
+- **It has no role in your app.** `member` is an ordinary signed-in member:
+  not your app's manager or owner, with no linked wallet and nothing it
+  made. When a change shows only to someone with a role, put the real
+  in-app path to that role in `hints.setup` (for example "Create a group
+  from + first; its creator is its manager"). Do not grant the role to
+  whoever opens the preview in seed data (see "Never seed the visitor"
+  above). If no in-app path reaches it, declare what a member does see and
+  say in the claim what the shots will leave out.
+- **No persona is your app's creator or one of its admins.** Homeroom tells
+  your app who is signed in, never their role in it: `req.user` has no
+  creator or admin field, and no platform call answers "is this the
+  owner?". `read_only_admin` and `full_admin` are Homeroom's own
+  administrators, which your app is not told; it sees them as ordinary
+  signed-in people (only on Homeroom's own proposals are they its
+  administrators). So a screen your code keeps for particular accounts (a
+  username or id written into it, an allowlist, "private to this account")
+  refuses every shots browser, and its changes are skipped. It refuses every
+  other voter who opens the preview too. Do not hard-code people into a
+  screen the project works on: gate it on something a signed-in person can
+  reach through the app's own UI (whoever creates a story edits it) and name
+  that way in `hints.setup`. When a screen must stay with particular people,
+  declare what a member sees and say in the claim what the shots leave out.
+  The response to `declare_visible_changes` warns when a change is declared
+  for an administrator persona, or names a creator, owner or admin screen
+  with no `hints.setup`.
+- **It cannot sign out.** A change that signed-out visitors see is declared
+  with persona `guest`. A private app shows a guest only what it shows a
+  signed-out visitor outside Homeroom, usually a sign-in page, so declare a
+  private app's changes for `member`. The response to
+  `declare_visible_changes` warns about both mistakes; declare again when it
+  does.
+- **The home screen is not on the copies' addresses**, but the shots agent
+  shoots each side's home-screen tile from that side's `dapp.json`. A change
+  to the app's `icon`, `name` or colour is a visible change: declare it
+  with impact `ui` and a claim naming the home-screen tile, not `none`.
+
 ### Testing `path:` for the hybrid-routed self-app
 
 The before/after screenshots and the "Test this change" button visit the
@@ -636,6 +780,77 @@ genuinely standalone server page left is `/cli/authorize`. **Always
 point a deep `path:` at the specific changed self-app screen** —
 omitting it defaults to `/` (the home feed), which no capture fix can
 rescue.
+
+## Time-dependent features
+
+Some changes only show at certain times: a reminder the evening before
+bins day, a rota that turns over on Monday, a deadline, "tonight", a
+seasonal screen. A preview opens on whatever day it happens to be, so
+without help nobody can see such a change before they vote on it. (A group
+was once asked to approve a Thursday-evening banner that Try it opened on a
+Monday and the shots could not show.) A staging preview can instead be
+shown as of a chosen moment. Four things make that work:
+
+1. **Read "now" through the platform, never `new Date()`, `Date.now()` or
+   SQL's `NOW()` / `CURRENT_DATE`, wherever the day or the time decides
+   what shows.**
+   - In the page: `usernode.now()` (the bridge) returns a `Date`. It is the
+     real time, except on a preview opened at a moment, where it is that
+     moment plus the time since the page loaded. `usernode.previewNow` is
+     that moment as an ISO string, or `null`.
+   - On the server: `req.now`, a `Date`. New apps' `server.js` sets it (its
+     sign-in middleware calls `requestNow`). An app without it adds this
+     before its routes:
+
+     ```js
+     const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+     const PREVIEW_NOW = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+     function requestNow(req) {
+       const raw = IS_STAGING ? (req.headers['x-usernode-now'] || req.query['un-now']) : null;
+       return typeof raw === 'string' && PREVIEW_NOW.test(raw) ? new Date(raw) : new Date();
+     }
+     app.use((req, _res, next) => { req.now = requestNow(req); next(); });
+     ```
+
+   - The page tells the server: every API call sends
+     `x-usernode-now: usernode.now().toISOString()` when
+     `usernode.previewNow` is set. The starter templates' `api()` helper
+     already does.
+   - In SQL, pass `req.now` as a parameter (`WHERE due_on = $1::date`)
+     instead of `NOW()` where the answer decides what shows. A timestamp
+     that records when something happened (`created_at DEFAULT NOW()`)
+     stays as it is.
+   - Name the zone. The server runs in UTC, so "Thursday evening" computed
+     with `getDay()` / `getHours()` is Thursday evening in UTC. Work out the
+     day and the hour in the group's zone with `Intl.DateTimeFormat` and
+     `timeZone`, and say which zone the app uses in its `CLAUDE.md`.
+   - **Production ignores it entirely.** The platform only adds
+     `?un-now=` to a staging preview's address, the bridge never reads it
+     on a production app's address, and the server reads it only when
+     `USERNODE_ENV` is `staging`. The code path is the same everywhere; only
+     the value of "now" differs, so this is data, not a gated feature.
+2. **Say when it shows** in the change's description and testing steps,
+   in plain words: "The reminder shows on Thursdays from 6 pm until bins is
+   ticked."
+3. **Declare a preview moment.** Put one line in the TESTING block (it is
+   carried into the pull request's "How to test", where it shows to
+   nobody):
+
+   ```
+   <!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->
+   ```
+
+   A local date and time (`YYYY-MM-DDTHH:MM`), then the IANA time zone the
+   app reasons in (UTC when left out). Pick a moment when the change shows
+   with the preview's own data: a Thursday at 7 pm, with the seeded rota's
+   bins still unticked. Try it then opens the preview at that moment and
+   says so above it ("Showing it as on Thursday 8 Oct, 7 pm", with "See it
+   as now" beside it), and the shots agent opens both the before and the
+   after copy at it. On `submit_work`, put the same line in
+   `testingSteps`. Only one moment per change; the first valid line wins.
+4. **Check it yourself** in the in-loop browser: add
+   `?un-now=2026-10-08T18:00:00Z` (an ISO time with `Z` or an offset) to
+   the URL, and look at it before and after the moment.
 
 ## Proposal tests — "CI for proposals"
 
@@ -1044,6 +1259,12 @@ Rules:
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the
   icon through any other channel.
+- **Before & after shots.** The tile is on Homeroom's home screen, which
+  the app's own pages never show. Declare an icon change as a visible
+  change with `startPath` `/__shots/home-tile`: during the shots each
+  version of the app answers that path with its own home tile, drawn
+  from its own `dapp.json` (icon, name and colour). The path exists only
+  in the shots, not in a preview or in production.
 
 #### Icon style: one set on the home screen
 
@@ -1727,6 +1948,8 @@ Each app carries `id`, `name`, `slug`, deployment/visibility timestamps,
 wallet field. Only view-public, non-platform apps with a usable deployment
 appear. Use the returned `url`, never rebuild a hostname from `slug`.
 `icon_url` is relative to `USERNODE_PLATFORM_ORIGIN` when present.
+Contributors are who built an app, not who is in it: for your own
+project's people use "Members" below.
 
 Cache the response for 30–60 seconds; the route allows 60 requests/minute
 per app. In staging, `DIRECTORY_ENABLED` is false because there is no app
@@ -1882,7 +2105,7 @@ const { found, user, ambiguous } = await resp.json();
 ```
 
 This user-token-only fallback exists **only** on the two `/users/*`
-endpoints. The governance feed still requires the app token, so its
+endpoints and `/members` (see "Members"). The governance feed still requires the app token, so its
 `FEED_ENABLED` check above (which ANDs `PLATFORM_API_BASE` **and**
 `USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
 URL-only check would try the feed in previews and get a 401.
@@ -1932,6 +2155,46 @@ try {
   known = (await usernode.lookupUser(handle)).found;
 } catch { /* no shell — accept it */ }
 ```
+
+The directory never returns the platform's own accounts (the
+`usernode-*` service identities that run checks, and synthetic users such
+as the Homeroom bot), so a handle like `usernode-capture-admin` is
+`found: false`.
+
+## Members: who is in this project
+
+"Everyone in the group" (a chore rota, a turn order, a "who's coming"
+list) is the project's member list, and the platform has it. Ask for it;
+don't build it.
+
+```js
+const headers = { 'x-usernode-user-token': userTokenFromThisRequest };
+if (process.env.USERNODE_LLM_PROXY_TOKEN) {
+  headers['x-usernode-app-token'] = process.env.USERNODE_LLM_PROXY_TOKEN;
+}
+const resp = await fetch(`${PLATFORM_API_BASE}/members`, { headers });
+if (resp.status === 403) { /* not a member: show the screen without the roster */ }
+const { members, has_more } = await resp.json();
+// members: [{ id, username }, ...], the creator first, then oldest member first
+```
+
+- **Same auth as `/users/*`, previews included.** A staging preview sends
+  only the user token and gets the project's **real** members, the same
+  people the live app will see. So the preview is where a member checks
+  that the rota has the right people in it.
+- **Only members get an answer.** Anyone else (an admin looking in, the
+  platform's check runner) gets `403 { code: 'not_a_member' }`. Show the
+  screen without the roster, and never fail the page on it.
+- **Never "whoever has opened the app".** Every proposal check opens the
+  preview as a platform account, so a list built from visitors shows that
+  account to the group. Key per-person rows by `members[].id`.
+- **Never a staging fixture of fake people for this.** It hides the real
+  answer in the one place people review it. If a declared check needs fixed
+  names, serve them only behind `IS_STAGING && req.query.demo === '1'` and
+  point that check at the `?demo=1` path; the plain route stays real.
+- Rate limit: shared with `/users/*` (120/min per app and user). Cache the
+  list for a minute rather than asking on every request. `?limit=` defaults
+  to 100, at most 200; `has_more` says there are more.
 
 ## Don't `git push` yourself
 
@@ -2097,10 +2360,10 @@ localize their UI should treat it as the **default** instead of building
 their own detection from `navigator.language` (which reflects the device,
 not the user's Homeroom-level choice). It reaches apps two ways:
 
-**Expect `null` for nearly every user (SV #1556).** The setting is still
-stored and still delivered on both paths below, but the platform shell is
-English-only, so its Settings picker is hidden pending platform i18n and is
-offered only to the few users who had already chosen a language. So make
+**Expect `null` for nearly every user.** The setting is stored and
+delivered on both paths below, but Homeroom's own screens are English only
+for now, so its Settings picker offers just "Auto" (`null`) and English, plus
+whatever language a user had already chosen when it listed more. So make
 device-language fallback the PRIMARY path and the platform tag an override
 when present. Do not build a feature that only works once the user sets a
 platform locale, and do not tell users to go and set one.
@@ -2663,6 +2926,22 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   the kit owns the inset now. Apps may consume `var(--un-kb-inset,
   0px)` for their own fixed bottom bars. No-op on desktop or where
   `visualViewport` is absent.
+- **Tap outside a field closes the keyboard (automatic).** On a phone,
+  with a text field focused, a tap (one finger, no scroll or drag, not a
+  long press) on anything that is not a field or a control blurs the
+  field, so the keyboard goes down. iOS does not do this by itself, and
+  the Homeroom app has no Done button above its keys, so this is how
+  people put the keyboard away; Chrome on Android already behaved this
+  way. The tap is never prevented and still does whatever it did. Taps on
+  inputs, textareas, selects, editable regions, buttons, links, labels,
+  `summary`, iframes, ARIA widget roles (`button`, `option`, `listbox`,
+  `menuitem`, `tab`, `switch` and the like), `.un-pressable`, and the
+  list a field names in `aria-controls` keep the keyboard up. Mark
+  anything else that must keep it (a custom picker made of plain divs)
+  with `data-keep-keyboard`; it covers everything inside. An app that
+  closes the keyboard its own way turns this off with
+  `data-un-keyboard-dismiss="off"` on `<html>` or `<body>`. No-op on
+  desktop.
 - **Keyboard avoidance for fixed-shell content scrollers.**
   `unNative.attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8,
   fields? })` — the same keyboard physics for the APP's main content
@@ -3037,8 +3316,9 @@ feature):
 ## Starter-template notice — meant to be deleted
 
 Freshly scaffolded apps ship `public/index.html` as a template welcome
-screen — a "Starter template" hero and a "What's already working" card —
-wrapped in sentinel comments:
+screen — a "Starter template" hero with the app's thumbnail tile (the
+icon the app wears on Home) and the plain-English note on how the app is
+being built (ask Homeroom bot) — wrapped in sentinel comments:
 
 - opens with `<!-- usernode-starter-notice@1 … -->`
 - closes with `<!-- /usernode-starter-notice@1 -->`
@@ -3047,14 +3327,16 @@ Unlike the dev-console forwarder block above, this one is **meant to be
 deleted**: the whole screen is placeholder content, not product intent.
 When the user asks for their first real feature, replace the template
 screen rather than building alongside it — remove the sentinel block
-(both comments and everything between them), remove or repurpose the
-"Try the example" card and its demo endpoints (`/api/press`,
-`/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
-scaffolded `README.md` to describe the actual app. Keep the dev-console
-forwarder `<script>` when rewriting the HTML, and the bridge `<script>`
-with the theme `<script>` right after it: the first real version keeps the
-template's light and dark looks and follows the viewer's Homeroom theme
-(see "New apps: a light and a dark look, following the platform").
+(both comments and everything between them), and rewrite the scaffolded
+`README.md` to describe the actual app. Apps created before October 2026
+still carry the older screen, which also had a "What's already working"
+list and a "Try the example" demo: remove that card and its demo
+endpoints (`/api/press`, `/api/leaderboard`, the `presses` table) there
+too. Keep the dev-console forwarder `<script>` when rewriting the HTML,
+and the bridge `<script>` with the theme `<script>` right after it: the
+first real version keeps the template's light and dark looks and follows
+the viewer's Homeroom theme (see "New apps: a light and a dark look,
+following the platform").
 
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 

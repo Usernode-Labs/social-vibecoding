@@ -168,6 +168,8 @@ function shapeFailingChecks(row) {
   };
 }
 
+// A merged change that is not live yet (chat_sessions.live_at) comes out of
+// the queries above as 'merging': the drawer and pills say "Going live".
 function shapeChangeRow(row) {
   if (!row || row.change_id == null) return null;
   return {
@@ -201,6 +203,24 @@ function shapeChangeRow(row) {
       }
       : null,
   };
+}
+
+// A merged change of the platform's own app that is not live yet reads
+// 'merging' here, as one still being merged does (shapeChangeRow). What it
+// waits for is the platform's next release, and when that comes
+// (services/release-watch.js) is set on it as `release`, which the
+// conversation's pill, its changes drawer and the inbox's row say in words
+// ("Merged; goes live in the next release (about 8 minutes)"). A change
+// still being merged, or a child app's, has none. One read, only when one
+// of `changes` is a Homeroom change going live.
+async function withReleases(pool, changes) {
+  const waiting = changes.filter((change) => change && change.status === 'merging' && change.appSelfHosted);
+  if (!waiting.length) return;
+  const releases = await require('./release-watch').releasesFor(pool, waiting.map((change) => change.id));
+  for (const change of waiting) {
+    const release = releases.get(Number(change.id));
+    if (release) change.release = release;
+  }
 }
 
 function shapeSession(row) {
@@ -281,7 +301,7 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
-            c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+            c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
@@ -301,10 +321,30 @@ async function listAgentSessions(pool, { userId, status = 'open', limit = 20, be
     [userId, status, cursor, bounded + 1, TURN_LEASE_STALE_SECONDS]
   );
   const page = rows.slice(0, bounded).map(shapeSession);
+  await withReleases(pool, page.map((session) => session.activeChange));
   return {
     sessions: page,
     nextBefore: rows.length > bounded ? page[page.length - 1].lastActivityAt : null,
+    started: page.length > 0 || await hasStartedAgentSession(pool, userId),
   };
+}
+
+/**
+ * Whether `userId` has ever had an agent session, archived ones included:
+ * whether they have built something themselves with a coding agent. The
+ * Homeroom menu's Agent chats section (Build it now and their
+ * sessions) is shown only then, so a first-time user's menu stays short
+ * (first-session run-through, 5 Oct 2026; ../../frontend/src/features/
+ * app-context/app-context-sheet.tsx). A list page with a session in it
+ * already says so; this one indexed read is for an empty page, which is
+ * a newcomer, or somebody whose sessions are all archived.
+ */
+async function hasStartedAgentSession(pool, userId) {
+  const { rows } = await pool.query(
+    'SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE user_id = $1) AS started',
+    [userId]
+  );
+  return !!(rows[0] && rows[0].started);
 }
 
 async function getAgentSession(pool, { userId, id }) {
@@ -321,7 +361,7 @@ async function getAgentSession(pool, { userId, id }) {
             fa.slug AS focus_app_slug, fa.name AS focus_app_name,
             fa.self_hosted AS focus_app_self_hosted, fa.icon_emoji AS focus_app_icon_emoji,
             fa.icon_image_id AS focus_app_icon_id,
-            c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+            c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
@@ -342,7 +382,7 @@ async function getAgentSession(pool, { userId, id }) {
   // Every change this conversation has started, newest first: the active one,
   // the parked ones the user can switch back to, and the closed ones.
   const { rows: changes } = await pool.query(
-    `SELECT c.id AS change_id, c.status AS change_status, c.pr_number AS change_pr_number,
+    `SELECT c.id AS change_id, CASE WHEN c.status = 'merged' AND c.live_at IS NULL THEN 'merging' ELSE c.status END AS change_status, c.pr_number AS change_pr_number,
             COALESCE(c.pr_title, c.session_title) AS change_title,
             c.staging_url AS change_staging_url, c.check_state AS change_check_state,
             CASE WHEN c.check_state = 'skipped' THEN c.check_error_detail END AS change_check_skip_reason,
@@ -355,6 +395,7 @@ async function getAgentSession(pool, { userId, id }) {
     [sessionId, userId]
   );
   session.changes = changes.map(shapeChangeRow);
+  await withReleases(pool, [session.activeChange, ...session.changes]);
   return session;
 }
 
@@ -1175,6 +1216,7 @@ module.exports = {
   setAgentChoice,
   getAgentChoice,
   listAgentSessions,
+  hasStartedAgentSession,
   getAgentSession,
   renameAgentSession,
   lookupRequestTitle,

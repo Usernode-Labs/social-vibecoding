@@ -6,15 +6,18 @@
  * ── What it says, in the design's order ────────────────────────────────
  *
  *   1. WHO IT IS. A large tile, the name, the tagline, the builders' avatars
- *      and a "<version> · <updated>" pill.
+ *      and how many members its community has ("12 members", #4218).
  *   2. WHAT YOU CAN DO WITH IT (an app): Open — Resume for the app you
  *      parked, and nothing at all for the app already running — and Add to
  *      your apps. HOW BIG IT IS (the platform): apps, members, merged.
- *   3. HOW IT IS BUILT. One sentence, true for THIS app's approval rules
- *      (./about-model.ts says why it is assembled rather than fixed).
+ *   3. HOW IT IS BUILT. One short line, its community builds it together,
+ *      and "How changes work", which opens the Workshop (#4218).
  *   4. WHO BUILDS IT. Contributors, each with what they have merged, each
  *      opening that person's page.
- *   5. MORE. Share, Add to home screen, View on GitHub, Fork this app.
+ *   5. MORE. Share, Add to home screen, Code (public on GitHub), Remix
+ *      (a fork, to the code; "Remix" to people), and the version as a plain
+ *      row, "App version: a1b2c3d" (#4218). A remix also says what it was
+ *      remixed from, under its description.
  *
  * ── It is still a PANE, not a sheet ────────────────────────────────────
  *
@@ -33,8 +36,11 @@
  *
  * ── The product's own truths, kept ─────────────────────────────────────
  *
- *   - `#improve-row-github` is the design's "Source code": View on GitHub,
- *     only where there is a repository, opening away from the shell.
+ *   - `#improve-row-github` is the design's "Source code": a row reading
+ *     Code, with "Public on GitHub" muted at its end, only where there is a
+ *     repository, opening away from the shell. It says public because every
+ *     repository is (services/github.js createRepo; an import must be public
+ *     already), whoever the project lets open it.
  *   - `#improve-row-share` keeps its id and, for an app, its gate and its
  *     dialog: Share hands somebody the app's live address, so it appears
  *     whenever the app HAS one (`canShare` — running, with a URL), from its
@@ -42,7 +48,11 @@
  *     errored or waiting on secrets has no page to send anyone to, and a row
  *     that opened a dialog with an empty link would be worse than no row.
  *     Homeroom always has an address — this one — so its Share is always
- *     there, and hands over the platform's own link.
+ *     there, and hands over the platform's own link. Either is hidden while
+ *     the menu still offers a newcomer "Go to Homeroom" (#4216,
+ *     ./about-data.ts offeringGoToHomeroom): Share brings more people into
+ *     the group, which a private member who has not gone to Homeroom yet is
+ *     not handing out.
  *   - Add to home screen is a ROW now, as the design draws it, but it is the
  *     row the product already had: for an app, the per-app install page its
  *     card menu and its Discover page offer (#1508, #2320) — found in
@@ -55,7 +65,7 @@
  * ── A viewer who is not served the platform's row ──────────────────────
  *
  * About Homeroom still opens for them (./platform-target.js): who it is, the
- * three figures, how it is built, Share and View on GitHub. The contributor
+ * three figures, how it is built, Share and its Code row. The contributor
  * list is the platform row's, which the API does not serve them, so it is not
  * drawn rather than drawn as an error.
  */
@@ -69,8 +79,10 @@ import {
   ShareIcon,
 } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
+import { navStore } from '../nav/nav-store.js';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
 import { A2HS_STEPS, detectMobileOs } from '../mobile-install/detect';
@@ -80,16 +92,18 @@ import { AppContext } from './app-context-controller.js';
 import {
   appNote,
   contributorView,
+  membersPillText,
   openLabel,
   platformNote,
   shortVersionOf,
   statCards,
   taglineOf,
-  versionPillText,
+  versionRowText,
   type AppRow,
 } from './about-model';
 import {
   listRowFor,
+  offeringGoToHomeroom,
   useAboutApp,
   useContributors,
   usePlatformAbout,
@@ -137,18 +151,45 @@ function Icon({ children }: { children: ReactNode }): ReactNode {
 }
 
 /** A MORE row that does something (a button), dismissing the menu first when asked. */
-function ActionRow({ id, icon, label, onClick }: {
+function ActionRow({ id, icon, label, sub = null, onClick }: {
   id: string;
   icon: ReactNode;
   label: string;
+  /** A second, quieter line under the label (Remix's "Make your own copy"). */
+  sub?: string | null;
   onClick: () => void;
 }): ReactNode {
   return (
-    <button id={id} type="button" className={ROW} onClick={onClick}>
+    <button id={id} type="button" className={sub ? `${ROW} py-2` : ROW} onClick={onClick}>
       <Icon>{icon}</Icon>
-      <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      {sub ? (
+        <span className="flex-1 min-w-0">
+          <span className="block truncate font-medium">{label}</span>
+          <span className="block truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400">{sub}</span>
+        </span>
+      ) : (
+        <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
+      )}
     </button>
   );
+}
+
+/**
+ * Where a remix came from: the resolved `forked_from` the app row carries
+ * (attachForkLineage in src/routes/apps.js: `{ slug, name, linkable }`, or
+ * null for an app that is not a copy and for one in demo mode). A deleted
+ * original resolves to "<deleted>" and is text, not a link. Pure; the line
+ * it feeds is pinned by tests/app-about-pane.test.js.
+ */
+function lineageOf(row: AppRow | null | undefined): { name: string; deleted: boolean; href: string | null } | null {
+  const ref = row ? row.forked_from : null;
+  if (!ref || typeof ref !== 'object') return null;
+  const name = typeof ref.name === 'string' && ref.name ? ref.name : '<deleted>';
+  const href = ref.linkable && typeof ref.slug === 'string' && ref.slug
+    ? `#app/${encodeURIComponent(ref.slug)}`
+    : null;
+  // `deleted`: the original is gone and `name` is only a placeholder; the line says so in its own words.
+  return { name, deleted: !(typeof ref.name === 'string' && ref.name), href };
 }
 
 /**
@@ -159,6 +200,26 @@ function ActionRow({ id, icon, label, onClick }: {
  */
 function afterDismiss(then: () => void): void {
   void AppContext.dismissForNav().then(then);
+}
+
+/**
+ * "How changes work": the project's Workshop tab, where its voting help
+ * spells out this app's rules. The sheet's own row pattern
+ * (./app-context-sheet.tsx followThenDismiss): pick the tab, write the
+ * address, then close the menu, so the menu's Back record is never spent on
+ * the new page. A modified click is left to the browser.
+ */
+function openWorkshop(e: React.MouseEvent, slug: string): void {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+    void AppContext.dismissForNav();
+    return;
+  }
+  e.preventDefault();
+  (window as unknown as { AppView?: { _landOnTab?: (s: string, t: string) => void } })
+    .AppView?._landOnTab?.(slug, 'workshop');
+  const href = `#app/${encodeURIComponent(slug)}/workshop`;
+  if (window.location.hash !== href) window.location.hash = href;
+  void AppContext.dismissForNav();
 }
 
 /** A person's initial in the roster's circle — Discover's contributor disc. */
@@ -214,6 +275,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
   showAll: boolean;
   onToggle: () => void;
 }): ReactNode {
+  const t = useMessages('agent');
   const shown = showAll ? people : people.slice(0, CONTRIB_FOLD);
   return (
     <>
@@ -229,7 +291,7 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
             >
               <Avatar who={c.who} size="sm" />
               <span className="flex-1 min-w-0 truncate font-medium">{`@${c.who}`}</span>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{`${c.merged} merged`}</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.about.contributor.live', { count: c.merged })}</span>
             </a>
           ))}
         </div>
@@ -243,18 +305,24 @@ export function ContributorsFold({ people, total, showAll, onToggle }: {
           className="w-full px-5 min-h-[40px] text-left text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
           onClick={onToggle}
         >
-          {showAll ? 'Show fewer' : `Show all ${total} contributors`}
+          {showAll ? t('agent:appContext.about.contributors.showFewer') : t('agent:appContext.about.contributors.showAll', { count: total })}
         </button>
       ) : null}
     </>
   );
 }
 
-export function AboutPane({ label }: { label: string }): ReactNode {
+/**
+ * `label` is the app's name. With `unnamed`, no name has loaded and `label` is
+ * a stand-in: the note uses its unnamed wording, not the stand-in as a name.
+ */
+export function AboutPane({ label, unnamed = false }: { label: string; unnamed?: boolean }): ReactNode {
+  const t = useMessages('agent');
   const {
     slug, target, restricted, repoUrl, canShare, version, iconUrl, iconEmoji, tab, deploying,
   } = useStoreState(improveStore);
   const { app: parked } = useStoreState(parkedStore);
+  const { privateMember } = useStoreState(navStore);
   const platform = target === 'platform';
   const isApp = target === 'app';
 
@@ -293,9 +361,10 @@ export function AboutPane({ label }: { label: string }): ReactNode {
     ? (about?.updatedAt || row?.last_deploy_at || null)
     : (row?.last_deploy_at || row?.created_at || null);
   const updated = updatedAt ? agoStamp(updatedAt) : null;
-  const pill = deploying && !platform
-    ? 'Deploying…'
-    : versionPillText(shortSha || null, updated?.text || null);
+  const versionText = versionRowText(shortSha || null, !!deploying && !platform, platform);
+  // The platform shows its members as a figure card below, so the pill is
+  // an app's.
+  const pill = isApp ? membersPillText(row?.member_count) : null;
   const ready = contributors.state === 'ready' ? contributors.items : [];
   const stack = ready.slice(0, 4).map(contributorView);
   const record = {
@@ -317,27 +386,33 @@ export function AboutPane({ label }: { label: string }): ReactNode {
   // ── More ──────────────────────────────────────────────────────────
   const repo = platform ? (about?.repoUrl || repoUrl) : (repoUrl || row?.repo_url || null);
   const showShare = platform || canShare;
+  // #4216: not while the menu still offers this newcomer "Go to Homeroom".
+  const shareRow = showShare && !offeringGoToHomeroom(!!privateMember);
   const platformA2hs = platform && !!os
     && typeof window !== 'undefined' && !isStandalone() && !isNativeApp();
   const showHomeScreen = platform ? platformA2hs : !!homeScreenItem;
   const showFork = isApp && !!forkItem;
+  const lineage = isApp ? lineageOf(row) : null;
 
   // The platform's rules are its row's, which a cold tab may still be loading
   // (./about-data.ts asks Home for the list): no sentence until they are here,
   // rather than the default rules for a moment and then the platform's own.
-  const note = platform
-    ? (restricted || row ? platformNote(row, !!restricted) : null)
-    : appNote(row);
+  const note = platform ? platformNote(label, !!restricted)
+    : unnamed ? t('agent:appContext.about.note.unnamedApp') : appNote(label);
+  // The name the note is about, as appNote and platformNote read it.
+  const named = typeof label === 'string' && label.trim() ? label.trim() : '';
+  // Where "How changes work" goes: the app's Workshop, or the platform's for
+  // a viewer it is served to.
+  const workshopSlug = slug && !restricted ? slug : null;
   const people = ready.map(contributorView);
 
   return (
     <div id="app-about-pane" className="pb-1">
       {/*
           WHO IT IS. The name is always here, so the pane never opens empty
-          whatever else is missing: an app with no manifest description shows
-          its ADDRESS in the tagline's place — what a URL says, what a support
-          conversation quotes, and the only name two apps called the same thing
-          do not share.
+          whatever else is missing. An app with no manifest description has
+          no line under it: its address stood there once, and read as noise
+          to a newcomer (#4218).
       */}
       <div id="app-about-identity" className="flex items-start gap-3.5 px-5 pt-2 pb-3">
         {platform ? (
@@ -375,11 +450,27 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             <p id="app-about-tagline" className="mt-0.5 line-clamp-3 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
               {tagline}
             </p>
-          ) : (!platform && slug ? (
-            <p className="mt-0.5 text-[0.8125rem] text-zinc-500 dark:text-zinc-400 truncate">
-              {`/app/${slug}`}
+          ) : null}
+          {/* A remix says what it was remixed from, under its description:
+              the line Discover's page draws under its version, in the same
+              amber, opening the original the way a contributor row opens a
+              person (the sheet closes first). */}
+          {isApp && lineage ? (
+            <p id="app-about-lineage" className="mt-0.5 text-xs text-amber-600 dark:text-amber-400 truncate">
+              {lineage.href ? (
+                <a
+                  href={lineage.href}
+                  className="hover:underline"
+                  title={lineage.deleted ? t('agent:appContext.about.lineage.linkTitleDeleted', { open: '<', close: '>' }) : t('agent:appContext.about.lineage.linkTitle', { app: lineage.name })}
+                  onClick={() => { void AppContext.dismissForNav(); }}
+                >
+                  {lineage.deleted ? t('agent:appContext.about.lineage.remixedFromDeleted', { open: '<', close: '>' }) : t('agent:appContext.about.lineage.remixedFrom', { app: lineage.name })}
+                </a>
+              ) : (
+                <span title={t('agent:appContext.about.lineage.goneTitle')}>{lineage.deleted ? t('agent:appContext.about.lineage.remixedFromDeleted', { open: '<', close: '>' }) : t('agent:appContext.about.lineage.remixedFrom', { app: lineage.name })}</span>
+              )}
             </p>
-          ) : null)}
+          ) : null}
           {stack.length || pill ? (
             <div id="app-about-pills" className="mt-2 flex flex-wrap items-center gap-2">
               {stack.length ? (
@@ -389,9 +480,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               ) : null}
               {pill ? (
                 <span
-                  id="app-about-version"
-                  title={[shortSha ? `Version ${shortSha}` : null, updated?.title ? `deployed ${updated.title}` : null]
-                    .filter(Boolean).join(', ') || undefined}
+                  id="app-about-members"
                   className="inline-flex items-center rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap"
                 >
                   {pill}
@@ -439,7 +528,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             data-added={String(yours)}
             disabled={yours}
             // The design's proportions: "✓ Added" is a compact state; "Add to
-            // Shortcuts" is sized to its words beside Open — a phone's sheet
+            // My apps" is sized to its words beside Open — a phone's sheet
             // has not room for both at half width without truncating it —
             // and takes the whole row when Open is gone.
             className={`inline-flex ${!yours && running ? 'flex-1 basis-0' : 'shrink-0'} min-w-0 items-center justify-center gap-1.5 h-10 px-4 rounded-full text-sm font-semibold whitespace-nowrap `
@@ -462,9 +551,9 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             {yours ? (
               <>
                 <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span className="truncate">Added</span>
+                <span className="truncate">{t('agent:appContext.about.added')}</span>
               </>
-            ) : <span className="truncate">Add to Shortcuts</span>}
+            ) : <span className="truncate">{t('agent:appContext.about.addToMyApps')}</span>}
           </button>
         </div>
       ) : null}
@@ -495,7 +584,25 @@ export function AboutPane({ label }: { label: string }): ReactNode {
 
       {(isApp || platform) && note ? (
         <p id="app-about-note" className="px-5 pt-1 pb-1 text-[0.8125rem] leading-relaxed text-zinc-600 dark:text-zinc-300">
-          {note}
+          {/* The space rides inside the note's own string: a bare {' '}
+              child is a hydration hazard (tests/shell-build.test.js). */}
+          {workshopSlug ? (
+            <RichMessage
+              id={platform
+                ? 'agent:appContext.about.noteHow.platform'
+                : unnamed ? 'agent:appContext.about.noteHow.unnamedApp'
+                  : named ? 'agent:appContext.about.noteHow.app' : 'agent:appContext.about.noteHow.thisApp'}
+              values={{ name: named || 'Homeroom', app: named }}
+              components={[
+                <a
+                  id="app-about-how"
+                  href={`#app/${encodeURIComponent(workshopSlug)}/workshop`}
+                  className="font-semibold text-violet-700 dark:text-violet-300 hover:underline underline-offset-2"
+                  onClick={(e) => openWorkshop(e, workshopSlug)}
+                />,
+              ]}
+            />
+          ) : note}
         </p>
       ) : null}
 
@@ -506,11 +613,11 @@ export function AboutPane({ label }: { label: string }): ReactNode {
           (Browse.openContributor).
       */}
       {(isApp || platform) && !restricted ? (
-        <section id="app-about-contributors" aria-label="Contributors">
-          <h4 className={SECTION}>Contributors</h4>
-          {contributors.state === 'loading' ? <p className={NOTE}>Loading contributors…</p> : null}
-          {contributors.state === 'error' ? <p className={NOTE}>Couldn’t load contributors.</p> : null}
-          {contributors.state === 'ready' && !people.length ? <p className={NOTE}>No contributors yet.</p> : null}
+        <section id="app-about-contributors" aria-label={t('agent:appContext.about.contributors.heading')}>
+          <h4 className={SECTION}>{t('agent:appContext.about.contributors.heading')}</h4>
+          {contributors.state === 'loading' ? <p className={NOTE}>{t('agent:appContext.about.contributors.loading')}</p> : null}
+          {contributors.state === 'error' ? <p className={NOTE}>{t('agent:appContext.about.contributors.failed')}</p> : null}
+          {contributors.state === 'ready' && !people.length ? <p className={NOTE}>{t('agent:appContext.about.contributors.none')}</p> : null}
           <ContributorsFold
             people={people}
             total={contributors.total || people.length}
@@ -520,14 +627,14 @@ export function AboutPane({ label }: { label: string }): ReactNode {
         </section>
       ) : null}
 
-      {showShare || showHomeScreen || repo || showFork ? (
-        <section id="app-about-more" aria-label="More">
-          <h4 className={SECTION}>More</h4>
-          {showShare ? (
+      {shareRow || showHomeScreen || repo || showFork || versionText ? (
+        <section id="app-about-more" aria-label={t('agent:appContext.about.more')}>
+          <h4 className={SECTION}>{t('agent:appContext.about.more')}</h4>
+          {shareRow ? (
             <ActionRow
               id="improve-row-share"
               icon={<ShareIcon />}
-              label={shareSaid || 'Share'}
+              label={shareSaid || t('agent:appContext.row.share')}
               onClick={() => {
                 if (!platform) {
                   // The app's live address, in the share dialog the Improve
@@ -538,7 +645,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
                   return;
                 }
                 void sharePlatform(label).then((how) => {
-                  const said = how === 'copied' ? 'Link copied' : (how === 'failed' ? 'Could not copy the link' : null);
+                  const said = how === 'copied' ? t('agent:appContext.about.share.copied') : (how === 'failed' ? t('agent:appContext.about.share.failed') : null);
                   if (!said) return;
                   setShareSaid(said);
                   window.setTimeout(() => setShareSaid(null), 1800);
@@ -550,7 +657,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             <ActionRow
               id="app-about-a2hs"
               icon={<Glyph d={GLYPHS.homeScreen} />}
-              label="Add to home screen"
+              label={t('agent:appContext.about.addToHomeScreen')}
               onClick={() => {
                 if (platform) {
                   setA2hsOpen((v) => !v);
@@ -561,7 +668,7 @@ export function AboutPane({ label }: { label: string }): ReactNode {
             />
           ) : null}
           {platform && a2hsOpen && os ? (
-            <p id="app-about-a2hs-steps" className={NOTE}>{A2HS_STEPS[os]}</p>
+            <p id="app-about-a2hs-steps" className={NOTE}>{t(A2HS_STEPS[os])}</p>
           ) : null}
           {repo ? (
             <a
@@ -573,16 +680,30 @@ export function AboutPane({ label }: { label: string }): ReactNode {
               onClick={() => { void AppContext.dismissForNav(); }}
             >
               <Icon><GitHubIcon /></Icon>
-              <span className="flex-1 min-w-0 truncate font-medium">View on GitHub</span>
+              <span className="flex-1 min-w-0 truncate font-medium">{t('agent:appContext.about.code')}</span>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.about.codePublic')}</span>
             </a>
           ) : null}
           {showFork && forkItem ? (
             <ActionRow
               id="app-about-fork"
               icon={<Glyph d={GLYPHS.fork} />}
-              label="Fork this app"
+              label={t('agent:appContext.about.remix')}
+              sub={t('agent:appContext.about.remixSub')}
               onClick={() => afterDismiss(() => forkItem.run())}
             />
+          ) : null}
+          {/* THE VERSION, last and plain (#4218): a fact for whoever needs
+              it, not an action, so a line with no glyph and no hover. It
+              kept the id the pill had. */}
+          {versionText ? (
+            <p
+              id="app-about-version"
+              title={updated?.title ? t('agent:appContext.about.liveSince', { when: updated.title }) : undefined}
+              className="px-5 min-h-[44px] flex items-center text-sm text-zinc-500 dark:text-zinc-400"
+            >
+              {versionText}
+            </p>
           ) : null}
         </section>
       ) : null}

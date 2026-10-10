@@ -118,7 +118,7 @@ test('a coding-agent run is one card named for the agent that ran, and a drafted
     // Every agent writes this row's content as "Claude Code progress"; only
     // its metadata says which one ran, so its words are never shown.
     row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js', 'Drafting the spec'], ...codex }, 12),
-    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', {
+    row(5, 'system', 'Scout drafted a 93-line plan from the codebase.', {
       specPreview: '## Thumbnails\nShow an image per item.', specLines: 93, specVersion: 2, durationMs: 81000, ...codex,
     }, 12),
     row(6, 'assistant', 'The spec is drafted.'),
@@ -129,7 +129,7 @@ test('a coding-agent run is one card named for the agent that ran, and a drafted
   assert.equal(run.status, 'done');
   assert.equal(run.agent, 'Codex · glm-5.3-flash', 'an OpenRouter change runs Codex, and says so');
   assert.deepEqual(run.log, ['Reading src/feed.js', 'Drafting the spec']);
-  assert.equal(transcript.runHeading(run), 'Wrote the spec');
+  assert.equal(transcript.runHeading(run), 'Wrote the plan');
   assert.equal(transcript.durationLabel(run.durationMs), '1m 21s');
   assert.ok(!JSON.stringify(scout).includes('Claude Code progress'));
   assert.deepEqual([spec.changeId, spec.version, spec.lines], [12, 2, 93]);
@@ -179,7 +179,7 @@ test('the screen draws a run as the dev chat\'s run card and a spec as a card th
     row(2, 'system', 'Scouting the repo for context (z-ai/glm-5.3-flash)...', codex, 12),
     row(3, 'system', 'Scout reading the codebase...', codex, 12),
     row(4, 'system', 'Claude Code progress', { progressLog: ['Reading src/feed.js'], ...codex }, 12),
-    row(5, 'system', 'Scout drafted a 93-line spec from the codebase.', { specPreview: 'Show an image per item.', specLines: 93, specVersion: 2, ...codex }, 12),
+    row(5, 'system', 'Scout drafted a 93-line plan from the codebase.', { specPreview: 'Show an image per item.', specLines: 93, specVersion: 2, ...codex }, 12),
   ];
   const requests = [];
   globalThis.window = { location: { hash: '#agent/7' }, App: {}, UsernodeReact: {}, PlatformUI: { toast: () => {} } };
@@ -203,11 +203,11 @@ test('the screen draws a run as the dev chat\'s run card and a spec as a card th
       : createElement(api.SpecCard, { item }))).join('');
     assert.match(html, /class="dc-cc-attached"/, 'the dev chat\'s own run card');
     assert.match(html, /data-agent-session-run="done"/);
-    assert.match(html, /Wrote the spec/);
+    assert.match(html, /Wrote the plan/);
     assert.match(html, /Codex · glm-5\.3-flash/, 'captioned with the agent that ran');
     assert.doesNotMatch(html, /Claude Code progress|Scout reading the codebase/, 'no loose lines');
     assert.match(html, /class="dc-spec-preview-card"[^>]*data-agent-session-spec="2"/);
-    assert.match(html, /Spec v2 · 93 lines/);
+    assert.match(html, /Plan v2 · 93 lines/);
 
     // The card opens the version it names, over the conversation.
     await api.openSpec(12, 2);
@@ -237,7 +237,7 @@ test('reply suggestions belong to the last thing said, and only while it is last
 test('the header pill and the live line say where things stand in words', () => {
   assert.equal(transcript.changeStatusLabel('active'), 'In progress');
   assert.equal(transcript.changeStatusLabel('paused'), 'In progress', 'paused is bookkeeping, never shown');
-  assert.equal(transcript.changeStatusLabel('promoted'), 'In vote');
+  assert.equal(transcript.changeStatusLabel('promoted'), 'Waiting for approval');
   assert.equal(transcript.changeStatusLabel(null), 'No active change');
   assert.equal(transcript.changeStatusLabel('active', true), 'Building');
   assert.equal(transcript.toolActivity('dispatch_coding_agent'), 'The coding agent is building');

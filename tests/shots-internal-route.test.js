@@ -32,10 +32,10 @@ async function listen(app, t) {
 // Register one run and serve the internal routes the way server.js does: the
 // global JSON parser runs first, so an octet-stream file must pass through it
 // untouched to the shot route's own raw parser.
-async function serve(t, { runId, sessionId = 42, intent = fixtures.motionIntent(), context = {}, expiresAt } = {}) {
+async function serve(t, { runId, sessionId = 42, intent = fixtures.motionIntent(), context = {}, expiresAt, homeTiles } = {}) {
   controlPlane._clearForTests();
   const registration = controlPlane.registerRun({
-    runId, sessionId, intent, context, expiresAt: expiresAt ?? Date.now() + 60_000,
+    runId, sessionId, intent, context, expiresAt: expiresAt ?? Date.now() + 60_000, homeTiles,
   });
   t.after(() => { registration.unregister(); controlPlane._clearForTests(); });
   const app = express();
@@ -252,17 +252,93 @@ test('the note route records what a change\'s shots leave out, for its own run o
   assert.equal(unsigned.status, 401);
 });
 
-test('the brief, shot, skip and note routes are the whole shots surface', async (t) => {
+test('the problem route records what the agent noticed on the after build, for its own run only', async (t) => {
+  const runId = '5'.repeat(32);
+  const { registration, base, token } = await serve(t, { runId });
+  const problem = (body, auth = token) => fetch(`${base}/problem`, {
+    method: 'POST', headers: { ...bearer(auth), 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const saved = await json(await problem({
+    change: 'invite-suggestions', screen: 'desktop', problem: 'The sort control overlaps the Done heading.',
+    alsoBefore: true, shot: 'screen',
+  }));
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.result, {
+    noticed: 'invite-suggestions', screen: 'desktop', alsoBefore: true, notices: 1, remaining: 4,
+  });
+  assert.deepEqual(registration.control.notices, [{
+    text: 'The sort control overlaps the Done heading.', change: 'invite-suggestions', screen: 'desktop',
+    shot: 'screen', alsoBefore: true,
+  }]);
+
+  for (const [body, status, code] of [
+    [{ change: 'invite-suggestions', screen: 'desktop' }, 400, 'problem_required'],
+    [{ change: 'someone-elses-change', screen: 'desktop', problem: 'x' }, 400, 'unknown_change'],
+    [{ change: 'invite-suggestions', screen: 'tablet', problem: 'x' }, 400, 'unknown_screen'],
+    [{ change: 'invite-suggestions', screen: 'desktop', problem: 'x', alsoBefore: 'perhaps' }, 400, 'invalid_also_before'],
+  ]) {
+    const refused = await json(await problem(body));
+    assert.deepEqual([refused.status, refused.body.code], [status, code]);
+  }
+  for (const text of ['Two.', 'Three.', 'Four.', 'Five.']) {
+    assert.equal((await problem({ change: 'invite-suggestions', screen: 'desktop', problem: text })).status, 200);
+  }
+  const sixth = await json(await problem({ change: 'invite-suggestions', screen: 'desktop', problem: 'Six.' }));
+  assert.deepEqual([sixth.status, sixth.body.code], [409, 'too_many_notices']);
+  const foreign = await json(await problem({ change: 'invite-suggestions', screen: 'desktop', problem: 'Not mine.' },
+    platformJwt.signShotsToken({ runId, sessionId: 43 })));
+  assert.deepEqual([foreign.status, foreign.body.code], [403, 'shots_scope_mismatch']);
+  assert.equal((await fetch(`${base}/problem`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+  })).status, 401);
+});
+
+test('each side\'s home tile page is readable only with this run\'s shots token', async (t) => {
+  const runId = '2'.repeat(32);
+  const homeTiles = {
+    base: { name: 'Habit Streak', icon: { kind: 'letter', letter: 'H' }, color: null },
+    head: { name: 'Habit Streak', icon: { kind: 'emoji', emoji: '🔥' }, color: '#2e6660' },
+  };
+  const { base, token } = await serve(t, { runId, homeTiles });
+  const get = (side, headers = bearer(token)) => fetch(`${base}/home-tile/${side}`, { headers });
+
+  const head = await get('head');
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.equal(head.headers.get('cache-control'), 'no-store');
+  assert.equal(head.headers.get('content-security-policy'), "default-src 'none'; img-src data:; style-src 'unsafe-inline'");
+  assert.equal(head.headers.get('x-content-type-options'), 'nosniff');
+  const page = await head.text();
+  assert.match(page, /Home screen tile, after the change/);
+  assert.match(page, /🔥/);
+  assert.match(await (await get('base')).text(), /Home screen tile, before the change/);
+
+  const unknown = await json(await get('outside'));
+  assert.deepEqual([unknown.status, unknown.body.code], [404, 'home_tile_unavailable']);
+  assert.equal((await get('head', {})).status, 401);
+  const otherRun = await json(await get('head', bearer(platformJwt.signShotsToken({ runId: '3'.repeat(32), sessionId: 42 }))));
+  assert.deepEqual([otherRun.status, otherRun.body.code], [403, 'shots_scope_mismatch']);
+});
+
+test('a run without home tiles answers 404 for them', async (t) => {
+  const runId = '4'.repeat(32);
+  const { base, token } = await serve(t, { runId });
+  const response = await json(await fetch(`${base}/home-tile/base`, { headers: bearer(token) }));
+  assert.deepEqual([response.status, response.body.code], [404, 'home_tile_unavailable']);
+});
+
+test('the brief, shot, skip, note, problem and home tile routes are the whole shots surface', async (t) => {
   const runId = '1'.repeat(32);
   const { base, token } = await serve(t, { runId });
   // The replay-era routes are gone, even for a valid token of this run.
-  for (const route of ['reset-pair', 'reset-side', 'run-plan', 'finish', 'capture', 'block-story', 'plan', 'context']) {
+  for (const route of ['reset-pair', 'reset-side', 'run-plan', 'finish', 'capture', 'block-story', 'plan', 'context',
+    'home-tile/base']) {
     const response = await fetch(`${base}/${route}`, {
       method: 'POST', headers: { ...bearer(token), 'content-type': 'application/json' }, body: '{}',
     });
     assert.equal(response.status, 404, `POST /${route} must not exist`);
   }
-  for (const route of ['shot', 'skip', 'note', 'diagnostics', 'artifacts']) {
+  for (const route of ['shot', 'skip', 'note', 'problem', 'diagnostics', 'artifacts']) {
     const response = await fetch(`${base}/${route}`, { headers: bearer(token) });
     assert.equal(response.status, 404, `GET /${route} must not exist`);
   }

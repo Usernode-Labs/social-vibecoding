@@ -61,7 +61,15 @@ const keptRecord = (s) => ({
   allow: s.allow,
   navigatedAt: s.navigatedAt,
   title: s.title,
+  build: s.build,
 });
+
+/**
+ * Is a document loaded on build `have` known to be older than build `want`?
+ * Only a KNOWN mismatch says so: a frame stamped with no build, or a caller
+ * that knows none, is not a reason to throw the user's document away.
+ */
+const otherBuild = (have, want) => !!have && !!want && have !== want;
 
 /**
  * Tell an app's document it has been hidden, or shown again (#2902). The
@@ -78,6 +86,14 @@ function announce(el, visible) {
 }
 
 const srcOf = (el) => (el && typeof el.getAttribute === 'function' ? el.getAttribute('src') : null) || '';
+
+/**
+ * A stale mounted frame (see `markStale`) that is not on screen: parked behind
+ * its own Workshop, about to be shown again. Bringing it back is the next open,
+ * which loads the new build. While it IS on screen a render leaves it alone:
+ * reloading the app under the viewer is the Improve offer's call, not ours.
+ */
+const returning = (s) => !!s.stale && !s.active;
 
 export const appFrameBridge = {
   /**
@@ -113,7 +129,9 @@ export const appFrameBridge = {
     // React keeps the node) with the attributes its document was loaded with.
     const restored = current.kept.find((k) => k.slug === slug) || null;
     let kept = current.kept.filter((k) => k.slug !== slug);
-    if (current.slug && current.navigatedAt) kept = [keptRecord(current), ...kept];
+    // A stale frame (see markStale) is let go rather than kept: it is a build
+    // that has since been replaced, and the next open should load the new one.
+    if (current.slug && current.navigatedAt && !current.stale) kept = [keptRecord(current), ...kept];
     kept = kept.slice(0, Math.max(0, keepAliveLimit() - 1));
     if (!restored) mounts += 1;
     const outgoing = current.slug ? appFrameRefs.iframe : null;
@@ -132,6 +150,8 @@ export const appFrameBridge = {
       allow: restored ? restored.allow : BASE_ALLOW,
       navigatedAt: restored ? restored.navigatedAt : 0,
       title: named || (restored && restored.title) || '',
+      build: restored ? restored.build : '',
+      stale: false,
       cover: cover ? { ...COVER_DEFAULTS, ...cover } : null,
       kept,
     });
@@ -147,17 +167,24 @@ export const appFrameBridge = {
    * period, past which the document's token is due a refresh anyway and a
    * reload is what would have happened had it stayed on screen). False
    * leaves everything as it was, and the caller launches the ordinary way.
+   *
+   * `build` is the commit the app is on now, as far as the caller knows. A
+   * frame that loaded a different one is a previous build, and is not brought
+   * back even if every event that should have let it go was missed (a phone
+   * asleep, a dropped socket). A stale frame (see markStale) never is.
    */
-  resume(slug, { maxAgeMs = 0 } = {}) {
+  resume(slug, { maxAgeMs = 0, build = '' } = {}) {
     if (!slug) return false;
     const current = appFrameStore.get();
     const fresh = (at) => at > 0 && (!maxAgeMs || Date.now() - at < maxAgeMs);
     if (current.slug === slug) {
-      if (!appFrameRefs.iframe || !current.sandboxReady || !fresh(current.navigatedAt)) return false;
+      if (!appFrameRefs.iframe || !current.sandboxReady || !fresh(current.navigatedAt)
+          || current.stale || otherBuild(current.build, build)) return false;
       appFrameStore.set({ active: true, faded: false, cover: null });
     } else {
       const kept = current.kept.find((k) => k.slug === slug);
-      if (!kept || !kept.sandboxReady || !fresh(kept.navigatedAt)) return false;
+      if (!kept || !kept.sandboxReady || !fresh(kept.navigatedAt)
+          || otherBuild(kept.build, build)) return false;
       appFrameBridge.mount({ slug, faded: false });
       if (appFrameStore.get().slug !== slug || !appFrameRefs.iframe) return false;
     }
@@ -174,10 +201,13 @@ export const appFrameBridge = {
    * #2902: was the mounted frame for `slug` resumed, and has it not navigated
    * since? Such a frame is the user's document as they left it, and a render
    * must adopt it rather than rebuild it — see renderAppTab.
+   *
+   * Not a stale one coming back from behind another screen (see markStale):
+   * that is the next open, and it loads the new build.
    */
   resumed(slug) {
     return !!slug && resumedSlug === slug && appFrameStore.get().slug === slug
-      && !!appFrameRefs.iframe;
+      && !!appFrameRefs.iframe && !returning(appFrameStore.get());
   },
 
   /** #2902: every app with a live frame, mounted first. */
@@ -199,8 +229,12 @@ export const appFrameBridge = {
     if (!slug || !src) return false;
     const el = appFrameRefs.iframe;
     if (!el) return false;
+    const current = appFrameStore.get();
+    // A stale frame coming back from behind another screen is the next open,
+    // and loads the new build (see markStale).
+    if (returning(current)) return false;
     // #3257: a theme toggle since the frame loaded is not a new url.
-    return appFrameStore.get().slug === slug && sameFrameSrc(srcOf(el), src);
+    return current.slug === slug && sameFrameSrc(srcOf(el), src);
   },
 
   /** Reveal the (already mounted) frame host — the App tab is on screen again. */
@@ -230,7 +264,7 @@ export const appFrameBridge = {
     appActivity.detachFrame(appFrameRefs.iframe);
     appFrameStore.set({
       slug: '', active: false, faded: true, background: '', sandboxReady: false,
-      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, title: '',
+      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, title: '', build: '', stale: false,
     });
   },
 
@@ -238,12 +272,13 @@ export const appFrameBridge = {
    * #2902: the app is being LEFT (backing out to Home). Its frame is kept
    * alive, hidden, so reopening it is instant and exactly as it was — unless
    * it never loaded a document, in which case there is nothing to keep and it
-   * is dropped like `unmount`.
+   * is dropped like `unmount`. A stale frame (see markStale) is dropped too:
+   * the build it shows has been replaced, and the next open loads the new one.
    */
   retire() {
     const current = appFrameStore.get();
     const el = appFrameRefs.iframe;
-    if (!current.slug || !current.navigatedAt || !el) {
+    if (!current.slug || !current.navigatedAt || !el || current.stale) {
       appFrameBridge.unmount();
       return false;
     }
@@ -253,9 +288,23 @@ export const appFrameBridge = {
     appActivity.detachFrame(el);
     appFrameStore.set({
       slug: '', active: false, faded: true, background: '', sandboxReady: false,
-      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, title: '', kept,
+      allow: BASE_ALLOW, cover: null, seq: 0, navigatedAt: 0, title: '', build: '', stale: false, kept,
     });
     announce(el, false);
+    return true;
+  },
+
+  /**
+   * A new build landed for the app on screen. Its document stays exactly as
+   * it is while the viewer is using it (the Improve offer is how they reload
+   * it), but it is now a previous build: leaving it lets it go instead of
+   * keeping it, and coming back to it (resume, or a render from behind its
+   * Workshop) loads the new one. Cleared by the next navigation, which loads
+   * what is deployed now.
+   */
+  markStale(slug) {
+    if (!slug || appFrameStore.get().slug !== slug || !appFrameRefs.iframe) return false;
+    appFrameStore.set({ stale: true });
     return true;
   },
 
@@ -289,7 +338,7 @@ export const appFrameBridge = {
     const kept = [
       ...fresh.map((slug) => ({
         slug, seq: (frames += 1), background: '', sandboxReady: false,
-        allow: BASE_ALLOW, navigatedAt: Date.now(), title: '',
+        allow: BASE_ALLOW, navigatedAt: Date.now(), title: '', build: '',
       })),
       ...current.kept,
     ].slice(0, keepAliveLimit());
@@ -334,15 +383,24 @@ export const appFrameBridge = {
    * Omitting `granted` narrows the frame to the ungated base rather than
    * leaving the previous app's delegation in place. A caller that has not
    * read the grants yet must not accidentally hand them on.
+   *
+   * `build` is the commit this load is of, as far as the caller knows ('' when
+   * it does not), stamped on the frame so `resume` can tell a previous build
+   * from the current one. Omitting it stamps nothing, for the same reason: a
+   * load is never credited with the last load's build. A navigation loads what
+   * is deployed now, so it also clears `stale`.
    */
-  setSrc(src, { granted = [] } = {}) {
+  setSrc(src, { granted = [], build = '' } = {}) {
     const el = appFrameRefs.iframe;
     if (!el || !src) return false;
     const platformOrigin = el.ownerDocument?.defaultView?.location?.origin;
     if (!isSafeAppFrameSrc(src, platformOrigin)) return false;
     // flushSync updates the sandbox AND the permission policy on this same
     // element before the navigation.
-    appFrameStore.set({ sandboxReady: true, allow: allowAttribute(granted), navigatedAt: Date.now() });
+    appFrameStore.set({
+      sandboxReady: true, allow: allowAttribute(granted), navigatedAt: Date.now(),
+      build: build ? String(build) : '', stale: false,
+    });
     resumedSlug = '';
     navigations += 1;
     appActivity.frameNavigated({ slug: appFrameStore.get().slug, frame: el, src });
@@ -360,6 +418,58 @@ export const appFrameBridge = {
    */
   allow() {
     return appFrameStore.get().allow;
+  },
+
+  /**
+   * Which production app posted `source`: the mounted frame's, or one kept
+   * alive behind it (#2902). Answers `{ slug, name, origin, mounted }`, or null
+   * for every other window: the staging preview, the landing viewer, a page an
+   * app nests inside its own frame, a frame that has not been pointed at an app
+   * yet, and anything else.
+   *
+   * The reader is the phone wallet relay in the shared bridge
+   * (public/usernode-bridge.js), through `window.__usernodeAppFrameFor`
+   * (./mount.ts). That relay acts with the platform's own native session, so
+   * being named here is what lets a frame reach the wallet at all, and nothing
+   * else may be. `origin` is where this frame was pointed, so the relay can
+   * tell the app's own document from another site the frame was navigated to
+   * later. `mounted` is true only for THE frame (`#app-iframe`): a kept app is
+   * hidden, and the relay holds it to the rule every shell relay applies to a
+   * hidden app.
+   *
+   * @param {unknown} source a message event's `source`
+   * @returns {{ slug: string, name: string, origin: string, mounted: boolean } | null}
+   */
+  appForSource(source) {
+    if (!source) return null;
+    const state = appFrameStore.get();
+    /**
+     * @param {string} slug
+     * @param {string} title
+     * @param {HTMLIFrameElement | null | undefined} el
+     * @param {boolean} ready the frame's sandbox was switched for an app load
+     * @param {boolean} mounted
+     */
+    const entry = (slug, title, el, ready, mounted) => {
+      if (!slug || !el || !ready || el.contentWindow !== source) return null;
+      const src = srcOf(el);
+      const platformOrigin = el.ownerDocument?.defaultView?.location?.origin;
+      if (!isSafeAppFrameSrc(src, platformOrigin)) return null;
+      let origin = '';
+      try {
+        origin = new URL(src).origin;
+      } catch {
+        return null;
+      }
+      return { slug, name: title || slug, origin, mounted };
+    };
+    const found = entry(state.slug, state.title, appFrameRefs.iframe, state.sandboxReady, true);
+    if (found) return found;
+    for (const k of state.kept) {
+      const kept = entry(k.slug, k.title, appFrameRefs.kept[k.slug], k.sandboxReady, false);
+      if (kept) return kept;
+    }
+    return null;
   },
 
   /**

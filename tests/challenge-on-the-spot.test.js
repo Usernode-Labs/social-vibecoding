@@ -111,6 +111,50 @@ test('a vote on your own proposal or request is not a candidate, and the window 
   assert.match(sql, /ORDER BY v\.user_id ASC, v\.created_at ASC/, 'their earliest vote in the window');
 });
 
+// The first-session test (2026-10-03): the Homeroom bot is the author of the
+// proposal it writes for somebody's request, so "not their own proposal"
+// paid the requester for voting on their own solo app's first version, and
+// the in-app "Suggest an improvement" on that app paid both feedback measures.
+const BOT_BUILD = /NOT EXISTS \(SELECT 1 FROM homeroom_bot_requesters r WHERE r\.app_id = cs\.app_id AND r\.issue_number = cs\.created_from_issue_number AND r\.user_id = (pv\.user_id|\$1)\)/;
+const NOT_JUST_YOU = "a.view_visibility = 'public' OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1 OR EXISTS (SELECT 1 FROM app_collaborators ic WHERE ic.app_id = a.id AND ic.status = 'invited')";
+
+test('a vote on the bot\'s build of your own request, or in a "Just you" project, is not a candidate', () => {
+  const sql = flat(scorer.MEASURE_SQL.VOTE_CAST);
+  assert.match(sql, BOT_BUILD);
+  assert.equal(sql.match(BOT_BUILD)[1], 'pv.user_id', 'the voter\'s own request');
+  // The audience test COMMUNITY_JOINED reads (there over the membership's
+  // community, here over the vote's project); the look has no project and
+  // is not affected.
+  assert.ok(flat(scorer.MEASURE_SQL.COMMUNITY_JOINED)
+    .replace('o.community_id = m.community_id', 'o.community_id = a.community_id').includes(NOT_JUST_YOU));
+  assert.ok(sql.includes(`AND (v.app_id IS NULL OR ${NOT_JUST_YOU})`));
+  assert.ok(sql.indexOf('WHERE v.user_id IS NOT NULL') < sql.indexOf('ORDER BY v.user_id ASC'),
+    'filtered before DISTINCT ON picks the earliest, so the credit is the earliest vote that counts');
+  // The card's Vote step points only at votes that pay: the Needs you
+  // count per project carries the same two tests.
+  const owed = flat(require('../src/routes/workshop-overview').OWED_BY_COMMUNITY_SQL);
+  assert.match(owed, BOT_BUILD);
+  assert.equal(owed.match(BOT_BUILD)[1], '$1', 'the viewer\'s own request');
+  assert.ok(owed.includes(NOT_JUST_YOU.replace('community_members o WHERE o.', 'community_members om WHERE om.')));
+  assert.match(owed, /THEN COUNT\(\*\) FILTER \(WHERE o\.pays\) ELSE 0 END\)::int AS paying/);
+  // And the admin is told.
+  assert.match(rules.MEASURES.VOTE_CAST.summary, /nor do votes on what the Homeroom bot built from their own request or votes in a project only they can see/);
+  const shown = anatomy('VOTE_CAST', { points: 250, target: null });
+  assert.match(shown.steps[0].text, /a vote on what the Homeroom bot built from a request they made and any vote in a "Just you" project/);
+  assert.ok(shown.steps[0].tables.includes('homeroom_bot_requesters'));
+});
+
+test('a report on a project you made, or a "Just you" one, is not feedback for either measure', () => {
+  const sql = flat(scorer.MEASURE_SQL.USEFUL_FEEDBACK);
+  assert.ok(sql.includes(`AND (fr.app_id IS NULL OR $4::boolean OR (a.created_by IS DISTINCT FROM fr.user_id AND (${NOT_JUST_YOU})))`),
+    'about the platform, or somebody else\'s project that somebody else is in, or anything on a First challenge (#4603)');
+  assert.equal(scorer.MEASURE_SQL.FEEDBACK_SENT, scorer.MEASURE_SQL.USEFUL_FEEDBACK, 'both measures, one statement');
+  for (const measure of ['USEFUL_FEEDBACK', 'FEEDBACK_SENT']) {
+    assert.match(rules.MEASURES[measure].summary, /a project they made,? or one only they can see/, measure);
+    assert.match(anatomy(measure, { points: 250, target: 4 }).steps[0].text, /a project they made/, measure);
+  }
+});
+
 test('a vote credit names what was voted on, and is dated when it was cast', async () => {
   const seen = [];
   const pool = {
@@ -295,11 +339,9 @@ test('every door runs the measures it can complete, and only those', () => {
 
 // ─── The heartbeat: a pass on the crossing, and on nothing else ────────
 
-test('the heartbeat reads nothing for an app you made, or once today is past the floor', async () => {
+test('the heartbeat reads nothing once today is past the floor', async () => {
   const pool = spotPool({ total: 40 });
-  const beat = (extra) => scorer.scoreOnAppTime(pool, ON, { appId: 3, ownerId: 9, userId: 7, seconds: 30, daySeconds: 30, ...extra });
-  assert.equal(await beat({ ownerId: 7 }), null);
-  assert.equal(pool.seen.length, 0, 'an app they made never counts, so it is never read');
+  const beat = (extra) => scorer.scoreOnAppTime(pool, ON, { appId: 3, userId: 7, seconds: 30, daySeconds: 30, ...extra });
   assert.equal(await beat({ seconds: 30, daySeconds: 60 }), null);
   assert.equal(pool.seen.length, 0, 'today was already at 30 before this heartbeat: so was the total');
   assert.equal(await beat({ daySeconds: undefined }), null);
@@ -310,13 +352,13 @@ test('the heartbeat reads nothing for an app you made, or once today is past the
 
 test('the heartbeat that crosses the floor runs a pass; the one before it reads and stops', async () => {
   const below = spotPool({ total: 6, ruleRows: [{ id: 1, measure: 'TRY_APPS' }] });
-  assert.equal(await scorer.scoreOnAppTime(below, ON, { appId: 3, ownerId: null, userId: 7, seconds: 6, daySeconds: 6 }), null);
+  assert.equal(await scorer.scoreOnAppTime(below, ON, { appId: 3, userId: 7, seconds: 6, daySeconds: 6 }), null);
   assert.deepEqual(below.seen, [scorer.APP_TIME_SQL], 'one indexed SUM, and no rule lookup');
 
   // Six seconds yesterday and six today is a crossing too: the total is
   // every day's, not the day row's.
   const crossing = spotPool({ total: 12, ruleRows: [{ id: 1, measure: 'TRY_APPS' }], challenges: [] });
-  await scorer.scoreOnAppTime(crossing, ON, { appId: 3, ownerId: 9, userId: 7, seconds: 6, daySeconds: 6, now: NOW });
+  await scorer.scoreOnAppTime(crossing, ON, { appId: 3, userId: 7, seconds: 6, daySeconds: 6, now: NOW });
   assert.deepEqual(crossing.seen.slice(0, 2), [scorer.APP_TIME_SQL, scorer.ON_THE_SPOT_RULES_SQL]);
   assert.ok(crossing.seen.includes(scorer.RULE_CHALLENGES_SQL), 'the pass ran');
   assert.deepEqual(crossing.locks, [[CHALLENGE_SCORER_LOCK, 0]]);
@@ -336,7 +378,7 @@ test('every vote door counts the vote before it answers', () => {
   const route = votes.slice(votes.indexOf("router.post('/api/sessions/:id/vote'"));
   const body = route.slice(0, route.indexOf('settleVoteInBackground({ config, pool, session, revision })'));
   assert.match(votes, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/);
-  assert.match(body, /await challengeScorer\.scoreOnVote\(pool, config\);\s*res\.json\(\{ ok: true, merged: false \}\);/,
+  assert.match(body, /await challengeScorer\.scoreOnVote\(pool, config\);\s*res\.json\(\{ ok: true, merged: false(?:, \.\.\.readyCard)? \}\);/,
     'a proposal vote: credited before the voter is answered');
   assert.ok(body.indexOf('scoreOnVote') > body.indexOf('if (reasonOnly) {'),
     'on a real vote only, behind the same gate as every other side effect');
@@ -364,7 +406,7 @@ test('the heartbeat hands the scorer what it needs to find the crossing', () => 
   const route = src.slice(src.indexOf("router.post('/api/apps/:slug/activity'"));
   const body = route.slice(0, route.indexOf("res.json({ ok: true });"));
   assert.match(body, /RETURNING \(xmax = 0\) AS inserted, seconds_spent`/, 'today\'s total, from the same statement');
-  assert.match(body, /await challengeScorer\.scoreOnAppTime\(pool, config, \{\s*appId: appRows\[0\]\.id,\s*ownerId: appRows\[0\]\.created_by,\s*userId: req\.user\.id,\s*seconds,\s*daySeconds: activityRows\[0\]\?\.seconds_spent,\s*\}\);/);
+  assert.match(body, /await challengeScorer\.scoreOnAppTime\(pool, config, \{\s*appId: appRows\[0\]\.id,\s*userId: req\.user\.id,\s*seconds,\s*daySeconds: activityRows\[0\]\?\.seconds_spent,\s*\}\);/);
 });
 
 // ─── What the admin reads ──────────────────────────────────────────────

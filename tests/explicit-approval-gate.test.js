@@ -221,3 +221,171 @@ test('a null `now` still resolves (serializers pass null to reach the options ar
   assert.equal(g.windowEndsAt, null);
   assert.equal(typeof g.required, 'number');
 });
+
+// ── The member floor ──────────────────────────────────────────────────
+//
+// A flagged proposal also needs at least one qualifying Yes from someone
+// other than its author whenever the community has more than one member.
+// The threshold still reports the vote count; `memberFloor` is its own
+// fact, and `mergeable` needs both.
+
+const floorGate = (gov, active, yes, no, openedAt, { members, otherYes, explicit = true } = {}) =>
+  governance.computeGate(gov, active, yes, no, openedAt, NOW, {
+    explicitApproval: explicit, memberCount: members, otherYes,
+  });
+
+test('memberFloor: applies above one member, met by one Yes from someone else', () => {
+  assert.equal(governance.memberFloor({}), null, 'no member count: not evaluated');
+  assert.equal(governance.memberFloor({ memberCount: null, otherYes: 3 }), null);
+  assert.deepEqual(governance.memberFloor({ memberCount: 1, otherYes: 0 }),
+    { applies: false, otherYes: 0, met: true });
+  assert.deepEqual(governance.memberFloor({ memberCount: 2, otherYes: 0 }),
+    { applies: true, otherYes: 0, met: false });
+  assert.deepEqual(governance.memberFloor({ memberCount: '5', otherYes: '1' }),
+    { applies: true, otherYes: 1, met: true });
+  assert.deepEqual(governance.memberFloor({ memberCount: 0, otherYes: 0 }),
+    { applies: false, otherYes: 0, met: true }, 'no community yet reads as one person');
+});
+
+test('default regime: the author’s own Yes meets the threshold but does not merge', () => {
+  // Two members, only the author active lately: one Yes is the threshold,
+  // which is exactly how an author's own Yes used to merge it alone.
+  const g = floorGate(DEFAULT_GOV, 1, 1, 0, ago(DAY), { members: 2, otherYes: 0 });
+  assert.equal(g.thresholdMet, true, 'the count is met');
+  assert.equal(g.mergeable, false, 'but nobody else has said Yes');
+  assert.deepEqual(g.memberFloor, { applies: true, otherYes: 0, met: false });
+});
+
+test('default regime: one Yes from another member opens the merge', () => {
+  const g = floorGate(DEFAULT_GOV, 2, 2, 0, ago(DAY), { members: 2, otherYes: 1 });
+  assert.equal(g.mergeable, true);
+  assert.equal(g.memberFloor.met, true);
+});
+
+test('a one-member community: the author’s Yes is enough', () => {
+  const g = floorGate(DEFAULT_GOV, 1, 1, 0, ago(DAY), { members: 1, otherYes: 0 });
+  assert.equal(g.mergeable, true);
+  assert.equal(g.memberFloor.applies, false);
+});
+
+test('the floor never lowers the bar: below threshold stays unmergeable', () => {
+  const g = floorGate(DEFAULT_GOV, 9, 1, 0, ago(DAY), { members: 9, otherYes: 1 });
+  assert.equal(g.thresholdMet, false);
+  assert.equal(g.mergeable, false);
+});
+
+test('at_least: the floor holds a met count and lets opposition close it', () => {
+  // N=1: the author's Yes is the whole count. Two members voted No.
+  const ONE = { approverPolicy: 'anyone', approvalsRequired: 1 };
+  const held = floorGate(ONE, 3, 1, 2, ago(7 * DAY), { members: 3, otherYes: 0 });
+  assert.equal(held.thresholdMet, true);
+  assert.equal(held.mergeable, false, 'the author alone cannot open it');
+  assert.equal(held.rejectionArmed, true,
+    'the keep-alive keys on mergeable, so an author-only Yes does not keep it open forever');
+
+  const plain = floorGate(ONE, 3, 1, 2, ago(7 * DAY), { members: 3, otherYes: 0, explicit: false });
+  assert.equal(plain.mergeable, true, 'unflagged, the same tally merges as before');
+  assert.equal(plain.rejectionArmed, false);
+  assert.equal(plain.memberFloor, null, 'an unflagged gate has no floor');
+
+  const met = floorGate(ONE, 3, 2, 1, ago(DAY), { members: 3, otherYes: 1 });
+  assert.equal(met.mergeable, true);
+  assert.equal(met.rejectionArmed, false, 'a mergeable proposal is never auto-closed');
+});
+
+test('applyNoTimerMerge: the floor gates mergeable, and null means not evaluated', () => {
+  const base = activeUsers.mergeGate(8, 3, 0, ago(3600 * 1000), NOW);
+  assert.equal(base.thresholdMet, true);
+  assert.equal(governance.applyNoTimerMerge(base, null).mergeable, true);
+  assert.equal(governance.applyNoTimerMerge(base, { applies: false, otherYes: 0, met: true }).mergeable, true);
+  assert.equal(governance.applyNoTimerMerge(base, { applies: true, otherYes: 0, met: false }).mergeable, false);
+  assert.equal(governance.applyNoTimerMerge(base, { applies: true, otherYes: 2, met: true }).mergeable, true);
+});
+
+// governedGate is the path every merge and apply decision takes, so it must
+// evaluate the floor itself: the author (passed, or read off the row), the
+// other-member Yes count, and the community size.
+function floorPool({ yes, otherYes, members, author = 7 }) {
+  const seen = [];
+  return {
+    seen,
+    async query(sql, params) {
+      seen.push({ sql, params });
+      if (/FROM apps WHERE id/.test(sql) && /approver_policy/.test(sql)) return { rows: [{}] };
+      if (/community_members/.test(sql)) return { rows: [{ n: members }] };
+      if (/SELECT user_id AS author_id FROM chat_sessions/.test(sql)) return { rows: [{ author_id: author }] };
+      if (/IS DISTINCT FROM \$2::int/.test(sql)) return { rows: [{ cnt: String(otherYes) }] };
+      if (/vote = 'yes'/.test(sql)) return { rows: [{ cnt: String(yes) }] };
+      if (/vote = 'no'/.test(sql)) return { rows: [{ cnt: '0' }] };
+      return { rows: [] };
+    },
+  };
+}
+
+function withActiveUsers(active, fn) {
+  const key = require.resolve('../src/services/active-users');
+  const original = require.cache[key];
+  require.cache[key] = {
+    ...original,
+    exports: { ...activeUsers, getActiveUserStats: async () => ({ active, majority: Math.floor(active / 2) + 1 }) },
+  };
+  return Promise.resolve(fn()).finally(() => { require.cache[key] = original; });
+}
+
+test('governedGate: a flagged proposal reads the author off the row and holds on the floor', () => withActiveUsers(1, async () => {
+  governance.invalidateGovernance(901);
+  const pool = floorPool({ yes: 1, otherYes: 0, members: 2, author: 7 });
+  const g = await governance.governedGate(pool, 901, {
+    kind: 'pr', id: 55, openedAt: ago(DAY), now: NOW, explicitApproval: true,
+  });
+  assert.equal(g.thresholdMet, true);
+  assert.equal(g.mergeable, false);
+  assert.deepEqual(g.memberFloor, { applies: true, otherYes: 0, met: false });
+  const other = pool.seen.find((c) => /IS DISTINCT FROM \$2::int/.test(c.sql));
+  assert.deepEqual(other.params, [55, 7], 'the other-Yes count excludes the author read off the row');
+}));
+
+test('governedGate: a passed author is used as is, and another member’s Yes merges', () => withActiveUsers(2, async () => {
+  governance.invalidateGovernance(902);
+  const pool = floorPool({ yes: 2, otherYes: 1, members: 2 });
+  const g = await governance.governedGate(pool, 902, {
+    kind: 'pr', id: 56, openedAt: ago(DAY), now: NOW, explicitApproval: true, authorId: 3,
+  });
+  assert.equal(g.mergeable, true);
+  assert.ok(!pool.seen.some((c) => /author_id/.test(c.sql)), 'no author read when the caller passed one');
+  const other = pool.seen.find((c) => /IS DISTINCT FROM \$2::int/.test(c.sql));
+  assert.deepEqual(other.params, [56, 3]);
+}));
+
+test('governedGate: an unflagged proposal pays for none of it', () => withActiveUsers(2, async () => {
+  governance.invalidateGovernance(903);
+  const pool = floorPool({ yes: 1, otherYes: 0, members: 2 });
+  const g = await governance.governedGate(pool, 903, { kind: 'pr', id: 57, openedAt: ago(DAY), now: NOW });
+  assert.equal(g.memberFloor, null);
+  assert.ok(!pool.seen.some((c) => /community_members|IS DISTINCT FROM|author_id/.test(c.sql)),
+    'the common path keeps its exact queries');
+}));
+
+test('governedGate: a secret-change issue reads issues.created_by as its author', () => withActiveUsers(3, async () => {
+  governance.invalidateGovernance(904);
+  const seen = [];
+  const pool = {
+    async query(sql, params) {
+      seen.push({ sql, params });
+      if (/approver_policy/.test(sql)) return { rows: [{}] };
+      if (/community_members/.test(sql)) return { rows: [{ n: 3 }] };
+      if (/SELECT created_by AS author_id FROM issues/.test(sql)) return { rows: [{ author_id: 11 }] };
+      if (/IS DISTINCT FROM \$2::int/.test(sql)) return { rows: [{ cnt: '0' }] };
+      if (/vote = 'up'/.test(sql)) return { rows: [{ cnt: '2' }] };
+      return { rows: [{ cnt: '0' }] };
+    },
+  };
+  const g = await governance.governedGate(pool, 904, {
+    kind: 'issue', id: 70, openedAt: ago(DAY), now: NOW, explicitApproval: true,
+  });
+  assert.equal(g.thresholdMet, true);
+  assert.equal(g.mergeable, false, 'the up votes are in, but none is from anyone but the author');
+  const other = seen.find((c) => /IS DISTINCT FROM \$2::int/.test(c.sql));
+  assert.match(other.sql, /FROM issue_votes/);
+  assert.deepEqual(other.params, [70, 11]);
+}));

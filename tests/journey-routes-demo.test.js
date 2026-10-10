@@ -38,6 +38,9 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
     nextSteps: '/api/admin/journey/next-steps',
     person: '/api/admin/journey/people/900102',
     leftOut: '/api/admin/journey/left-out',
+    creation: '/api/admin/journey/creation',
+    pairs: '/api/admin/journey/pairs',
+    firstSession: '/api/admin/journey/first-session',
   };
   for (const [key, p] of Object.entries(paths)) {
     const res = await fetch(`${base}${p}${p.includes('?') ? '&' : '?'}demo=1`);
@@ -47,6 +50,51 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
     const keys = Object.keys(body).filter((k) => k !== 'demo').sort();
     assert.deepEqual(keys, Object.keys(pinned[key]).sort(), `${key}: same top-level keys as the real payload`);
   }
+  // The first mile's onboard column: Getting started as x of n per person,
+  // no card for the one stuck before the join screen, nothing without an
+  // account.
+  const mile = await (await fetch(`${base}/api/admin/journey/first-mile?admitted=2026-10-05&demo=1`)).json();
+  assert.deepEqual(mile.people.map((p) => p.onboard && (p.onboard.shown ? `${p.onboard.done}/${p.onboard.total}` : 'no card')),
+    ['3/5', '1/5', 'no card', null]);
   const loops = await (await fetch(`${base}/api/admin/journey/loops?demo=1`)).json();
   assert.deepEqual(loops.change.atStep.hear_back, { status: 'coming' }, 'Hear back is coming in the demo too');
+
+  // The demo keeps the real-person rule: the test account on its left-out
+  // list is in none of its readings.
+  const left = (await (await fetch(`${base}/api/admin/journey/left-out?demo=1`)).json()).people;
+  assert.ok(left.some((p) => p.reason === 'test'));
+  const named = JSON.stringify([
+    await (await fetch(`${base}/api/admin/journey/stages?demo=1`)).json(),
+    await (await fetch(`${base}/api/admin/journey/summary?demo=1`)).json(),
+    loops,
+  ]);
+  for (const p of left) assert.equal(named.includes(`"userId":${p.userId}`), false, `${p.username} is left out of the demo`);
+
+  // The creation path and the pairs narrow by cohort and by "all time" the
+  // way the real readings do, and say "not recorded" before their records.
+  const creation = await (await fetch(`${base}/api/admin/journey/creation?demo=1`)).json();
+  assert.deepEqual(creation.steps.map((x) => [x.key, x.reached, x.of]),
+    [['created', 5, 5], ['running', 5, 5], ['first_version', 3, 5], ['preview', 3, 5], ['change_live', 1, 5]]);
+  assert.equal(creation.weeks.length, 8);
+  assert.equal(creation.weeks[0].steps.find((x) => x.key === 'running').reached.recorded, false,
+    'a week before the record began reads "not recorded", never 0');
+  const cohort = await (await fetch(`${base}/api/admin/journey/creation?demo=1&cohort=2026-10-05`)).json();
+  assert.ok(cohort.examples.every((x) => [900101, 900102, 900103].includes(x.userId)), 'a cohort narrows the examples');
+  const allTime = await (await fetch(`${base}/api/admin/journey/creation?demo=1&week=all`)).json();
+  assert.equal(allTime.week, 'all');
+  const pairs = await (await fetch(`${base}/api/admin/journey/pairs?demo=1`)).json();
+  assert.deepEqual([pairs.count, pairs.of, pairs.open, pairs.trend.length], [2, 4, 1, 8]);
+  assert.ok(pairs.examples.every((x) => x.pair.length === 2 && ['invite', 'members'].includes(x.via)));
+  const cohortPairs = await (await fetch(`${base}/api/admin/journey/pairs?demo=1&cohort=2026-09-24`)).json();
+  assert.ok(cohortPairs.of <= pairs.of && cohortPairs.trend.every((t) => t.count <= t.of));
+  assert.equal((await fetch(`${base}/api/admin/journey/pairs?demo=1&cohort=x`)).status, 400);
+
+  // The invite funnel's sign-ins in their two ways (#4272), so the split
+  // draws in a staging preview, its conversion past FUNNEL_RATE_FROM opens.
+  const first = await (await fetch(`${base}/api/admin/journey/first-session?demo=1`)).json();
+  assert.deepEqual([first.opens.opened, first.opens.signedIn, first.opens.signedInByInvite, first.opens.signedInAlready],
+    [11, 5, 3, 2]);
+  const firstAll = (await (await fetch(`${base}/api/admin/journey/first-session?demo=1&week=all`)).json()).opens;
+  assert.equal(firstAll.signedInByInvite + firstAll.signedInAlready, firstAll.signedIn);
+  assert.ok(firstAll.joined <= firstAll.signedIn && firstAll.signedIn <= firstAll.opened);
 });

@@ -183,23 +183,42 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     assert.equal(wrong.status, 400, 'only a group is created with invites');
   });
 
-  await t.test('a starter template is written to the row and reaches the build; Empty stays the default (#3521)', async () => {
+  await t.test('Empty is stored as nothing, a ready-made app as itself, and a deleted starter is refused before anything exists (#3521)', async () => {
     viewer = { id: starter.id, username: starter.username, isAdmin: false, canAdminWrite: false };
-    const game = await create({ name: 'Star catch', audience: 'solo', template: 'game-2d' });
-    assert.equal(game.status, 201, JSON.stringify(game.data));
-    assert.equal(game.data.app.template, 'game-2d');
-    assert.equal(built.find((row) => row.id === game.data.app.id).template, 'game-2d',
-      'the build receives the row it scaffolds from, so a Retry writes the same starter');
     const plain = await create({ name: 'Plain', audience: 'solo' });
     assert.equal(plain.status, 201, JSON.stringify(plain.data));
     assert.equal(plain.data.app.template, null, 'no template is the empty starter, stored as nothing');
+    const named = await create({ name: 'Named empty', audience: 'solo', template: 'empty' });
+    assert.equal(named.status, 201, JSON.stringify(named.data));
+    assert.equal(named.data.app.template, null, 'naming the empty starter stores nothing either');
+    assert.equal(built.find((row) => row.id === named.data.app.id).template, null,
+      'the build reads no template as the empty starter');
+    // A ready-made app (services/app-templates.js) is stored, built from, and
+    // has nothing for Homeroom bot to build or sketch, even with a description.
+    // (Made by mailer: the create limiter allows five an hour each.)
+    viewer = { id: mailer.id, username: mailer.username, isAdmin: false, canAdminWrite: false };
+    const groceries = await create({
+      name: 'Groceries', audience: 'invited', template: 'grocery-list', description: 'A grocery list',
+      brief: 'An app to organize our groceries: one shared list.', from: 'first-session',
+    });
+    assert.equal(groceries.status, 201, JSON.stringify(groceries.data));
+    assert.equal(groceries.data.app.template, 'grocery-list');
+    assert.equal(built.find((row) => row.id === groceries.data.app.id).template, 'grocery-list', 'the build makes the ready-made app');
+    assert.equal(groceries.data.homeroomBot, undefined, 'no first version is started');
+    const { rows: firsts } = await pool.query('SELECT 1 FROM homeroom_bot_first_versions WHERE app_id = $1', [groceries.data.app.id]);
+    assert.deepEqual(firsts, [], 'nor recorded for anyone to build');
+    const { rows: sketches } = await pool.query('SELECT 1 FROM app_sketches WHERE app_id = $1', [groceries.data.app.id]);
+    assert.deepEqual(sketches, [], 'and nothing is sketched: it has its own icon');
+    viewer = { id: starter.id, username: starter.username, isAdmin: false, canAdminWrite: false };
+    // The four general starters went with the create dialog.
+    const game = await create({ name: 'Star catch', audience: 'solo', template: 'game-2d' });
+    assert.equal(game.status, 400);
+    assert.match(game.data.error, /^template must be one of: empty, tier-list-restaurants, /);
     const unknown = await create({ name: 'Mystery', audience: 'solo', template: 'chess' });
     assert.equal(unknown.status, 400);
-    assert.match(unknown.data.error, /^template must be one of: empty, /);
     const imported = await create({ name: 'Imported', audience: 'solo', template: 'game-3d', repoUrl: 'https://github.com/o/r' });
     assert.equal(imported.status, 400);
-    assert.match(imported.data.error, /import keeps its own repository/);
-    const { rows } = await pool.query(`SELECT name FROM apps WHERE name IN ('Mystery', 'Imported')`);
+    const { rows } = await pool.query(`SELECT name FROM apps WHERE name IN ('Star catch', 'Mystery', 'Imported')`);
     assert.deepEqual(rows, [], 'a refused template creates nothing');
   });
 

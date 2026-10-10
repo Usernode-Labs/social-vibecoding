@@ -1,0 +1,427 @@
+/**
+ * The first-session tours' steps: real screens, one screen whole and then the
+ * tap that leads on (./index.tsx draws them). One short title and one short
+ * sentence per card: the card names the place, the screen behind it says the
+ * rest (#4044, the tour script on the onboarding canvas).
+ *
+ * Three tours. Starting a community and joining one share their first seven
+ * cards, word for word: the project on Home, the project opened, Suggest an
+ * improvement in its Homeroom menu, ✕ back to Home, where to find it under
+ * Communities, and its hub. The maker's ends
+ * on the plan in Homeroom bot's chat, which waits there until the tour is
+ * over (decision C); the invited one ends in Discussion. "Look around first"
+ * has its own four cards on Home (decision E, #4072): where to start a
+ * project later, and what the tab bar's places are. A private member, let in
+ * by an invite link before the waitlist let them in, gets the maker's walk
+ * through the project, three cards reworded for someone invited, then
+ * Homeroom bot and the waitlist, the first time they reach Home (#4080,
+ * #4398, privateSteps).
+ *
+ * Every target is the product's own control or region, found by the
+ * selectors the rest of the shell already pins (tests/baselines/
+ * shell-markup.json, dapp.json): nothing here draws a picture of the product.
+ *
+ * The words are read from the catalog (frontend/locales/en/onboarding.json)
+ * when a tour's steps are built, never at module load, so they are in the
+ * language on screen; ./index.tsx builds them again when it changes.
+ */
+
+import { t as translate } from '../../lib/i18n/runtime';
+
+export type TourScreen = 'home' | 'app' | 'hub' | 'discussion' | 'bot';
+
+export type TourStep = {
+  screen: TourScreen;
+  /** Selector(s); several are drawn as one cut-out around all of them. */
+  target: string;
+  /**
+   * Drawn into the same cut-out once the target is on screen: the top bar
+   * over a screen (SCREEN_HEADER). It never stands in for the target, so a
+   * screen that has not opened still dims whole and opens itself.
+   */
+  alongside?: string;
+  /**
+   * Bars the cut-out stops above (BOTTOM_BARS): every screen runs on under
+   * the phone's tab bar, so a cut-out of the screen took the bar in with it.
+   * Only a bar lying across the cut-out's foot counts; the rail beside the
+   * screen from 768px up takes nothing off.
+   */
+  endsAbove?: string;
+  /**
+   * A tap step whose cut-out shows more than its control: the control itself,
+   * the one press that leads on. It is what is ringed, and the only part of
+   * the cut-out a press reaches. Without it, the target is the control.
+   */
+  press?: string;
+  title: string;
+  text: string;
+  /**
+   * A step the reader finishes by pressing its control: the hint shown instead
+   * of Next. The hint presses that control too (./index.tsx pressTarget).
+   */
+  tap?: string;
+  /** Where the card goes: under the target or over it (auto), at the foot of the screen, or just above or below another element. */
+  place?: 'auto' | 'bottom' | { above: string } | { below: string };
+  /** Pressing the target lands on a list; open the next step's screen itself (the bot's chat, not the inbox). */
+  opensNext?: boolean;
+  /**
+   * A step that points at one control without asking for the press ("Look
+   * around first": Next leads on). The control is ringed as a tap step's is,
+   * and covered like the rest of the cut-out, so a press on it does not take
+   * the reader out of the tour.
+   */
+  ringed?: boolean;
+  /**
+   * What the card says instead while `when` is on screen: the maker's last
+   * step, once the plan it waits for has come into the chat.
+   */
+  instead?: { when: string; title: string; text: string };
+  /**
+   * A control that draws the target when the screen holds it back, pressed
+   * once if the target is not there: Home's "Show all N apps", behind which
+   * a full collapsed grid keeps the New project tile (home.js createHidden).
+   * The product's own handler draws it, as a finger on it would.
+   */
+  revealWith?: string;
+  /**
+   * A transcript in the cut-out: the newest of its `rows` begins just under
+   * the coach card (./index.tsx showNewestBelow), so the plan's title and
+   * first lines are never under the card, and as much of the rest as the
+   * screen holds, its Build it included, shows below them.
+   */
+  newestBelowCard?: { scroller: string; rows: string };
+  /**
+   * The card's words say where the app opens ("<project> opens here"), so
+   * the App tab's own "It opens here when it's ready." hides while the card
+   * is up: the card carries `data-tour-says-where-it-opens`, which that line
+   * reads (features/app-frame/app-status.tsx).
+   */
+  saysWhereItOpens?: boolean;
+  /**
+   * A step inside the Homeroom menu (APP_MENU): the tour opens the menu
+   * while the step is up, Back to it included, and closes it once the reader
+   * moves on, Skip included (./index.tsx). The tour is drawn over the menu
+   * then, which on touch is a kit sheet above the tour's usual layer.
+   */
+  inMenu?: boolean;
+  last?: boolean;
+};
+
+/**
+ * The maker's last step: their chat with Homeroom bot, its header (the bot's
+ * name and what it is doing for them) with its messages under it, as one
+ * cut-out. It used to be the messages alone, under a dimmed header, and its
+ * newest card began part-way down: "the chat with Homeroom bot is missing the
+ * header" (Evan, on his phone, 5 October 2026). The conversation's own
+ * section scopes both, so no other pane's header or transcript is measured.
+ * The platform's top bar above them is drawn in too (SCREEN_HEADER).
+ */
+export const BOT_CHAT_HEADER = '.messages-thread-direct > .messages-thread-header';
+export const BOT_CHAT_MESSAGES = '.messages-thread-direct > .messages-thread-scroll';
+
+/**
+ * The platform's top bar, drawn with the screen under it (TourStep.alongside).
+ * Its top padding is the status bar's inset, so its box starts at the top of
+ * the screen inside the iOS app's WebView too. The steps that show a screen
+ * whole cut it out with that screen: "include the header", on the app's
+ * close step, the hub and the chat with Homeroom bot (Evan, on his phone,
+ * 5 October 2026).
+ */
+export const SCREEN_HEADER = '#platform-header';
+
+/**
+ * What sits along the foot of a platform screen: the tab bar, and the app you
+ * left (the Resume strip) on top of it. "The whole screen, minus the tab
+ * bar" stops above both (TourStep.endsAbove).
+ */
+export const BOTTOM_BARS = '#platform-parked, #platform-tabs';
+
+
+/**
+ * The plan waiting for its maker's Build it, in the chat with Homeroom bot
+ * (../messages/bot-plan-view.tsx draws `data-bot-plan` with its state). The
+ * conversation's own section scopes it, so the App tab's copy of the card
+ * never counts.
+ */
+export const PLAN_WAITING = '.messages-thread-direct [data-bot-plan="open"]';
+
+/**
+ * The app screen's Suggest steps, the same on the invited and maker paths
+ * (request #4225, reordered by #4390): the Homeroom mark at the top of the
+ * app, which the reader taps, then the real menu it opens with its "Suggest
+ * an improvement" button pointed at but not pressed, so no suggestion
+ * starts. The copy is honest about what happens to a suggestion: Homeroom
+ * bot does not always build it, and sometimes brings it to the group as a
+ * request instead.
+ */
+export const MENU_TEXT = 'onboarding:firstSession.tour.menu.text';
+export const SUGGEST_TEXT = 'onboarding:firstSession.tour.suggest.text';
+
+/** The menu the Homeroom mark opens (../app-context/app-context-sheet.tsx). */
+export const APP_MENU = '#apps-switcher-sheet';
+
+function suggestSteps(): TourStep[] {
+  return [
+    {
+      screen: 'app',
+      target: '#platform-mark-btn',
+      title: translate('onboarding:firstSession.tour.menu.title'),
+      text: translate(MENU_TEXT),
+      tap: translate('onboarding:firstSession.tour.menu.tap'),
+    },
+    {
+      screen: 'app',
+      target: '#improve-row-feedback',
+      inMenu: true,
+      ringed: true,
+      title: translate('onboarding:firstSession.tour.suggest.title'),
+      text: translate(SUGGEST_TEXT),
+    },
+  ];
+}
+
+/**
+ * Where a project's first version stands, as its App tab shows it
+ * (GET /api/apps/:slug `first_version`; public/js/app-view.js
+ * _firstVersionView): Homeroom bot still building it, built and waiting for
+ * approval, or neither (null: the app is what there is). "You're in" reads it
+ * (./index.tsx firstVersionStage); the cards no longer do, since the screen
+ * behind the app's card says it (#4043, #4053).
+ */
+export type FirstVersionStage = 'building' | 'ready' | null;
+
+export type TourProject = {
+  slug: string;
+  name: string;
+  conversationId?: number | null;
+};
+
+/**
+ * The project's hub, named without a possessive: "Page Turners's hub" was
+ * what a name ending in s read as (first-session run-through, 5 October 2026).
+ */
+export function hubTitle(name: string): string {
+  return translate('onboarding:firstSession.tour.hub.title', { community: name });
+}
+
+/**
+ * The cards both paths open with, word for word (the tour script on the
+ * onboarding canvas): the project on Home; the project opened, the app
+ * screen whole with its top bar; Suggest an improvement (#4225, #4390), the
+ * Homeroom mark tapped and the menu it opens; ✕, ringed alone, back to Home
+ * (#4044: "focus the step on the ✕"); the Communities tab, naming the
+ * project instead of "its hub and its group chat"; and the hub, by what is
+ * on it (#4045). The Communities tab is ONE element, the phone's bottom bar
+ * below 768px and the rail above it (features/nav/tab-bar.tsx; its key is
+ * still `workshop`).
+ */
+function sharedSteps(slug: string, name: string): TourStep[] {
+  return [
+    {
+      screen: 'home',
+      target: `.app-card[data-slug="${slug}"]`,
+      title: translate('onboarding:firstSession.tour.onHome.title', { app: name }),
+      text: translate('onboarding:firstSession.tour.onHome.text'),
+      tap: translate('onboarding:firstSession.tour.onHome.tap'),
+    },
+    {
+      // `#app-view` holds both halves of the screen, the build's progress
+      // (#app-content) and the running app (#app-frame-host), and the top
+      // bar over it is drawn in too.
+      screen: 'app',
+      target: '#app-view',
+      alongside: SCREEN_HEADER,
+      title: translate('onboarding:firstSession.tour.opens.title', { app: name }),
+      text: translate('onboarding:firstSession.tour.opens.text'),
+      saysWhereItOpens: true,
+      place: 'bottom',
+    },
+    ...suggestSteps(),
+    {
+      screen: 'app',
+      target: '#back-btn',
+      title: translate('onboarding:firstSession.tour.back.title'),
+      text: translate('onboarding:firstSession.tour.back.text', { app: name }),
+      tap: translate('onboarding:firstSession.tour.back.tap'),
+    },
+    {
+      screen: 'home',
+      target: '#platform-tab-workshop',
+      title: translate('onboarding:firstSession.tour.communities.title', { community: name }),
+      text: translate('onboarding:firstSession.tour.communities.text'),
+      tap: translate('onboarding:firstSession.tour.communities.tap'),
+    },
+    {
+      // The hub whole: its top bar over it, down to the tab bar.
+      screen: 'hub',
+      target: '#app-content',
+      alongside: SCREEN_HEADER,
+      endsAbove: BOTTOM_BARS,
+      title: hubTitle(name),
+      text: translate('onboarding:firstSession.tour.hub.text'),
+      place: 'bottom',
+    },
+  ];
+}
+
+/** Joining a community: nine steps, ending in its Discussion, where the people already are. */
+export function invitedSteps({ slug, name }: TourProject): TourStep[] {
+  return [
+    ...sharedSteps(slug, name),
+    {
+      // #4417: #general's row in the places list beside the page (a wide
+      // window), or on a phone the place bar's button, which opens the list
+      // in its tray: whichever of the two is on screen is ringed. The press
+      // that opens the tray does not open #general itself, so the tour does.
+      screen: 'hub',
+      target: '[data-places] [data-place="discussion"], [data-places-btn]',
+      title: translate('onboarding:firstSession.tour.general.title'),
+      text: translate('onboarding:firstSession.tour.general.text', { community: name }),
+      tap: translate('onboarding:firstSession.tour.general.tap'),
+      opensNext: true,
+    },
+    {
+      screen: 'discussion',
+      target: '#gc-messages, #gc-form',
+      title: translate('onboarding:firstSession.tour.sayHi.title'),
+      text: translate('onboarding:firstSession.tour.sayHi.text'),
+      place: { above: '#gc-form' },
+      last: true,
+    },
+  ];
+}
+
+/**
+ * A PRIVATE MEMBER's tour (users.private_member_since): an invite link let
+ * them into a community's app before they were let in, and they reach the
+ * rest of Homeroom only through the mark menu's "Go to Homeroom" (#4080).
+ * The first time they do, nine cards (request #4398): the maker's walk
+ * through the project (sharedSteps), with three cards reworded for someone
+ * who was invited rather than someone who made it (the app opened, Suggest
+ * an improvement in its menu, and the hub), then Homeroom bot and the
+ * waitlist card that is how they make apps of their own. The ✕ step has its
+ * control because goHome notes the Home visit before the tour starts
+ * (App._privateNoClose turns false), so the app has its ✕ again.
+ */
+export function privateSteps({ slug, name }: TourProject): TourStep[] {
+  const [home, app, menu, suggest, close, communities, hub] = sharedSteps(slug, name);
+  return [
+    home,
+    { ...app, text: translate('onboarding:firstSession.tour.private.opens.text') },
+    menu,
+    { ...suggest, text: translate('onboarding:firstSession.tour.private.suggest.text', { app: name }) },
+    close,
+    communities,
+    { ...hub, text: translate('onboarding:firstSession.tour.private.hub.text') },
+    {
+      screen: 'hub',
+      target: '#platform-tab-messages',
+      ringed: true,
+      // What the bot is for, then where it is (#4397); the maker's and "Look
+      // around first" tours keep their own card.
+      title: translate('onboarding:firstSession.tour.private.bot.title'),
+      text: translate('onboarding:firstSession.tour.private.bot.text', { app: name }),
+    },
+    {
+      // The card's own heading says what it is for ("Make and share your
+      // own apps"); this card says where, and what the card does.
+      screen: 'home',
+      target: '#home-waitlist-card',
+      ringed: true,
+      title: translate('onboarding:firstSession.tour.private.waitlist.title'),
+      text: translate('onboarding:firstSession.tour.private.waitlist.text'),
+      last: true,
+    },
+  ];
+}
+
+/**
+ * Starting a community, after "Invite people later" or "Go to the Homeroom
+ * app": the same first seven cards, then Messages, ending on the plan in
+ * Homeroom bot's chat (when the project has one: the bot builds for this
+ * account), and otherwise on the hub. The plan waits there for Build it, and
+ * nothing asks for it before the tour ends (decision C): the last card says
+ * the bot is working on it until a plan is in the chat, and how to answer it
+ * once it is. Nothing else in the tour names the plan (./tour-running.ts).
+ */
+export function makerSteps({ slug, name, conversationId }: TourProject): TourStep[] {
+  const steps = sharedSteps(slug, name);
+  if (!conversationId) {
+    steps[steps.length - 1] = { ...steps[steps.length - 1], last: true };
+    return steps;
+  }
+  steps.push(
+    {
+      screen: 'hub',
+      target: '#platform-tab-messages',
+      title: translate('onboarding:firstSession.tour.maker.bot.title'),
+      text: translate('onboarding:firstSession.tour.maker.bot.text', { app: name }),
+      tap: translate('onboarding:firstSession.tour.maker.bot.tap'),
+      opensNext: true,
+    },
+    {
+      screen: 'bot',
+      target: `${BOT_CHAT_HEADER}, ${BOT_CHAT_MESSAGES}`,
+      alongside: SCREEN_HEADER,
+      // The card at the top, under the chat's header, and the plan just
+      // under the card: at the foot of the screen the card covered the very
+      // buttons it names, and over the plan's top it covered its title and
+      // first lines (the owner, 6 and 7 October 2026).
+      newestBelowCard: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
+      // Until a plan waits, nothing on the card says there is one coming:
+      // the bot may ask a question first (requests #4391, #4393).
+      title: translate('onboarding:firstSession.tour.maker.working.title', { app: name }),
+      text: translate('onboarding:firstSession.tour.maker.working.text'),
+      instead: {
+        when: PLAN_WAITING,
+        title: translate('onboarding:firstSession.tour.maker.plan.title'),
+        text: translate('onboarding:firstSession.tour.maker.plan.text'),
+      },
+      place: { below: BOT_CHAT_HEADER },
+      last: true,
+    },
+  );
+  return steps;
+}
+
+/**
+ * "Look around first" (decision E, #4072): it used to land on Home with
+ * nothing explained. Four cards on Home, each pointing at one place and
+ * leading on with Next, so nobody is taken anywhere: New project, where a
+ * community and its app start whenever they want one, then the tab bar's
+ * Discover, Communities and Messages.
+ */
+export function lookAroundSteps(): TourStep[] {
+  return [
+    {
+      screen: 'home',
+      target: '#home-create-tile',
+      revealWith: '#home-apps-more-btn',
+      ringed: true,
+      title: translate('onboarding:firstSession.tour.look.make.title'),
+      text: translate('onboarding:firstSession.tour.look.make.text'),
+    },
+    {
+      screen: 'home',
+      target: '#platform-tab-discover',
+      ringed: true,
+      title: translate('onboarding:firstSession.tour.look.discover.title'),
+      text: translate('onboarding:firstSession.tour.look.discover.text'),
+    },
+    {
+      screen: 'home',
+      target: '#platform-tab-workshop',
+      ringed: true,
+      title: translate('onboarding:firstSession.tour.look.communities.title'),
+      text: translate('onboarding:firstSession.tour.look.communities.text'),
+    },
+    {
+      screen: 'home',
+      target: '#platform-tab-messages',
+      ringed: true,
+      title: translate('onboarding:firstSession.tour.look.bot.title'),
+      text: translate('onboarding:firstSession.tour.look.bot.text'),
+      last: true,
+    },
+  ];
+}

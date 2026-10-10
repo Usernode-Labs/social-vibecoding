@@ -21,7 +21,7 @@ function cleanClaims(value) {
   return value.slice(0, 3).map((claim) => ({
     id: String(claim?.id || '').slice(0, 96),
     claim: String(claim?.claim || '').slice(0, 1000),
-    persona: ['member', 'read_only_admin', 'full_admin'].includes(claim?.persona)
+    persona: ['member', 'read_only_admin', 'full_admin', 'guest'].includes(claim?.persona)
       ? claim.persona : 'member',
     viewports: Array.isArray(claim?.viewports)
       ? claim.viewports.slice(0, 2).map((name) => String(name).slice(0, 32))
@@ -35,7 +35,8 @@ function cleanClaims(value) {
 }
 
 // One result per declared change: its shots are ready, or the shots agent
-// skipped it and says why.
+// skipped it and says why, or it failed: the agent did the steps and the
+// after build broke.
 // The agent sometimes writes a quotation mark already escaped, as it would
 // inside JSON (\"Continue\"); people should read the quotation mark.
 const unescapeQuotes = (text) => text.replace(/\\+(["'])/g, '$1');
@@ -45,11 +46,30 @@ function cleanShotResults(value) {
   return value.slice(0, 3).filter((result) => STORY_ID_RE.test(String(result?.id || '')))
     .map((result) => ({
       id: String(result.id),
-      status: result.status === 'ready' ? 'ready' : 'skipped',
+      status: result.status === 'ready' || result.status === 'failed' ? result.status : 'skipped',
       reason: result.status === 'ready' || typeof result.reason !== 'string'
         ? null : unescapeQuotes(result.reason).slice(0, 1000),
       note: result.status !== 'ready' || typeof result.note !== 'string'
         ? null : unescapeQuotes(result.note).slice(0, 500),
+    }));
+}
+
+// What the shots agent noticed broken on the after build besides the
+// declared changes: a handful of short notes, each where it shows (one of
+// this run's declared changes and a screen name), which after shot shows it
+// if one does, and whether the before build has it too. Advisory: shown
+// under "Also noticed" and nothing else reads them.
+function cleanShotNotices(value, claims) {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set((claims || []).map((claim) => claim.id));
+  return value.filter((entry) => entry && typeof entry.text === 'string' && entry.text.trim()
+    && ids.has(entry.change) && VIEWPORT_RE.test(String(entry.screen || '')))
+    .slice(0, 5).map((entry) => ({
+      text: unescapeQuotes(entry.text.trim()).slice(0, 300),
+      change: entry.change,
+      screen: entry.screen,
+      shot: entry.shot === 'screen' || entry.shot === 'element' ? entry.shot : null,
+      alsoBefore: entry.alsoBefore === true || entry.alsoBefore === false ? entry.alsoBefore : 'unknown',
     }));
 }
 
@@ -157,6 +177,7 @@ function fromSnapshot(session, currentHead) {
     repairAvailable: detail.repairAvailable === true,
     planHash: typeof detail.planHash === 'string' ? detail.planHash : null,
     shotResults: [],
+    shotNotices: [],
     screens: [],
     progress: null,
     verifiedReason: null,
@@ -193,7 +214,14 @@ function serialize(run, session, slug, currentHead) {
     repairAvailable: matchesCurrent && run.repairAvailable === true
       && !(run.automaticRetryPending === true && !['merged', 'archived'].includes(session?.status)),
     planHash: run.planHash || null,
-    shotResults: matchesCurrent && run.state === 'verified' ? cleanShotResults(run.shotResults) : [],
+    // A failed run carries them only when a declared change failed
+    // (shots_change_failed), so the change page can say which one.
+    shotResults: matchesCurrent && (run.state === 'verified'
+      || (run.state === 'failed' && run.failureCode === 'shots_change_failed'))
+      ? cleanShotResults(run.shotResults) : [],
+    // Only a published run's card shows them.
+    shotNotices: matchesCurrent && run.state === 'verified'
+      ? cleanShotNotices(run.shotNotices, cleanClaims(run.claims)) : [],
     screens: matchesCurrent && run.state === 'verified' ? cleanScreens(run.screens, cleanClaims(run.claims)) : [],
     progress: matchesCurrent && PUBLIC_STATES.has(run.state) ? (run.progress || null) : null,
     verifiedReason: null,
@@ -262,6 +290,7 @@ module.exports = {
   PUBLIC_STATES,
   cleanClaims,
   cleanShotResults,
+  cleanShotNotices,
   cleanScreens,
   cleanArtifacts,
   artifactUrl,

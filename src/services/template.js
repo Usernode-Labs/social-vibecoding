@@ -2,6 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
+// The packages a starter may add on top of the template's (an entry's
+// `dependencies` in services/app-templates.js), with their lockfile entries.
+const extraPackages = require('../templates/node-app/extra-packages.json');
 const appTemplates = require('./app-templates');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
@@ -80,18 +83,195 @@ const DEV_CONSOLE_FORWARDER = `
 // Homeroom theme (#3257), not the OS: inside the platform's frame
 // `prefers-color-scheme` sees only the OS. The scaffold's screen already does
 // (the theme <script> after the bridge tag in public/index.html, the same one
-// every starter in app-templates/ ships); this is what its CLAUDE.md tells the
+// a starter under app-templates/ would ship); this is what its CLAUDE.md tells the
 // agent that replaces that screen, so the first real version keeps both.
-// Shared by the Empty scaffold's notes and every starter's.
-const THEME_CLAUDE_NOTE = `The screen has a light and a dark look and follows the viewer's Homeroom
+// Shared by the Empty scaffold's notes and every starter's. Every screen is
+// built from the design kit, whose colour tokens carry both looks, and the
+// notes record a fixed look under their own "## Design". The default wording
+// (`dark:` variants) is for a screen drawn without the kit.
+function themeClaudeNote({ how = 'Tailwind\'s `dark:` variants', where = '"App-specific conventions"' } = {}) {
+  return `The screen has a light and a dark look and follows the viewer's Homeroom
 theme, switching live when they change it: the theme \`<script>\` right after
 the bridge tag sets a \`dark\` class on \`<html>\`. Keep that script, and give
-everything you build both looks (Tailwind's \`dark:\` variants), unless one
+everything you build both looks (${how}), unless one
 fixed look is the point of this app, like a game's own scene; then say so
-under "App-specific conventions" below. Unless a request asks for one, add
+under ${where} below. Unless a request asks for one, add
 no theme picker: the viewer's Homeroom setting is the control. "The
 platform's light/dark theme inside the app frame" in the platform
 conventions has the details.`;
+}
+
+// #3737 (Rec2): the Empty starter is a small design system, not just a
+// placeholder screen. Its stylesheet carries semantic colour tokens for both
+// looks and a few components (DESIGN_KIT_CSS below), and its notes carry the
+// app's design record: blanks the first real version fills in (the bot's
+// build is told to, homeroom-bot-live.js FIRST_VERSION_DESIGN_LINES) and the
+// rules every later change keeps. Kept short on purpose: the long form
+// belongs in a design skill, not in every app's CLAUDE.md. The rules answer
+// what the taste benchmark found in first versions built from the old
+// starter: low-contrast text, blank or dishonest loading and error states,
+// no staging demo data, small tap targets, and the usual tells.
+const DESIGN_CLAUDE_SECTION = `## Design
+
+This app's look. The first real version fills in the blanks; every later
+change follows it, and updates it when a request changes the look on purpose.
+
+- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
+  "accent: tomato red; second: basil green; neutrals: warm greys")_
+- **Signature element:** _(the one thing on screen drawn from this app's
+  subject, which no other app would have)_
+- **Type scale:** \`text-title\`, \`text-heading\`, \`text-body\`, \`text-small\`
+  _(change their sizes in \`tailwind.config.js\` if you must, not their number)_
+- **One fixed look:** _(only for an app drawn as its own scene, such as a
+  game: which look, and why. Otherwise delete this line.)_
+
+The kit is in \`styles/tailwind-input.css\`: colour tokens with a light and
+a dark value (named in \`tailwind.config.js\`), and a few components
+(\`btn-primary\`, \`btn-secondary\`, \`field\`, \`list\` and \`list-row\`,
+\`card\`, \`section-label\`, \`skeleton\`, \`state-empty\`, \`state-error\`).
+Re-theme by changing the token values there, keeping every text pair at
+4.5:1 or more in both looks.
+
+- Colour comes only from the tokens (\`bg-ground\`, \`bg-surface\`,
+  \`text-fg\`, \`text-muted\`, \`border-line\`, \`bg-accent\` with
+  \`text-on-accent\`, ...): never a raw hex value or a stock palette class.
+- Tap targets are at least 44 px; the buttons and fields already are.
+- A field's label says what it is; its placeholder, if any, is an example
+  that says so ("e.g. 5.0"), never a bare value that could pass for one
+  already entered.
+- Every screen that loads data has honest loading, empty and error states.
+  Never show the empty state while loading or after a failure; an error says
+  what failed, what still works, and offers Retry.
+- Seed obviously fake staging demo data so the populated screen can be seen
+  ("Staging mock data" in the platform conventions).
+- No cards in cards, no uppercase eyebrows, no emoji as icons.`;
+
+// The design kit's half of styles/tailwind-input.css, after the three
+// @tailwind lines. Part of the Tailwind build every new app shares (a
+// starter's screen just does not use it yet), and invisible until used: the
+// base layer only defines variables and makes `hidden` win over a display
+// class, and Tailwind drops every component no markup names.
+//
+// Token values are "R G B" channels, not hex: Tailwind needs channels for
+// opacity modifiers, and the benchmark's tells lint counts hex literals in
+// an app's source as stray colours. tests/template-design-kit.test.js
+// computes every text pair's contrast in both looks from these values.
+const DESIGN_KIT_CSS = `
+/* ── Colour tokens ────────────────────────────────────────────────────────
+ * This app's palette, defined once. Each value is "R G B"; tailwind.config.js
+ * names them (bg-ground, bg-surface, text-fg, text-muted, border-line,
+ * bg-accent with text-on-accent, ...). :root is the light look, and .dark,
+ * which the theme script in public/index.html sets on <html>, the dark one.
+ *
+ * Re-theme the app HERE: change the values, keep the names. The defaults
+ * (warm greys, one teal accent) are a quiet starting point, not a look.
+ * Keep every text pair at 4.5:1 or more in both looks: fg and muted on
+ * ground, surface and raised; accent and danger on ground and surface;
+ * on-accent on accent; on-danger on danger.
+ *
+ * Adopting the native UI kit later? Point its --un-accent and
+ * --un-accent-contrast at the accent and on-accent tokens.
+ */
+@layer base {
+  :root {
+    --ground: 250 250 249;    /* the page */
+    --surface: 255 255 255;   /* lists, cards, fields */
+    --raised: 245 245 244;    /* hovers, badges */
+    --fg: 28 25 23;           /* text */
+    --muted: 87 83 78;        /* secondary text */
+    --line: 231 229 228;      /* borders, dividers, skeletons */
+    --accent: 15 118 110;     /* the one accent */
+    --on-accent: 255 255 255; /* text on the accent */
+    --danger: 185 28 28;
+    --on-danger: 255 255 255;
+    --focus: 13 148 136;      /* the keyboard focus ring */
+  }
+  .dark {
+    --ground: 12 10 9;
+    --surface: 28 25 23;
+    --raised: 41 37 36;
+    --fg: 245 245 244;
+    --muted: 168 162 158;
+    --line: 68 64 60;
+    --accent: 45 212 191;
+    --on-accent: 4 47 46;
+    --danger: 248 113 113;
+    --on-danger: 69 10 10;
+    --focus: 94 234 212;
+  }
+  /* el.hidden = true hides an element even when a class gives it a display
+     (flex, the components below). */
+  [hidden]:where(:not([hidden="until-found"])) {
+    display: none !important;
+  }
+}
+
+/* ── Components ───────────────────────────────────────────────────────────
+ * A small starting kit on the tokens. Use these rather than restyling the
+ * same thing by hand, add to them sparingly, and change a component here
+ * rather than one copy of it. Type: text-title, text-heading, text-body and
+ * text-small (tailwind.config.js), nothing in between.
+ */
+@layer components {
+  /* Buttons: one primary per screen, the rest secondary. At least 44 px
+     each way, so they are easy to tap. */
+  .btn-primary,
+  .btn-secondary {
+    @apply inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg px-4 text-body font-medium
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2
+      focus-visible:ring-offset-ground disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-accent text-on-accent hover:brightness-95;
+  }
+  .btn-secondary {
+    @apply border border-line bg-surface text-fg hover:bg-raised;
+  }
+
+  /* Text inputs, selects and textareas: <input class="field">, 44 px tall.
+     The placeholder is a faint hint (muted at 60%), so an example such as
+     "5.0" never reads as a value somebody already typed in. */
+  .field {
+    @apply block min-h-11 w-full rounded-lg border border-line bg-surface px-3 py-2 text-body text-fg
+      placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-focus;
+  }
+
+  /* A grouped list: <ul class="list"> of <li class="list-row">. The usual
+     way to show several things; prefer it to a stack of cards. */
+  .list {
+    @apply divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface;
+  }
+  .list-row {
+    @apply flex min-h-11 items-center gap-3 px-4 py-3;
+  }
+
+  /* A card: one self-contained thing, usually something you tap. Most
+     screens need none. Never put a card inside a card or a .list. */
+  .card {
+    @apply rounded-xl border border-line bg-surface p-4;
+  }
+
+  /* The label above a section: sentence case, never uppercase or tracked. */
+  .section-label {
+    @apply mb-2 px-1 text-small font-medium text-muted;
+  }
+
+  /* The states of anything that loads data. Show exactly one at a time:
+     - loading: .skeleton shapes where the data will be, never a blank;
+     - empty, only when the load WORKED and found nothing: a title, one
+       sentence and the action that fills it;
+     - error, only when the load FAILED: what failed, what still works,
+       and a Retry button.
+     Never show the empty state while loading or for a failure. */
+  .skeleton {
+    @apply rounded-md bg-line motion-safe:animate-pulse;
+  }
+  .state-empty,
+  .state-error {
+    @apply flex flex-col items-center gap-2 px-4 py-8 text-center;
+  }
+}
+`;
 
 // Resolved at module-load: which Homeroom platform domain do we
 // inject into scaffolded apps? Apps need to point users back to the
@@ -319,51 +499,17 @@ connector registered under some other name.
 
 // server.js has three parts that differ by template; everything around them
 // (the sign-in check, the hosted-asset handler, the share-link fallback) is
-// the same for every new app. EMPTY_SERVER is the Press! example, exactly
-// as the scaffold always wrote it. STARTER_SERVER mounts a starter's api.js
+// the same for every new app. EMPTY_SERVER carries no routes and no tables:
+// the starter screen is static (#4047 removed the Press! demo it served),
+// so there is nothing for the scaffold to mount until the app's first real
+// feature adds its own. STARTER_SERVER mounts a starter's api.js
 // (services/app-templates.js) and adds the graceful shutdown the platform
 // conventions ask for.
 const EMPTY_SERVER = {
   health: `app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 `,
-  routes: `// Button press
-app.post('/api/press', async (req, res) => {
-  try {
-    await pool.query(\`
-      INSERT INTO presses (user_id, username) VALUES ($1, $2)
-    \`, [req.user.id, req.user.username]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Leaderboard
-app.get('/api/leaderboard', async (_req, res) => {
-  try {
-    const { rows } = await pool.query(\`
-      SELECT username, COUNT(*) as presses
-      FROM presses
-      GROUP BY username
-      ORDER BY presses DESC
-      LIMIT 50
-    \`);
-    res.json({ leaderboard: rows });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-`,
+  routes: '',
   start: `async function start() {
-  await pool.query(\`
-    CREATE TABLE IF NOT EXISTS presses (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      username VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  \`);
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
@@ -392,6 +538,10 @@ api.routes(app, pool);
   const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
+  // A starter that keeps live connections (a game's, game/live.js) takes
+  // them on this same server, with its own sign-in check: the middleware
+  // above never sees a WebSocket upgrade.
+  const live = typeof api.attach === 'function' ? api.attach(server) : null;
 
   // Every deploy stops this container with SIGTERM. Stop accepting
   // connections, let in-flight requests finish under a short deadline,
@@ -401,6 +551,7 @@ api.routes(app, pool);
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(\`[shutdown] \${signal} received, draining\`);
+    if (live && typeof live.close === 'function') live.close();
     server.close(() => {});
     server.closeIdleConnections?.();
     const timer = setTimeout(() => server.closeAllConnections?.(), DRAIN_MS);
@@ -435,7 +586,7 @@ api.routes(app, pool);
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null } = {}) {
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null, sketch = null, iconEmoji = null } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   // `template` is the create screen's starter (services/app-templates.js).
   // Absent or `empty` writes exactly what every new app always got; a
@@ -443,8 +594,34 @@ function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = n
   const starter = template == null || template === appTemplates.DEFAULT_TEMPLATE ? null : appTemplates.get(template);
   if (template != null && !appTemplates.isTemplate(template)) throw new Error(`Unknown app template: ${template}`);
   const server = starter ? STARTER_SERVER : EMPTY_SERVER;
+  // A starter's own packages (a game's `ws`), added to package.json and its
+  // lockfile so the image's `npm ci` installs them.
+  const extraDeps = starter && starter.dependencies ? extraDependencies(starter) : null;
   const governanceBlock = require('./create-options').governanceBlock(governance);
   const about = typeof description === 'string' && description.trim() ? description.trim() : null;
+  // The first session's card (services/app-sketch.js): its emoji is the
+  // project's icon, so dapp.json says so from the first commit (every deploy
+  // reconciles the icon from it). A starter's own icon comes first; with
+  // neither, a caller's iconEmoji stands in — the repo heal passes the app
+  // row's icon_emoji (#4047) — and becomes dapp.json's icon block too, so
+  // the first deploy's reconcile (app-manifest reconcileAppIcon) keeps the
+  // icon the app already had instead of clearing it from a manifest without
+  // one.
+  const card = sketch ? require('./app-sketch').cardOf(sketch.design) : null;
+  const callerEmoji = typeof iconEmoji === 'string' && iconEmoji.trim() ? iconEmoji.trim() : null;
+  // A game starter becomes the game its creator described, so the card's
+  // emoji (drawn from their words) comes before the starter's own.
+  const icon = starter && (starter.ready || !card) ? { emoji: starter.icon }
+    : (card ? { emoji: card.emoji }
+    : (callerEmoji ? { emoji: callerEmoji } : null));
+  // The welcome card's thumbnail tile, the app's face on Home
+  // (features/home/app-grid.tsx .app-icon-tile): the same emoji dapp.json's
+  // icon block carries, else the name's first letter the way the home tile
+  // falls back. Interpolated once at create time; the screen is placeholder
+  // content the first real change deletes.
+  const tileFace = icon
+    ? escapeHtml(icon.emoji)
+    : `<span class="text-muted">${escapeHtml(appName.charAt(0).toUpperCase())}</span>`;
   const files = [
     {
       path: 'CLAUDE.md',
@@ -510,26 +687,24 @@ the platform fixes the base commit, and none of this applies.
 
 ${starter ? starterClaudeSection(starter) : `## Starter template
 
-The screen this app currently ships — the hero, the "What's already
-working" card, and the Press! example (the demo markup in
-\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
-the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
-from the Homeroom starter template, not product intent.
+The screen this app currently ships — the "Starter template" hero with
+the app's thumbnail tile and the plain-English note on how the app gets
+built (by asking Homeroom bot) — is placeholder content from the
+Homeroom starter template, not product intent.
 
 When the user asks for their first real feature, REPLACE the template
 screen rather than building alongside it:
 
 - remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
   (both sentinel comments and everything between them),
-- remove or repurpose the "Try the example" card, its demo endpoints and
-  the \`presses\` table as appropriate,
 - rewrite \`README.md\` to describe the actual app.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
 HTML — that block is platform infrastructure, not template content. So is
-the bridge \`<script>\`.
+the bridge \`<script>\`. The design kit is not placeholder either: build the
+real app with it, and fill in "## Design" below.
 
-${THEME_CLAUDE_NOTE}
+${themeClaudeNote({ how: 'the design kit\'s colour tokens carry both', where: '"## Design"' })}
 
 `}If a rule below this line conflicts with the hosted conventions, the
 hosted conventions win. This file is **app-specific** — write down
@@ -544,6 +719,8 @@ tables you've marked private), etc.
 ${about ? `${about}\n\n_(add a sentence or two more of product context here so Claude Code has a\nshared understanding of what this app is for)_` : `_(add a sentence or two of product context here so Claude Code has a
 shared understanding of what this app is for)_`}
 
+${DESIGN_CLAUDE_SECTION}
+
 ## App-specific conventions
 
 _(optional — e.g. "all currency values stored as integer cents, not
@@ -556,7 +733,9 @@ dependencies"; etc.)_
     // That was "tap Improve in the header" until #2718 retired the Improve
     // pill; since #3573 it names what is there now, the Homeroom mark's menu
     // and its "Start a new change" row (frontend/src/features/app-context/
-    // app-context-sheet.tsx). "Homeroom icon" is what the mark looks like (the
+    // app-context-sheet.tsx); since B8, its "Ask for a change" button, which
+    // goes to Homeroom bot, called "Suggest an improvement" since the
+    // first-session run-through (5 Oct 2026). "Homeroom icon" is what the mark looks like (the
     // platform's own copy calls its menu "the Homeroom menu", its
     // aria-label), and one starter serves every new app, so it says "your
     // app". Only new repositories get this: an existing app keeps the copy it
@@ -574,19 +753,18 @@ The scaffold is a small working demo that proves the plumbing works:
 - **Sign-in** — the server verifies the platform-issued user token
   (an RS256 JWT) on every request, so the app already knows who is
   using it. No accounts to build.
-- **Database** — the app has its own private Postgres database; the
-  demo stores button presses in a \`presses\` table.
-- **Live API** — two example routes (\`/api/press\`,
-  \`/api/leaderboard\`) read and write through a real Express server.
+- **Database** — the app has its own private Postgres database, ready
+  to store things.
 - **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
   image creation with either Kubernetes/Paketo or standalone Docker, in a
   light and a dark look that follow the viewer's Homeroom theme.
 
 ## Replacing the template
 
-Open the app on Homeroom, tap the Homeroom icon in the header, choose
-**Start a new change**, and describe the app you want in plain English.
-The template will be replaced with your real app. You can also run
+To change this app, ask Homeroom bot: open the app on Homeroom, tap the
+Homeroom icon in the header, then **Suggest an improvement**, and describe
+the app you want in plain English. The template will be replaced with your
+real app. You can also run
 Claude Code against this repo directly; start with \`CLAUDE.md\`, which
 carries the app-specific notes and points at the platform rules.
 
@@ -599,6 +777,7 @@ Once the real app exists, rewrite this README to describe it.
         ...nodeAppPackage,
         name: slug,
         description: appName,
+        ...(extraDeps ? { dependencies: sortedKeys({ ...nodeAppPackage.dependencies, ...extraDeps.ranges }) } : {}),
       }, null, 2),
     },
     {
@@ -606,7 +785,15 @@ Once the real app exists, rewrite this README to describe it.
       content: JSON.stringify({
         ...nodeAppLock,
         name: slug,
-        packages: {
+        packages: extraDeps ? sortedKeys({
+          ...nodeAppLock.packages,
+          '': {
+            ...nodeAppLock.packages[''],
+            name: slug,
+            dependencies: sortedKeys({ ...nodeAppLock.packages[''].dependencies, ...extraDeps.ranges }),
+          },
+          ...extraDeps.packages,
+        }, '') : {
           ...nodeAppLock.packages,
           '': { ...nodeAppLock.packages[''], name: slug },
         },
@@ -660,6 +847,12 @@ CMD ["node", "server.js"]
 // To build it locally (optional; the image build does this for you):
 //   npm ci --include=dev
 //   npm run build
+
+// A colour token: a CSS variable holding "R G B", set for the light and the
+// dark look in styles/tailwind-input.css. <alpha-value> keeps opacity
+// modifiers working (bg-accent/10).
+const token = (name) => \`rgb(var(--\${name}) / <alpha-value>)\`;
+
 module.exports = {
   // Every file that can contain a class name. Tailwind's extractor is a
   // regex over source text, so it finds class names written as whole
@@ -683,7 +876,35 @@ module.exports = {
   // the usernode-native UI kit and harmless without it.
   future: { hoverOnlyWhenSupported: true },
 
-  theme: { extend: {} },
+  // This app's design kit, added to Tailwind's defaults: the stock palettes
+  // and sizes still exist, but the screen uses these names. The colours are
+  // semantic, so each is right in both looks with no dark: variant. To
+  // re-theme the app, change the token VALUES in styles/tailwind-input.css
+  // and keep these names.
+  theme: {
+    extend: {
+      colors: {
+        ground: token('ground'), // the page
+        surface: token('surface'), // lists, cards, fields
+        raised: token('raised'), // hovers, badges
+        fg: token('fg'), // text
+        muted: token('muted'), // secondary text
+        line: token('line'), // borders, dividers, skeletons
+        accent: token('accent'), // the one accent: the primary action
+        'on-accent': token('on-accent'), // text on the accent
+        danger: token('danger'),
+        'on-danger': token('on-danger'),
+        focus: token('focus'), // the keyboard focus ring
+      },
+      // The type scale: four sizes, and nothing in between.
+      fontSize: {
+        small: ['0.875rem', { lineHeight: '1.25rem' }],
+        body: ['1rem', { lineHeight: '1.5rem' }],
+        heading: ['1.25rem', { lineHeight: '1.75rem', fontWeight: '600' }],
+        title: ['1.75rem', { lineHeight: '2.25rem', fontWeight: '700' }],
+      },
+    },
+  },
   plugins: [],
 };
 `,
@@ -703,7 +924,7 @@ module.exports = {
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-`,
+${DESIGN_KIT_CSS}`,
     },
     {
       path: '.dockerignore',
@@ -774,8 +995,9 @@ value = "build"
       content: JSON.stringify(
         {
           ...(about ? { description: about } : {}),
-          // A starter's tile icon and the checks its first proposal runs.
-          ...(starter ? { icon: { emoji: starter.icon } } : {}),
+          // A starter's tile icon, else the first session card's, and the
+          // checks a starter's first proposal runs.
+          ...(icon ? { icon } : {}),
           secrets: [],
           ...(governanceBlock ? { governance: governanceBlock } : {}),
           ...(starter ? { tests: starter.tests } : {}),
@@ -789,6 +1011,12 @@ value = "build"
     // is per app, so it is added beside them rather than inside them.
     ...getConnectorScaffoldFiles(),
     ...(canonicalRepoFile ? [canonicalRepoFile] : []),
+    // The `frontend-design` skill (services/design-skill.js): App bench
+    // context pack 4's files, at the path the bench put them, which the
+    // bot's spec and build are told to read. A new repository's only, not
+    // an import's or a fork's (getConnectorScaffoldFiles): those bring their
+    // own look.
+    ...require('./design-skill').skillFiles(),
     {
       path: 'server.js',
       content: `const express = require('express');
@@ -812,6 +1040,18 @@ const JWT_PUBLIC_KEY = (process.env.USERNODE_JWT_PUBLIC_KEY || '')
 const APP_AUDIENCE = process.env.USERNODE_APP_ID
   ? 'usernode:app:' + process.env.USERNODE_APP_ID
   : null;
+
+// Visitors with no Homeroom account ("guests") may look around this app at
+// its own address, read-only (every public app). The platform marks
+// them with a token of their own: ES256, signed by a key of its own (its
+// public half is USERNODE_GUEST_JWT_PUBLIC_KEY), this audience, \`pur:
+// 'guest'\`, \`guest: true\`, and no id or username. Such a visitor is
+// \`req.guest\`, never \`req.user\`, and every write they try is answered 401
+// \`account_required\`, which the bridge turns into "Make an account to
+// continue".
+const GUEST_AUDIENCE = APP_AUDIENCE ? APP_AUDIENCE + ':guest' : null;
+const GUEST_PUBLIC_KEY = (process.env.USERNODE_GUEST_JWT_PUBLIC_KEY || '')
+  .replace(/\\\\n/g, '\\n');
 
 // Paths that stay open without authentication. Add a path here (and add it
 // with \`app.get\`/\`app.post\` below) if you deliberately want it public.
@@ -861,11 +1101,28 @@ app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
   }
 });
 
+// "Now" for this request, as a Date: \`req.now\`, set for every request by
+// the middleware below. Read the day and the time through it (and
+// \`usernode.now()\` in the page), never \`new Date()\` or SQL's NOW(),
+// wherever they decide what shows: a reminder, a rota, a deadline.
+// Production always gets the real time. A staging preview may be shown as of
+// a chosen moment: the platform opens it with \`?un-now=<ISO time>\`, and the
+// page sends \`usernode.now()\` on as the \`x-usernode-now\` header. Only a
+// staging container reads either. See "Time-dependent features" in the
+// platform conventions.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+const PREVIEW_NOW = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2})$/;
+function requestNow(req) {
+  const raw = IS_STAGING ? (req.headers['x-usernode-now'] || req.query['un-now']) : null;
+  return typeof raw === 'string' && PREVIEW_NOW.test(raw) ? new Date(raw) : new Date();
+}
+
 // Verify platform-issued JWT if one was passed, then enforce auth on
 // anything not explicitly marked public. The iframe adds \`?token=…\`
 // on load; the frontend script forwards the token via \`x-usernode-token\`
 // on subsequent fetches.
 app.use((req, res, next) => {
+  req.now = requestNow(req);
   const token = req.query.token || req.headers['x-usernode-token'];
   if (token && JWT_PUBLIC_KEY && APP_AUDIENCE) {
     try {
@@ -882,12 +1139,28 @@ app.use((req, res, next) => {
       if (claims && claims.pur === 'iframe') req.user = claims;
     } catch {}
   }
+  if (!req.user && token && GUEST_PUBLIC_KEY && GUEST_AUDIENCE) {
+    try {
+      const guest = jwt.verify(token, GUEST_PUBLIC_KEY, {
+        algorithms: ['ES256'],
+        issuer: 'usernode',
+        audience: GUEST_AUDIENCE,
+      });
+      if (guest && guest.pur === 'guest' && guest.guest === true) req.guest = true;
+    } catch {}
+  }
 
   // Static assets (CSS/JS/images) are always served; the API and the HTML
   // shell are gated so direct hits to the staging/prod subdomain don't
-  // leak app data to the public internet.
+  // leak app data to the public internet. A guest may READ: every GET,
+  // \`/api/*\` included, so read routes must not assume req.user (use
+  // \`req.user ? req.user.id : null\`). Every write needs an account.
   if (req.method !== 'GET' || req.path.startsWith('/api/')) {
     if (PUBLIC_API_PATHS.has(req.path)) return next();
+    if (!req.user && req.guest) {
+      if (req.method === 'GET' || req.method === 'HEAD') return next();
+      return res.status(401).json({ error: 'account_required' });
+    }
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   }
   next();
@@ -912,7 +1185,7 @@ ${server.routes}app.use(express.static(path.join(__dirname, 'public')));
 // of a redirect, so the platform shell is never loaded INSIDE its own
 // app iframe and stray visits still don't reveal the app.
 app.get('*', (req, res) => {
-  if (!req.user) {
+  if (!req.user && !req.guest) {
     // Deep-link pass-through (platform #743): carry the visited
     // path+query into the chromeless view so share links land on the
     // shared screen, not Home. The clean platform route stores \`path\`
@@ -993,129 +1266,75 @@ ${server.start}start().catch(err => { console.error(err); process.exit(1); });
     })();
   </script>
 </head>
-<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 min-h-screen">
-  <main class="max-w-md mx-auto px-4 py-10 flex flex-col gap-6">
+<body class="min-h-screen bg-ground text-fg">
+  <!-- Built from the design kit in styles/tailwind-input.css: colour tokens
+       that are right in both looks, and components for buttons, fields,
+       lists, cards and data states. The real app keeps the kit; CLAUDE.md's
+       "## Design" says how. -->
+  <!-- (Named in prose on purpose: Tailwind compiles any class-name word in
+       these files, comments included, and the starter should ship only the
+       components its screen uses.) -->
+  <main class="mx-auto flex max-w-md flex-col gap-8 px-4 py-10">
 
     <!-- usernode-starter-notice@1 — starter-template messaging. When building
          the user's real app, replace this whole screen and delete this block,
          both sentinel comments included. -->
-    <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/10 dark:from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
-      <span class="inline-block rounded-full bg-violet-600/10 text-violet-700 dark:bg-violet-600/20 dark:text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
-      <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
-      <p class="text-sm text-zinc-600 dark:text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-sm text-zinc-600 dark:text-zinc-300 leading-relaxed">Tap the <strong class="text-violet-700 dark:text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-700 dark:text-violet-300 font-semibold">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
-    </section>
-
-    <section>
-      <h2 class="text-sm font-medium text-zinc-500 mb-2 px-1">What's already working</h2>
-      <div class="rounded-xl border border-zinc-200 bg-white divide-y divide-zinc-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:divide-zinc-800">
-        <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Sign-in</p>
-            <p class="text-sm text-zinc-600 dark:text-zinc-400">You're signed in through Homeroom automatically — no accounts to build.</p>
-          </div>
-        </div>
-        <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Database</p>
-            <p class="text-sm text-zinc-600 dark:text-zinc-400">Your app has its own private database, ready to store things.</p>
-          </div>
-        </div>
-        <div class="flex items-start gap-3 p-4">
-          <svg class="w-5 h-5 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Live API</p>
-            <p class="text-sm text-zinc-600 dark:text-zinc-400">The example below talks to a real server — try it.</p>
-          </div>
-        </div>
-      </div>
+    <section class="card flex flex-col items-start gap-3">
+      <div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title">${tileFace}</div>
+      <span class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">Starter template</span>
+      <h1 class="text-title">${escapeHtml(appName)}</h1>
+      <p class="text-body text-muted">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
+      <p class="text-body text-muted">To change this app, ask Homeroom bot: tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Suggest an improvement</strong>. Describe what you'd like in plain English, and it will be turned into your real app.</p>
     </section>
     <!-- /usernode-starter-notice@1 -->
 
-    <section class="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
-      <div class="w-full flex items-baseline justify-between gap-2">
-        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
-        <span class="text-xs text-zinc-500 dark:text-zinc-600">This example will be replaced</span>
-      </div>
-
-      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
-        Press!
-      </button>
-
-      <div id="count" class="text-lg text-zinc-600 dark:text-zinc-400">0 total presses</div>
-
-      <div class="w-full max-w-sm">
-        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
-        <div id="leaderboard" class="space-y-1"></div>
-      </div>
-    </section>
-
-    <p class="text-center text-xs text-zinc-500 dark:text-zinc-600">Built on Homeroom — this template screen disappears once you build your real app.</p>
+    <p class="text-center text-small text-muted">Built on Homeroom. This template screen disappears once you build your real app.</p>
   </main>
-
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token') || '';
-    const headers = token ? { 'x-usernode-token': token } : {};
-
-    async function loadLeaderboard() {
-      const res = await fetch('/api/leaderboard', { headers });
-      if (!res.ok) return;
-      const { leaderboard } = await res.json();
-      const el = document.getElementById('leaderboard');
-      if (!leaderboard.length) {
-        el.innerHTML = '<p class="text-center text-zinc-500 dark:text-zinc-600 text-sm">No presses yet</p>';
-        return;
-      }
-      el.innerHTML = leaderboard.map((r, i) =>
-        '<div class="flex justify-between px-3 py-1 rounded ' + (i === 0 ? 'bg-violet-600/10 text-violet-700 dark:bg-violet-600/20 dark:text-violet-300' : 'text-zinc-600 dark:text-zinc-400') + '">' +
-        '<span>' + (i + 1) + '. ' + r.username + '</span>' +
-        '<span class="font-mono">' + r.presses + '</span></div>'
-      ).join('');
-      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses), 0);
-      document.getElementById('count').textContent = total + ' total presses';
-    }
-
-    document.getElementById('press-btn').addEventListener('click', async () => {
-      try {
-        const res = await fetch('/api/press', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
-        });
-        if (res.ok) loadLeaderboard();
-        else if (res.status === 401) document.getElementById('count').textContent = 'Sign in to press!';
-      } catch {}
-    });
-
-    loadLeaderboard();
-  </script>
 </body>
 </html>
 `,
     },
   ];
-  if (!starter) return files;
+  if (!starter) return card ? withCard(files, appName, sketch) : files;
   // A starter's own screen replaces the Press! page, and its api.js and
   // scripts join the shared plumbing.
+  // The entry's own `fill` (what a tier list ranks) lands in the page's
+  // markup, so it is escaped like the name.
   const own = appTemplates.starterFiles(template, {
+    ...Object.fromEntries(Object.entries(starter.fill || {}).map(([key, value]) => [key, escapeHtml(value)])),
     APP_NAME: escapeHtml(appName),
     DEV_CONSOLE_FORWARDER: DEV_CONSOLE_FORWARDER.trim(),
   });
   const ownPaths = new Set(own.map((f) => f.path));
-  return [...files.filter((f) => !ownPaths.has(f.path)), ...own];
+  const all = [...files.filter((f) => !ownPaths.has(f.path)), ...own];
+  return card ? withCard(all, appName, sketch) : all;
+}
+
+// The first session's card (services/app-sketch.js), when it was ready in
+// time for the first commit: the repository carries it as design/sketch.json,
+// whose own note says what it is, and its emoji is the icon in dapp.json
+// above. It is a picture of the idea, not of a screen, so it changes no
+// screen, colour or design note. Until 5 October 2026 it was a mock of the
+// main screen that took the starter screen's place, recoloured the kit and
+// filled in "## Design", and the first version was told to build it.
+function withCard(files, appName, sketch) {
+  return [...files, ...require('./app-sketch').designFiles({ name: appName, sketch })];
 }
 
 // The CLAUDE.md section a starter writes in place of the Press! example's.
-// Same job: tell the coding agent what is placeholder and what to keep.
+// Same job: tell the coding agent what the app already is and what to keep.
+// A ready-made starter is the app (services/app-templates.js), so its screen
+// carries no "started from a template" notice to delete. A game starter is
+// a working game its first version turns into the one its creator described
+// (gameClaudeSection).
 function starterClaudeSection(starter) {
+  if (!starter.ready) return gameClaudeSection(starter);
   return `## Starter template: ${starter.title}
 
-This app was created from Homeroom's **${starter.title}** template:
-${starter.summary.charAt(0).toLowerCase()}${starter.summary.slice(1)} It is a working starting point, not
-product intent. Keep what the people building this app want and change
-the rest freely.
+This app was created from Homeroom's ready-made **${starter.title}**.
+${starter.summary} It works as it is, and it is a starting point, not a fixed
+product: keep what the people building this app want and change the rest
+freely.
 
 Where things are:
 
@@ -1126,24 +1345,87 @@ Where things are:
 - \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
   and change them when you change what they look for.
 
-The \`usernode-starter-notice@1\` block in \`public/index.html\` (both sentinel
-comments and everything between them) is the "started from a template"
-notice: remove it with the first real change. Rewrite \`README.md\` to
-describe the actual app once it has one.
+Update \`README.md\` when what the app does changes.
 
 Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
 \`<script>\` when rewriting the HTML: both are platform infrastructure.
+The screen is built from the design kit, which is not placeholder either:
+keep building with it, and fill in "## Design" below with the first change
+that gives this app a look of its own.
 
-${THEME_CLAUDE_NOTE}
+${themeClaudeNote({ how: 'the design kit\'s colour tokens carry both', where: '"## Design"' })}
+
+`;
+}
+
+// A game starter (services/app-templates.js, `kind: 'game'`): a working
+// multiplayer game on the shared game room, which Homeroom bot's first
+// version changes into the game its creator described. This is what tells
+// that build, and every later one, what is already there.
+function gameClaudeSection(starter) {
+  return `## Starter template: ${starter.title}
+
+This app was created from Homeroom's **${starter.title}**: ${starter.summary}
+It is a working game, and its first version is the game its creator
+described, built ON it: keep what fits, change what does not, and replace
+the example game's rules and screen freely. Never delete the game room
+layer to start over; it is what makes the game multiplayer.
+
+Where things are:
+
+- \`game/room.js\` and \`game/live.js\`: the game room. Who is playing, the
+  lobby, starting a game, turns, timers or a live tick, each player's view,
+  saved results and the leaderboard, kept in Postgres (tables
+  \`game_rooms\` and \`game_results\`) and sent to every player over one
+  WebSocket (\`/api/live\`), with \`GET /api/room\` and \`POST /api/room/*\`
+  as the same thing over plain requests. It knows nothing about the game.
+  Its header comment is the contract a game's rules keep.
+- \`game/rules.js\`: this game's rules, as plain functions of the game's
+  state: set up a game, apply a move, what each player may see, when it is
+  over and who won. Most changes to how the game plays happen here.
+- \`api.js\`: wires the rules into the room${starter.tables ? ', and keeps ' + starter.tables : ''}.
+  \`server.js\` mounts it after the sign-in check, runs \`migrate()\` on
+  boot (which also seeds a few obviously fake rows in a staging preview)
+  and hands it the server for the live connection (\`attach\`).
+- \`public/game/room.js\`: the page's side of the room: the live
+  connection, falling back to asking every couple of seconds, and
+  \`join()\`, \`start()\`, \`act(move)\`, \`input(controls)\`.
+- \`public/index.html\` and \`public/app.js\`: the screens (a title screen with
+  the lobby, then the game filling the screen), and \`public/scene.css\`: the
+  game's own look.
+${starter.notes ? `${starter.notes}
+` : ''}- \`dapp.json\` \`tests\`: the checks every proposal runs. Keep them passing,
+  and change them when you change what they look for.
+
+Rules the room keeps for you, and a new game should too:
+
+- The server decides. A move is checked by \`rules.act\` on the server; the
+  page only shows the result. A guest (no account) can watch, never play.
+- Time on the server is \`Date.now()\` inside the room: games run on real
+  time, not a preview's chosen \`req.now\`.
+- Content rules: no weapons, combat or attacking characters, and no
+  gambling or wagering. Shooting games are out; breaking rocks, racing,
+  building and quizzes are fine.
+
+Update \`README.md\` when what the game does changes.
+
+Keep the \`usernode-dev-console@1\` forwarder \`<script>\` and the bridge
+\`<script>\` when rewriting the HTML: both are platform infrastructure.
+The page around the game is built from the design kit, which is not
+placeholder either; a game drawn as its own scene may keep one look of its
+own, and should say so under "## Design".
+
+${themeClaudeNote({ how: 'the design kit\'s colour tokens carry both', where: '"## Design"' })}
 
 `;
 }
 
 function starterReadme(appName, starter) {
+  if (!starter.ready) return gameReadme(appName, starter);
   return `# ${appName}
 
-> **Started from a template.** This repo was scaffolded by Homeroom from
-> the **${starter.title}** template. Make it your own.
+> **Ready-made.** This repo was scaffolded by Homeroom as its ready-made
+> **${starter.title}**. It works as it is; make it your own.
 
 ${starter.summary}
 
@@ -1162,12 +1444,68 @@ And what every Homeroom app gets:
 
 ## Changing it
 
-Open the app on Homeroom, tap the Homeroom icon in the header, choose
-**Start a new change**, and describe what you want in plain English. You
-can also run Claude Code against this repo directly; start with
+To change this app, ask Homeroom bot: open the app on Homeroom, tap the
+Homeroom icon in the header, then **Suggest an improvement**, and describe
+what you want in plain English. You can also run Claude Code against this repo directly; start with
 \`CLAUDE.md\`, which carries the app-specific notes and points at the
 platform rules.
 `;
+}
+
+// A game starter's README: what the example game does, and that the
+// project's first version turns it into the game its creator described.
+function gameReadme(appName, starter) {
+  return `# ${appName}
+
+> **Game starter.** This repo was scaffolded by Homeroom from its
+> **${starter.title}**, a game that already works and is multiplayer.
+> Homeroom bot builds the game its creator described on top of it.
+
+${starter.summary}
+
+What the starter already does:
+
+${starter.features.map((f) => `- ${f}`).join('\n')}
+
+And what every Homeroom app gets:
+
+- **Sign-in**: the server verifies the platform-issued user token (an
+  RS256 JWT) on every request and every live connection, so the game
+  already knows who is playing.
+- **Database**: the app has its own Postgres database. Its tables are
+  created on boot by \`api.js\` and \`game/room.js\`.
+- **Styling**: Tailwind CSS, precompiled by \`npm run build\` during image
+  creation, following the platform's light or dark theme.
+
+## Changing it
+
+To change this game, ask Homeroom bot: open the app on Homeroom, tap the
+Homeroom icon in the header, then **Suggest an improvement**, and describe
+what you want in plain English. You can also run Claude Code against this
+repo directly; start with \`CLAUDE.md\`, which says where the game's rules
+live and points at the platform rules.
+`;
+}
+
+// An object with its keys in order (`first` leading), the way npm writes
+// package.json dependencies and a lockfile's packages.
+function sortedKeys(obj, first = null) {
+  const keys = Object.keys(obj).sort((a, b) => (a === first ? -1 : b === first ? 1 : a.localeCompare(b)));
+  return Object.fromEntries(keys.map((k) => [k, obj[k]]));
+}
+
+// A starter's `dependencies` (names from extra-packages.json): their ranges
+// for package.json and the lockfile entries `npm ci` installs them from.
+function extraDependencies(starter) {
+  const ranges = {};
+  let packages = {};
+  for (const name of starter.dependencies) {
+    const extra = extraPackages[name];
+    if (!extra) throw new Error(`Starter ${starter.id} needs ${name}, which src/templates/node-app/extra-packages.json does not lock`);
+    ranges[name] = extra.range;
+    packages = { ...packages, ...extra.packages };
+  }
+  return { ranges, packages };
 }
 
 function escapeHtml(str) {

@@ -32,12 +32,16 @@
  *
  * The URL is the live `${origin}/mcp`, passed in rather than written into
  * the prose, for the reason sections/connectors.tsx gives: a host spelled
- * out in copy goes stale on a fork or a config change.
+ * out in copy goes stale on a fork or a config change. The ChatGPT steps
+ * take it as a prop too, so the step that asks for the paste shows the
+ * same value the field above it does.
  */
 
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+
+import { useMessages } from '../../lib/i18n/react';
 
 import {
   ChatgptSetupSteps,
@@ -66,14 +70,16 @@ function ui(): any {
  * this is the one value somebody may need to select by hand.
  */
 function ConnectorUrl({ url }: { url: string }) {
-  const [label, setLabel] = useState('Copy');
+  const t = useMessages('devchat');
+  // What the last press came to; the label is read from it when it renders.
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   return (
     <div className="mt-2 flex min-w-0 items-stretch overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900">
       <input
         readOnly
         data-connector-setup-url="1"
         value={url}
-        aria-label="Your MCP server URL"
+        aria-label={t('devchat:connector.urlLabel')}
         className="min-w-0 flex-1 bg-transparent px-3 py-2 text-xs font-mono text-zinc-700 dark:text-zinc-300 outline-none"
       />
       <Button
@@ -83,15 +89,17 @@ function ConnectorUrl({ url }: { url: string }) {
         size="none"
         ink="none"
         className="inline-flex min-h-[44px] min-w-[88px] items-center justify-center border-l border-zinc-200 dark:border-zinc-800 px-3 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-        aria-label="Copy your MCP server URL"
+        aria-label={t('devchat:connector.copyUrl')}
         onClick={async () => {
           const ok = await ui()?.copyText?.(url);
-          setLabel(ok ? 'Copied' : 'Copy failed');
-          if (!ok) ui()?.toast?.('Couldn’t copy. Select the text and copy it manually', { error: true });
-          setTimeout(() => setLabel('Copy'), 1500);
+          setCopyState(ok ? 'copied' : 'failed');
+          if (!ok) ui()?.toast?.(t('devchat:connector.copyFailedToast'), { error: true });
+          setTimeout(() => setCopyState('idle'), 1500);
         }}
       >
-        {label}
+        {copyState === 'copied'
+          ? t('core:common.copied')
+          : copyState === 'failed' ? t('devchat:connector.copyFailed') : t('core:common.copy')}
       </Button>
     </div>
   );
@@ -99,33 +107,34 @@ function ConnectorUrl({ url }: { url: string }) {
 
 export function ConnectorSetupInline({ view }: { view: ConnectorSetupInlineView }) {
   const { product, url, connected } = view;
+  const t = useMessages('devchat');
   return (
     <div className="dc-launchpad" data-connector-setup={product}>
-      <div className="dc-launchpad-lead">{`Add the Homeroom connector in ${product}`}</div>
+      <div className="dc-launchpad-lead">{t('devchat:connector.lead', { product })}</div>
       <p className="dc-launchpad-sub">
         {connected
           // The status count spans every Claude and ChatGPT account the
           // person has connected, so it can be non-zero while the account
           // they are about to paste into has nothing. Same caveat the
           // walkthrough card carries, said where it can be acted on.
-          ? `You have a connector on another account. A connector belongs to the ${product} account it was added in, so the one you hand this work to needs its own.`
-          : `${product} reads your apps, mints the work order and opens the proposal through this connector. It takes a few minutes, once per account.`}
+          ? t('devchat:connector.otherAccount', { product })
+          : t('devchat:connector.intro', { product })}
       </p>
 
       <div className="mt-3">
-        <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Your MCP server URL</div>
+        <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">{t('devchat:connector.urlLabel')}</div>
         <ConnectorUrl url={url} />
       </div>
 
       <div className="mt-4">
-        {product === 'ChatGPT' ? <ChatgptSetupSteps /> : <ClaudeSetupSteps />}
+        {product === 'ChatGPT' ? <ChatgptSetupSteps url={url} /> : <ClaudeSetupSteps />}
       </div>
 
       {/* The one fact neither product's own walkthrough states, and the one
           that sends people back here thinking it failed: a connector added
           mid-conversation is not in the conversation they added it from. */}
       <p className="mt-3 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
-        {`Then start a NEW ${product} ${product === 'ChatGPT' ? 'chat' : 'conversation'}. A connector you just added is only picked up by a new one, so the chat you were already in will not see it.`}
+        {product === 'ChatGPT' ? t('devchat:connector.startNewChatgpt') : t('devchat:connector.startNewClaude')}
       </p>
 
       <div className="dc-flow-actions">
@@ -139,13 +148,13 @@ export function ConnectorSetupInline({ view }: { view: ConnectorSetupInlineView 
           data-connector-setup-action="done"
           onClick={() => (window as any).DevChat?._devFlowConnectorDone()}
         >
-          I&rsquo;ve added it. Check again
+          {t('devchat:connector.done')}
         </Button>
         {/* Settings keeps the rest of the reference — the Claude Code
             permission rules, Codex, other MCP clients, and the list of what
             is already connected — so the route stays, as a way on rather
             than as the only place the steps exist. */}
-        <a className="dc-pr-btn dc-flow-action" href="#settings/connectors">More connector settings</a>
+        <a className="dc-pr-btn dc-flow-action" href="#settings/connectors">{t('devchat:connector.moreSettings')}</a>
       </div>
     </div>
   );

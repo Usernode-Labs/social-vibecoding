@@ -32,6 +32,9 @@ import type { ReactNode } from 'react';
 
 import { LockIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { listText, t as translate } from '../../lib/i18n/runtime';
+
 const CARD = 'flex min-h-[6.5rem] items-center gap-3 rounded-3xl border border-dashed border-zinc-300 '
   + 'bg-white/40 p-3 dark:border-zinc-700 dark:bg-white/[0.03]';
 const TILE = 'flex h-20 w-20 shrink-0 items-center justify-center rounded-[0.6875rem] text-zinc-500 dark:text-zinc-400 '
@@ -44,7 +47,7 @@ const HINT = 'mt-0.5 line-clamp-2 text-[0.8125rem] leading-5 text-zinc-500 dark:
 /** "6 challenges unlock after Getting started". */
 export function lockedTitle(count: number): string {
   const n = Math.floor(Number(count) || 0);
-  return n === 1 ? '1 challenge unlocks after Getting started' : `${n} challenges unlock after Getting started`;
+  return translate('leaderboard:challenges.locked.title', { count: n });
 }
 
 /**
@@ -56,16 +59,20 @@ export function lockedHint(count: number, names?: string[] | null): string {
   const n = Math.floor(Number(count) || 0);
   const shown = (Array.isArray(names) ? names : [])
     .map((s) => String(s == null ? '' : s).trim()).filter(Boolean).slice(0, Math.max(0, n));
-  if (!shown.length) return 'Finish Getting started on Home to see them';
+  if (!shown.length) return translate('leaderboard:challenges.locked.hint');
   const more = n - shown.length;
-  if (more > 0) return `${shown.join(', ')} and ${more} more`;
+  if (more > 0) return translate('leaderboard:challenges.locked.namesAndMore', { names: listText(shown), count: more });
   if (shown.length === 1) return shown[0];
-  return `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`;
+  return translate('leaderboard:challenges.locked.namesAnd', {
+    names: listText(shown.slice(0, -1)), last: shown[shown.length - 1],
+  });
 }
 
 export function LockedChallengesCard({ count, names, className }: {
   count: number; names?: string[] | null; className?: string;
 }): ReactNode {
+  // Subscribed: the two lines are read by the helpers above.
+  useMessages('leaderboard');
   const n = Math.floor(Number(count) || 0);
   if (n < 1) return null;
   return (

@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -170,6 +171,7 @@ function loadAppView({ fetchImpl } = {}) {
     location: { search: '', hash: '' }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
@@ -231,7 +233,8 @@ test('the item reads ask for the short form; an underway change reads /details',
     '/api/sessions/42/details',
   ]);
   const head = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(head, /await fetch\(`\$\{url\}\?results=failing\$\{demo\}`, \{ signal \}\);/,
+  // A live re-read (#4177) adds `cache: 'no-cache'` to the same request.
+  assert.match(head, /await fetch\(`\$\{url\}\?results=failing\$\{demo\}`, fresh \? \{ \.\.\.FRESH, signal \} : \{ signal \}\);/,
     'the change page\'s own read (readChangeDetail) asks for the short form too');
   assert.match(read('public/js/app-view.js'), /passCount: v\.passCount, passesFor: v\.passesFor,/,
     'the ledger\'s checks row carries it');
@@ -259,6 +262,7 @@ function loadDevChat(answer) {
     UsernodeReact: { devChat: { publishSessionList: (state) => { published = state; } } },
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${read('frontend/src/features/dev-chat/dev-chat.js')}\n;globalThis.__DevChat = DevChat;`, sandbox);
   sandbox.AppView = { appData: { slug: 'demo' } };

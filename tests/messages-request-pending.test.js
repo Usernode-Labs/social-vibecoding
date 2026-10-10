@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -98,7 +99,7 @@ function snapshot(active, messages = []) {
 test('before the opening message: the composer, and one line saying what it will be', () => {
   const html = composerHtml(snapshot(pendingDirect()));
   assert.match(html, /<textarea[^>]*aria-label="Message"/, 'the opening message can still be written');
-  assert.match(html, /class="messages-composer-hint"[^>]*>@usernode-capture gets your first message as a message request\. You can send more once they accept\./);
+  assert.match(html, /class="messages-composer-hint"[^>]*>usernode-capture gets your first message as a message request\. You can send more once they accept\./);
   assert.doesNotMatch(html, /Waiting for/);
 });
 
@@ -113,7 +114,7 @@ test('after the opening message: no composer, and the thread says who it is wait
     assert.doesNotMatch(html, /<textarea/, 'no box whose sends would all fail');
     assert.match(html, /data-awaiting-acceptance=""/);
     assert.match(html, /<strong>Message request sent<\/strong>/);
-    assert.match(html, /Waiting for @usernode-capture to accept your message request\. You can send more once they do\./);
+    assert.match(html, /Waiting for usernode-capture to accept your message request\. You can send more once they do\./);
     assert.doesNotMatch(html, /You can’t send messages in this conversation/);
   }
 });
@@ -176,31 +177,22 @@ test('an unanswered direct request is named by its requester in the row and the 
   assert.match(row, /title=\{peer\?\.username \|\| conversation\.title\}/, 'the tile is theirs, not "DM"');
   const header = SCREEN.slice(SCREEN.indexOf('function ThreadHeader('), SCREEN.indexOf('/** The day a message was sent'));
   assert.match(header, /const person = directPerson\(active\);/);
-  assert.match(header, /active\.kind === 'direct' && person \? `@\$\{person\.username\}`/);
+  // B5: named as senderName names it; in a direct message, bare (#4655).
+  assert.match(header, /active\.kind === 'direct' && person \? senderName\(person, \{ bare: true \}\)/);
   // The sender's own side of a request says it is pending too.
-  assert.match(header, /active\.awaitingAcceptance \? 'Request pending' : 'Direct message'/);
+  assert.equal(message('messages:header.subtitle.requestPending'), 'Request pending');
+  assert.equal(message('messages:header.subtitle.direct'), 'Direct message');
+  assert.match(header, /active\.awaitingAcceptance \? t\('messages:header\.subtitle\.requestPending'\) : t\('messages:header\.subtitle\.direct'\)/);
 });
 
 test('the phone bar over an unanswered request names its requester too', () => {
   const STORE = read('frontend/src/features/messages/store.ts');
-  assert.match(STORE, /: state\.route\.agent \? 'Messages' : chromeTitle\(state\.active\)\)/);
+  assert.equal(message('messages:store.header.messages'), 'Messages');
+  assert.match(STORE, /: state\.route\.agent \? t\('messages:store\.header\.messages'\) : chromeTitle\(state\.active\)\)/);
   const helper = STORE.slice(STORE.indexOf('function chromeTitle('));
   assert.match(helper, /active\.kind === 'direct' && active\.membershipStatus === 'invited' && active\.requester\?\.username\)\s*\{\s*return active\.requester\.username;/);
 });
 
-test('Recents names a request by its sender too', () => {
-  const { buildRecents } = loadTsx('frontend/src/features/nav/recents.ts');
-  const items = buildRecents({
-    apps: [], discussions: [], agents: [], agentSessions: [], viewerId: ME.id,
-    conversations: [{
-      id: 5, kind: 'direct', title: 'Direct message', lastActivityAt: '2026-09-24T12:00:00Z', unreadCount: 0,
-      peer: null, members: [], membershipStatus: 'invited', requester: { id: 1, username: 'localadmin' },
-    }, {
-      id: 6, kind: 'direct', title: 'Direct message', lastActivityAt: '2026-09-24T11:00:00Z', unreadCount: 0,
-      peer: null, members: [], membershipStatus: 'member', requester: { id: 1, username: 'localadmin' },
-    }],
-  });
-  const label = (id) => items.find((item) => item.key === `conversation:${id}`)?.label;
-  assert.equal(label(5), '@localadmin');
-  assert.equal(label(6), 'Direct message', 'only an unanswered request borrows its requester');
-});
+// #4417: "Recents names a request by its sender too" went with the rail's
+// Recents. A request's sender names it where the conversation is listed now,
+// Messages' own list (the inbox tests above).

@@ -51,6 +51,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { ChevronLeftIcon, ExpandIcon, XIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { SidePanel as controller } from './controller';
@@ -87,6 +88,7 @@ const DISC = `inline-flex ${DISC_BOX}`;
 const BACK = `hidden ${DISC_BOX}`;
 
 export function SidePanel(): ReactNode {
+  const t = useMessages('agent');
   const s = useStoreState(sidePanelStore);
   const rootRef = useRef<HTMLElement | null>(null);
   const backRef = useRef<HTMLButtonElement | null>(null);
@@ -119,8 +121,8 @@ export function SidePanel(): ReactNode {
           size="icon"
           ink="none"
           className={BACK}
-          aria-label="Back"
-          title="Back"
+          aria-label={t('core:common.back')}
+          title={t('core:common.back')}
           onClick={() => controller.back()}
         >
           <ChevronLeftIcon className="w-5 h-5" aria-hidden="true" />
@@ -138,8 +140,8 @@ export function SidePanel(): ReactNode {
           size="icon"
           ink="none"
           className={DISC}
-          aria-label="Open full width, leaving the app"
-          title="Open full width"
+          aria-label={t('agent:sidePanel.expandLabel')}
+          title={t('agent:sidePanel.expand')}
           onClick={() => controller.expand()}
         >
           <ExpandIcon className="w-4 h-4" aria-hidden="true" />
@@ -151,22 +153,26 @@ export function SidePanel(): ReactNode {
           size="icon"
           ink="none"
           className={DISC}
-          aria-label="Close panel"
-          title="Close panel"
+          aria-label={t('agent:sidePanel.close')}
+          title={t('agent:sidePanel.close')}
           onClick={() => controller.close()}
         >
           <XIcon className="w-4 h-4" aria-hidden="true" />
         </Button>
       </div>
       <div id="side-panel-body" className="side-panel-body">
+        {/* data-un-keyboard-relay: a tap in the panel that closes the
+            keyboard is reported here, so the app beside it puts its field
+            away too (the kit, native.js; request #4314). */}
         {s.frameSrc ? (
           <iframe
             key={s.frameKey}
             ref={frameRef}
             id="side-panel-frame"
-            title="Side panel"
+            title={t('agent:sidePanel.frameTitle')}
             src={s.frameSrc}
             className={s.loading ? 'side-panel-frame' : 'side-panel-frame side-panel-frame-ready'}
+            data-un-keyboard-relay=""
           />
         ) : null}
         <div
@@ -204,6 +210,7 @@ function SidePanelDivider({
   panelRef: RefObject<HTMLElement | null>;
   shown: boolean;
 }): ReactNode {
+  const t = useMessages('agent');
   const [range, setRange] = useState<WidthRange | null>(null);
   const drag = useRef<{ id: number; startX: number; startW: number; width: number | null } | null>(null);
 
@@ -302,11 +309,11 @@ function SidePanelDivider({
       role="separator"
       aria-orientation="vertical"
       aria-controls="platform-side-panel"
-      aria-label="Resize panel"
+      aria-label={t('agent:sidePanel.resize')}
       aria-valuenow={range ? range.now : undefined}
       aria-valuemin={range ? range.min : undefined}
       aria-valuemax={range ? range.max : undefined}
-      title="Drag to resize · double-click to reset"
+      title={t('agent:sidePanel.resizeTitle')}
       tabIndex={0}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

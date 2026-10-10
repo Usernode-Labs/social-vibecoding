@@ -47,11 +47,8 @@ let signupRows;
 let userRows;
 let mailRows;
 let socialRows;
-// The invite-tree switch's platform_settings row: null is no row (on).
-let inviteSetting;
 
 function resetFixtures() {
-  inviteSetting = null;
   signupRows = [
     {
       id: 1,
@@ -255,19 +252,6 @@ function handleQuery(rawSql, params = []) {
     const removed = signupRows.filter((r) => ids.includes(r.id));
     signupRows = signupRows.filter((r) => !ids.includes(r.id));
     return { rows: removed.map((r) => ({ id: r.id, email: r.email })) };
-  }
-
-  // The invite-tree switch (services/community-invites.js).
-  if (sql.startsWith('SELECT s.value, s.updated_at, u.username AS updated_by FROM platform_settings s')) {
-    assert.deepEqual(params, ['invite_tree_enabled']);
-    return { rows: inviteSetting ? [{ ...inviteSetting, updated_by: 'full-admin' }] : [] };
-  }
-  if (sql.startsWith('INSERT INTO platform_settings')) {
-    inviteSetting = { value: params[1], updated_at: new Date(NOW), actor: params[3] };
-    return { rows: [] };
-  }
-  if (sql.startsWith('SELECT COUNT(*) FILTER (WHERE invite_generation = 0')) {
-    return { rows: [{ roots: 2, through_links: 5 }] };
   }
 
   throw new Error(`Unhandled mock query: ${sql}`);
@@ -737,38 +721,41 @@ test('an empty, missing, or all-invalid ids array is rejected without querying',
   assert.equal(signupRows.length, 5, 'a rejected bulk-delete must not remove any row');
 });
 
-// ─── The invite-tree switch ─────────────────────────────────────────────
+// ─── The invite-tree switch is retired ──────────────────────────────────
+// Private membership replaced it (services/community-invites.js): there is no
+// switch to read or write.
 
-test('the invite switch reads as on with nothing stored, for a view-only admin too', async () => {
-  const denied = await get('/api/v4/admin/invite-tree', 'user');
-  assert.equal(denied.status, 403);
-
-  const { status, body } = await get('/api/v4/admin/invite-tree', 'readonly');
-  assert.equal(status, 200);
-  assert.deepEqual(body, {
-    success: true,
-    data: { enabled: true, root_skips: 10, roots: 2, through_links: 5, updated_at: null, updated_by: null },
-  });
+test('the invite-tree switch is gone: the admin router has no route for it', () => {
+  const route = require('node:fs').readFileSync(require.resolve('../src/routes/topochain/admin/waitlist.js'), 'utf8');
+  assert.doesNotMatch(route, /\/api\/v4\/admin\/invite-tree/);
 });
 
-test('only a full admin can switch it, and only to a boolean', async () => {
-  const ro = await mutate('PUT', '/api/v4/admin/invite-tree', { enabled: false }, 'readonly');
-  assert.equal(ro.status, 403);
-  assert.equal(inviteSetting, null, 'a refused request writes nothing');
-
-  for (const bad of [{}, { enabled: 'false' }, { enabled: 0 }, { enabled: null }]) {
-    const res = await mutate('PUT', '/api/v4/admin/invite-tree', bad);
-    assert.equal(res.status, 422, JSON.stringify(bad));
-  }
-  assert.equal(inviteSetting, null);
-
-  const off = await mutate('PUT', '/api/v4/admin/invite-tree', { enabled: false });
-  assert.equal(off.status, 200);
-  assert.equal(off.body.data.enabled, false);
-  assert.equal(off.body.data.updated_by, 'full-admin');
-  assert.match(off.body.data.updated_at, /\+00:00$/, 'the v4 date format');
-  assert.deepEqual([inviteSetting.value, inviteSetting.actor], ['false', 902]);
-
-  const again = await get('/api/v4/admin/invite-tree');
-  assert.equal(again.body.data.enabled, false, 'the write dropped the cache');
+// #4223: a phone row has no email. The list shows it by its account, says
+// it joined by phone with at most the number's last four digits, and marks
+// it held until Homeroom can send texts (#4096).
+test('a phone row is listed by account, with its last four digits, and held for SMS', async () => {
+  signupRows.push({
+    id: 9,
+    email: null,
+    submitted_at: T(-1),
+    released_at: null,
+    confirmed_at: T(-1),
+    linked_user_id: 11,
+    invited_by: null,
+    answers: null,
+    phone_last4: '4242',
+  });
+  const res = await get('/api/v4/admin/waitlist?status=pending');
+  assert.equal(res.status, 200);
+  const phone = res.body.data.find((r) => r.id === 9);
+  assert.equal(phone.email, null);
+  assert.equal(phone.phone_only, true);
+  assert.equal(phone.phone_last4, '4242');
+  assert.equal(phone.needs_sms, true);
+  assert.ok(phone.linked_username, 'named by its account');
+  const email = res.body.data.find((r) => r.id === 1);
+  assert.deepEqual([email.phone_only, email.phone_last4, email.needs_sms], [false, null, false]);
+  const list = seenSql.find((s) => s.startsWith('SELECT w.id, w.email') && s.includes('LIMIT $1'));
+  assert.match(list, /CASE WHEN w\.email IS NULL THEN RIGHT\(ph\.phone_e164, 4\) END AS phone_last4/,
+    'never more of the number than its last four digits, and only for a phone row');
 });

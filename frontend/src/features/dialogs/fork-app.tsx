@@ -1,8 +1,9 @@
 /**
- * Fork-app dialog (#fork-modal).
+ * Fork-app dialog (#fork-modal), which people see as "Remix".
  *
- * Stands up an independent copy of an app — its own repo, database and web
- * address.
+ * Makes the viewer their own copy of an app: its code and look, in a new
+ * project that starts as Just you, with its own repo, an empty database and
+ * its own web address.
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
  * moved the behaviour in and made it stateful. The render output is still
@@ -29,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppAllowance, useAppAllowance } from './app-allowance';
@@ -46,12 +48,29 @@ import { useDialog } from './use-dialog';
 
 const POLL_INTERVAL_MS = 4000;
 
+/**
+ * What a remix copies, what starts fresh and what stays behind, in that
+ * order: the box under the name field. Each line must stay true of what
+ * src/services/app-forker.js does (an empty database, no stored keys, the
+ * original's visibility, approval rule and admins stripped from dapp.json).
+ * tests/remix-safe-defaults.test.js pins the words as the shell ships them.
+ */
+// Each line is one whole message (frontend/locales/en/dialogs.json). `lead`
+// says the message opens with a bold lead-in, written as its numbered tag.
+const FORK_INFO_LINES: ReadonlyArray<{ id: string; lead: boolean }> = [
+  { id: 'dialogs:fork.info.copied', lead: true },
+  { id: 'dialogs:fork.info.fresh', lead: true },
+  { id: 'dialogs:fork.info.notCopied', lead: true },
+  { id: 'dialogs:fork.info.public', lead: false },
+];
+
 export interface ForkSource {
   slug: string;
   name?: string;
 }
 
 export function ForkAppDialog() {
+  const t = useMessages('dialogs');
   const inputRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<ForkSource | null>(null);
@@ -71,7 +90,9 @@ export function ForkAppDialog() {
       setError('');
       setForked(null);
       stopWatchingCreation();
-      if (inputRef.current) inputRef.current.value = `${src?.name || 'App'} (fork)`;
+      if (inputRef.current) inputRef.current.value = src?.name
+        ? t('dialogs:fork.defaultName.named', { app: src.name })
+        : t('dialogs:fork.defaultName.unnamed');
       setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -113,7 +134,7 @@ export function ForkAppDialog() {
     const source = sourceRef.current;
     if (!source?.slug) return;
     const name = (inputRef.current?.value || '').trim();
-    if (name.length < 3) return setError('Name must be at least 3 characters.');
+    if (name.length < 3) return setError(t('dialogs:fork.error.nameShort'));
 
     setBusy(true);
     try {
@@ -125,7 +146,7 @@ export function ForkAppDialog() {
       const data = await res.json().catch(() => ({}));
       void invalidateAppAllowance();
       if (!res.ok) {
-        setError(data.error || 'Fork failed.');
+        setError(data.error || t('dialogs:fork.error.failed'));
         return;
       }
       const slug = data.app?.slug;
@@ -135,7 +156,7 @@ export function ForkAppDialog() {
         // Home writes an address right after the close (#3683).
         dialog.closeForNavigation();
         window.PlatformUI?.toast?.(
-          'Your fork is being created. It will appear in your apps when it is ready.',
+          t('dialogs:fork.beingMade'),
         );
         (window.App?.navigateHome as (() => void) | undefined)?.();
         return;
@@ -147,7 +168,7 @@ export function ForkAppDialog() {
       // the user closes it.
       (window.Home?.load as (() => void) | undefined)?.();
     } catch {
-      setError('Network error. Please try again.');
+      setError(t('dialogs:fork.error.network'));
     } finally {
       setBusy(false);
     }
@@ -190,7 +211,7 @@ export function ForkAppDialog() {
                     publishAppStatus({
                       slug,
                       status: 'error',
-                      errorReason: data.error || `Retry failed (HTTP ${res.status}).`,
+                      errorReason: data.error || t('dialogs:fork.retry.http', { status: res.status }),
                     });
                     return;
                   }
@@ -200,7 +221,7 @@ export function ForkAppDialog() {
                   publishAppStatus({
                     slug,
                     status: 'error',
-                    errorReason: 'Could not reach the server to retry. Try again from the app tile.',
+                    errorReason: t('dialogs:fork.retry.unreachable'),
                   });
                 });
             }}
@@ -208,15 +229,29 @@ export function ForkAppDialog() {
           />
         ) : (
           <>
-        <h2 className="text-lg font-bold mb-1">
-          Fork this app
+        {/*
+            People see a fork as a "Remix": their own copy, which starts as
+            Just you with an empty database (src/services/app-forker.js says
+            what is copied and what is not). The ids keep "fork": the route
+            is /fork and the shell baseline pins them.
+
+            Every space beside an inline element is written inside a string:
+            JSX drops the line break between text and a tag, which once ran
+            the name into its sentence ("ForkingBook Clubstands up").
+        */}
+        <h2 className="text-lg font-bold mb-1 break-words">
+          {sourceName ? (
+            <RichMessage
+              id="dialogs:fork.title.named"
+              values={{ app: sourceName }}
+              components={[<span id="fork-source-name" />]}
+            />
+          ) : (
+            <RichMessage id="dialogs:fork.title.unnamed" components={[<span id="fork-source-name" />]} />
+          )}
         </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          Forking
-          <span id="fork-source-name" className="font-mono text-zinc-300">
-            {sourceName}
-          </span>
-          stands up your own independent copy: its own repo, database, and web address.
+        <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+          {t('dialogs:fork.intro')}
         </p>
         <AppAllowance />
         <form id="fork-form" className="space-y-4" onSubmit={submit}>
@@ -225,7 +260,7 @@ export function ForkAppDialog() {
               htmlFor="fork-input"
               className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
             >
-              Name for your fork
+              {t('dialogs:fork.nameLabel')}
             </label>
             <Input
               id="fork-input"
@@ -238,39 +273,25 @@ export function ForkAppDialog() {
               box="dialog"
               hint="muted"
               ring="seamless"
-              placeholder="My fork"
+              placeholder={t('dialogs:fork.namePlaceholder')}
             />
           </div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
-            <p>
-              <span className="text-emerald-700 dark:text-emerald-400">
-                ✅ Carries over:
-              </span>
-              the app's code, its icon, and its current
-              <strong>
-                public
-              </strong>
-              data (e.g. leaderboards, public posts).
-            </p>
-            <p>
-              <span className="text-violet-700 dark:text-violet-400">
-                🔁 Resets to you:
-              </span>
-              you become the sole owner, and collaborators, group chat, issues, proposals and votes all start empty.
-            </p>
-            <p>
-              <span className="text-amber-800 dark:text-amber-400">
-                ❌ Not copied:
-              </span>
-              <strong>
-                private
-              </strong>
-              secrets (API keys, signing keys) and
-              <strong>
-                private
-              </strong>
-              data (DMs, per-user rows). You'll be asked to re-enter required secrets before your fork goes live.
-            </p>
+          <div
+            className="text-xs text-zinc-600 dark:text-zinc-300 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3"
+          >
+            {FORK_INFO_LINES.map((line) => (
+              <p key={line.id}>
+                {/* The lead-in and its sentence are one message: the bold part
+                    is the numbered tag, and what follows it stays one text
+                    child, as the prerender needs. */}
+                {line.lead ? (
+                  <RichMessage
+                    id={line.id}
+                    components={[<strong className="font-semibold text-zinc-900 dark:text-zinc-100" />]}
+                  />
+                ) : t(line.id)}
+              </p>
+            ))}
           </div>
           <div id="fork-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
             {error}
@@ -282,7 +303,7 @@ export function ForkAppDialog() {
               className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
             >
-              Cancel
+              {t('core:common.cancel')}
             </button>
             <Button
               type="submit"
@@ -291,7 +312,7 @@ export function ForkAppDialog() {
               disabled={busy || quotaBlocksCreation}
               disabledStyle="block"
             >
-              {busy ? 'Forking…' : 'Fork'}
+              {busy ? t('dialogs:fork.submitting') : t('dialogs:fork.submit')}
             </Button>
           </div>
         </form>

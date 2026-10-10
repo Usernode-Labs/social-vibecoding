@@ -31,6 +31,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t } from '../../lib/i18n/runtime';
 import { ChatgptSetupSteps, ClaudeSetupSteps } from '../settings/connector-setup-steps';
 import * as api from './api';
 import type { AgentChange, AgentSession, HandoffStatus } from './api';
@@ -117,12 +119,11 @@ const ACTION = 'inline-flex items-center rounded-full border border-violet-300 p
 const ACTION_PRIMARY = 'inline-flex items-center rounded-full bg-violet-600 px-3 py-1 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-60';
 
 function lead(agent: HandoffAgent, target: HandoffTarget | null): string {
-  const label = AGENT_LABELS[agent];
-  const product = AGENT_PRODUCT[agent];
-  const lands = target?.change
-    ? `its work comes back as an update to ${target.change.prNumber ? `PR #${target.change.prNumber}` : 'this change'}`
-    : `its work comes back as a new proposal${target?.appName ? ` on ${target.appName}` : ''}`;
-  return `${label} builds on your own ${product} plan and pushes to your fork of the app; ${lands}. No Homeroom credits.`;
+  const values = { agent: AGENT_LABELS[agent], product: AGENT_PRODUCT[agent] };
+  if (target?.change) return t('agent:session.handoff.lead.update', values);
+  return target?.appName
+    ? t('agent:session.handoff.lead.newChangeOnApp', { ...values, app: target.appName })
+    : t('agent:session.handoff.lead.newChange', values);
 }
 
 /**
@@ -149,11 +150,11 @@ export function handoffChecks(status: HandoffStatus | null, agent: HandoffAgent)
   const fork = byKey('fork');
   const last = byKey('handoff');
   const checks: HandoffCheck[] = [
-    { key: 'github', label: 'GitHub linked', done: github?.state === 'done', current: github?.state === 'current', detail: github?.detail || '', actions: github?.actions || [] },
-    { key: 'fork', label: 'Fork ready', done: fork?.state === 'done', current: fork?.state === 'current', detail: fork?.detail || '', actions: fork?.actions || [] },
+    { key: 'github', label: t('agent:session.handoff.check.github'), done: github?.state === 'done', current: github?.state === 'current', detail: github?.detail || '', actions: github?.actions || [] },
+    { key: 'fork', label: t('agent:session.handoff.check.fork'), done: fork?.state === 'done', current: fork?.state === 'current', detail: fork?.detail || '', actions: fork?.actions || [] },
     {
       key: 'connector',
-      label: `Homeroom connected in ${AGENT_PRODUCT[agent]}`,
+      label: t('agent:session.handoff.check.connector', { product: AGENT_PRODUCT[agent] }),
       done: connected,
       current: !connected && last?.state === 'current',
       detail: connected ? '' : (last?.detail || ''),
@@ -172,6 +173,7 @@ export function handoffChecks(status: HandoffStatus | null, agent: HandoffAgent)
  * this same tab, so there is one hand-off, not two.
  */
 export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose: () => void }) {
+  const t = useMessages('agent');
   const snapshot = useAgentSessionPick((s) => ({ session: s.session, draft: s.draft }));
   const about = snapshot.session || snapshot.draft;
   const active = snapshot.session?.activeChange || null;
@@ -190,7 +192,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
     setError('');
     void api.handoffStatus(target.slug, target.change ? { id: target.change.id, kind: target.change.kind } : null)
       .then((next) => { if (live) setStatus(next); })
-      .catch((failure) => { if (live) setError(failure instanceof Error ? failure.message : 'Could not check where the hand-off stands.'); });
+      .catch((failure) => { if (live) setError(failure instanceof Error ? failure.message : t('agent:session.handoff.statusFailed')); });
     return () => { live = false; };
   }, [targetKey, revision]);
 
@@ -205,11 +207,18 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
 
   const label = AGENT_LABELS[agent];
   const product = AGENT_PRODUCT[agent];
+  // The live connector endpoint, for the ChatGPT walkthrough's step that
+  // names it. Derived here, like the URL line in the connector section
+  // below renders it, for the reason sections/connectors.tsx gives: a
+  // host written into the copy goes stale on a fork or a config change,
+  // and the prerender has no window to read one from (the steps show
+  // their fill-in placeholder there).
+  const connectorUrl = typeof window === 'undefined' ? undefined : `${window.location.origin}/mcp`;
   const checks = handoffChecks(status, agent);
   const ready = checks.length > 0 && checks.every((check) => check.done);
   const instructions = status && typeof status.instructions === 'string' ? status.instructions : '';
   const unavailable = status && status.available === false
-    ? (devFlowSelect()?.unavailableNote(status.reason) || 'Handing work to Claude Code or Codex is unavailable right now.')
+    ? (devFlowSelect()?.unavailableNote(status.reason) || t('agent:session.handoff.unavailable'))
     : '';
 
   const act = (action: FlowAction) => {
@@ -225,7 +234,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
     const copying = instructions ? window.PlatformUI?.copyText?.(instructions) : undefined;
     void Promise.resolve(copying).then((ok) => {
       setManual(!ok);
-      setNotice(ok ? `Copied. Paste it into the new ${label} session.` : 'Could not copy. Copy the instructions below by hand, then paste them into the new session.');
+      setNotice(ok ? t('agent:session.handoff.copied', { agent: label }) : t('agent:session.handoff.copyFailed'));
     });
   };
 
@@ -233,11 +242,11 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
     <div className="flex flex-col gap-3 text-sm text-zinc-900 dark:text-zinc-100" data-agent-session-handoff={agent}>
       {target ? <p className="px-1 leading-snug text-zinc-600 dark:text-zinc-300">{lead(agent, target)}</p> : (
         <p className="px-1 leading-snug text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-empty>
-          There is nothing to hand over yet. Tell the Mayor which app to change first, then come back here.
+          {t('agent:session.handoff.nothingYet')}
         </p>
       )}
       {error ? <p role="alert" className="px-1 text-red-700 dark:text-red-300">{error}</p> : null}
-      {target && !status && !error ? <p role="status" className="px-1 text-zinc-500 dark:text-zinc-400">Checking where you are…</p> : null}
+      {target && !status && !error ? <p role="status" className="px-1 text-zinc-500 dark:text-zinc-400">{t('agent:session.handoff.checking')}</p> : null}
       {unavailable ? <p className="px-1 text-zinc-600 dark:text-zinc-300" data-agent-session-handoff-unavailable>{unavailable}</p> : null}
       {checks.length ? (
         <ul className="overflow-hidden rounded-2xl bg-white dark:bg-zinc-800" data-agent-session-handoff-steps>
@@ -258,7 +267,7 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
                   {check.done ? <CheckIcon className="h-3.5 w-3.5" /> : null}
                 </span>
                 <span className={`flex-1 font-medium ${check.done || check.current ? '' : 'text-zinc-500 dark:text-zinc-400'}`}>{check.label}</span>
-                <span className="sr-only">{check.done ? 'Done' : 'Not done yet'}</span>
+                <span className="sr-only">{check.done ? t('agent:session.handoff.check.done') : t('agent:session.handoff.check.notDone')}</span>
               </div>
               {check.current && !check.done ? (
                 <div className="mt-1.5 pl-8">
@@ -297,31 +306,34 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
       ) : null}
       {connector && !ready ? (
         <section className="space-y-3 rounded-2xl bg-white p-3 dark:bg-zinc-800" data-agent-session-handoff-connector={product}>
-          <p className="font-semibold">{`Add the Homeroom connector in ${product}`}</p>
+          <p className="font-semibold">{t('agent:session.handoff.connector.heading', { product })}</p>
           <p className="text-zinc-600 dark:text-zinc-300">
-            {'Your MCP server URL: '}
-            <code className="break-all rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-900">{typeof window === 'undefined' ? '/mcp' : `${window.location.origin}/mcp`}</code>
+            <RichMessage
+              id="agent:session.handoff.connector.serverUrl"
+              values={{ url: typeof window === 'undefined' ? '/mcp' : `${window.location.origin}/mcp` }}
+              components={[<code className="break-all rounded bg-zinc-100 px-1 py-0.5 text-xs dark:bg-zinc-900" />]}
+            />
           </p>
-          {product === 'ChatGPT' ? <ChatgptSetupSteps /> : <ClaudeSetupSteps />}
+          {product === 'ChatGPT' ? <ChatgptSetupSteps url={connectorUrl} /> : <ClaudeSetupSteps />}
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            {`Then start a new ${product} conversation: one you already had open will not see a connector added after it started.`}
+            {t('agent:session.handoff.connector.startNew', { product })}
           </p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={ACTION_PRIMARY} onClick={() => { setConnector(false); setRevision((n) => n + 1); }}>
-              I&rsquo;ve added it. Check again
+              {t('agent:session.handoff.connector.checkAgain')}
             </button>
-            <a className={ACTION} href="#settings/connectors" onClick={onClose}>More connector settings</a>
+            <a className={ACTION} href="#settings/connectors" onClick={onClose}>{t('agent:session.handoff.connector.moreSettings')}</a>
           </div>
         </section>
       ) : null}
       {ready ? (
         <>
           <div className="rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" data-agent-session-handoff-ready>
-            <p className="font-semibold">Handed over with the instructions</p>
+            <p className="font-semibold">{t('agent:session.handoff.carried.heading')}</p>
             <p className="mt-0.5 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
               {status?.specCarried && active?.title
-                ? `This chat's spec: "${active.title}"`
-                : status?.specCarried ? 'This chat\'s spec' : `No spec yet, so ${label} will ask what to build.`}
+                ? t('agent:session.handoff.carried.specTitled', { title: active.title })
+                : status?.specCarried ? t('agent:session.handoff.carried.spec') : t('agent:session.handoff.carried.noSpec', { agent: label })}
             </p>
           </div>
           <a
@@ -332,15 +344,15 @@ export function HandoffPanel({ agent, onClose }: { agent: HandoffAgent; onClose:
             data-agent-session-handoff-action="copy-open"
             onClick={copyAndOpen}
           >
-            {`Copy instructions and open ${label}`}
+            {t('agent:session.handoff.copyAndOpen', { agent: label })}
           </a>
-          <p className="px-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Paste into the new session. It starts building straight away.</p>
+          <p className="px-1 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{t('agent:session.handoff.pasteHint')}</p>
         </>
       ) : null}
       {notice ? <p role="status" className={`px-1 ${manual ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>{notice}</p> : null}
       {ready && instructions ? (
         <details className="rounded-2xl bg-white px-4 py-3 dark:bg-zinc-800" open={manual}>
-          <summary className="cursor-pointer font-semibold">Instructions</summary>
+          <summary className="cursor-pointer font-semibold">{t('agent:session.handoff.instructions')}</summary>
           <pre className="mt-2 max-h-60 select-all overflow-y-auto whitespace-pre-wrap break-words text-xs text-zinc-700 dark:text-zinc-300" data-agent-session-handoff-instructions>{instructions}</pre>
         </details>
       ) : null}
@@ -385,7 +397,7 @@ export function creditsView(refusal: CreditsRefusal, context: {
   co?: CreditOptionsApi | null;
 } = {}): { lead: string; intro: string; rows: CreditRow[] } {
   const co = context.co === undefined ? creditOptions() : context.co;
-  if (!co) return { lead: refusal.error || 'Your Homeroom credits are used up.', intro: '', rows: [] };
+  if (!co) return { lead: refusal.error || t('agent:session.creditsCard.usedUp'), intro: '', rows: [] };
   const state = {
     ...co.creditState(context.budget || null),
     hasApiKey: !!context.hasApiKey,
@@ -413,6 +425,7 @@ function viewerContext() {
 }
 
 export function CreditsCardView({ refusal, view }: { refusal: CreditsRefusal; view: ReturnType<typeof creditsView> }): ReactNode {
+  const t = useMessages('agent');
   return (
     <section
       className="rounded-2xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30"
@@ -442,7 +455,7 @@ export function CreditsCardView({ refusal, view }: { refusal: CreditsRefusal; vi
         ))}
       </ul>
       <button type="button" className="mt-3 text-sm font-semibold text-zinc-600 hover:underline dark:text-zinc-300" onClick={() => dismissCredits()}>
-        Dismiss
+        {t('core:common.dismiss')}
       </button>
     </section>
   );

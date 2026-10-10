@@ -53,6 +53,17 @@
  * would be offering to mute something they were never going to receive.
  */
 const APP_CATEGORY_DEFINITIONS = Object.freeze([
+  // B7: a change Homeroom bot built is ready to try and needs your Yes. ON:
+  // it is asked of the few whose approval it needs (on a public community,
+  // only the approvers a project names), so it is no broadcast; and it is
+  // how they hear at all, since new_proposals below is off.
+  Object.freeze({
+    key: 'changes_ready',
+    label: 'Changes ready for you to try',
+    description: 'A change on this app needs your approval and is ready for you to try.',
+    defaultEnabled: true,
+    kinds: Object.freeze(['change_ready']),
+  }),
   Object.freeze({
     key: 'new_proposals',
     label: 'New proposals to vote on',
@@ -79,6 +90,22 @@ const APP_CATEGORY_DEFINITIONS = Object.freeze([
     defaultEnabled: true,
     kinds: Object.freeze(['check_failed', 'stale_pr', 'pr_merged']),
   }),
+  // A person's message in the discussion of a private project of 8 people or
+  // fewer (services/group-channel-notify.js). ON: in a group that small the
+  // discussion is the group chat, and a message nobody hears is a
+  // conversation that stalls. `smallGroupOnly`: offered on a project's own
+  // dialog only while it IS such a group, because nothing else ever sends
+  // it, so a switch anywhere else would be a switch that does nothing. The
+  // account-wide row is the "quiet in every group" choice, and a project's
+  // own row beats it, as for every category here.
+  Object.freeze({
+    key: 'channel_messages',
+    label: 'Every message in the discussion',
+    description: 'In a private project of 8 people or fewer, anything someone writes in its discussion. Mentions reach you either way.',
+    defaultEnabled: true,
+    smallGroupOnly: true,
+    kinds: Object.freeze(['channel_message']),
+  }),
   Object.freeze({
     key: 'thread_replies',
     label: 'Replies to you',
@@ -91,13 +118,21 @@ const APP_CATEGORY_DEFINITIONS = Object.freeze([
     //
     // `mention` is deliberately NOT here. Being named by somebody is a
     // direct address rather than app activity, and muting it per app is a
-    // surprise nobody asked for; it stays account-level.
+    // surprise nobody asked for; it stays account-level. #3952's
+    // `issue_mention` (named in a request's text) is a mention too, and is
+    // not here for the same reason.
     //
     // #2387 adds `thread_reply`: somebody answered in a reply thread you
     // started or joined in this app's chat. That is this category's promise
     // word for word — a reply to your message on this app — so the one
     // switch governs both, and createThreadReplyNotifications checks it.
-    kinds: Object.freeze(['reply', 'thread_reply']),
+    //
+    // #4535 adds `issue_thread_reply`: somebody posted in a request's
+    // discussion after you did, or answered the request you filed. The same
+    // promise, so the same switch governs it too
+    // (createIssueThreadNotifications checks it) — one place to turn the
+    // conversation follow-ups off.
+    kinds: Object.freeze(['reply', 'thread_reply', 'issue_thread_reply']),
   }),
   Object.freeze({
     key: 'proposal_votes',
@@ -236,14 +271,22 @@ function isKindEnabled(kind, overrides) {
 /**
  * The categories to show one person for one app, as view models.
  *
- * `isAdmin` hides the admin-only rows. `source` says WHERE each answer came
+ * `isAdmin` hides the admin-only rows, and `smallGroup` (the project is a
+ * private group of 8 people or fewer, group-channel-notify.isSmallGroup) is
+ * what shows the small-group ones. `source` says WHERE each answer came
  * from, which is what lets the dialog draw "following your default" against
  * a row nobody has touched, rather than presenting an inherited value as a
  * per-app decision.
  */
-function serializeAppCategories({ appOverrides = {}, accountOverrides = {}, isAdmin = false } = {}) {
+function offeredOn(category, { isAdmin = false, smallGroup = false } = {}) {
+  return (!category.adminOnly || isAdmin) && (!category.smallGroupOnly || smallGroup);
+}
+
+function serializeAppCategories({
+  appOverrides = {}, accountOverrides = {}, isAdmin = false, smallGroup = false,
+} = {}) {
   return APP_CATEGORY_DEFINITIONS
-    .filter((category) => !category.adminOnly || isAdmin)
+    .filter((category) => offeredOn(category, { isAdmin, smallGroup }))
     .map((category) => {
       const hasApp = typeof appOverrides[category.key] === 'boolean';
       const hasAccount = typeof accountOverrides[category.key] === 'boolean';
@@ -432,6 +475,7 @@ module.exports = {
   isGatedKind,
   categoryForKind,
   definitionFor,
+  offeredOn,
   resolveEnabled,
   isKindEnabled,
   serializeAppCategories,

@@ -61,10 +61,14 @@ test('the change loop in turns, the invite loop, and next steps from navigation'
   await pool.query(
     `INSERT INTO feedback_reports (user_id, target, app_id, issue_number, title, description, created_at)
      VALUES ($1, 'app', $2, 8, 'Slow map', 'x', '2026-09-29T10:00:00Z')`, [ben, app]);
-  // An admin's request is not a user's turn.
+  // An admin's request is not a user's turn, and neither is a test account's.
   await pool.query(
     `INSERT INTO issues (app_id, github_issue_number, title, created_by, created_at)
      VALUES ($1, 9, 'Internal', $2, '2026-09-29T10:00:00Z')`, [app, boss]);
+  const tess = await user('tess', { test_account_created_at: '2026-09-01T00:00:00Z' });
+  await pool.query(
+    `INSERT INTO issues (app_id, github_issue_number, title, created_by, created_at)
+     VALUES ($1, 10, 'Trying it out', $2, '2026-09-30T10:00:00Z')`, [app, tess]);
 
   const loop = await journey.changeLoop(pool, { week, now });
   assert.deepEqual(loop.steps, ['notice', 'make_sense', 'sketch', 'decide', 'go_live', 'hear_back']);

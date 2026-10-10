@@ -53,8 +53,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The BuildKit daemon from Google's Docker Hub mirror, as the build
+      # job's: see the note there.
       - uses: docker/setup-buildx-action@v4
         if: github.event_name == 'schedule'
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
 
       - name: Check scheduled worker image
         id: scheduled_worker
@@ -164,7 +168,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Nothing in the build comes from Docker Hub directly. Pulls from Docker
+      # Hub here are anonymous, and Docker Hub limits those per IP address,
+      # which GitHub's runners share with everybody else's builds: on 9 Oct
+      # 2026 four releases in a row (20:52 to 21:15) failed in under a minute
+      # on "429 Too Many Requests" for node:22-alpine, and the re-runs failed
+      # on Docker Hub's token service answering 504. mirror.gcr.io, Google's
+      # Docker Hub mirror, serves the same images without that limit.
+      #
+      #   driver-opts image   the BuildKit daemon itself (moby/buildkit),
+      #                       which the runner's Docker pulls before any
+      #                       build starts, so the config below cannot reach
+      #                       it: the capture job failed right here at 21:41.
+      #   buildkitd config    every docker.io image a build pulls: the base
+      #                       images (node:22-alpine, node:22-bookworm-slim)
+      #                       and the SBOM scanner `sbom: true` runs
+      #                       (docker/buildkit-syft-scanner). BuildKit tries
+      #                       the mirror first and falls back to Docker Hub.
       - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Resolve Claude Code version
         id: claude
@@ -245,6 +271,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      # Reads this workflow's own runs: when the newest release went out, and
+      # whether a dispatched run is queued (see "Check branch tip before
+      # publishing").
+      actions: read
       contents: read
       packages: write
     env:
@@ -400,21 +430,158 @@ jobs:
           echo "release_channel=$release_channel" >> "$GITHUB_OUTPUT"
           echo "registry_owner=$registry_owner" >> "$GITHUB_OUTPUT"
 
-      # Push events can be queued out of order. An old source revision must
-      # not publish a higher chart version after main has advanced.
+      # Push events can be queued out of order, and Argo CD runs the highest
+      # 0.1.* chart: an older source revision must never publish a higher
+      # chart version than a newer one. The branch tip always publishes.
+      #
+      # Requiring the exact tip guaranteed that, but runs are queued one at a
+      # time (concurrency above), so while merges land faster than a run
+      # finishes every run found a newer tip and nothing was released. On 5
+      # October nothing deployed from 16:12 to about 17:50 UTC while twelve
+      # merges built. So a stable run that is no longer the tip still
+      # publishes when the branch contains its revision, the newest release in
+      # the registry is older than it and numbered below it, and that release's
+      # revision was merged at least RELEASE_EVERY_MINUTES before this one: a
+      # burst of merges ships a release about that often instead of none, and
+      # not one per merge, since every release restarts the platform. Anything
+      # that cannot be read falls back to the exact tip.
+      #
+      # The tip itself still published every time. On 7 October approved
+      # proposals merged one after another, each run took two to four
+      # minutes, and most runs were the tip when they finished: the platform
+      # rolled out at 21:41:57, 21:50:46, 21:53:44 and 21:57:49 UTC, four
+      # times in sixteen minutes, and more than sixty times that day. Each
+      # rollout restarts the platform, which re-runs every proposal's checks
+      # in flight (slowing the queue further) and interrupts the bot's builds.
+      # So a stable release now goes out no sooner than
+      # RELEASE_MIN_GAP_MINUTES after the one before it, timed from the end of
+      # the run that published it (when Argo CD was asked to roll it out):
+      #   - The tip waits in this step until the gap has passed (so at most
+      #     that long), then re-reads the branch: still the tip, it publishes.
+      #     A newer merge landing meanwhile ends the wait and this run skips;
+      #     that merge's run is queued behind this one and publishes once it
+      #     has built. The last merge's run is always the tip, so the newest
+      #     merge is never left unreleased.
+      #   - A run behind the tip also skips inside the gap; the tip's run,
+      #     queued behind it, releases its revision.
+      # The gap only spaces restarts; it never decides which revision wins.
+      # So when the newest release's run cannot be read, this publishes as
+      # it did before. Feature-branch candidates and dispatched runs never
+      # wait.
+      #
+      # To release at once (an urgent fix), run this workflow on main by hand:
+      #   gh workflow run build-kubernetes-images.yml --ref main
+      # A dispatched run never waits, and a run waiting here when one is
+      # queued behind it skips in its favour, so main goes out as soon as
+      # the dispatched run has built, with a single restart.
       - name: Check branch tip before publishing
         id: current_head
         shell: bash
+        # The wait is at most RELEASE_MIN_GAP_MINUTES; this only stops a hung
+        # read from holding the release queue.
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ steps.chart.outputs.release_channel }}
+          CHART_VERSION: ${{ steps.chart.outputs.chart_version }}
+          CHART_REF: oci://ghcr.io/${{ steps.chart.outputs.registry_owner }}/charts/social-vibecoding-platform
+          RELEASE_EVERY_MINUTES: '15'
+          RELEASE_MIN_GAP_MINUTES: '10'
         run: |
           set -euo pipefail
-          current_sha="$(git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1)"
+          branch_tip() { git ls-remote --exit-code origin "$GITHUB_REF" | cut -f1; }
+          current_sha="$(branch_tip)"
           test -n "$current_sha"
+          decide() {
+            echo "publish=$1" >> "$GITHUB_OUTPUT"
+            echo "$2" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          # base...head: "ahead" when head contains base and more.
+          compare() { gh api "repos/$GITHUB_REPOSITORY/compare/$1...$2" --jq .status 2>/dev/null || echo unknown; }
+          merged_at() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq '.commit.committer.date | fromdateiso8601' 2>/dev/null || echo; }
+          runs="repos/$GITHUB_REPOSITORY/actions/workflows/build-kubernetes-images.yml/runs"
+          gap=$(( RELEASE_MIN_GAP_MINUTES * 60 ))
+
+          # The newest stable release in the registry, the one Argo CD runs.
+          newest_release() {
+            local chart
+            chart="$(helm show chart "$CHART_REF" --version '0.1.*' 2>/dev/null || true)"
+            published_sha="$(printf '%s\n' "$chart" | sed -n 's/^appVersion: *//p' | tr -d '"' | head -n 1)"
+            published_version="$(printf '%s\n' "$chart" | sed -n 's/^version: *//p' | tr -d '"' | head -n 1)"
+            [[ "$published_sha" =~ ^[a-f0-9]{40}$ && "$published_version" =~ ^0\.1\.[0-9]+$ ]]
+          }
+          # Seconds since the run that published the newest release finished,
+          # or nothing when that cannot be read. Its chart is 0.1.<run number
+          # * 1000 + attempt>; a later attempt of the same run only makes the
+          # release look newer, so the wait errs long, never short.
+          release_age() {
+            local at
+            at="$(gh api "$runs?head_sha=$published_sha&per_page=100" \
+              --jq "[.workflow_runs[] | select(.run_number == $(( ${published_version##*.} / 1000 )) and .status == \"completed\") | .updated_at | fromdateiso8601][0] // empty" \
+              2>/dev/null || true)"
+            [[ "$at" =~ ^[0-9]+$ ]] || return 0
+            at=$(( $(date +%s) - at ))
+            echo $(( at < 0 ? 0 : at ))
+          }
+          # Dispatched runs of this workflow on this branch, queued after this
+          # one. Unreadable counts as none.
+          dispatched() {
+            gh api "$runs?event=workflow_dispatch&per_page=20" \
+              --jq "[.workflow_runs[] | select(.head_branch == \"${GITHUB_REF#refs/heads/}\" and .status != \"completed\" and .run_number > $GITHUB_RUN_NUMBER)] | length" \
+              2>/dev/null || echo 0
+          }
+
           if [ "$current_sha" = "$GITHUB_SHA" ]; then
-            echo 'publish=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'publish=false' >> "$GITHUB_OUTPUT"
-            echo "Skipping $GITHUB_SHA: $GITHUB_REF is now $current_sha." >> "$GITHUB_STEP_SUMMARY"
+            publishing="Publishing $GITHUB_SHA, the tip of $GITHUB_REF"
+            [ "$RELEASE_CHANNEL" = stable ] || decide true "$publishing."
+            [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] \
+              || decide true "$publishing, at once: it was dispatched by hand."
+            newest_release || decide true "$publishing; the newest release could not be read."
+            age="$(release_age)"
+            [ -n "$age" ] \
+              || decide true "$publishing; when the newest release ($published_version) went out could not be read."
+            [ "$age" -lt "$gap" ] \
+              || decide true "$publishing: the newest release ($published_version) went out $(( age / 60 )) minutes ago."
+
+            waited_from="$(date +%s)"
+            wait_until=$(( waited_from + gap - age ))
+            echo "The newest release ($published_version) went out $(( age / 60 )) minutes ago. Waiting up to $(( (gap - age + 59) / 60 )) more minutes, until it is $RELEASE_MIN_GAP_MINUTES minutes old. To release now, run this workflow on $GITHUB_REF by hand."
+            while :; do
+              [ "$(dispatched)" = 0 ] \
+                || decide false "Skipping $GITHUB_SHA: a run of this workflow dispatched by hand is queued behind this one, and it publishes $GITHUB_REF without waiting."
+              now="$(date +%s)"
+              [ "$now" -lt "$wait_until" ] || break
+              sleep $(( wait_until - now < 30 ? wait_until - now : 30 ))
+              current_sha="$(branch_tip)" && [ -n "$current_sha" ] || current_sha="$GITHUB_SHA"
+              [ "$current_sha" = "$GITHUB_SHA" ] \
+                || decide false "Skipping $GITHUB_SHA: $GITHUB_REF moved to $current_sha while this run waited for the newest release ($published_version) to be $RELEASE_MIN_GAP_MINUTES minutes old. That commit's run is queued behind this one and publishes once it has built."
+            done
+            decide true "$publishing, after waiting $(( ($(date +%s) - waited_from + 30) / 60 )) minutes for the newest release ($published_version) to be $RELEASE_MIN_GAP_MINUTES minutes old."
           fi
+          skipping="Skipping $GITHUB_SHA: $GITHUB_REF is now $current_sha"
+          [ "$RELEASE_CHANNEL" = stable ] || decide false "$skipping."
+          [ "$(compare "$GITHUB_SHA" "$current_sha")" = ahead ] \
+            || decide false "$skipping, which does not contain it."
+
+          newest_release || decide false "$skipping, and the newest release could not be read."
+          [ "$(compare "$published_sha" "$GITHUB_SHA")" = ahead ] \
+            || decide false "$skipping, and the newest release ($published_version, $published_sha) is not older than it."
+          [ "${published_version##*.}" -lt "${CHART_VERSION##*.}" ] \
+            || decide false "$skipping, and the newest release ($published_version) is numbered at or above $CHART_VERSION."
+
+          this_at="$(merged_at "$GITHUB_SHA")"
+          published_at="$(merged_at "$published_sha")"
+          [[ "$this_at" =~ ^[0-9]+$ && "$published_at" =~ ^[0-9]+$ ]] \
+            || decide false "$skipping, and when its revisions were merged could not be read."
+          [ $(( this_at - published_at )) -ge $(( RELEASE_EVERY_MINUTES * 60 )) ] \
+            || decide false "$skipping, and the newest release ($published_version) is less than $RELEASE_EVERY_MINUTES minutes older; a later run releases it."
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+            age="$(release_age)"
+            [ -z "$age" ] || [ "$age" -ge "$gap" ] \
+              || decide false "$skipping, and the newest release ($published_version) went out $(( age / 60 )) minutes ago, under $RELEASE_MIN_GAP_MINUTES; the tip's run releases it."
+          fi
+          decide true "Publishing $GITHUB_SHA ahead of $GITHUB_REF's tip ($current_sha): the newest release ($published_version, $published_sha) is $(( (this_at - published_at) / 60 )) minutes older."
 
       - name: Log in to GHCR for Helm
         if: steps.current_head.outputs.publish == 'true'

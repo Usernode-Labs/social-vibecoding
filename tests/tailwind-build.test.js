@@ -104,6 +104,50 @@ test('Dockerfile compiles Tailwind in a builder and copies only the output into 
   assert.doesNotMatch(runtime, /npm run build:css/, 'the runtime must not compile assets');
 });
 
+test('a commit id in the document adds no rule to the stylesheet', async () => {
+  // Dockerfile.kubernetes compiles this stylesheet against a `dev` document and
+  // only then writes the document the build serves, so that a commit which
+  // left the frontend alone can reuse the compile (the GIT_SHA note in that
+  // file). That is sound only while the two documents give Tailwind the same
+  // classes. They differ in exactly two things, the id in
+  // <meta name="platform-build"> and the /b/<id> prefix on every local script
+  // and stylesheet URL, and the extractor reads those as candidates like any
+  // other text. So: compile the tags that differ, both ways, and expect
+  // nothing from either. Candidates never span a quote or an angle bracket,
+  // which is why the tags alone stand for the whole document.
+  const postcss = require('postcss');
+  const tailwind = require('tailwindcss');
+  const config = require('../tailwind.config.js');
+  const stamp = require('../scripts/shell-stamp');
+  const inputFile = path.join(ROOT, 'styles', 'tailwind-input.css');
+  const input = fs.readFileSync(inputFile, 'utf8');
+  const compile = async (raw) => (await postcss([
+    tailwind({ ...config, content: [{ raw, extension: 'html' }] }),
+  ]).process(input, { from: inputFile })).css;
+
+  // The suite's own document may have been built under an id; take that off
+  // first so every variant below starts from the same plain tags.
+  const built = stamp.readBuildMeta(indexHtml);
+  const plain = built && built !== 'dev' ? indexHtml.split(`/b/${built}`).join('') : indexHtml;
+  const tags = plain.match(/<(?:script|link)\b[^>]*?\s(?:src|href)="\/[^"]*"[^>]*>/g) || [];
+  assert.ok(tags.length >= 30, `only ${tags.length} local script and stylesheet tags found in index.html`);
+
+  // One real class in every variant: an empty scan makes Tailwind warn, and
+  // the second compile shows this comparison can tell a new rule when it sees one.
+  const anchor = '<p class="hidden"></p>';
+  const nothing = await compile(anchor);
+  assert.notEqual(await compile(`${anchor}<p class="flex"></p>`), nothing);
+  assert.equal(await compile(`${anchor}\n${tags.join('\n')}`), nothing, 'a plain asset URL compiled to a rule');
+  // A full id, the short form, and ids that spell words out of hex letters.
+  for (const id of ['0205380668653afb4b844ae55546df26b3d27814', '1234567', 'deadbeef', 'facade0', 'feedface', 'accede0']) {
+    const scoped = stamp.prefixShellAssetUrls(tags.join('\n'), id);
+    assert.equal(scoped.split(`/b/${id}/`).length - 1 >= 30, true, `the tags were not scoped for ${id}`);
+    assert.equal(await compile(`${anchor}\n${stamp.formatBuildMeta(id)}\n${scoped}`), nothing,
+      `the commit id ${id} compiled to a rule: the stylesheet would differ between the document Tailwind `
+      + 'scanned and the one the image serves');
+  }
+});
+
 test('the compiled stylesheet is substantial, not a stub', () => {
   // ~1100 distinct class tokens across the shell compile to tens of KB. A
   // near-empty file means the content globs matched nothing (e.g. a moved

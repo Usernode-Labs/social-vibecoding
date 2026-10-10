@@ -19,6 +19,43 @@ test('semantic intent can require the isolated full-admin shots persona', () => 
   assert.equal(shots.parseIntent(candidate).stories[0].persona, 'full_admin');
 });
 
+test('a change may be declared for a guest, a visitor who is not signed in', () => {
+  const candidate = intent();
+  candidate.stories[0].persona = 'guest';
+  assert.equal(shots.parseIntent(candidate).stories[0].persona, 'guest');
+  candidate.stories[0].persona = 'anonymous';
+  assert.equal(shots.safeParseIntent(candidate).ok, false);
+});
+
+test('every surface that declares or reports a change names the same personas', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const listed = `[${shots.PERSONAS.map((persona) => `'${persona}'`).join(', ')}]`;
+  assert.deepEqual(shots.PERSONAS, ['member', 'read_only_admin', 'full_admin', 'guest']);
+  for (const file of ['worker/visible-changes-mcp.js', 'src/cli/main.js', 'src/services/mcp-tools.js']) {
+    assert.ok(read(file).includes(`persona: z.enum(${listed})`), `${file} lists ${listed}`);
+  }
+  assert.ok(read('src/services/shots-view.js').includes(`${listed}.includes(claim?.persona)`));
+});
+
+// No persona is a child app's creator or one of its admins: an app is told
+// who is signed in, never their role in it (shots-identities.js). Every
+// surface an author declares a change through says so.
+test('every surface that declares a change says no persona holds a role in an app built on Homeroom', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  // The work order is an array of quoted lines: join them back into prose.
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
+    .replace(/',\s*'\s*/g, ' ').replace(/\\'/g, "'").replace(/\s+/g, ' ');
+  for (const file of ['worker/visible-changes-mcp.js', 'src/cli/main.js', 'src/services/mcp-tools.js',
+    'src/services/external-agent-tasks.js']) {
+    assert.match(read(file), /On an app built on Homeroom (?:no persona is|none of them is) the app.s creator or one of its admins/,
+      `${file} says no persona is the app's creator or admin`);
+    assert.match(read(file), /a screen it keeps for particular accounts cannot be shot/, file);
+  }
+});
+
 test('new UI may explicitly label base absence without treating missing media as proof', () => {
   const candidate = intent();
   candidate.stories[0].intent.baseState = 'not_present';
@@ -243,6 +280,31 @@ test('clips are recorded at the motion screens\' own size', () => {
   const still = shots.parseIntent({ ...raw, stories: [raw.stories[0]] });
   assert.equal(shots.clipSize(still), null);
   assert.equal(shots.clipSize(null), null);
+  // The phone browsers record at the phone screens' size, the others at theirs.
+  const both = withScreens([phone, desktop]);
+  assert.equal(shots.clipSize(both, { phone: true }), '390x844');
+  assert.equal(shots.clipSize(both, { phone: false }), '1280x800');
+  assert.equal(shots.clipSize(withScreens([desktop]), { phone: true }), null, 'no phone motion screen');
+});
+
+test('a screen narrower than a tablet is a phone\'s, and its persona gets a phone browser', () => {
+  assert.equal(shots.PHONE_WIDTH_BELOW, 768);
+  for (const width of [320, 390, 412, 767]) assert.equal(shots.phoneScreen({ width, height: 800 }), true, width);
+  for (const width of [768, 820, 1280]) assert.equal(shots.phoneScreen({ width, height: 800 }), false, width);
+  assert.equal(shots.phoneScreen(undefined), false);
+  assert.equal(shots.phoneScreen({}), false);
+
+  const raw = motionIntent();
+  const phone = { name: 'phone', width: 390, height: 844 };
+  const intent = shots.parseIntent({ ...raw, stories: [
+    { ...raw.stories[0], persona: 'guest', viewports: [phone] },
+    { ...raw.stories[1], persona: 'member', viewports: [{ name: 'tablet', width: 768, height: 1024 }] },
+    { ...raw.stories[1], id: 'admin-toast', persona: 'read_only_admin', viewports: [raw.stories[1].viewports[0], phone] },
+  ] });
+  // In persona order, once each; a tablet screen gets none.
+  assert.deepEqual(shots.phonePersonas(intent), ['read_only_admin', 'guest']);
+  assert.deepEqual(shots.phonePersonas(shots.parseIntent(raw)), []);
+  assert.deepEqual(shots.phonePersonas(null), []);
 });
 
 test('the replay plan contract is gone from the declaration module', () => {

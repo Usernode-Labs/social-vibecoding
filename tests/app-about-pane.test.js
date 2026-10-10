@@ -38,44 +38,32 @@ const ui = loadTsx('tests/fixtures/about-pane-api.ts');
 
 // ── 1. The wording ───────────────────────────────────────────────────
 
-test('the note is true for each of the three approval regimes', () => {
-  const lead = 'Built by the group, one voted proposal at a time. ';
-  assert.equal(model.appNote({}),
-    `${lead}Anyone can propose; a proposal merges once the app’s active members back it in a vote and its checks pass.`,
-    'the default: the time-and-majority gate among active members');
-  assert.equal(model.appNote({ approver_policy: 'invited' }),
-    `${lead}Anyone can propose; a proposal merges once the app’s invited approvers back it in a vote and its checks pass.`,
-    'invited approvers: the same gate, only their votes count');
-  assert.equal(model.appNote({ approvals_required: 3 }),
-    `${lead}Anyone can propose; a proposal merges once it has 3 yes votes and its checks pass.`,
-    'at least N, anyone voting');
-  assert.equal(model.appNote({ approver_policy: 'invited', approvals_required: 1 }),
-    `${lead}Anyone can propose; a proposal merges once one of the app’s invited approvers votes yes and its checks pass.`);
-  assert.equal(model.appNote({ approver_policy: 'invited', approvals_required: '2', locked: true, collab_visibility: 'private' }),
-    `${lead}Its members can propose; a proposal merges once 2 of the app’s invited approvers vote yes, an admin votes yes, and its checks pass.`,
-    'an invite-only build takes proposals from its members; a locked app needs an admin\'s yes');
-  assert.equal(model.appNote(null), model.appNote({}), 'no row reads as the default, as on the server');
-});
-
-test('the platform\'s note: its own rules, or how it is built for a viewer who cannot propose', () => {
-  assert.equal(model.platformNote({ approver_policy: 'invited', approvals_required: 1 }, false),
-    'The platform is built the same way as the apps on it: anyone can propose a change to the tabs, '
-    + 'the bell or the workshop, and it ships once one of the platform’s invited approvers votes yes '
-    + 'and its checks pass. This menu is the same one every app has.');
-  const restricted = model.platformNote(null, true);
-  assert.doesNotMatch(restricted, /anyone can propose/, 'not an invitation the platform would refuse');
-  assert.match(restricted, /open to admins only/);
-  assert.match(restricted, /This menu is the same one every app has\.$/);
+test('the build line is short and warm: the community builds it, the rules are a tap away (#4218)', () => {
+  assert.equal(model.appNote('Supply Line'), 'Supply Line’s community builds it together.');
+  assert.equal(model.appNote(''), 'This app’s community builds it together.', 'no name, still a line');
+  for (const said of [model.appNote('Notes'), model.platformNote('Homeroom', false)]) {
+    assert.doesNotMatch(said, /checks pass|vote|approv|goes live/, 'no mechanics: those are the Workshop\'s');
+  }
+  assert.equal(model.platformNote('Homeroom', false),
+    'Homeroom’s community builds it together, the same way as the apps on it.');
+  const restricted = model.platformNote('Homeroom', true);
+  assert.doesNotMatch(restricted, /anyone can suggest/, 'not an invitation the platform would refuse');
+  assert.match(restricted, /open to admins only\.$/);
 });
 
 test('the pill, the cards, the rows and the Open button say what the design says', () => {
-  assert.equal(model.versionPillText('a1b2c3d', '2h ago'), 'a1b2c3d · 2h ago');
-  assert.equal(model.versionPillText(null, '2h ago'), 'Updated 2h ago');
-  assert.equal(model.versionPillText(null, null), null, 'no pill rather than "version —"');
+  assert.equal(model.membersPillText(1), '1 member');
+  assert.equal(model.membersPillText('12'), '12 members');
+  assert.equal(model.membersPillText(0), null, 'a zero says nothing');
+  assert.equal(model.membersPillText(undefined), null);
+  assert.equal(model.versionRowText('a1b2c3d', false, false), 'App version: a1b2c3d');
+  assert.equal(model.versionRowText('a1b2c3d', false, true), 'Version: a1b2c3d');
+  assert.equal(model.versionRowText(null, true, false), 'App version: deploying…');
+  assert.equal(model.versionRowText(null, false, false), null, 'no row rather than "version —"');
   assert.equal(model.shortVersionOf({ version: { shortSha: 'abc1234' } }), 'abc1234');
   assert.equal(model.shortVersionOf({ main_sha: 'abc1234def' }), 'abc1234');
   assert.deepEqual(model.statCards({ apps: 1, members: 2, merged: 0 }).map((c) => [c.key, c.value, c.label]),
-    [['apps', '1', 'app'], ['members', '2', 'members'], ['merged', '0', 'merged']]);
+    [['apps', '1', 'app'], ['members', '2', 'members'], ['merged', '0', 'live']]);
   assert.equal(model.taglineOf({ manifest_snapshot: { description: '  Sketch\n together. ' } }), 'Sketch together.');
   assert.equal(model.taglineOf({ manifest_snapshot: {} }), null);
   assert.deepEqual(model.contributorView({ username: 'dana', merged_count: '6' }), { who: 'dana', initial: 'D', merged: 6 });
@@ -83,7 +71,6 @@ test('the pill, the cards, the rows and the Open button say what the design says
   assert.deepEqual(model.openLabel('running', true), { label: 'Resume', canOpen: true });
   assert.deepEqual(model.openLabel('creating', false), { label: 'Spinning up…', canOpen: false });
   assert.deepEqual(model.openLabel('error', true), { label: 'Not running', canOpen: false });
-  assert.equal(model.joinClauses(['a', null, 'b', 'c']), 'a, b, and c');
 });
 
 // ── 2. The pane, rendered ─────────────────────────────────────────────
@@ -92,32 +79,36 @@ const ROW = {
   slug: 'notes-ab12', name: 'Notes', status: 'running', is_collaborator: false, is_favorited: false,
   manifest_snapshot: { description: 'Shared notes for the group.' },
   version: { shortSha: 'a1b2c3d' }, last_deploy_at: new Date(Date.now() - 2 * 3600e3).toISOString(),
-  approver_policy: 'anyone', approvals_required: null, repo_url: 'https://github.com/example/notes',
+  approver_policy: 'anyone', approvals_required: null, repo_url: 'https://github.com/example/notes', member_count: 3,
 };
 
-function render(patch, { apps = [ROW], parked = null, items = null } = {}) {
+function render(patch, { apps = [ROW], parked = null, items = null, privateMember = false, homeVisited = false } = {}) {
   const savedWindow = globalThis.window;
   const before = { ...ui.improveStore.get() };
   const parkedBefore = { ...ui.parkedStore.get() };
+  const navBefore = { ...ui.navStore.get() };
   globalThis.window = {
     location: { search: '', origin: 'https://sv.test' },
+    App: { _privateHomeVisited: () => homeVisited },
     Home: {
       _apps: apps,
       _appsLoaded: true,
       isYours: (a) => !!((a.is_collaborator && !a.your_apps_hidden) || a.is_favorited),
       menuItemsFor: () => items || [
         { key: 'install', label: 'Add to Home Screen', run: () => {} },
-        { key: 'fork', label: 'Fork this app', run: () => {} },
+        { key: 'fork', label: 'Remix', run: () => {} },
       ],
     },
   };
   ui.improveStore.set({ ...before, ...patch });
   ui.parkedStore.set({ app: parked });
+  ui.navStore.set({ privateMember });
   try {
     return renderToHtml(createElement(ui.AboutPane, { label: patch.name || 'Notes' }));
   } finally {
     ui.improveStore.set(before);
     ui.parkedStore.set(parkedBefore);
+    ui.navStore.set(navBefore);
     if (savedWindow === undefined) delete globalThis.window;
     else globalThis.window = savedWindow;
   }
@@ -126,9 +117,9 @@ function render(patch, { apps = [ROW], parked = null, items = null } = {}) {
 test('an app\'s About, in the design\'s order', () => {
   const html = render({ target: 'app', slug: 'notes-ab12', name: 'Notes', tab: 'dev', canShare: true,
     repoUrl: ROW.repo_url });
-  const order = ['app-about-identity', 'app-about-tagline', 'app-about-version', 'app-about-actions',
-    'app-about-open', 'app-about-add', 'app-about-note', 'app-about-contributors', 'app-about-more',
-    'improve-row-share', 'app-about-a2hs', 'improve-row-github', 'app-about-fork'];
+  const order = ['app-about-identity', 'app-about-tagline', 'app-about-members', 'app-about-actions',
+    'app-about-open', 'app-about-add', 'app-about-note', 'app-about-how', 'app-about-contributors', 'app-about-more',
+    'improve-row-share', 'app-about-a2hs', 'improve-row-github', 'app-about-fork', 'app-about-version'];
   let at = -1;
   for (const id of order) {
     const i = html.indexOf(`id="${id}"`);
@@ -136,12 +127,25 @@ test('an app\'s About, in the design\'s order', () => {
     at = i;
   }
   assert.match(html, /Shared notes for the group\./, 'the tagline is the manifest\'s description');
-  assert.match(html, /id="app-about-version"[^>]*>a1b2c3d · 2h ago</);
+  assert.match(html, /id="app-about-members"[^>]*>3 members</, 'how many are in its community, not the version');
+  assert.match(html, /id="app-about-version"[^>]*>App version: a1b2c3d</, 'the version is a plain row under More');
+  assert.match(html, /id="app-about-how" href="#app\/notes-ab12\/workshop"[^>]*>How changes work</,
+    'the details are the Workshop\'s');
+  assert.doesNotMatch(html, /\/app\/notes-ab12</, 'no address under the name');
   assert.match(html, /id="app-about-open"[^>]*href="\/app\/notes-ab12"[^>]*>Open</,
     'Open is an address, so a modified click still opens a tab');
-  assert.match(html, /id="app-about-add"[^>]*data-added="false"[^>]*>(?:<[^>]+>)*Add to Shortcuts/);
+  assert.match(html, /id="app-about-add"[^>]*data-added="false"[^>]*>(?:<[^>]+>)*Add to My apps/);
   assert.match(html, /Loading contributors…/, 'the roster loads after the pane opens, never in a render');
-  assert.match(html, /Anyone can propose; a proposal merges once/);
+  assert.match(html, /Notes’s community builds it together\./);
+});
+
+test('a newcomer offered "Go to Homeroom" has no Share until they have used it (#4216)', () => {
+  const patch = { target: 'app', slug: 'notes-ab12', name: 'Notes', tab: 'dev', canShare: true };
+  assert.doesNotMatch(render(patch, { privateMember: true }), /improve-row-share/,
+    'a private member who has not gone to Homeroom yet');
+  assert.match(render(patch, { privateMember: true, homeVisited: true }), /id="improve-row-share"/,
+    'back once they have used Go to Homeroom');
+  assert.match(render(patch, { privateMember: false }), /id="improve-row-share"/, 'and once let in');
 });
 
 test('Open says Resume for the parked app, and is gone for the app already running', () => {
@@ -166,6 +170,29 @@ test('Add to home screen and Fork are the app page\'s own items, and absent with
     'a laptop has no home screen, and the platform row cannot be forked');
 });
 
+// People see a fork as a "Remix". The row says what it does under its label,
+// and a copy says what it was remixed from, under its description, the way
+// Discover's page does.
+test('Remix says "Make your own copy", and a copy says what it was remixed from', () => {
+  const patch = { target: 'app', slug: 'notes-ab12', name: 'Notes', tab: 'dev' };
+  const plain = render(patch);
+  assert.match(plain, /id="app-about-fork"[^>]*>[\s\S]*?>Remix<[\s\S]*?>Make your own copy</);
+  assert.doesNotMatch(plain, /Fork this app/);
+  assert.doesNotMatch(plain, /app-about-lineage/, 'an app that is not a copy has no lineage line');
+
+  const copy = { ...ROW, forked_from: { appId: 3, slug: 'book-club', name: 'Book Club', linkable: true } };
+  const html = render(patch, { apps: [copy] });
+  assert.match(html, /id="app-about-lineage"[^>]*>(?:<[^>]+>)*\u2442 Remixed from Book Club</);
+  assert.match(html, /id="app-about-lineage"[^>]*><a href="#app\/book-club"/, 'it opens the original');
+  assert.ok(html.indexOf('id="app-about-tagline"') < html.indexOf('id="app-about-lineage"'),
+    'under the description');
+
+  const orphan = { ...ROW, forked_from: { appId: 3, slug: 'book-club', name: '<deleted>', linkable: false } };
+  const gone = render(patch, { apps: [orphan] });
+  assert.match(gone, /\u2442 Remixed from &lt;deleted&gt;/);
+  assert.doesNotMatch(gone, /id="app-about-lineage"[^>]*><a /, 'a deleted original is text, not a link');
+});
+
 test('About Homeroom: the three figures instead of the actions, the platform\'s note, its roster', () => {
   const self = { ...ROW, slug: 'usernode-2d5619', name: 'Homeroom', self_hosted: true,
     approver_policy: 'invited', approvals_required: 1 };
@@ -177,7 +204,9 @@ test('About Homeroom: the three figures instead of the actions, the platform\'s 
   for (const key of ['apps', 'members', 'merged']) {
     assert.match(html, new RegExp(`data-stat="${key}"`), `the ${key} card`);
   }
-  assert.match(html, /The platform is built the same way as the apps on it: anyone can propose/);
+  assert.match(html, /Homeroom’s community builds it together, the same way as the apps on it\./);
+  assert.match(html, /id="app-about-how" href="#app\/usernode-2d5619\/workshop"/, 'the platform\'s own Workshop');
+  assert.doesNotMatch(html, /id="app-about-members"/, 'its members are a figure card');
   assert.match(html, /id="app-about-contributors"/);
   assert.match(html, /id="improve-row-share"/, 'Homeroom always has an address to share');
   assert.doesNotMatch(html, /app-about-fork/);
@@ -189,6 +218,7 @@ test('About Homeroom for a viewer not served its row: no roster the API would re
   assert.match(html, /id="app-about-stats"/);
   assert.doesNotMatch(html, /app-about-contributors/);
   assert.match(html, /open to admins only/);
+  assert.doesNotMatch(html, /app-about-how/, 'no link to a workshop the platform would refuse');
   assert.match(html, /id="improve-row-share"/);
 });
 
@@ -326,9 +356,12 @@ test('the restricted row hides through a layout effect, so the prerendered menu 
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   // The discussion and invite rows that hid with it left the menu (UI
   // overhaul, #3362); the workshop row is the one left to hide.
-  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*for \(const el of \[workshopRowRef\.current\]\)/);
-  assert.match(sheet, /el\.classList\.toggle\('hidden', !!restricted\);[\s\S]{0,40}\}, \[restricted, view\]\);/,
+  // #4216: a newcomer still offered "Go to Homeroom" has it hidden the same way.
+  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*const hide = !!restricted \|\| newcomer;\s*for \(const el of \[workshopRowRef\.current\]\)/);
+  assert.match(sheet, /el\.classList\.toggle\('hidden', hide\);[\s\S]{0,40}\}, \[restricted, newcomer, view, open\]\);/,
     'and re-runs when the menu pane comes back from About, whose rows mount again');
+  assert.match(sheet, /const newcomer = mounted && offeringGoToHomeroom\(!!privateMember\);/,
+    'after mount only: the visit is remembered in storage the prerender cannot see');
   assert.match(sheet, /id="app-menu-row-workshop"\s+dataContextRow="workshop"\s+elRef=\{workshopRowRef\}/);
   assert.doesNotMatch(sheet, /id="app-menu-row-(discussion|invite)"/);
   const html = read('public/index.html');

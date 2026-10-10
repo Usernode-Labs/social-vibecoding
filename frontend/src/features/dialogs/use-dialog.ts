@@ -92,6 +92,12 @@ export interface UseDialogOptions<T> {
    * outcome of.
    */
   canClose?: () => boolean;
+  /**
+   * Present as a bottom sheet on a phone instead of the kit's centred modal
+   * (lib/static-modal.ts `phoneSheet`). Only the feedback dialog sets it;
+   * desktop and narrow desktop windows keep the modal.
+   */
+  phoneSheet?: boolean;
 }
 
 export interface UseDialogResult<T> {
@@ -215,6 +221,7 @@ export function useDialog<T = void>(
   useEffect(() => settleExitWaiters, [settleExitWaiters]);
 
   useStaticModal(rootRef, isOpen, {
+    phoneSheet: opts.current.phoneSheet,
     // A suspension's own exit landing is not the viewer dismissing anything —
     // the dialog is on its way back. Passing it to close() would release the
     // back-press claim mid-round-trip, and resume() does not take it again, so

@@ -27,6 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
@@ -71,6 +72,7 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -206,11 +208,19 @@ test('#2989: a session row is a focusable, named button', () => {
   assert.match(html, /class="dc-session-item[^"]*" data-id="7">/, 'data-id stays the last attribute');
 });
 
+// A component that reads its words with a hook can only be called while
+// React is rendering, so the call is made inside a probe's render.
+function duringRender(call) {
+  let result;
+  renderToHtml(createElement(() => { result = call(); return null; }));
+  return result;
+}
+
 test('#2989: Enter and Space on the row open the session; keys from a child do not', async () => {
   const m = mod();
   const list = m.SessionListView({ rows: [ROW] });
   const rowEl = list.props.children[0];
-  const div = rowEl.type(rowEl.props);
+  const div = duringRender(() => rowEl.type(rowEl.props));
   const opened = [];
   const prev = globalThis.window;
   globalThis.window = { DevChat: { openSessionFromList: (id) => { opened.push(id); } } };

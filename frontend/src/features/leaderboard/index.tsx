@@ -63,6 +63,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs';
+import { useMessages } from '../../lib/i18n/react';
 import { useScrollFade } from '../../lib/use-scroll-fade';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -110,10 +111,10 @@ import { topochainChallengesStore } from './topochain-challenges-store.js';
 // been the Kudos pane's "My history" sub-view, and a deep link must keep
 // meaning what it meant.
 const SECTION_TABS = [
-  { key: 'challenges', label: 'Challenges' },
-  { key: 'kudos', label: 'Kudos' },
-  { key: 'topochain', label: 'Standings' },
-  { key: 'seasons', label: 'History' },
+  { key: 'challenges', label: 'leaderboard:tabs.challenges' },
+  { key: 'kudos', label: 'leaderboard:tabs.kudos' },
+  { key: 'topochain', label: 'leaderboard:tabs.standings' },
+  { key: 'seasons', label: 'leaderboard:tabs.history' },
 ];
 
 // Four labels at the strip's px-4 are wider than a 390px phone's column, so
@@ -136,6 +137,7 @@ const STRIP_LIST = `${SECTION_TABS_LIST} max-w-full overflow-x-auto [scrollbar-w
 const KUDOS_COLUMN = 'max-w-[40rem] mx-auto';
 
 export function LeaderboardScreen() {
+  const t = useMessages('leaderboard');
   const screenRef = useRef<HTMLElement | null>(null);
   useVisibilityHiddenClass(screenRef, 'leaderboard-screen', false);
   const { mounted, section } = useLeaderboardSection();
@@ -208,7 +210,7 @@ export function LeaderboardScreen() {
                       activeClassName={SECTION_TAB_ACTIVE}
                       inactiveClassName={SECTION_TAB_INACTIVE}
                     >
-                      {s.label}
+                      {t(s.label)}
                     </TabsTrigger>
                   ))
                 : null}

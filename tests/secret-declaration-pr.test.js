@@ -56,9 +56,11 @@ async function captureOpts(t, args, existingManifest = { secrets: [] }) {
   t.mock.method(notifications, 'createPrProposedNotifications', async () => []);
 
   const chat = [];
+  const stamps = [];
   const pool = {
-    query: async (sql) => {
+    query: async (sql, params) => {
       if (/INSERT INTO chat_sessions/.test(sql)) return { rows: [{ id: 123 }] };
+      if (/SET requires_explicit_approval/.test(sql)) stamps.push(params);
       return { rows: [], rowCount: 0 };
     },
   };
@@ -69,6 +71,7 @@ async function captureOpts(t, args, existingManifest = { secrets: [] }) {
   return {
     result,
     chat,
+    stamps,
     manifest: JSON.parse(written.content),
     content: written.content,
   };
@@ -200,20 +203,39 @@ test('a declaration-only proposal says so instead of promising a value', async (
   assert.ok(!/value included/.test(chat.join('\n')));
 });
 
-test('the flavor rides the shared manifest-PR core with no explicit-approval flag', () => {
+test('the flavor rides the shared manifest-PR core WITH the explicit-approval flag', () => {
   // Text-pinned: `explicitApproval: true` switches off the time-based
-  // merge paths (issue #788, for privilege-granting changes). A secret
-  // declaration grants nobody anything, so it must merge like any other
-  // proposal — and this is cheaper to pin than to exercise.
+  // merge paths and asks for a Yes from a member other than the author
+  // (issue #788, extended to every protected block). This used to pin
+  // `explicitApproval: false` on the reasoning that a declaration grants
+  // nobody anything; but a declaration can carry a VALUE, held until the
+  // merge, and decides what the app or the platform is handed, so it must
+  // not merge on silence or on its author's own Yes.
   const fn = renamePrJs.slice(
     renamePrJs.indexOf('async function createSecretDeclarationPR('),
     renamePrJs.indexOf('// Returns the open declaration PR session')
   );
   assert.ok(fn.length, 'createSecretDeclarationPR not found');
   assert.match(fn, /return createManifestPR\(/, 'reuses the shared core, so the vote plumbing is identical');
-  assert.match(fn, /explicitApproval: false/);
+  assert.match(fn, /explicitApproval: true/);
+  assert.doesNotMatch(fn, /explicitApproval: false/);
+  assert.match(fn, /explicitApprovalReason: isPlatform \? 'platform_env' : 'secrets'/,
+    'the reason names where the value lands');
   assert.match(fn, /branchPrefix: 'secret-declare'/);
   assert.match(fn, /eventMetadata: \{ secretDeclaration: true, scope, key \}/);
+});
+
+test('the proposal is stamped at creation with where its value lands', async (t) => {
+  const app = await captureOpts(t, { scope: 'app', key: 'APP_TOKEN', declaration: DECL, hasValue: true });
+  assert.deepEqual(app.stamps, [[123, true, 'secrets']]);
+});
+
+test('a platform declaration is stamped as a platform setting', async (t) => {
+  const platform = await captureOpts(t, {
+    scope: 'platform', key: 'FEATURE_X', declaration: { group: 'General' }, hasValue: false,
+  });
+  assert.deepEqual(platform.stamps, [[123, true, 'platform_env']],
+    'even with no value: it still decides what the platform is handed');
 });
 
 test('findSecretDeclarationPr dedupes per KEY, over live proposals only', () => {

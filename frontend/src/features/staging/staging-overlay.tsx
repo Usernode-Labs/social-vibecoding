@@ -37,12 +37,43 @@ import { useRef, useState, type ReactNode } from 'react';
 import { ChevronLeftIcon, TerminalIcon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { improveStore } from '../improve/improve-store.js';
 import { stagingHandlers, stagingRefs, stagingStore } from './staging-store.js';
 import { useStoreState } from '../../lib/use-store-state';
 
+/**
+ * The line under the preview's bar. A project that is just yours goes live
+ * when you vote it in; anywhere else members try the change before they
+ * vote. Either way the preview's data is its own.
+ */
+export function previewBannerText(solo: boolean): string {
+  return solo
+    ? translate('devchat:staging.banner.solo')
+    : translate('devchat:staging.banner.group');
+}
+
+/**
+ * The line that says which moment the preview shows. A change that only
+ * shows at certain times (a Thursday-evening reminder) declares a moment, and
+ * the preview opens at it (src/services/preview-clock.js). On 5 October 2026
+ * a group was asked to approve such a banner on a Monday, when it could not
+ * show; this line says why today's date is not the one on screen.
+ */
+export function previewClockText(label: string, asNow: boolean): string {
+  return asNow ? translate('devchat:staging.clock.showingNow') : translate('devchat:staging.clock.showingAt', { moment: label });
+}
+
+/** The button beside it: the other of the two moments. */
+export function previewClockToggleText(label: string, asNow: boolean): string {
+  return asNow ? translate('devchat:staging.clock.seeAt', { moment: label }) : translate('devchat:staging.clock.seeNow');
+}
+
 export function StagingOverlay(): ReactNode {
+  // Subscribed: the helpers above read their text through the runtime.
+  const t = useMessages('devchat');
   const state = useStoreState(stagingStore);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const loaderRef = useRef<HTMLDivElement | null>(null);
@@ -52,6 +83,7 @@ export function StagingOverlay(): ReactNode {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const retryRef = useRef<HTMLButtonElement | null>(null);
   const spinnerRef = useRef<HTMLDivElement | null>(null);
+  const clockRef = useRef<HTMLDivElement | null>(null);
 
   // Publish the element the bridge mutates. Registered once — this component
   // never unmounts, and the ref never points at a different node.
@@ -62,6 +94,7 @@ export function StagingOverlay(): ReactNode {
 
   useHiddenClass(retryRef, !state.loaderRetry);
   useHiddenClass(spinnerRef, state.loaderRetry);
+  useHiddenClass(clockRef, !state.clockLabel);
   useHiddenClass(overlayRef, !state.open);
   useClassToggle(overlayRef, 'staging-overlay-docked', state.mode === 'docked');
 
@@ -165,7 +198,7 @@ export function StagingOverlay(): ReactNode {
           onClick={() => stagingHandlers.onBack?.()}
         >
           <ChevronLeftIcon className="w-4 h-4" />
-          Back to session
+          {t('core:common.back')}
         </button>
         <span className="flex-1">
         </span>
@@ -180,7 +213,7 @@ export function StagingOverlay(): ReactNode {
           title={state.testBtnTitle || undefined}
           onClick={() => stagingHandlers.onTest?.()}
         >
-          Test this change
+          {t('devchat:staging.testThisChange')}
         </button>
         {/*
             #771: docked-mode toggle. In the docked side panel it reads
@@ -197,9 +230,16 @@ export function StagingOverlay(): ReactNode {
           title={state.fsBtnTitle || undefined}
           onClick={() => stagingHandlers.onFullscreen?.()}
         >
-          {state.fsBtnText}
+          {state.fsBtnText ?? t('devchat:staging.fullScreen')}
         </button>
-        <span id="staging-url-label" className="text-xs text-zinc-400 font-mono truncate">
+        {/*
+            The preview's title, "Flat 4B Chores · Preview", set by
+            AppView.swapToStaging (_stagingTitle). The id is the old name: it
+            showed the raw staging address, which told a newcomer arriving
+            from the bot's ready card nothing (first-session run, 4 October
+            2026).
+        */}
+        <span id="staging-url-label" className="text-xs text-zinc-400 truncate">
           {state.urlLabel}
         </span>
         {/*
@@ -213,7 +253,7 @@ export function StagingOverlay(): ReactNode {
         <button
           id="staging-dev-console-btn"
           className="relative text-zinc-400 hover:text-zinc-200"
-          aria-label="Open developer console"
+          aria-label={t('devchat:staging.openConsole')}
         >
           <TerminalIcon className="w-5 h-5" />
           <span
@@ -224,24 +264,53 @@ export function StagingOverlay(): ReactNode {
         </button>
         {/*
             #771: close button for the docked side panel. CSS shows it only
-            in docked mode (where "Back to session" is hidden — closing the
+            in docked mode (where "Back" is hidden: closing the
             panel IS going back to the session, which never left).
         */}
         <button
           id="staging-dock-close"
           className="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0"
-          aria-label="Close preview"
+          aria-label={t('devchat:staging.closePreview')}
           onClick={() => stagingHandlers.onDockClose?.()}
         >
           &times;
         </button>
       </div>
       {/*
-          Explains why this change isn't live yet — a common point of
-          confusion the first time someone previews their own PR.
+          Explains why this change isn't live yet, a common point of
+          confusion the first time someone previews their own PR, and that
+          the preview keeps its own copy of the app's data: it runs on a
+          clone of the database, so what you add here never reaches the live
+          app. It does not say "only you can see this": other members open
+          previews too, to try a change before they vote. On a project that is
+          just yours (`solo`, from stagingBridge.setAudience) it says so.
       */}
       <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
-        Private preview. Only you can see this until the app's users vote your change in.
+        {previewBannerText(state.solo)}
+      </div>
+      {/*
+          Which moment this preview shows, when its change declared one
+          (AppView.swapToStaging, through stagingBridge.setClock). Rendered
+          always and hidden through a ref like the loader, so the iframe's
+          place among its siblings never changes; with no moment it ships
+          hidden and empty, which is what the prerendered page carries. The
+          button reloads the preview at the other moment (app-view.js
+          re-points the iframe; this row never touches it).
+      */}
+      <div
+        ref={clockRef}
+        className="hidden flex items-center gap-3 px-4 py-1.5 border-b border-zinc-800 text-xs text-zinc-300 shrink-0"
+      >
+        <span className="flex-1 min-w-0">
+          {state.clockLabel ? previewClockText(state.clockLabel, state.clockAsNow) : ''}
+        </span>
+        <button
+          type="button"
+          className="text-xs font-medium px-2.5 py-1 rounded bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 shrink-0"
+          onClick={() => stagingHandlers.onClockToggle?.()}
+        >
+          {previewClockToggleText(state.clockLabel, state.clockAsNow)}
+        </button>
       </div>
       <div className="relative flex-1">
         {/*
@@ -282,14 +351,14 @@ export function StagingOverlay(): ReactNode {
         >
           <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
             <span className="text-xs font-semibold text-violet-300">
-              How to test
+              {t('devchat:staging.howToTest')}
             </span>
             <span className="flex-1">
             </span>
             <button
               id="staging-testing-close"
               className="text-zinc-400 hover:text-zinc-200 text-sm leading-none px-1"
-              aria-label="Dismiss testing instructions"
+              aria-label={t('devchat:staging.dismissTesting')}
               onClick={() => stagingHandlers.onTestingClose?.()}
             >
               &times;
@@ -320,7 +389,7 @@ export function StagingOverlay(): ReactNode {
           <div ref={spinnerRef} className="w-9 h-9 border-2 border-zinc-700 border-t-violet-400 rounded-full animate-spin">
           </div>
           <div id="staging-loader-title" className="text-sm text-zinc-200 font-medium">
-            {state.loaderTitle}
+            {state.loaderTitle ?? t('devchat:staging.loader.opening')}
           </div>
           <div id="staging-loader-sub" className="text-xs text-zinc-400 max-w-xs leading-relaxed">
             {state.loaderSub}
@@ -335,7 +404,7 @@ export function StagingOverlay(): ReactNode {
             className="hidden min-h-[44px] px-4 py-2 text-sm font-medium"
             onClick={() => stagingHandlers.onRetry?.()}
           >
-            {state.loaderRetryLabel}
+            {state.loaderRetryLabel ?? t('devchat:staging.loader.retrySignIn')}
           </Button>
         </div>
       </div>

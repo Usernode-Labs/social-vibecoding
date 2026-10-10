@@ -37,6 +37,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { message } = require('./lib/platform-i18n');
+
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const APP = read('public/js/app.js');
 const SETTINGS = read('frontend/src/features/settings/settings.js');
@@ -125,9 +127,19 @@ test('the session residue goes with the session, not just the snapshot', () => {
 
 test('a native shutdown that never lands is bounded, not permanent', () => {
   assert.match(SETTINGS, /const NATIVE_LOGOUT_SAFETY_MS = 5000;/);
+  // #3915: a second bound, armed when the terminal call is ISSUED rather than
+  // when native answers, so an app that never answers cannot hold a signed-out
+  // user on Settings. Both nets land on the same destination through one
+  // once-only exit. tests/native-logout-order.test.js runs it.
+  assert.match(SETTINGS, /const NATIVE_LOGOUT_ISSUED_SAFETY_MS = 8000;/);
   const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
   const body = logout.slice(0, logout.indexOf('\n    },'));
-  assert.match(body, /setTimeout\(\(\) => \{\s*\n\s*window\.location\.replace\(LANDING_URL\);\s*\n\s*\}, NATIVE_LOGOUT_SAFETY_MS\)/);
+  assert.match(body, /const leave = \(\) => \{\s*\n\s*if \(left\) return;\s*\n\s*left = true;\s*\n\s*window\.location\.replace\(LANDING_URL\);\s*\n\s*\};/);
+  assert.match(body, /const timer = setTimeout\(leave, ms\);/);
+  // Armed in the same synchronous block that issues the terminal call, so it
+  // counts from the call and cannot fire before it; and only once the server
+  // revoked the session.
+  assert.match(body, /if \(webRevoked\) armLeave\(NATIVE_LOGOUT_ISSUED_SAFETY_MS\);\s*\n\s*return NativeChrome\.commitNativeLogout\(\)\.then\(\(result\) => \{[\s\S]*?armLeave\(NATIVE_LOGOUT_SAFETY_MS\);/);
 });
 
 // ── The advisory that has to survive a navigation ──────────────────────
@@ -141,9 +153,11 @@ test('the two files agree on the one-shot advisory key', () => {
 });
 
 test('the advisory copy is unchanged, and carries no em dash', () => {
-  const copy = SETTINGS.match(/const NATIVE_SHUTDOWN_NOTICE =\s*\n\s*'([^']+)';/);
+  // The constant names the message; the English catalog holds its words.
+  const copy = SETTINGS.match(/const NATIVE_SHUTDOWN_NOTICE =\s*'(settings:[^']+)';/);
   assert.ok(copy, 'the advisory is a named constant');
-  assert.equal(copy[1],
+  assert.equal(copy[1], 'settings:signOut.nativeShutdownNotice');
+  assert.equal(message(copy[1]),
     'Signed out. Close and reopen the app to finish shutting down Homeroom.');
   // User-facing copy: no em dash in any encoding.
   const logout = SETTINGS.slice(SETTINGS.indexOf('    async logout({ accountDeleted = false } = {}) {'));
@@ -155,7 +169,12 @@ test('the advisory copy is unchanged, and carries no em dash', () => {
   for (const src of scopes) {
     const strings = src.match(/'[^'\n]*(\u2014|&mdash;|&#8212;|\\u2014)[^'\n]*'/g) || [];
     assert.deepEqual(strings, []);
+    // The words these scopes show are catalog messages now: the same rule
+    // holds for the English of every id they name.
+    const ids = [...new Set(src.match(/'settings:[A-Za-z0-9_.]+'/g) || [])].map((id) => id.slice(1, -1));
+    assert.deepEqual(ids.filter((id) => /\u2014|&mdash;|&#8212;/.test(message(id))), []);
   }
+  assert.doesNotMatch(message('settings:signOut.nativeShutdownNotice'), /\u2014|&mdash;|&#8212;/);
 });
 
 test('the advisory is written only where there is something to say', () => {
@@ -166,7 +185,7 @@ test('the advisory is written only where there is something to say', () => {
   // …and it is the native-failure path, which is also the only path that
   // still needs the user to do something.
   const failure = body.slice(body.indexOf('}, (error) => {'));
-  assert.match(failure, /sessionStorage\?\.setItem\?\.\(LOGOUT_NOTICE_KEY, NATIVE_SHUTDOWN_NOTICE\)/);
+  assert.match(failure, /sessionStorage\?\.setItem\?\.\(LOGOUT_NOTICE_KEY, tr\(NATIVE_SHUTDOWN_NOTICE\)\)/);
   assert.match(failure, /window\.location\.replace\(LANDING_URL\)/);
 });
 

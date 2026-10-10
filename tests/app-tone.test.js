@@ -388,12 +388,22 @@ test('the scaffold\'s own page colour resolves to the viewer\'s tone, light or d
   const { getTemplateFiles } = require('../src/services/template');
   const html = getTemplateFiles('My App', 'my-app-123', 'pg://x', 'secret')
     .find((f) => f.path === 'public/index.html').content;
-  // <html> paints nothing, so the bridge reads the body: the colours below
-  // are what `bg-zinc-50` and `dark:bg-zinc-950` compile to, the grounds a
-  // new app actually shows in each theme.
+  // <html> paints nothing, so the bridge reads the body: its `bg-ground` is
+  // the design kit's ground token (#3737), and the colours below are that
+  // token's light and dark values, the grounds a new app actually shows in
+  // each theme.
   assert.match(html, /<html lang="en">/);
-  assert.match(html, /<body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 /);
-  for (const [theme, ground] of [['light', '#fafafa'], ['dark', '#09090b']]) {
+  assert.match(html, /<body class="min-h-screen bg-ground text-fg">/);
+  const css = getTemplateFiles('My App', 'my-app-123', 'pg://x', 'secret')
+    .find((f) => f.path === 'styles/tailwind-input.css').content;
+  const groundIn = (selector) => {
+    const block = new RegExp(`\\n\\s*${selector.replace('.', '\\.')} \\{([^}]*)\\}`).exec(css);
+    const [r, g, b] = /--ground:\s*(\d+) (\d+) (\d+);/.exec(block[1]).slice(1).map(Number);
+    return `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+  };
+  const grounds = [['light', groundIn(':root')], ['dark', groundIn('.dark')]];
+  assert.deepEqual(grounds, [['light', '#fafaf9'], ['dark', '#0c0a09']]);
+  for (const [theme, ground] of grounds) {
     assert.equal(toneOf(ground), theme, `the scaffold's ${theme} page is a ${theme} page`);
     // End to end through the real store shape and the real publisher.
     const state = { slug: 'my-app-123', active: true, background: ground };

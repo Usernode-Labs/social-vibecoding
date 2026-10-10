@@ -12,7 +12,9 @@
 // the shared listener (bootstrap, control plane) attaches none; only a
 // hosted-app pair's own two origins receive it, never a hosted production
 // app; a token the page sent itself is left alone; and the token never
-// appears in anything the proxy writes out.
+// appears in anything the proxy writes out. The guest (a browser that is not
+// signed in) has a listener too, which carries a guest token only when the
+// platform minted one, and nothing otherwise.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -21,26 +23,19 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn, execFileSync } = require('node:child_process');
-const { once } = require('node:events');
+const { closedPromise, waitForReady, stopProxy, startOnFreePorts } = require('./lib/shots-proxy');
 
 const TOKENS = Object.freeze({
   member: 'member.fixture.jwt',
   read_only_admin: 'admin.fixture.jwt',
   full_admin: 'full-admin.fixture.jwt',
 });
+const GUEST_TOKEN = 'guest.fixture.jwt';
 
 async function listen(handler) {
   const server = http.createServer(handler);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   return { server, origin: `http://127.0.0.1:${server.address().port}` };
-}
-
-async function freePort() {
-  const server = http.createServer();
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return port;
 }
 
 // Three upstreams that record the identity header each request arrived with:
@@ -59,16 +54,19 @@ async function upstreams(t) {
   return { seen, base: await make('base'), head: await make('head'), hosted: await make('hosted') };
 }
 
-async function startProxy(t, { base, head, hosted, platformAssets = '1', withPersonaPorts = true }) {
+function startProxy(t, options) {
+  return startOnFreePorts((ports) => startProxyOn(t, ports, options));
+}
+
+async function startProxyOn(t, ports, {
+  base, head, hosted, platformAssets = '1', withPersonaPorts = true, guestToken = null,
+}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-proxy-identity-'));
   const ready = path.join(dir, 'proxy.ready');
   const hostedFile = path.join(dir, 'hosted-origins.json');
   fs.writeFileSync(hostedFile, JSON.stringify({
     version: 2, baseOrigin: base, headOrigin: head, apps: [{ origin: hosted, slug: 'hosted-app' }],
   }));
-  const ports = {
-    member: await freePort(), read_only_admin: await freePort(), full_admin: await freePort(),
-  };
   const proxy = spawn(process.execPath, [path.join(__dirname, '..', 'worker', 'shots-origin-proxy.js')], {
     env: {
       PATH: process.env.PATH,
@@ -80,23 +78,22 @@ async function startProxy(t, { base, head, hosted, platformAssets = '1', withPer
       SHOTS_MEMBER_TOKEN: TOKENS.member,
       SHOTS_ADMIN_TOKEN: TOKENS.read_only_admin,
       SHOTS_FULL_ADMIN_TOKEN: TOKENS.full_admin,
+      ...(guestToken != null ? { SHOTS_GUEST_TOKEN: guestToken } : {}),
       ...(withPersonaPorts ? { SHOTS_PROXY_PERSONA_PORTS: JSON.stringify(ports) } : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  const closed = closedPromise(proxy);
   const output = [];
   proxy.stdout.on('data', (chunk) => output.push(chunk));
   proxy.stderr.on('data', (chunk) => output.push(chunk));
   t.after(async () => {
-    proxy.kill('SIGTERM');
-    await once(proxy, 'close');
+    await stopProxy(proxy, closed);
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  const deadline = Date.now() + 5000;
-  while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(fs.existsSync(ready), true, 'the proxy started');
+  const shared = await waitForReady(proxy, ready, { output: () => Buffer.concat(output).toString() });
   return {
-    shared: Number(fs.readFileSync(ready, 'utf8')),
+    shared,
     ports,
     output: () => Buffer.concat(output).toString(),
     events: () => Buffer.concat(output).toString().trim().split('\n')
@@ -150,11 +147,67 @@ test('the identity reaches only the pair\'s own origins, and never overrides the
   ]);
 });
 
+test('the guest\'s listener carries no identity when there is no guest token', async (t) => {
+  // Homeroom's own copies, a private child app, or no guest signer: the
+  // guest browser is a visitor with nothing at all, on either side.
+  for (const guestToken of [null, '']) {
+    const up = await upstreams(t);
+    const proxy = await startProxy(t, { ...up, guestToken });
+    assert.equal(await send(proxy.ports.guest, `${up.head}/`, { 'sec-fetch-dest': 'document' }), 200);
+    assert.equal(await send(proxy.ports.guest, `${up.base}/api/items`), 200);
+    assert.deepEqual(up.seen.map(({ token }) => token), [null, null]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(proxy.events().filter((event) => event.kind === 'document_request')
+      .map((event) => event.identityAttached), [false]);
+  }
+});
+
+test('a guest token goes only out of the guest\'s listener, and only to a child-app pair\'s own origins', async (t) => {
+  const up = await upstreams(t);
+  const proxy = await startProxy(t, { ...up, guestToken: GUEST_TOKEN });
+  assert.equal(await send(proxy.ports.guest, `${up.head}/`, { 'sec-fetch-dest': 'document' }), 200);
+  assert.equal(await send(proxy.ports.guest, `${up.base}/api/items`), 200);
+  // Never to a hosted production app, and never over the page's own token.
+  assert.equal(await send(proxy.ports.guest, `${up.hosted}/`), 200);
+  assert.equal(await send(proxy.ports.guest, `${up.base}/`, { 'x-usernode-token': 'page.own.jwt' }), 200);
+  // No other listener carries it.
+  for (const persona of Object.keys(TOKENS)) {
+    assert.equal(await send(proxy.ports[persona], `${up.head}/`), 200);
+  }
+  assert.equal(await send(proxy.shared, `${up.head}/`), 200);
+  assert.deepEqual(up.seen.map(({ name, token }) => [name, token]), [
+    ['head', GUEST_TOKEN], ['base', GUEST_TOKEN],
+    ['hosted', null], ['base', 'page.own.jwt'],
+    ['head', TOKENS.member], ['head', TOKENS.read_only_admin], ['head', TOKENS.full_admin],
+    ['head', null],
+  ]);
+
+  // The platform's own pairs are never sent one, even if one were given.
+  const own = await upstreams(t);
+  const ownProxy = await startProxy(t, { ...own, platformAssets: '0', guestToken: GUEST_TOKEN });
+  assert.equal(await send(ownProxy.ports.guest, `${own.base}/`), 200);
+  assert.deepEqual(own.seen.map(({ token }) => token), [null]);
+});
+
 test('the platform\'s own pairs get nothing: their sessions are cookies the bootstrap installs', async (t) => {
   const up = await upstreams(t);
   const proxy = await startProxy(t, { ...up, platformAssets: '0' });
   assert.equal(await send(proxy.ports.member, `${up.base}/`), 200);
   assert.deepEqual(up.seen.map(({ token }) => token), [null]);
+});
+
+test('the ready file appears whole: written under another name, then renamed into place', () => {
+  // Every caller polls for the file and then reads the shared port out of
+  // it. writeFileSync alone creates it empty before writing, and under the
+  // full suite's load a reader once read '' as port 0 and was refused
+  // (5 October, the test below).
+  const src = fs.readFileSync(path.join(__dirname, '..', 'worker', 'shots-origin-proxy.js'), 'utf8');
+  const body = src.slice(src.indexOf('function writeReady('), src.indexOf('Promise.all(['));
+  assert.match(body, /fs\.writeFileSync\(partial, String\(sharedPort\)/);
+  assert.match(body, /fs\.renameSync\(partial, readyFile\)/);
+  assert.match(body, /const partial = `\$\{readyFile\}\.\$\{process\.pid\}\.tmp`/, 'beside it, so the rename stays on one filesystem');
+  assert.doesNotMatch(src, /writeFileSync\(readyFile/);
+  assert.match(src, /if \(readyFile\) writeReady\(sharedPort\);/);
 });
 
 test('without persona ports the proxy is the single shared listener it was, and attaches nothing', async (t) => {
@@ -168,7 +221,8 @@ test('without persona ports the proxy is the single shared listener it was, and 
 
 test('the token never leaves the proxy: diagnostics carry a boolean, and the control plane stays on the shared port', async (t) => {
   const up = await upstreams(t);
-  const proxy = await startProxy(t, up);
+  const proxy = await startProxy(t, { ...up, guestToken: GUEST_TOKEN });
+  await send(proxy.ports.guest, `${up.base}/`);
   await send(proxy.ports.member, `${up.head}/`, { 'sec-fetch-dest': 'document' });
   await send(proxy.shared, `${up.head}/`, { 'sec-fetch-dest': 'document' });
   // Control requests on a persona listener are refused before any check.
@@ -178,7 +232,7 @@ test('the token never leaves the proxy: diagnostics carry a boolean, and the con
   await new Promise((resolve) => setTimeout(resolve, 100));
 
   const out = proxy.output();
-  for (const token of Object.values(TOKENS)) {
+  for (const token of [...Object.values(TOKENS), GUEST_TOKEN]) {
     assert.ok(!out.includes(token), 'no token appears in anything the proxy writes');
   }
   const requests = proxy.events().filter((event) => event.kind === 'document_request');
@@ -215,12 +269,12 @@ test('each persona\'s browser is configured onto its own listener', () => {
         const args = mcpServers[name].args;
         return args[args.indexOf('--proxy-server') + 1];
       };
-      return ['browser_member', 'browser_admin', 'browser_full_admin'].map(proxyOf);
+      return ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest'].map(proxyOf);
     };
     assert.deepEqual(write({
-      SHOTS_PROXY_PERSONA_PORTS: '{"member":17892,"read_only_admin":17893,"full_admin":17894}',
-    }), ['http://127.0.0.1:17892', 'http://127.0.0.1:17893', 'http://127.0.0.1:17894']);
-    assert.deepEqual(write({}), Array(3).fill('http://127.0.0.1:17891'),
+      SHOTS_PROXY_PERSONA_PORTS: '{"member":17892,"read_only_admin":17893,"full_admin":17894,"guest":17895}',
+    }), ['http://127.0.0.1:17892', 'http://127.0.0.1:17893', 'http://127.0.0.1:17894', 'http://127.0.0.1:17895']);
+    assert.deepEqual(write({}), Array(4).fill('http://127.0.0.1:17891'),
       'without ports every browser keeps the shared listener');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -229,10 +283,10 @@ test('each persona\'s browser is configured onto its own listener', () => {
   const runner = fs.readFileSync(path.join(__dirname, '..', 'worker', 'run-cc.sh'), 'utf8');
   const exported = /export SHOTS_PROXY_PERSONA_PORTS='([^']+)'/.exec(runner);
   assert.ok(exported, 'the runner names the persona ports');
-  assert.deepEqual(Object.keys(JSON.parse(exported[1])).sort(), ['full_admin', 'member', 'read_only_admin']);
+  assert.deepEqual(Object.keys(JSON.parse(exported[1])).sort(), ['full_admin', 'guest', 'member', 'read_only_admin']);
   // The proxy starts before the runner drops the tokens from its environment.
   assert.ok(runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &')
-    < runner.indexOf('unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN'));
+    < runner.indexOf('unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN'));
   assert.ok(runner.indexOf("export SHOTS_PROXY_PERSONA_PORTS=")
     < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'));
 });

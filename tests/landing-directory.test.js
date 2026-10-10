@@ -35,6 +35,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { shellMarkup } = require('./lib/shell-markup');
+const { message } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -56,13 +57,16 @@ test('the landing offers exactly two ways in, and neither is in the bar', () => 
   assert.doesNotMatch(header[0], /<a[\s>]/, 'no CTA in the landing bar');
 
   const interior = interiorHtmlFor('auth-landing-screen');
-  // One pill to the waitlist, one to sign-in, and nothing else. Account
-  // creation is still deferred: it happens at the end of the waitlist
-  // journey, or when a gated app routes to #signup.
+  // The waitlist landing: one pill to the waitlist, one to sign-in, and
+  // nothing else. It is still drawn, hidden, for when the first session's
+  // story is switched off (services/first-session.js).
   assert.match(interior, /id="landing-waitlist-link"/);
   assert.match(interior, /<a href="#login"/);
   assert.doesNotMatch(interior, /Create account/);
-  assert.doesNotMatch(interior, /href="#signup"/);
+  // The story is the default, and its "Get started" is the one way to make
+  // an account from here; the waitlist landing still defers it.
+  assert.equal((interior.match(/href="#signup"/g) || []).length, 1);
+  assert.match(interior, /<a href="#signup" data-landing-story-start=""/);
   // The in-app survey is not one of them any more. #landing-status-link is
   // the exception and keeps its own href — see the check-my-status test.
   const pills = interior.slice(interior.indexOf('id="landing-waitlist-link"'));
@@ -149,11 +153,14 @@ test('the check-my-status line sits under the pills, unchanged (#1538)', () => {
   assert.match(link.slice(0, 300), /data-offline-disabled/);
   assert.match(link.slice(0, 400), /Check your status/);
   assert.match(interior, /Already joined\? /);
-  // dapp.json's declared check selects on exactly this.
+  // It is the waitlist landing's, which shows only when the first session's
+  // story is switched off (services/first-session.js); the story is the
+  // default, so the declared check that used to select on this link now
+  // selects on the story's own "Sign in" instead.
   const manifest = JSON.parse(read('dapp.json'));
   assert.ok(
-    manifest.tests.some((t) => /#landing-status-link\[href="#waitlist\?confirm=1"\]/.test(t.expectSelector || '')),
-    'the declared check for the status link is untouched',
+    manifest.tests.some((t) => /a\[data-landing-story-signin\]\[href="#login"\]/.test(t.expectSelector || '')),
+    'the declared check signs an existing account in from the story',
   );
 });
 
@@ -225,7 +232,9 @@ test('the join pill is the marketing URL, from the server, opened externally', (
   // file, href/target/rel together or not at all, and hidden until the server
   // has named the host rather than rendered inert.
   assert.match(tsx, /marketing_url/, 'the site link is read off the same payload');
-  const learn = tsx.slice(tsx.indexOf('Learn more about Homeroom') - 900);
+  assert.equal(message('auth:landing.learnMore'), 'Learn more about Homeroom');
+  assert.ok(tsx.includes("{t('auth:landing.learnMore')}"));
+  const learn = tsx.slice(tsx.indexOf("{t('auth:landing.learnMore')}") - 900);
   assert.match(learn.slice(0, 900), /href=\{siteUrl \|\| undefined\}/);
   assert.match(learn.slice(0, 900), /target=\{siteUrl \? '_blank' : undefined\}/);
   assert.match(learn.slice(0, 900), /rel=\{siteUrl \? 'noopener noreferrer' : undefined\}/);
@@ -399,8 +408,8 @@ test('both "you\'re on the list" surfaces name the registered address (#1537)', 
   const tsx = read(WAITLIST_TSX);
   const panel = tsx.match(/id="waitlist-confirmed-email"[\s\S]{0,400}?<\/p>/);
   assert.ok(panel, '#waitlist-confirmed-email exists');
-  assert.match(panel[0], /\{sentTo\}/);
-  assert.match(panel[0], /Registered with/);
+  assert.match(panel[0], /<RichMessage id="auth:waitlist\.status\.registeredWith" values=\{\{ email: sentTo \}\}/);
+  assert.equal(message('auth:waitlist.status.registeredWith', { email: 'a@b.co' }), 'Registered with <0>a@b.co</0>');
   // Hidden rather than conditionally rendered: the id is part of the shell's
   // inventory, and an empty "Registered with" reads as a bug.
   assert.match(panel[0], /hiddenFirst\(\s*!sentTo/);
@@ -424,12 +433,13 @@ test('both "you\'re on the list" surfaces name the registered address (#1537)', 
   assert.match(more, /const \[signupEmail, setSignupEmail\] = useState\(''\)/);
   const line = more.match(/id="more-signup-email"[\s\S]{0,400}?<\/p>/);
   assert.ok(line, '#more-signup-email exists');
-  assert.match(line[0], /\{email\}/);
-  assert.match(line[0], /Registered with/);
+  assert.match(line[0], /<RichMessage id="auth:more\.registeredWith" values=\{\{ email \}\}/);
+  assert.equal(message('auth:more.registeredWith', { email: 'a@b.co' }), 'Registered with <0>a@b.co</0>');
   assert.match(line[0], /email \? '' : ' hidden'/);
   assert.doesNotMatch(line[0], /mailto:/);
   // Beside the queue pill, inside the form both dapp.json checks select on.
-  const block = more.match(/<form\s+id="more-form"[\s\S]*?Question 1 of 4/);
+  assert.equal(message('auth:more.question', { number: 1, total: 4 }), 'Question 1 of 4');
+  const block = more.match(/<form\s+id="more-form"[\s\S]*?t\('auth:more\.question', \{ number: 1, total: 4 \}\)/);
   assert.ok(block, 'the stage-2 form exists');
   const pillAt = block[0].indexOf('<StatusPill');
   const emailAt = block[0].indexOf('<SignupEmail');

@@ -247,6 +247,181 @@ test('Claude Code totals cover the run, so the ledger skips the thread delta', a
   assert.equal(result.estimatedCost.estimatedCostUsd, 0.102);
 });
 
+// ── A stopped Claude Code turn is priced from what it streamed (F) ─────
+
+test('a stopped Claude Code turn with no reported usage is priced from what its requests streamed', async () => {
+  // Claude Code totals a run only on its result event; a turn its clock
+  // stopped has none. The worker's per-request sum is the floor it is
+  // priced from, and only for the Claude harness.
+  const relayUsage = { requests: 23, inputTokens: 4_200_000, cachedInputTokens: 3_900_000, outputTokens: 31_000 };
+  assert.deepEqual(agentTurn.usageTotalFromResult({ agentHarness: 'claude', relayUsage }), {
+    inputTokens: 4_200_000, cachedInputTokens: 3_900_000, cacheWriteInputTokens: null,
+    outputTokens: 31_000, reasoningOutputTokens: null, source: 'stream',
+  });
+  assert.equal(agentTurn.usageTotalFromResult({ agentHarness: 'codex', relayUsage }), null,
+    'a Codex total is a thread\'s running total: a per-turn sum would corrupt its delta');
+  assert.equal(agentTurn.usageTotalFromResult({ agentHarness: 'claude', relayUsage: { requests: 0, inputTokens: 0, outputTokens: 0 } }), null,
+    'no request finished streaming: still unknown');
+  const reported = agentTurn.usageTotalFromResult({
+    agentHarness: 'claude', inputTokens: 10, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 5, relayUsage,
+  });
+  assert.equal(reported.inputTokens, 10, 'the run\'s own totals win when it reported them');
+  assert.equal(reported.source, undefined);
+
+  // Through the ledger: priced, marked as a floor, and the routed provider kept.
+  const row = {
+    session_id: 5, status: 'running', agent_thread_id: null, reasoning_effort: null,
+    metadata: { pricing: { available: true, inputPricePerMillion: 0.1, outputPricePerMillion: 0.4 } },
+    input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0,
+    output_tokens: 0, reasoning_output_tokens: 0,
+  };
+  const client = {
+    async query(text, params) {
+      if (/FOR UPDATE/.test(text)) return { rows: [row] };
+      if (/^\s*UPDATE agent_turns/.test(text)) { row.updateSql = text; row.updateParams = params; return { rowCount: 1 }; }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = { async connect() { return client; } };
+  const out = await agentTurn.completeCodexAttempt({
+    pool, turnUuid: 'u-stop', status: 'failed', usageScope: 'run', routedProvider: 'DeepInfra',
+    usageTotal: agentTurn.usageTotalFromResult({ agentHarness: 'claude', relayUsage }),
+  });
+  assert.equal(out.estimatedCost.costSource, 'requested_model_catalog_estimate');
+  assert.ok(out.estimatedCost.estimatedCostUsd > 0.4, 'no longer about $0');
+  assert.equal(JSON.parse(row.updateParams[18]).usage_source, 'stream_floor');
+  assert.match(row.updateSql, /routed_provider = COALESCE\(\$21, routed_provider\)/);
+  assert.equal(row.updateParams[20], 'DeepInfra');
+});
+
+test('a stopped Claude Code turn is priced from the counts its finished requests closed on, not from what Claude Code streamed', async () => {
+  // Through OpenRouter, Claude Code's own events say 0 input tokens: the
+  // counts arrive only on each reply's closing message_delta. A 40-minute GLM
+  // build stopped by the bot's clock on 2026-10-06 was priced at 0 input and
+  // $0 that way. The request listener reads the closing counts of every
+  // request that finished, and those win.
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  const progress = [];
+  const feed = (line) => worker.parseLine(line, (l) => progress.push(l), state);
+  const provider = (event) => feed(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`);
+  const stream = (event, uuid) => feed(JSON.stringify({ type: 'stream_event', event, session_id: 'cc-or-2', parent_tool_use_id: null, uuid }));
+  feed(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cc-or-2' }));
+  // What Claude Code streams through OpenRouter: no input on message_start.
+  stream({ type: 'message_start', message: { id: 'gen-1', model: 'z-ai/glm-5.3-flash', usage: { input_tokens: 0, output_tokens: 1 } } }, 'a1');
+  provider({ kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok', providerName: 'Fireworks',
+    usage: { inputTokens: 1834, outputTokens: 712, cacheReadInputTokens: 96512, cacheWriteInputTokens: 0 } });
+  provider({ kind: 'provider_request_result', requestOrdinal: 2, httpStatus: 200, outcome: 'ok',
+    usage: { inputTokens: 900, outputTokens: 400, cacheReadInputTokens: 98000, cacheWriteInputTokens: 1200 } });
+  // The request the stop cut off reported nothing, and a bogus count is ignored.
+  provider({ kind: 'provider_request_result', requestOrdinal: 3, outcome: 'cancelled', usage: { inputTokens: -5, outputTokens: 'x' } });
+  worker.finalizeHarnessResult(state);
+  assert.deepEqual(state.relayUsage, {
+    requests: 2, inputTokens: 1834 + 96512 + 900 + 98000 + 1200, cachedInputTokens: 96512 + 98000,
+    cacheWriteInputTokens: 1200, outputTokens: 712 + 400, source: 'requests',
+  });
+  assert.equal(state.routedProvider, 'Fireworks');
+  const total = agentTurn.usageTotalFromResult({ ...state, agentHarness: 'claude' });
+  assert.equal(total.source, 'requests');
+  assert.equal(total.inputTokens, 198446);
+  assert.equal(total.cacheWriteInputTokens, 1200);
+
+  // Recorded as the sum of the requests, not as a floor.
+  const row = {
+    session_id: 6, status: 'running', agent_thread_id: null, reasoning_effort: null,
+    metadata: { pricing: { available: true, inputPricePerMillion: 0.15, outputPricePerMillion: 0.5 } },
+    input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0,
+  };
+  const client = {
+    async query(text, params) {
+      if (/FOR UPDATE/.test(text)) return { rows: [row] };
+      if (/^\s*UPDATE agent_turns/.test(text)) { row.updateParams = params; return { rowCount: 1 }; }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const out = await agentTurn.completeCodexAttempt({
+    pool: { async connect() { return client; } }, turnUuid: 'u-stop-2', status: 'failed', usageScope: 'run', usageTotal: total,
+  });
+  assert.ok(out.estimatedCost.estimatedCostUsd > 0.02, 'priced');
+  assert.equal(JSON.parse(row.updateParams[18]).usage_source, 'request_sum');
+
+  // With no finished request reported, the stream floor stands as before.
+  const old = worker.newWatchState();
+  old.agentBackend = 'codex_openrouter';
+  old.agentHarness = 'claude';
+  worker.parseLine(JSON.stringify({ type: 'stream_event', session_id: 's', parent_tool_use_id: null, uuid: 'b1',
+    event: { type: 'message_start', message: { id: 'g', model: 'm', usage: { input_tokens: 10, output_tokens: 1 } } } }), () => {}, old);
+  worker.finalizeHarnessResult(old);
+  assert.equal(old.relayUsage.source, undefined);
+  assert.equal(agentTurn.usageTotalFromResult({ ...old, agentHarness: 'claude' }).source, 'stream');
+});
+
+test("a Claude Code turn's metrics say how many images its requests sent, moved out of tool results, and left out", async () => {
+  // The listener counts each request's images (claude-openrouter-request.js);
+  // the worker sums them per turn and the ledger row keeps the sums, so a
+  // build can be checked for whether its screenshots reached the model.
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  const provider = (event) => worker.parseLine(`__USERNODE_CODING_PROVIDER__ ${JSON.stringify(event)}`, () => {}, state);
+  provider({ kind: 'provider_request_result', requestOrdinal: 1, httpStatus: 200, outcome: 'ok',
+    images: { sent: 0, moved: 0, omitted: 0 } });
+  provider({ kind: 'provider_request_result', requestOrdinal: 2, httpStatus: 200, outcome: 'ok',
+    images: { sent: 1, moved: 1, omitted: 0 } });
+  provider({ kind: 'provider_request_result', requestOrdinal: 3, httpStatus: 200, outcome: 'ok',
+    images: { sent: 3, moved: 2, omitted: 0 } });
+  // A bogus count is ignored; a line without counts adds nothing.
+  provider({ kind: 'provider_request_result', requestOrdinal: 4, outcome: 'cancelled', images: { sent: -1, moved: 'x', omitted: 1.5 } });
+  provider({ kind: 'provider_request_result', requestOrdinal: 5, httpStatus: 200, outcome: 'ok' });
+  assert.equal(state.imageSentCount, 4);
+  assert.equal(state.imageMovedCount, 3);
+  assert.equal(state.imageOmittedCount, 0);
+  // Another turn's state never saw a count: unknown, not zero.
+  assert.equal(worker.newWatchState().imageMovedCount, null);
+
+  const llmTelemetry = require('../src/services/llm-telemetry');
+  const previousEnabled = llmTelemetry._setEnabledForTests(true);
+  try {
+    const row = {
+      session_id: 7, status: 'running', agent_thread_id: null, reasoning_effort: null,
+      metadata: {}, input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0,
+      output_tokens: 0, reasoning_output_tokens: 0,
+    };
+    const client = {
+      async query(text, params) {
+        if (/FOR UPDATE/.test(text)) return { rows: [row] };
+        if (/^\s*UPDATE agent_turns/.test(text)) { row.updateParams = params; return { rowCount: 1 }; }
+        return { rows: [] };
+      },
+      release() {},
+    };
+    await agentTurn.completeCodexAttempt({
+      pool: { async connect() { return client; } }, turnUuid: 'u-img', status: 'completed', usageScope: 'run',
+      telemetryComponent: 'homeroom_bench', telemetryMetrics: state,
+    });
+    const metrics = JSON.parse(row.updateParams[18]).telemetry_metrics;
+    assert.equal(metrics.image_sent_count, 4);
+    assert.equal(metrics.image_moved_count, 3);
+    assert.equal(metrics.image_omitted_count, 0);
+    assert.deepEqual(llmTelemetry.normalizeDiagnostics({ toolCallCount: 1 }), { tool_call_count: 1 },
+      'a turn with no counts records none');
+  } finally {
+    llmTelemetry._setEnabledForTests(previousEnabled);
+  }
+});
+
+test('both ledger completions pass the routed provider the listener saw', () => {
+  const fs = require('node:fs');
+  const sessions = fs.readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
+  assert.match(sessions, /usageScope: agentTurn\.usageScopeForHarness\(runtimeContext\.agentHarness\),[\s\S]{0,240}routedProvider: result\?\.routedProvider \|\| null,/);
+  const ledger = fs.readFileSync(require.resolve('../src/services/agent-turn'), 'utf8');
+  assert.match(ledger, /usageScope: usageScopeForHarness\(activeTurn\.harness\),\n\s+routedProvider: result\?\.routedProvider \|\| null,/,
+    'and a recovered turn\'s');
+});
+
 // ── Worker: capability env ────────────────────────────────────────────
 
 test('a Claude-harness OpenRouter turn gets the OpenRouter capability set and nothing Anthropic', () => {
@@ -386,10 +561,13 @@ function renderedOpenRouterCopy() {
   const start = settings.indexOf('_normalizeOpenRouterCopy() {');
   const body = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
   const pick = (re) => { const m = re.exec(body); assert.ok(m, String(re)); return m[1]; };
+  // The heading is the product's name, written out. The description and the
+  // label are catalog messages: what the screen shows is their English.
+  const { message: english } = require('./lib/platform-i18n');
   return {
     heading: pick(/heading\.textContent = '([^']*)'/),
-    intro: pick(/intro\.textContent = '([^']*)'/),
-    label: pick(/modelLabel\.textContent = '([^']*)'/),
+    intro: english(pick(/intro\.textContent = tr\('(settings:openrouter\.intro)'\)/)),
+    label: english(pick(/modelLabel\.textContent = tr\('(settings:openrouter\.model\.label)'\)/)),
   };
 }
 
@@ -401,15 +579,30 @@ test('the OpenRouter settings copy people see names the models that run in Claud
 });
 
 test('the static OpenRouter settings markup says exactly what the runtime copy says', () => {
-  const copy = renderedOpenRouterCopy();
+  // Both sides read the description and the label from the catalog now, so
+  // "exactly the same" is the same message id on each side; the heading is
+  // the product's name, written out in both.
+  const settings = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
+  const start = settings.indexOf('_normalizeOpenRouterCopy() {');
+  const runtime = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
+  const runtimeId = (node) => {
+    const m = new RegExp(`${node}\\.textContent = \\w+\\('(settings:[\\w.]+)'\\)`).exec(runtime);
+    assert.ok(m, `${node} is written from a catalog message`);
+    return m[1];
+  };
+  const runtimeHeading = /heading\.textContent = '([^']*)'/.exec(runtime);
+  assert.ok(runtimeHeading, 'the runtime heading is the name, written out');
   const tsx = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'sections', 'openrouter.tsx'), 'utf8');
-  const section = /<SectionHeading title=\{<>([^<]*)<\/>\}>\s*([^<]*?)\s*<\/SectionHeading>/.exec(tsx);
+  const section = /<SectionHeading title=\{<>([^<]*)<\/>\}>\s*\{t\('(settings:[\w.]+)'\)\}\s*<\/SectionHeading>/.exec(tsx);
   assert.ok(section, 'the OpenRouter SectionHeading is where this test expects it');
-  assert.equal(section[1], copy.heading);
-  assert.equal(section[2].replace(/\s+/g, ' '), copy.intro);
-  const label = /<Label[^>]*htmlFor="settings-openrouter-model">\s*([^<]*?)\s*<\/Label>/.exec(tsx);
+  assert.equal(section[1], runtimeHeading[1]);
+  assert.equal(section[2], runtimeId('intro'));
+  const label = /<Label[^>]*htmlFor="settings-openrouter-model">\s*\{t\('(settings:[\w.]+)'\)\}\s*<\/Label>/.exec(tsx);
   assert.ok(label, 'the model picker label is where this test expects it');
-  assert.equal(label[1], copy.label);
+  assert.equal(label[1], runtimeId('modelLabel'));
+  const { message } = require('./lib/platform-i18n');
+  assert.match(message(section[2]), /^Use any compatible model for all chat and coding in an OpenRouter session\./);
+  assert.equal(message(label[1]), 'OpenRouter model');
 });
 
 test('the transcript and the log name the CLI that actually ran', () => {
@@ -431,5 +624,7 @@ test('pickers mark the Claude Code models and keep their thinking level', () => 
   const choice = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'model-choice.ts'), 'utf8');
   assert.match(choice, /return !model \|\| model\.supportsReasoning !== false;/);
   assert.ok(!/harness !== 'claude'/.test(choice), 'no model loses its thinking level for running in Claude Code');
-  assert.match(choice, /'Runs on your OpenRouter key, in Claude Code'/);
+  assert.match(choice, /OPENROUTER_CLAUDE_TITLE = 'agent:session\.model\.title\.openRouterClaudeCode'/);
+  assert.equal(require('./lib/platform-i18n').message('agent:session.model.title.openRouterClaudeCode'),
+    'Runs on your OpenRouter key, in Claude Code');
 });

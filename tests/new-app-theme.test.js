@@ -170,8 +170,12 @@ for (const id of appTemplates.TEMPLATE_IDS) {
     const body = /<body class="([^"]*)"/.exec(html);
     assert.ok(body, 'the body carries the page ground');
     const tokens = body[1].split(/\s+/);
-    assert.ok(tokens.some((c) => /^bg-/.test(c)) && tokens.some((c) => /^dark:bg-/.test(c)),
-      'a light ground and a dark one');
+    // A light ground and a dark one: a `dark:` variant beside it, or (Empty,
+    // #3737) the design kit's ground token, which has a value in each look
+    // (tests/template-design-kit.test.js).
+    assert.ok(tokens.some((c) => /^bg-/.test(c))
+      && (tokens.some((c) => /^dark:bg-/.test(c)) || tokens.includes('bg-ground')),
+    'a light ground and a dark one');
     assertFollowsThePlatform(themeScriptOf(html, id), id);
   });
 }
@@ -223,11 +227,13 @@ test('Empty\'s own Tailwind build compiles both looks', (t) => {
   execFileSync(process.execPath, [cli, '-c', 'tailwind.config.js', '-i', 'styles/tailwind-input.css', '-o', 'out.css'],
     { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
   const css = fs.readFileSync(path.join(dir, 'out.css'), 'utf8');
-  assert.match(css, /\.bg-zinc-50 \{/, 'the light ground');
-  assert.match(css, /\.dark\\:bg-zinc-950:is\(\.dark \*\) \{/,
-    'the dark ground, keyed off the class the theme script sets, not the OS');
-  assert.match(css, /\.dark\\:text-violet-300:is\(\.dark \*\) \{/,
-    'class names built in the demo\'s script compile too');
+  // #3737: Empty's screen is built from the design kit's tokens, which take
+  // their dark values from the class the theme script sets, not the OS.
+  assert.match(css, /\.bg-ground \{[^}]*background-color: rgb\(var\(--ground\)/, 'the ground');
+  assert.match(css, /:root \{\s*--ground: [\d ]+;/, 'its light value');
+  assert.match(css, /\.dark \{\s*--ground: [\d ]+;/,
+    'its dark value, keyed off the class the theme script sets, not the OS');
+  assert.match(css, /\.rounded-2xl \{/, 'class names the screen\'s markup names compile too');
   assert.doesNotMatch(css, /prefers-color-scheme/, 'darkMode stays class-based');
 });
 
@@ -237,7 +243,9 @@ for (const id of appTemplates.TEMPLATE_IDS) {
   test(`the ${id} starter's CLAUDE.md tells the agent to keep both looks`, () => {
     const claude = flat(file(generate(id), 'CLAUDE.md'));
     assert.match(claude, /follows the viewer's Homeroom theme, switching live/);
-    assert.match(claude, /Keep that script, and give everything you build both looks \(Tailwind's `dark:` variants\)/);
+    // #3737: Empty's screen gets both from its design kit's colour tokens,
+    // and so does every ready-made app's (services/app-templates.js).
+    assert.match(claude, /Keep that script, and give everything you build both looks \(the design kit's colour tokens carry both\)/);
     assert.match(claude, /unless one fixed look is the point of this app/, 'where relevant to the app');
     assert.match(claude, /Unless a request asks for one, add no theme picker/, 'the platform setting is the default');
     assert.match(claude, /The platform's light\/dark theme inside the app frame/, 'points at the conventions');

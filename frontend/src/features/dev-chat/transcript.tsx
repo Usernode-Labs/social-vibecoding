@@ -29,6 +29,7 @@ import {
   type SyntheticEvent,
 } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { createLogFollower, revealDisclosure, type LogFollower } from './log-follow';
 import {
@@ -115,6 +116,7 @@ function StatusIcon({ kind }: { kind: 'spinner' | 'check' | 'key' | 'flag' }): R
  * mistake run in reverse.
  */
 function Failure({ r }: { r: Extract<TranscriptRow, { t: 'failure' }> }): ReactNode {
+  const t = useMessages('devchat');
   const tone = r.tone || 'blocked';
   return (
     <div className={`dc-failure dc-failure-${tone}`} role="status">
@@ -136,7 +138,7 @@ function Failure({ r }: { r: Extract<TranscriptRow, { t: 'failure' }> }): ReactN
         <button
           className="dc-force-stop-btn"
           onClick={(e) => controller()?._forceStopTurn?.(e.currentTarget)}
-        >Force stop</button>
+        >{t('devchat:transcript.forceStop')}</button>
       ) : null}
       <Stamp text={r.stamp} />
     </div>
@@ -183,6 +185,7 @@ function VenueCaption({ text }: { text: string | undefined }): ReactNode {
  * keep their own words whole, rather than being broken to make room.
  */
 function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): ReactNode {
+  const t = useMessages('devchat');
   return (
     <div
       className={r.caption ? 'dc-status-line dc-status-line-captioned' : 'dc-status-line'}
@@ -197,7 +200,7 @@ function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): Reac
         <button
           className="dc-force-stop-btn"
           onClick={(e) => controller()?._forceStopTurn?.(e.currentTarget)}
-        >Force stop</button>
+        >{t('devchat:transcript.forceStop')}</button>
       ) : null}
       <Stamp text={r.stamp} />
       <VenueCaption text={r.caption} />
@@ -232,12 +235,13 @@ function useDetails(d: DetailsSpec) {
 
 function CcLog({ r }: { r: Extract<TranscriptRow, { t: 'ccLog' }> }): ReactNode {
   const { open, onToggle } = useDetails(r.details);
+  const t = useMessages('devchat');
   return (
     <details
       className="dc-cc-log" data-persist-id={r.details.persistId}
       open={open} onToggle={onToggle}
     >
-      <summary className="dc-cc-log-toggle">{`${r.label} log`}</summary>
+      <summary className="dc-cc-log-toggle">{t('devchat:transcript.agentLog', { agent: r.label })}</summary>
       <pre className="dc-cc-log-content">{r.log}</pre>
     </details>
   );
@@ -271,10 +275,11 @@ function ProgressChips(
     elapsed: ElapsedSpec;
   },
 ): ReactNode {
+  const t = useMessages('devchat');
   return (
     <>
       <span className="dc-cc-current">{p.current}</span>
-      <span className="dc-cc-steps">{p.steps ? `${p.steps} steps` : ''}</span>
+      <span className="dc-cc-steps">{p.steps ? t('devchat:transcript.progress.steps', { count: p.steps }) : ''}</span>
       <span className="dc-cc-phase">{p.phase}</span>
       <Elapsed e={elapsed} />
     </>
@@ -293,6 +298,7 @@ function ProgressNote(
   { p }: { p: NonNullable<Extract<TranscriptRow, { t: 'attached' }>['progress']> },
 ): ReactNode {
   const { now } = useStoreState(nowStore);
+  const t = useMessages('devchat');
   const w = fmt();
   const countdown = p.countdownTo != null && typeof w.formatCountdown === 'function'
     ? w.formatCountdown(p.countdownTo, now > 0 ? now : Date.now())
@@ -309,9 +315,9 @@ function ProgressNote(
     <span className="dc-cc-note">
       <span
         className="dc-cc-estimate"
-        title="Experimental: a small AI model's rough guess from the progress log. May be wrong."
+        title={t('devchat:transcript.progress.guessTitle')}
       >
-        {p.estimate ? `\u2726 AI guess: ${p.estimate}` : ''}
+        {p.estimate ? t('devchat:transcript.progress.guess', { estimate: p.estimate }) : ''}
         {p.estimate && p.countdownTo != null
           ? <span className="dc-cc-countdown" data-countdown-to={p.countdownTo}>{countdown}</span>
           : null}
@@ -407,6 +413,7 @@ function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): Reac
 }
 
 function SpecCard({ r }: { r: Extract<TranscriptRow, { t: 'spec' }> }): ReactNode {
+  const t = useMessages('devchat');
   return (
     <>
       <StatusLine r={r.status} />
@@ -415,11 +422,11 @@ function SpecCard({ r }: { r: Extract<TranscriptRow, { t: 'spec' }> }): ReactNod
           hit. The host outlives every repaint of its contents. */}
       <div
         className="dc-spec-preview-card" data-spec-version={r.version}
-        role="button" tabIndex={0} aria-label="Open spec viewer"
+        role="button" tabIndex={0} aria-label={t('devchat:transcript.spec.open')}
       >
         <div className="dc-spec-preview-header">
           <span className="dc-spec-preview-title">{r.header}</span>
-          <span className="dc-spec-preview-cta">View full spec →</span>
+          <span className="dc-spec-preview-cta">{t('devchat:transcript.spec.viewFull')}</span>
         </div>
         <Html className="dc-spec-preview-snippet" html={r.snippetHtml} />
       </div>
@@ -429,6 +436,7 @@ function SpecCard({ r }: { r: Extract<TranscriptRow, { t: 'spec' }> }): ReactNod
 
 function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> }): ReactNode {
   const body = r.body;
+  const t = useMessages('devchat');
   const details = body.kind === 'details' ? body.details : null;
   const d = useDetails(details || { persistId: '', defaultOpen: false });
   const resolve = (action: 'confirm' | 'dismiss', el: HTMLButtonElement) =>
@@ -455,7 +463,7 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
           >
             <summary className="dc-pi-report-summary">
               {body.summary}
-              <span className="dc-pi-report-cue">… Show full report</span>
+              <span className="dc-pi-report-cue">{t('devchat:transcript.issueDraft.showFull')}</span>
             </summary>
             <div className="dc-pi-report-rest">{body.rest}</div>
           </details>
@@ -475,7 +483,7 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
               <button className="dc-pr-btn dc-pr-btn-promote"
                 onClick={(e) => resolve('confirm', e.currentTarget)}>{r.action.confirmLabel}</button>
               <button className="dc-pr-btn dc-pr-btn-preview"
-                onClick={(e) => resolve('dismiss', e.currentTarget)}>Dismiss</button>
+                onClick={(e) => resolve('dismiss', e.currentTarget)}>{t('devchat:transcript.issueDraft.dismiss')}</button>
             </>
           ) : null}
         </div>
@@ -483,9 +491,6 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
     </>
   );
 }
-
-const MERGED_TITLE = 'This change is merged and now live in the app.';
-const PREVIEW_GONE = 'Preview removed after merge. This change is now live in the app';
 
 function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<TranscriptRow, { t: 'changes' }>; embedded?: boolean; historical?: boolean }): ReactNode {
   return (
@@ -502,11 +507,12 @@ function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<T
  * there is no vote to open, so the badge stays a plain label.
  */
 function StatusLink({ id, children }: { id: number | null; children: ReactNode }): ReactNode {
+  const t = useMessages('devchat');
   if (!id) return children;
   return (
     <button
       type="button" className="dc-pr-status-link" data-open-vote={id}
-      title="Open this proposal's vote page"
+      title={t('devchat:card.changes.openVote')}
       onClick={() => controller()?.openProposalVote?.(id)}
     >{children}</button>
   );
@@ -520,21 +526,23 @@ function StatusLink({ id, children }: { id: number | null; children: ReactNode }
  */
 function PrCard({ r, embedded = false, historical = false }: { r: Extract<TranscriptRow, { t: 'changes' }>; embedded?: boolean; historical?: boolean }): ReactNode {
   const preview = (testing: boolean, url: string) => controller()?.previewStaging?.(url, testing);
+  const t = useMessages('devchat');
+  const previewGone = t('devchat:card.changes.previewGone');
   return (
     <>
       <div className="dc-pr-card" id="dc-pr-card">
         <div className="dc-pr-card-header">
           {r.prUrl && !embedded
-            ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{`PR #${r.prNumber}`}</a>
-            : <span style={{ color: 'var(--text-muted)' }}>Changes ready</span>}
+            ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{t('devchat:card.changes.prLink', { number: r.prNumber })}</a>
+            : <span style={{ color: 'var(--text-muted)' }}>{t('devchat:card.changes.ready')}</span>}
           {r.title ? <span className="dc-pr-title">{r.title}</span> : null}
           {(r.closes || []).map((c) => (
             <button
               key={c.n} type="button" data-issue-chip={c.n}
               className="dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400"
-              title={`Open request #${c.n}`}
+              title={t('devchat:card.changes.openRequest', { number: c.n })}
               onClick={() => controller()?.openIssueRef?.(c.n)}
-            >{`${c.verb} #${c.n}`}</button>
+            >{c.closed ? t('devchat:card.changes.closed', { number: c.n }) : t('devchat:card.changes.closes', { number: c.n })}</button>
           ))}
           <span style={{ fontSize: '9px', opacity: 0.4, marginLeft: '8px' }}>{r.stamp}</span>
         </div>
@@ -545,20 +553,20 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
           <button
             className="dc-pr-btn dc-pr-btn-preview"
             disabled={!r.preview.enabled}
-            title={r.preview.enabled ? undefined : PREVIEW_GONE}
+            title={r.preview.enabled ? undefined : previewGone}
             onClick={r.preview.enabled ? () => preview(false, r.preview.url) : undefined}
-          >Preview staging</button>
+          >{t('devchat:card.changes.previewStaging')}</button>
           {r.test ? (
             <button
               className="dc-pr-btn dc-pr-btn-preview"
               disabled={!r.test.enabled}
-              title={r.test.enabled ? undefined : PREVIEW_GONE}
+              title={r.test.enabled ? undefined : previewGone}
               onClick={r.test.enabled ? () => preview(true, r.test!.url) : undefined}
-            >Test this change</button>
+            >{t('devchat:card.changes.test')}</button>
           ) : null}
           {r.prUrl ? (
             <a href={r.prUrl} target="_blank" rel="noreferrer"
-              className="dc-pr-btn dc-pr-btn-preview" style={{ textDecoration: 'none' }}>View on GitHub</a>
+              className="dc-pr-btn dc-pr-btn-preview" style={{ textDecoration: 'none' }}>{t('devchat:card.changes.viewOnGithub')}</a>
           ) : null}
           {/* #558: the in-flight state is the MODEL's, not this element's.
               `promotePR` used to disable the button and swap its innerHTML
@@ -570,21 +578,21 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
               className="dc-pr-btn dc-pr-btn-promote"
               disabled={r.propose.kind !== 'ready'}
               aria-busy={r.propose.kind === 'pending' ? 'true' : undefined}
-              title={r.propose.kind === 'ready' ? r.propose.note : undefined}
+              title={r.propose.kind === 'ready' || r.propose.kind === 'empty' ? r.propose.note : undefined}
               onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
             >
               {r.propose.kind === 'pending'
-                ? <><span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>{' Proposing…'}</>
-                : r.propose.kind === 'completed' ? 'Already proposed' : 'Submit for review'}
+                ? <><span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>{` ${t('devchat:card.changes.proposing')}`}</>
+                : r.propose.kind === 'completed' ? t('devchat:card.changes.alreadyProposed') : t('devchat:card.changes.submit')}
             </button>
           ) : null}
           {r.status2.kind === 'merged'
-            ? <StatusLink id={r.proposalId}><span className="ms-badge ms-badge-violet" title={r.proposalId ? undefined : MERGED_TITLE}>✓ Merged, now live in the app</span></StatusLink>
+            ? <StatusLink id={r.proposalId}><span className="ms-badge ms-badge-violet" title={r.proposalId ? undefined : t('devchat:card.changes.mergedTitle')}>{t('devchat:card.changes.mergedBadge')}</span></StatusLink>
             : null}
           {r.status2.kind === 'badge'
             ? <StatusLink id={r.proposalId}><Html as="span" className="contents" html={r.status2.html} /></StatusLink>
             : null}
-        </div> : <p className="dev-topic-note">{r.status2.kind === 'merged' ? 'Merged, now live in the app' : historical ? 'Earlier build result' : 'Build result. Current actions are above.'}</p>}
+        </div> : <p className="dev-topic-note">{r.status2.kind === 'merged' ? t('devchat:card.changes.mergedNote') : historical ? t('devchat:card.changes.earlierResult') : t('devchat:card.changes.resultNote')}</p>}
       </div>
     </>
   );
@@ -610,7 +618,8 @@ function LiveContent({ rowKey, html }: { rowKey: string; html: string }): ReactN
 function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   const more = useDetails(r.more ? r.more.details : { persistId: '', defaultOpen: false });
   const reasoning = useDetails(r.reasoning ? r.reasoning.details : { persistId: '', defaultOpen: false });
-  const who = r.who === 'user' ? 'You' : r.who === 'cc' ? 'Claude Code' : 'AI';
+  const t = useMessages('devchat');
+  const who = r.who === 'user' ? t('devchat:transcript.who.you') : r.who === 'cc' ? t('devchat:transcript.who.claudeCode') : t('devchat:transcript.who.ai');
   // "You" is READ, not shown. Side and surface already say whose turn it is —
   // the row is right-aligned and it is the only one drawn as a card — so the
   // word was labelling a thing that labels itself, at the top of every second
@@ -639,18 +648,18 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           data-persist-id={r.more.details.persistId}
           open={more.open} onToggle={more.onToggle}
         >
-          <summary className="dc-cc-log-toggle">Full output</summary>
+          <summary className="dc-cc-log-toggle">{t('devchat:transcript.fullOutput')}</summary>
           <Html className="dc-msg-content" style={MORE_STYLE} html={r.more.html} />
         </details>
       ) : null}
       {r.attachments && r.attachments.length ? (
         <div className="dc-msg-attachments">
           {r.attachments.map((a) => (a.kind === 'image' ? (
-            <a key={a.href} href={a.href} target="_blank" rel="noopener noreferrer" title={`${a.name}: open full size`}>
+            <a key={a.href} href={a.href} target="_blank" rel="noopener noreferrer" title={a.unnamed ? t('devchat:transcript.attachment.openFullSizeUnnamed') : t('devchat:transcript.attachment.openFullSize', { name: a.name })}>
               <img className="dc-msg-att-img" src={a.href} alt={a.name} loading="lazy" />
             </a>
           ) : (
-            <a key={a.href} className="dc-msg-att-chip" href={a.href} download={a.name} title={`Download ${a.name}`}>
+            <a key={a.href} className="dc-msg-att-chip" href={a.href} download={a.name} title={a.unnamed ? t('devchat:transcript.attachment.downloadUnnamed') : t('devchat:transcript.attachment.download', { name: a.name })}>
               <Html as="span" className="contents" html={a.badgeHtml || ''} />
               <span className="dc-attach-name">{a.name}</span>
               <span className="dc-attach-size">{a.size}</span>
@@ -664,7 +673,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           data-persist-id={r.reasoning.details.persistId}
           open={reasoning.open} onToggle={reasoning.onToggle}
         >
-          <summary className="dc-cc-log-toggle">Mayor reasoning (raw)</summary>
+          <summary className="dc-cc-log-toggle">{t('devchat:transcript.reasoning')}</summary>
           <pre className="dc-cc-log-content">{r.reasoning.raw}</pre>
         </details>
       ) : null}
@@ -685,12 +694,12 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
                    takes the caret with it. */
                 <div className="dc-qa-number">
                   <button
-                    type="button" className="dc-qa-step" aria-label="Less"
+                    type="button" className="dc-qa-step" aria-label={t('devchat:transcript.qa.less')}
                     data-qa-group={gi} data-qa-step="-1"
                   >{'\u2212'}</button>
                   <input
                     className="dc-qa-number-field" type="text" inputMode="decimal"
-                    aria-label={g.label || 'Value'}
+                    aria-label={g.label || t('devchat:transcript.qa.value')}
                     data-qa-number={gi} defaultValue={g.number.value} key={g.number.value}
                     onBlur={(e) => controller()?._onQaNumberCommit?.(e.currentTarget)}
                     onKeyDown={(e) => {
@@ -698,13 +707,13 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
                     }}
                   />
                   <button
-                    type="button" className="dc-qa-step" aria-label="More"
+                    type="button" className="dc-qa-step" aria-label={t('devchat:transcript.qa.more')}
                     data-qa-group={gi} data-qa-step="1"
                   >{'+'}</button>
                   {/* The default is still NAMED, in the same muted voice the
                       suggested chip uses — a stepper that opens on a value
                       says nothing about whether that value was recommended. */}
-                  <span className="dc-qa-chip-hint">suggested {g.number.suggested}</span>
+                  <span className="dc-qa-chip-hint">{t('devchat:transcript.qa.suggestedNumber', { number: g.number.suggested })}</span>
                 </div>
               ) : (
                 <div className="dc-qa-chip-row">
@@ -715,7 +724,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
                       data-qa-group={gi} data-qa-answer={ai}
                     >
                       {a.text}
-                      {a.suggested ? <span className="dc-qa-chip-hint">suggested</span> : null}
+                      {a.suggested ? <span className="dc-qa-chip-hint">{t('devchat:transcript.qa.suggested')}</span> : null}
                     </button>
                   ))}
                   {g.escape ? (
@@ -745,8 +754,8 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           ))}
           {r.qa.multi ? (
             <div className="dc-qa-actions">
-              <button type="button" className="dc-qa-send" data-qa-send="1">Send answers</button>
-              <button type="button" className="dc-qa-defaults" data-qa-defaults="1">Use the suggested defaults</button>
+              <button type="button" className="dc-qa-send" data-qa-send="1">{t('devchat:transcript.qa.send')}</button>
+              <button type="button" className="dc-qa-defaults" data-qa-defaults="1">{t('devchat:transcript.qa.useDefaults')}</button>
             </div>
           ) : null}
         </div>
@@ -868,6 +877,7 @@ const Row = memo(function Row({ r, embedded = false, historical = false }: RowPr
  * so the declared checks under that id resolve wherever it sits.
  */
 export function DevChatTranscript({ embedded = false }: { embedded?: boolean }): ReactNode {
+  const t = useMessages('devchat');
   const s = useStoreState(transcriptStore);
   const latestAt = s.rows.findLastIndex((r) => r.t === 'changes');
   const latest = latestAt >= 0 ? s.rows[latestAt] as Extract<TranscriptRow, { t: 'changes' }> : null;
@@ -882,7 +892,7 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
           ChatGPT, and gone the moment the first message arrives. */}
       {s.empty ? (
         <div id="dc-empty-state" className="dc-empty-state">
-          <div className="dc-empty-title">What should this session change?</div>
+          <div className="dc-empty-title">{t('devchat:transcript.emptyTitle')}</div>
         </div>
       ) : null}
       {s.rows.map((r, i) => {

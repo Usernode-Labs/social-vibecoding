@@ -106,3 +106,43 @@ test('triage runs in its own session on main, never a build\'s, and rests only a
   await bot.pauseIdleSession(pool, archived);
   assert.equal(await status(archived), 'archived');
 });
+
+test('a failed read counts the failures that saw the same thread (#1080)', { timeout: 180000 }, async (t) => {
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 2000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    t.skip('PostgreSQL unavailable; set TEST_DATABASE_URL to require this check');
+    return;
+  }
+  const name = `hbot_failed_reads_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN); url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 4 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
+  const app = (await pool.query(
+    `INSERT INTO apps (name, slug, status, repo_url) VALUES ('Gas', 'gas', 'running', 'https://github.com/usernode-bot/gas') RETURNING id`,
+  )).rows[0];
+  const run = (issue, verdict, seen, error = null) => pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, thread_seen_at, error) VALUES ($1, $2, 'shadow', $3, $4, $5)`,
+    [app.id, issue, verdict, seen, error],
+  );
+  // #2: failed once on this thread. #3: failed twice on it. #4: failed on
+  // an older thread, then read fine, then failed on the new one.
+  await run(2, 'failed', '2026-10-04T04:00:00Z', 'unparseable: API Error: 400');
+  await run(3, 'failed', '2026-10-04T04:00:00Z', 'unparseable: one');
+  await run(3, 'failed', '2026-10-04T04:00:00Z', 'unparseable: two');
+  await run(4, 'failed', '2026-10-01T00:00:00Z', 'unparseable: old');
+  await run(4, 'ready', '2026-10-02T00:00:00Z');
+  await run(4, 'failed', '2026-10-03T00:00:00Z', 'unparseable: new');
+  const last = await bot.lastRunsByIssue(pool, app.id);
+  assert.equal(last.get(2).failed_tries, 1);
+  assert.equal(last.get(3).failed_tries, 2);
+  assert.equal(last.get(4).failed_tries, 1, 'only the failures that read this thread');
+  assert.equal(last.get(4).verdict, 'failed');
+});

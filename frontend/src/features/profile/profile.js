@@ -67,6 +67,7 @@ import {
   initialOf,
 } from './profile-store.js';
 import { pushDismissible } from '../../lib/back-stack';
+import { t } from '../../lib/i18n/runtime';
 import { sourceRect } from './avatar-crop';
 import {
   act as actOnFriend,
@@ -439,7 +440,7 @@ const Profile = {
       }
       announceFriendsChanged();
     } catch (err) {
-      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : 'them') });
+      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : null) });
     } finally {
       profileStore.set({ friendsPending: null });
     }
@@ -464,7 +465,7 @@ const Profile = {
       }
       announceFriendsChanged();
     } catch (err) {
-      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : 'them') });
+      profileStore.set({ friendsStatus: friendErrorMessage(err, row ? row.username : null) });
     } finally {
       profileStore.set({ friendsPending: null });
     }
@@ -497,16 +498,16 @@ const Profile = {
     const absolute = new URL(href, location.origin).href;
     try {
       await navigator.clipboard.writeText(absolute);
-      profileStore.set({ publicStatus: 'Public link copied.' });
+      profileStore.set({ publicStatus: t('profile:edit.public.copied') });
     } catch (_) {
-      profileStore.set({ publicStatus: `Copy this link: ${absolute}` });
+      profileStore.set({ publicStatus: t('profile:edit.public.copyManually', { url: absolute }) });
     }
   },
 
   async _setPublished(published) {
     profileStore.set({
       publishing: true,
-      publicStatus: published ? 'Publishing…' : 'Unpublishing…',
+      publicStatus: published ? t('profile:edit.public.publishing') : t('profile:edit.public.unpublishing'),
     });
     try {
       const res = await fetch('/api/me/public-profile', {
@@ -516,17 +517,17 @@ const Profile = {
         body: JSON.stringify({ published }),
       });
       const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload.error || 'Could not update publication.');
+      if (!res.ok) throw new Error(payload.error || t('profile:edit.public.updateFailed'));
       if (Profile._data) Profile._data.ownerPublicProfile = payload;
       profileStore.set({ publishing: false, publicStatus: '' });
       Profile._render();
       if (window.PlatformUI) {
-        PlatformUI.toast(published ? 'Public profile published' : 'Public profile unpublished');
+        PlatformUI.toast(published ? t('profile:edit.public.published') : t('profile:edit.public.unpublished'));
       }
     } catch (err) {
       profileStore.set({
         publishing: false,
-        publicStatus: (err && err.message) || 'Could not update publication.',
+        publicStatus: (err && err.message) || t('profile:edit.public.updateFailed'),
       });
     }
   },
@@ -545,9 +546,9 @@ const Profile = {
         }
       );
       if (!res.ok) throw new Error('request failed');
-      return { ok: true, status: 'Report received.' };
+      return { ok: true, status: t('profile:report.received') };
     } catch (_) {
-      return { ok: false, status: 'Could not send the report. Try again.' };
+      return { ok: false, status: t('profile:report.failed') };
     }
   },
 
@@ -774,7 +775,7 @@ const Profile = {
     const width = image.width;
     const height = image.height;
     if (image.close) image.close();
-    if (!(Math.min(width, height) > 0)) throw new Error('That image could not be read.');
+    if (!(Math.min(width, height) > 0)) throw new Error(t('profile:edit.photo.unreadable'));
     // The editor closed while the file was decoding: there is nothing left
     // for the step to open over.
     if (!profileStore.get().sheetOpen) return;
@@ -940,7 +941,7 @@ const Profile = {
 
   _checkAvatarType(file) {
     if (!/^image\/(png|jpeg|webp)$/.test((file && file.type) || '')) {
-      throw new Error('Choose a PNG, JPEG or WebP image.');
+      throw new Error(t('profile:edit.photo.wrongType'));
     }
   },
 
@@ -959,7 +960,7 @@ const Profile = {
     Profile._checkAvatarType(file);
     const bitmap = await Profile._decodeImage(file);
     const side = Math.min(bitmap.width, bitmap.height);
-    if (!side) throw new Error('That image could not be read.');
+    if (!side) throw new Error(t('profile:edit.photo.unreadable'));
     const rect = crop
       ? sourceRect(crop, bitmap.width, bitmap.height)
       : {
@@ -973,7 +974,7 @@ const Profile = {
     canvas.width = target;
     canvas.height = target;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('That image could not be processed here.');
+    if (!ctx) throw new Error(t('profile:edit.photo.unprocessable'));
     ctx.drawImage(bitmap, rect.x, rect.y, rect.size, rect.size, 0, 0, target, target);
     if (bitmap.close) bitmap.close();
 
@@ -993,7 +994,7 @@ const Profile = {
       canvas = next;
       blob = await toBlob(canvas, 'image/jpeg', 0.85);
     }
-    if (!blob) throw new Error('That image could not be processed here.');
+    if (!blob) throw new Error(t('profile:edit.photo.unprocessable'));
     return blob;
   },
 
@@ -1015,7 +1016,7 @@ const Profile = {
       img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
       img.onerror = () => {
         URL.revokeObjectURL(url);
-        reject(new Error('That image could not be read.'));
+        reject(new Error(t('profile:edit.photo.unreadable')));
       };
       img.src = url;
     });
@@ -1037,7 +1038,7 @@ const Profile = {
           method: 'DELETE', credentials: 'same-origin',
         });
         if (!res.ok) {
-          throw new Error((await Profile._errText(res)) || 'Could not remove the photo.');
+          throw new Error((await Profile._errText(res)) || t('profile:edit.photo.removeFailed'));
         }
       } else if (Profile._pendingAvatar) {
         const res = await fetch('/api/me/avatar', {
@@ -1047,7 +1048,7 @@ const Profile = {
           body: Profile._pendingAvatar,
         });
         if (!res.ok) {
-          throw new Error((await Profile._errText(res)) || 'Could not upload the photo.');
+          throw new Error((await Profile._errText(res)) || t('profile:edit.photo.uploadFailed'));
         }
       }
 
@@ -1072,16 +1073,16 @@ const Profile = {
           // open with the user's other edits intact.
           if (pinned) return { fieldErrors };
         }
-        throw new Error((body && body.error) || 'Could not save your profile.');
+        throw new Error((body && body.error) || t('profile:edit.saveFailed'));
       }
 
       await Profile._refreshUser();
       Profile._dismissSheet();
       Profile._render();
-      if (window.PlatformUI) PlatformUI.toast('Profile saved');
+      if (window.PlatformUI) PlatformUI.toast(t('profile:edit.saved'));
       return { ok: true };
     } catch (err) {
-      return { error: (err && err.message) || 'Could not save your profile.' };
+      return { error: (err && err.message) || t('profile:edit.saveFailed') };
     }
   },
 

@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { appAllowanceStore, refreshAppAllowance, requestMoreApps } from './app-allowance-store.js';
 
@@ -18,9 +20,13 @@ export interface ServerCapacity {
 }
 
 export function quotaHeadline(quota: AppCreationQuota): string {
-  if (quota.limit === null) return quota.used == null ? 'No app limit' : `${quota.used} ${quota.used === 1 ? 'app' : 'apps'} · no limit`;
-  if (quota.used == null) return `${quota.limit} app slots`;
-  return `${quota.used} of ${quota.limit} app ${quota.limit === 1 ? 'slot' : 'slots'} used`;
+  if (quota.limit === null) {
+    return quota.used == null
+      ? translate('dialogs:allowance.headline.noLimit')
+      : translate('dialogs:allowance.headline.usedNoLimit', { count: quota.used });
+  }
+  if (quota.used == null) return translate('dialogs:allowance.headline.slots', { count: quota.limit });
+  return translate('dialogs:allowance.headline.used', { count: quota.limit, used: quota.used });
 }
 
 /**
@@ -30,8 +36,12 @@ export function quotaHeadline(quota: AppCreationQuota): string {
  */
 export function appSlotsLine(quota: AppCreationQuota | null, requestedAt: string | null): string | null {
   if (!quota) return null;
-  const headline = quotaHeadline(quota);
-  return requestedAt && quota.limit !== null ? `${headline} · more requested` : headline;
+  if (!requestedAt || quota.limit === null) return quotaHeadline(quota);
+  // The line with the request on it is a message of its own, not the
+  // headline with words appended.
+  return quota.used == null
+    ? translate('dialogs:allowance.headline.slotsRequested', { count: quota.limit })
+    : translate('dialogs:allowance.headline.usedRequested', { count: quota.limit, used: quota.used });
 }
 
 /**
@@ -43,6 +53,30 @@ export function serverBinds(quota: AppCreationQuota | null, server: ServerCapaci
   if (!server) return false;
   if (server.full) return true;
   return quota?.remaining == null || server.remaining < quota.remaining;
+}
+
+/**
+ * Whether the create dialog's allowance card has anything to say (#23, D7).
+ * On every step it read "0 of 2 app slots used" above the question, with a
+ * bright "Request more" for somebody who had made nothing yet. Quiet, the
+ * card shows only when the allowance matters to what happens next: the
+ * server is full or is the nearer limit, the slots are spent or one is left,
+ * more were asked for, or the read failed. Never for an unlimited allowance.
+ * Profile's "App slots" row still shows the count at any time.
+ */
+export function allowanceWorthShowing(
+  quota: AppCreationQuota | null,
+  server: ServerCapacity | null,
+  requestedAt: string | null,
+  error: string | null | undefined,
+): boolean {
+  if (error) return true;
+  if (server?.full) return true;
+  if (!quota || quota.limit === null) return false;
+  if (serverBinds(quota, server)) return true;
+  if (quota.used !== null && quota.used >= quota.limit) return true;
+  if (quota.remaining !== null && quota.remaining <= 1) return true;
+  return !!requestedAt;
 }
 
 export function useAppAllowance() {
@@ -83,21 +117,35 @@ const SURFACE = {
   pane: 'mb-4 rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
 } as const;
 
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
-export function AppAllowance({ id, surface = 'inset' }: { id?: string; surface?: keyof typeof SURFACE }) {
+/**
+ * "Request more" is a secondary act. On the pane (the create dialog) it is
+ * the neutral pill, one step off the white card in dark mode as the import
+ * check's pill is; the fork dialog's inset keeps the button it had.
+ */
+const REQUEST_BUTTON = {
+  inset: {},
+  pane: { variant: 'pillNeutral', ink: 'neutral', className: 'dark:bg-zinc-700 dark:hover:bg-zinc-600' },
+} as const;
+
+export function AppAllowance({ id, surface = 'inset', quiet = false }: {
+  id?: string;
+  surface?: keyof typeof SURFACE;
+  /** Only when allowanceWorthShowing says so (the create dialog, #23). */
+  quiet?: boolean;
+}) {
+  const t = useMessages('dialogs');
   const { quota, server, requestedAt, loading, error, spent, serverFull } = useAppAllowance();
   const binds = !!quota && serverBinds(quota, server);
   const [busy, setBusy] = useState(false);
   const [requestError, setRequestError] = useState('');
   if (!quota && !loading && !error) return null;
+  if (quiet && !allowanceWorthShowing(quota, server, requestedAt as string | null, error || requestError)) return null;
   const request = async () => {
     setBusy(true);
     setRequestError('');
     try { await requestMoreApps(); }
-    catch (err: any) { setRequestError(err.message || 'Could not send your request.'); }
+    catch (err: any) { setRequestError(err.message || t('dialogs:allowance.error.request')); }
     finally { setBusy(false); }
   };
   return (
@@ -105,16 +153,17 @@ export function AppAllowance({ id, surface = 'inset' }: { id?: string; surface?:
       aria-live="polite"
       data-quota-state={!quota ? 'loading' : serverFull ? 'server-full' : spent ? 'spent' : 'available'}>
       <div className="flex items-baseline justify-between gap-3 text-sm">
-        <span className="font-medium text-zinc-700 dark:text-zinc-200">App allowance</span>
+        <span className="font-medium text-zinc-700 dark:text-zinc-200">{t('dialogs:allowance.title')}</span>
         <strong className="text-right text-zinc-900 dark:text-zinc-100">
-          {!quota ? 'Checking…' : serverFull ? 'Server is full' : quotaHeadline(quota)}
+          {!quota ? t('dialogs:allowance.checking') : serverFull ? t('dialogs:allowance.serverFull') : quotaHeadline(quota)}
         </strong>
       </div>
       {quota && !serverFull ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-        {quota.limit === null ? 'Admin accounts can create apps without a slot limit.'
-          : quota.remaining == null ? 'Current usage is unavailable.'
-          : `${quota.remaining} ${quota.remaining === 1 ? 'slot' : 'slots'} available. Creating, importing and forking share this allowance.`}
-        {spent ? ' Request more slots to create another app.' : ''}
+        {quota.limit === null ? t('dialogs:allowance.detail.admin')
+          : quota.remaining == null
+            ? (spent ? t('dialogs:allowance.detail.unavailableSpent') : t('dialogs:allowance.detail.unavailable'))
+          : spent ? t('dialogs:allowance.detail.availableSpent', { count: quota.remaining })
+          : t('dialogs:allowance.detail.available', { count: quota.remaining })}
       </p> : null}
       {/*
           QA 2026-09-24 Q33b: the server-wide cap, when it is the limit this
@@ -128,21 +177,22 @@ export function AppAllowance({ id, surface = 'inset' }: { id?: string; surface?:
         <p id={id ? `${id}-server` : undefined} data-server-full={serverFull ? 'true' : 'false'}
           className={serverFull ? 'mt-1 text-xs text-red-700 dark:text-red-400' : 'mt-1 text-xs text-zinc-500 dark:text-zinc-400'}>
           {serverFull
-            ? `This server is at its app limit (${server.limit}). Ask an admin to remove an app or raise the limit. `
-              + `Your own allowance: ${quota.limit === null ? 'no limit' : `${plural(quota.remaining ?? 0, 'slot', 'slots')} free`}.`
-            : `This server has room for ${plural(server.remaining, 'more app', 'more apps')} (limit ${server.limit}).`}
+            ? (quota.limit === null
+              ? t('dialogs:allowance.server.fullNoLimit', { limit: server.limit })
+              : t('dialogs:allowance.server.fullSlotsFree', { limit: server.limit, count: quota.remaining ?? 0 }))
+            : t('dialogs:allowance.server.room', { count: server.remaining, limit: server.limit })}
         </p>
       ) : null}
       {quota && quota.limit !== null && !serverFull ? (
         <div className="mt-2">
-          <Button type="button" size="sm" disabled={busy || !!requestedAt} disabledStyle="block" onClick={request}>
-            {busy ? 'Sending…' : requestedAt ? 'Request pending' : 'Request more'}
+          <Button type="button" size="sm" {...REQUEST_BUTTON[surface]} disabled={busy || !!requestedAt} disabledStyle="block" onClick={request}>
+            {busy ? t('dialogs:allowance.request.sending') : requestedAt ? t('dialogs:allowance.request.pending') : t('dialogs:allowance.request.more')}
           </Button>
-          {requestedAt ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Admins have your request. You’ll be notified when it is reviewed.</p> : null}
+          {requestedAt ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{t('dialogs:allowance.request.note')}</p> : null}
         </div>
       ) : null}
       {error || requestError ? <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-400">{requestError || error}</p> : null}
-      {error ? <Button type="button" size="sm" disabled={loading} onClick={() => void refreshAppAllowance()}>Refresh allowance</Button> : null}
+      {error ? <Button type="button" size="sm" disabled={loading} onClick={() => void refreshAppAllowance()}>{t('dialogs:allowance.refresh')}</Button> : null}
     </div>
   );
 }

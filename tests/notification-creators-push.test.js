@@ -112,9 +112,11 @@ test('filterToCollaborators short-circuits without an app or candidates', async 
 
 // ── Invite creators ─────────────────────────────────────────────────────
 
+// A collab invite carries its `detail` ('join' for an invite to join a
+// private project, src/services/collab-invites.js) as a fourth value.
 const INVITE_CREATORS = [
   ['collab_invite', notifications.createCollabInviteNotification,
-    { appId: 10, recipientId: 7, inviterId: 3 }, [7, 10, 3]],
+    { appId: 10, recipientId: 7, inviterId: 3 }, [7, 10, 3, null]],
   ['collab_invite_accepted', notifications.createCollabInviteAcceptedNotification,
     { appId: 10, recipientId: 3, accepterId: 7 }, [3, 10, 7]],
   ['approver_invite', notifications.createApproverInviteNotification,
@@ -130,7 +132,8 @@ test('each invite creator inserts its reviewed push-eligible kind for the right 
     const rows = await creator(pool, input);
     assert.equal(pool.state.inserts.length, 1, kind);
     const insert = pool.state.inserts[0];
-    assert.match(insert.sql, new RegExp(`VALUES \\(\\$1, \\$2, \\$3, '${kind}'\\)`));
+    const values = kind === 'collab_invite' ? `'${kind}', \\$4` : `'${kind}'`;
+    assert.match(insert.sql, new RegExp(`VALUES \\(\\$1, \\$2, \\$3, ${values}\\)`));
     assert.deepEqual(insert.params, params, kind);
     assert.equal(rows.length, 1, `${kind} returns the row for hydrateAndPush`);
   }
@@ -149,7 +152,13 @@ test('invite creators are no-ops without a recipient or app', async () => {
 test('a missing inviter degrades to a system notification, not a failure', async () => {
   const pool = fakePool({});
   await notifications.createCollabInviteNotification(pool, { appId: 10, recipientId: 7 });
-  assert.deepEqual(pool.state.inserts[0].params, [7, 10, null]);
+  assert.deepEqual(pool.state.inserts[0].params, [7, 10, null, null]);
+});
+
+test('an invite to join a private project says so in its detail', async () => {
+  const pool = fakePool({});
+  await notifications.createCollabInviteNotification(pool, { appId: 10, recipientId: 7, inviterId: 3, detail: 'join' });
+  assert.deepEqual(pool.state.inserts[0].params, [7, 10, 3, 'join']);
 });
 
 // ── managed OpenRouter review ──────────────────────────────────────────
@@ -203,6 +212,38 @@ test('platform limit alerts need a well-formed token', async () => {
   for (const input of [{}, { detail: '' }, { detail: 'apps_warn' }, { detail: ':1:2' }]) {
     const pool = fakePool({});
     assert.deepEqual(await notifications.createPlatformLimitNotifications(pool, input), []);
+    assert.equal(pool.state.queries.length, 0);
+  }
+});
+
+// ── unexpected events (#4296) ─────────────────────────────────────────
+
+test('unexpected events alerts go to full admins, once per digest day or kind hour, and may push', async () => {
+  const pool = fakePool({});
+  const since = new Date('2026-10-07T15:00:00Z');
+  const rows = await notifications.createPlatformIncidentNotifications(pool, {
+    detail: 'hour:build_interrupted:6', dedupePrefix: 'hour:build_interrupted:', since,
+  });
+  const insert = pool.state.inserts[0];
+
+  assert.equal(ALLOWED_KINDS.has('platform_incident'), true,
+    'a pile of errors that should not happen is worth a push to the admins who can look');
+  assert.match(insert.sql, /SELECT admin\.id, NULL, 'platform_incident', \$1::varchar\(32\)/);
+  assert.match(insert.sql, /admin\.is_admin = TRUE AND admin\.admin_readonly = FALSE/,
+    'view-only admins can read the section, but are not paged');
+  assert.match(insert.sql,
+    /existing\.kind = 'platform_incident' AND LEFT\(existing\.detail, char_length\(\$2\)\) = \$2 AND existing\.created_at >= \$3/,
+    'read or not, one alert per admin and prefix since the window opened');
+  assert.doesNotMatch(insert.sql, /app_id/, 'the log belongs to the server, not an app');
+  assert.deepEqual(insert.params, ['hour:build_interrupted:6', 'hour:build_interrupted:', since]);
+  assert.equal(rows.length, 1);
+});
+
+test('unexpected events alerts need a token that starts with its own prefix', async () => {
+  for (const input of [{}, { detail: 'digest:1:x=1' }, { detail: 'digest:1:x=1', dedupePrefix: 'hour:', since: new Date() },
+    { detail: 'digest:1:x=1', dedupePrefix: 'digest:', since: 'not a date' }]) {
+    const pool = fakePool({});
+    assert.deepEqual(await notifications.createPlatformIncidentNotifications(pool, input), []);
     assert.equal(pool.state.queries.length, 0);
   }
 });

@@ -4,8 +4,11 @@
 //
 // The bot never competes with a person who started on a request: a live
 // claim, a person's session on it or their proposal for it keeps the bot
-// off it (homeroom-bot.js issueHolders, classifyIssue). It used to keep off
-// SILENTLY, so "@homeroom_bot try again?" on a request somebody had claimed
+// off it (homeroom-bot.js issueHolders, classifyIssue). #4190: a claim made
+// once the bot is already on the request is not a hold: the bot finishes
+// and delivers, and only a claim made before it started keeps it off.
+//
+// It used to keep off SILENTLY, so "@homeroom_bot try again?" on a request somebody had claimed
 // three days earlier came to nothing, and the person asking could not tell
 // why (Todo List #75).
 //
@@ -66,7 +69,8 @@ function ageText(since, now = new Date()) {
 /** Pure: one hold, as a clause. */
 function holdClause(hold, now) {
   const who = hold.username || 'Somebody';
-  if (hold.kind === 'proposal') return `${who}'s proposal for it is up for a vote`;
+  // B10a: plain words, as every shared screen says it.
+  if (hold.kind === 'proposal') return `${who}'s change for it is waiting for approval`;
   if (hold.kind === 'session') return `${who} has a change in progress for it (last worked on ${ageText(hold.since, now)})`;
   return `${who} claimed this request ${ageText(hold.since, now)}`;
 }
@@ -137,6 +141,22 @@ function decide({ holds = [], mentions = [], notes = [] }) {
   return { action: 'leave', mention, holds: others };
 }
 
+/**
+ * #4530: the text of the regex a mention of the bot matches, so every place
+ * that looks for one matches it identically: @homeroom_bot, and not
+ * @homeroom_bot_x or the tail of an email address.
+ *
+ * #4610: and its display name, "@Homeroom bot", which is what the composer
+ * writes when a person picks the bot from its list: with a zero-width
+ * character after the @ (U+200B, or a joiner) so the name does not link as
+ * somebody else's handle. Used as a JavaScript RegExp and a Postgres `~*`
+ * pattern alike, so the zero-width characters are literal, not escapes.
+ */
+const ZERO_WIDTH = '\u200b\u200c\u200d\u2060';
+function mentionPattern() {
+  return `(^|[^a-z0-9_])@(${live.BOT_USERNAME}|[${ZERO_WIDTH}]?homeroom bot)([^a-z0-9_-]|$)`;
+}
+
 /** Recent mentions of the bot by people, in the discussions of `numbers`, oldest first. */
 async function recentMentions(pool, appId, numbers, { windowHours = MENTION_WINDOW_HOURS } = {}) {
   const { rows } = await pool.query(
@@ -149,7 +169,7 @@ async function recentMentions(pool, appId, numbers, { windowHours = MENTION_WIND
         AND m.content ~* $3
         AND m.created_at > NOW() - make_interval(hours => $4)
       ORDER BY m.created_at, m.id`,
-    [appId, numbers, `(^|[^a-z0-9_])@${live.BOT_USERNAME}([^a-z0-9_-]|$)`, windowHours],
+    [appId, numbers, mentionPattern(), windowHours],
   );
   return rows;
 }
@@ -261,6 +281,7 @@ module.exports = {
   GOING_KIND,
   MENTION_WINDOW_HOURS,
   ageText,
+  mentionPattern,
   holdsByPerson,
   leavingText,
   goingText,

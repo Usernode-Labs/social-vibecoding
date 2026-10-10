@@ -228,6 +228,40 @@ test('attachComposerKeyboard hands the kit the scroller and the platform header'
   assert.equal(calls[0].detached, 1, 'detach is idempotent');
 });
 
+test('a screen with a bar of its own hands the kit that bar instead (the first session\'s make screen)', () => {
+  const { attachComposerKeyboard } = loadTsx('frontend/src/lib/composer-keyboard.ts');
+  const { kit, calls } = fakeKit();
+  const bar = { id: 'make-bar' };
+  attachComposerKeyboard({ nodeType: 1 }, { unNative: kit }, DOC, bar);
+  assert.equal(calls[0].opts.topEl, bar);
+  attachComposerKeyboard({ nodeType: 1 }, { unNative: kit }, DOC, null);
+  assert.deepEqual(calls[1].opts, {}, 'null: no bar, the scroller\'s own top');
+  attachComposerKeyboard({ nodeType: 1 }, { unNative: kit }, DOC);
+  assert.equal(calls[2].opts.topEl, HEADER, 'left out: the platform header, as before');
+});
+
+test('useComposerKeyboard hands over the bar its second ref holds', () => {
+  const r = fakeReact();
+  const { useComposerKeyboard } = loadTsx('frontend/src/lib/composer-keyboard.ts', { stubs: { react: r.React } });
+  const { kit, calls } = fakeKit();
+  const prevWin = global.window;
+  const prevDoc = global.document;
+  global.window = { unNative: kit };
+  global.document = DOC;
+  try {
+    const scroller = { current: { nodeType: 1 } };
+    const bar = { current: { id: 'make-bar' } };
+    r.render(() => useComposerKeyboard(scroller, bar));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].opts.topEl, bar.current);
+    r.unmount();
+    assert.equal(calls[0].detached, 1);
+  } finally {
+    global.window = prevWin;
+    global.document = prevDoc;
+  }
+});
+
 test('attachComposerKeyboard is a no-op without an element or a kit, and survives a throwing kit', () => {
   const { attachComposerKeyboard } = loadTsx('frontend/src/lib/composer-keyboard.ts');
   const { kit, calls } = fakeKit();
@@ -349,4 +383,234 @@ test('the kit\'s class inside a reserving column is kept from reserving the inse
   const inner = /html\.un-kb \.platform-kb-column \.un-kb-avoid\s*\{([^}]*)\}/.exec(APP_CSS);
   assert.ok(inner, 'html.un-kb .platform-kb-column .un-kb-avoid rule is missing');
   assert.match(inner[1], /padding-bottom:\s*0/);
+});
+
+// ── 4. The composer's own tap: no pan at all (5 Oct 2026) ───────────────
+//
+// The pin above puts iOS's pan back a quarter second after the keys settle,
+// which is what was SEEN: in the Homeroom app and in iOS Safari the
+// composer rose into the top half of the screen, then dropped back onto the
+// keys. The column option takes the composer's tap the way the scroller's
+// fields are taken: focused with preventScroll, so there is no pan to put
+// back, and the column's own inset places it.
+
+function columnHarness() {
+  const start = NATIVE_JS.indexOf('  var KB_TAP_SLOP');
+  const end = NATIVE_JS.lastIndexOf('  /*', NATIVE_JS.indexOf('Spring tuner (?un-tune=1)', start));
+  const timers = [];
+  const listen = (bag) => ({
+    addEventListener: (type, fn) => { bag[type] = fn; },
+    removeEventListener: (type) => { delete bag[type]; },
+  });
+  const scrollerOn = {};
+  const columnOn = {};
+  const focused = [];
+  const field = (inScroller) => ({
+    nodeType: 1,
+    tagName: 'TEXTAREA',
+    value: 'a draft',
+    readOnly: false,
+    disabled: false,
+    isContentEditable: false,
+    inScroller,
+    selection: null,
+    closest(sel) { return /textarea/.test(sel) ? this : null; },
+    focus(opts) { focused.push({ field: this, opts }); doc.activeElement = this; },
+    setSelectionRange(a, b) { this.selection = [a, b]; },
+  });
+  const transcriptField = field(true);
+  const composerField = field(false);
+  const scrollEl = {
+    nodeType: 1,
+    classList: { contains: () => false, add() {}, remove() {} },
+    ...listen(scrollerOn),
+    contains: (n) => n === transcriptField,
+  };
+  const column = {
+    nodeType: 1,
+    ...listen(columnOn),
+    contains: (n) => n === scrollEl || n === transcriptField || n === composerField,
+  };
+  const doc = { activeElement: null, documentElement: { classList: { contains: () => false } }, body: {} };
+  const ctx = vm.createContext({
+    window: { visualViewport: listen({}), scrollY: 0, pageYOffset: 0, scrollTo() {}, innerHeight: VV_HEIGHT },
+    document: doc,
+    console,
+    platform: 'ios',
+    prefersReducedMotion: false,
+    kbInset: 0,
+    gestures: { owner: () => null },
+    isTextEntryField: physics.isTextEntryField,
+    revealScrollDelta: physics.revealScrollDelta,
+    getComputedStyle: () => ({ overflowY: 'hidden' }),
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout() {},
+  });
+  vm.runInContext(NATIVE_JS.slice(start, end), ctx);
+  const handle = ctx.attachKeyboardAvoidance(scrollEl, { column });
+  const tap = (target) => {
+    let prevented = false;
+    const touches = [{ clientX: 10, clientY: 10 }];
+    columnOn.touchstart({ touches, target });
+    columnOn.touchend({ touches: [], target, cancelable: true, preventDefault: () => { prevented = true; } });
+    return prevented;
+  };
+  return { handle, tap, focused, timers, scrollerOn, columnOn, transcriptField, composerField };
+}
+
+test('the composer\'s tap is focused without the pan, its draft picked up at the end, and nothing revealed', () => {
+  const h = columnHarness();
+  assert.ok(h.columnOn.touchend, 'the column carries the touch listeners');
+  assert.equal(h.scrollerOn.touchend, undefined, 'and only the column: a tap in the scroller bubbles to it once');
+  assert.equal(h.tap(h.composerField), true, 'the native tap (focus, pan, click) is cancelled');
+  assert.deepEqual(h.focused.map((f) => [f.field, f.opts && f.opts.preventScroll]), [[h.composerField, true]]);
+  assert.deepEqual(h.composerField.selection, [7, 7], 'the caret at the end of "a draft"');
+  assert.equal(h.timers.filter((t) => t.ms === 250).length, 0, 'no reveal: the column places the composer');
+});
+
+test('a field in the scroller is still revealed, and an already-focused composer keeps its native taps', () => {
+  const h = columnHarness();
+  assert.equal(h.tap(h.transcriptField), true);
+  assert.equal(h.timers.filter((t) => t.ms === 250).length, 1, 'the scroller\'s field waits for the settled pin');
+  h.tap(h.composerField);
+  assert.equal(h.tap(h.composerField), false, 'a second tap moves the caret natively');
+  h.handle.detach();
+  assert.equal(h.columnOn.touchend, undefined, 'detach takes the column\'s listeners off');
+});
+
+test('every chat hands the kit its composer column', () => {
+  const { attachComposerKeyboard } = loadTsx('frontend/src/lib/composer-keyboard.ts');
+  const { kit, calls } = fakeKit();
+  const column = { id: 'col' };
+  const el = { nodeType: 1, closest: (sel) => (sel === '.platform-kb-column' ? column : null) };
+  attachComposerKeyboard(el, { unNative: kit }, DOC);
+  assert.equal(calls[0].opts.column, column, 'React chats (Messages, #general)');
+  assert.match(read('public/js/platform-ui.js'),
+    /const column = typeof scrollEl\.closest === 'function' \? scrollEl\.closest\('\.platform-kb-column'\) : null;\s+handles\.push\(un\.attachKeyboardAvoidance\(scrollEl, \{ topEl: topEl \|\| undefined, column: column \|\| undefined \}\)\);/,
+    'and the legacy-mounted ones (a project\'s chat, a topic thread, a dev chat) through attachScreenFx');
+});
+
+// ── 5. The column rides the keys (5 Oct 2026) ───────────────────────────
+//
+// In the app (no web view resize) the keyboard's height reached the page
+// with the keys ~84% up, and the column's padding snapped the composer and
+// the transcript there in one frame; on the way down the tab bar's band came
+// back in the blur while the padding eased out in 150ms, so the composer
+// hopped 16pt up and then outran the keys. A keyboard-sized step of the
+// scroller's foot right after a focus or a blur now plays out on the
+// column's padding along the keys' curve.
+
+function rideHarness({ fixedShell = true, reduced = false } = {}) {
+  const start = NATIVE_JS.indexOf('  var KB_TAP_SLOP');
+  const end = NATIVE_JS.lastIndexOf('  /*', NATIVE_JS.indexOf('Spring tuner (?un-tune=1)', start));
+  const listen = (bag) => ({
+    addEventListener: (type, fn) => { bag[type] = fn; },
+    removeEventListener: (type) => { delete bag[type]; },
+  });
+  let now = 1000;
+  const animations = [];
+  const scrollEl = {
+    nodeType: 1, offsetTop: 100, offsetHeight: 500,
+    classList: { contains: () => false, add() {}, remove() {} },
+    ...listen({}),
+    contains: () => false,
+  };
+  const columnOn = {};
+  const column = {
+    nodeType: 1, style: { transition: '' },
+    ...listen(columnOn),
+    contains: (n) => n === scrollEl,
+    animate(frames, opts) {
+      const anim = { frames, opts, cancelled: false, cancel() { this.cancelled = true; if (this.oncancel) this.oncancel(); } };
+      animations.push(anim);
+      return anim;
+    },
+  };
+  let observed = null;
+  class FakeRO { constructor(cb) { this.cb = cb; } observe(el) { observed = { el, cb: this.cb }; } disconnect() { observed = null; } }
+  const ctx = vm.createContext({
+    window: { visualViewport: listen({}), ResizeObserver: FakeRO, performance: { now: () => now }, scrollY: 0, pageYOffset: 0, scrollTo() {}, innerHeight: VV_HEIGHT },
+    document: { activeElement: null, documentElement: { classList: { contains: () => true } }, body: {} },
+    console, platform: 'ios', prefersReducedMotion: reduced, kbInset: 0,
+    gestures: { owner: () => null },
+    isTextEntryField: physics.isTextEntryField, revealScrollDelta: physics.revealScrollDelta,
+    getComputedStyle: (el) => (el === column ? { paddingBottom: '335px' } : { overflowY: fixedShell ? 'hidden' : 'auto' }),
+    setTimeout: () => 0, clearTimeout() {},
+  });
+  vm.runInContext(NATIVE_JS.slice(start, end), ctx);
+  const handle = ctx.attachKeyboardAvoidance(scrollEl, { column });
+  return {
+    ctx, handle, column, columnOn, animations,
+    tick: (ms) => { now += ms; },
+    moveFoot: (dy) => { scrollEl.offsetHeight += dy; observed.cb(); },
+    observing: () => observed && observed.el === scrollEl,
+  };
+}
+
+test('the keys\' curve, and the padding keyframes from where the keys already are to where they land', () => {
+  const h = rideHarness();
+  const ease = h.ctx.kbEase;
+  assert.equal(ease(0), 0);
+  assert.equal(ease(1), 1);
+  assert.ok(Math.abs(ease(0.25) - 0.58) < 0.01, 'measured: 58% of the way at 75ms of 300ms');
+  // Up by 259px onto a 335px padding, the keys 45% of the way: it starts
+  // short of the top by what is left and ends exactly on the CSS value.
+  const frames = h.ctx.kbRideFrames(335, -259, 0.45, 4);
+  assert.equal(frames.length, 5);
+  assert.equal(frames[0].offset, 0);
+  assert.equal(frames[4].offset, 1);
+  assert.equal(frames[4].paddingBottom, '335px');
+  assert.ok(parseFloat(frames[0].paddingBottom) < 335 && parseFloat(frames[0].paddingBottom) > 335 - 259);
+  for (let i = 1; i < frames.length; i += 1) {
+    assert.ok(parseFloat(frames[i].paddingBottom) >= parseFloat(frames[i - 1].paddingBottom), 'one way, never back');
+  }
+  // Down: from the keys' top to none, never below zero.
+  const down = h.ctx.kbRideFrames(0, 259, 0, 4);
+  assert.equal(down[0].paddingBottom, '259px');
+  assert.equal(down[4].paddingBottom, '0px');
+});
+
+test('a keyboard-sized step right after a focus rides; the padding transition is out of its way', () => {
+  const h = rideHarness();
+  assert.ok(h.observing(), 'it watches the scroller\'s box');
+  assert.equal(h.column.style.transition, 'none', 'a running transition would outrank the animation');
+  h.columnOn.focusin({ type: 'focusin' });
+  h.tick(180);
+  h.moveFoot(-259); // the keys' height lands: the composer's foot goes up
+  assert.equal(h.animations.length, 1);
+  const up = h.animations[0];
+  assert.equal(up.opts.easing, 'linear');
+  assert.equal(up.opts.duration, Math.round(300 * (1 - 0.45)), 'from 45% at most: the app hears late');
+  h.moveFoot(-3); // its own padding, frame by frame
+  assert.equal(h.animations.length, 1, 'never rides its own movement');
+  // Tapping away mid-ride stops it where it is; the drop then rides from there.
+  h.columnOn.focusout({ type: 'focusout' });
+  assert.equal(up.cancelled, true);
+  h.tick(16);
+  h.moveFoot(262);
+  assert.equal(h.animations.length, 2);
+  assert.ok(h.animations[1].opts.duration > 250, 'down starts with the blur');
+});
+
+test('no ride for a small step, a late one, outside a fixed shell, or with reduced motion; detach restores the column', () => {
+  const small = rideHarness();
+  small.columnOn.focusin({ type: 'focusin' });
+  small.moveFoot(-60); // the tab bar's band, a QuickType row
+  assert.equal(small.animations.length, 0);
+  const late = rideHarness();
+  late.columnOn.focusin({ type: 'focusin' });
+  late.tick(1500);
+  late.moveFoot(-259); // a rotation, a resize: not the keys
+  assert.equal(late.animations.length, 0);
+  const paged = rideHarness({ fixedShell: false });
+  paged.columnOn.focusin({ type: 'focusin' });
+  paged.moveFoot(-259);
+  assert.equal(paged.animations.length, 0, 'a browser page pans its own way');
+  const still = rideHarness({ reduced: true });
+  still.columnOn.focusin({ type: 'focusin' });
+  still.moveFoot(-259);
+  assert.equal(still.animations.length, 0);
+  still.handle.detach();
+  assert.equal(still.column.style.transition, '');
+  assert.equal(still.columnOn.focusin, undefined);
 });

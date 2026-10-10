@@ -49,6 +49,7 @@ require.cache[require.resolve('../src/services/merge-queue')] = {
 
 const unitSuite = require('../src/services/unit-suite');
 const mainWatch = require('../src/services/main-watch');
+const checkRuns = require('../src/services/check-runs');
 
 const SHA = 'c'.repeat(40);
 const OLD = 'd'.repeat(40);
@@ -179,6 +180,67 @@ test('classify: only a verdict ABOUT the code can pause merges', () => {
   assert.equal(mainWatch.classify(fail('Suite setup failed: npm ci exited 1')).state, 'error');
   assert.equal(mainWatch.classify(fail('Suite run exceeded 20 minutes')).state, 'error');
   assert.deepEqual(mainWatch.classify(pass).detail, { summary: pass.row.summary });
+});
+
+test('classify (#4265): a suite that counted failures is failing, even when its log lost the setup line', () => {
+  // PR #4217's log: the summary survived, the setup sentinel and every
+  // `not ok` line did not, and the Job's own failure rode along.
+  const tail = '# tests 21748\n# suites 0\n# pass 21713\n# fail 18\n# cancelled 0\n# skipped 17\n# todo 0';
+  assert.equal(mainWatch.classify(fail(unitSuite.failureDetail(tail, 'BackoffLimitExceeded: Error'))).state, 'failing');
+  // With no test reported, it is still a run that could not happen.
+  assert.equal(mainWatch.classify(fail(unitSuite.failureDetail('npm error code E404', 'BackoffLimitExceeded: Error'))).state, 'error');
+});
+
+test('classify: a suite that never ran is an error, whatever its reason now says', async (t) => {
+  // The rows unit-suite.js writes when the suite never reached `npm test`
+  // (notRunOutcome): their reason no longer starts "Suite setup failed", so
+  // the row's own mark is what keeps them from pausing merges.
+  const empty = await unitSuite.outcomeFromLog({ pool: null, appId: 12, sessionId: 'main-12', succeeded: false, stdout: '', stderr: 'BackoffLimitExceeded: Error', graduated: true });
+  assert.equal(empty.row.couldNotRun, true);
+  assert.doesNotMatch(empty.row.failureReason, /^Suite setup failed/);
+  assert.equal(mainWatch.classify(empty).state, 'error');
+
+  const github = require('../src/services/github');
+  const kubernetes = require('../src/services/kubernetes');
+  const history = require('../src/services/check-history');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', async () => '{"scripts":{"test":"node --test"}}');
+  t.mock.method(github, 'getCloneUrl', async () => 'https://example.test/repo');
+  t.mock.method(history, 'loadGraduated', async () => new Set());
+  t.mock.method(kubernetes, 'runUnitSuiteJob', async () => {
+    throw Object.assign(new Error('jobs.batch "sv-unit-suite-smain-12-x" is forbidden: exceeded quota: social-workers, requested: count/jobs.batch=1'),
+      { code: 403, checkJobNotCreated: true });
+  });
+  const refused = await unitSuite.maybeRunUnitSuite({
+    config: { workerRuntime: 'kubernetes' }, pool: null, appId: 12, sessionId: 'main-12',
+    repoOwner: 'org', repoName: 'demo', ref: SHA,
+  });
+  assert.match(refused.row.failureReason, /^The unit suite could not start: the cluster's job quota was full\. \| /);
+  assert.equal(mainWatch.classify(refused).state, 'error', 'a refused Job says nothing about main');
+  // An install that failed on main's own package files is that commit's
+  // failing row, but main-watch has never paused merges for a suite that
+  // could not get going, and still does not.
+  const lockfile = await unitSuite.outcomeFromLog({
+    pool: null, appId: 12, sessionId: 'main-12', succeeded: false, graduated: true, stderr: 'BackoffLimitExceeded: Error',
+    stdout: [`${unitSuite.ROOT_SENTINEL}=/tmp/w`, unitSuite.CLONED_SENTINEL, 'npm error code ETARGET'].join('\n'),
+  });
+  assert.equal(lockfile.row.setupFailed, true);
+  assert.equal(mainWatch.classify(lockfile).state, 'error');
+  // A red suite is still red.
+  assert.equal(mainWatch.classify(fail(TAP_RED)).state, 'failing');
+});
+
+test('afterMerge: a suite that never ran records error, is not re-run to confirm, and pauses nothing', async () => {
+  const notRun = await unitSuite.outcomeFromLog({ pool: null, appId: 12, sessionId: 'main-12', succeeded: false, stdout: '', stderr: 'BackoffLimitExceeded: Error', graduated: true });
+  const pool = fakePool();
+  const suite = stubSuite(async () => notRun);
+  try {
+    const out = await run(pool);
+    assert.equal(out.state, 'error');
+    assert.equal(suite.calls.length, 1, 'only a red is asked again');
+    assert.deepEqual(pool.writes().map(([state, , clear, set]) => [state, clear, set]), [['error', false, false]]);
+    assert.match(out.detail.failureReason, /^The unit suite stopped before any test ran: /);
+  } finally { suite.restore(); }
 });
 
 // ── afterMerge ───────────────────────────────────────────────────────────
@@ -371,14 +433,16 @@ test('afterMerge: nothing runs without a repo, a sha, or the switch on', async (
 
 test('the pause write is the same CASE for every verdict, keyed on the sha it is about', () => {
   // Pinned as source: green clears, red/confirming sets unless an admin
-  // already resumed THIS sha, anything else leaves the column alone. The
+  // already resumed THIS sha, anything else leaves the column alone. A red
+  // of known flakes alone (detail.flakesOnly) is green for the pause. The
   // fake pool cannot evaluate SQL, so the shape is what stands in for it.
   const fs = require('node:fs');
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'main-watch.js'), 'utf8');
   const write = src.slice(src.indexOf('async function writeState'), src.indexOf('async function afterMerge'));
   assert.match(write, /main_check_paused_sha = CASE\s+WHEN \$5::boolean THEN NULL\s+WHEN \$6::boolean AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(\$2::text\) THEN \$2::text\s+ELSE main_check_paused_sha\s+END/);
   assert.match(write, /WHERE id = \$1 AND main_check_sha = \$2::text/);
-  assert.match(write, /state === 'passing', state === 'failing' \|\| state === 'confirming'/);
+  assert.match(write, /const quiet = !!detail && Array\.isArray\(detail\.flakesOnly\) && detail\.flakesOnly\.length > 0;/);
+  assert.match(write, /state === 'passing' \|\| quiet, \(state === 'failing' \|\| state === 'confirming'\) && !quiet/);
 });
 
 // ── resume ───────────────────────────────────────────────────────────────
@@ -462,7 +526,7 @@ test('resumeInterrupted: an interrupted confirmation resumes at the re-run, with
     // Only the rows a live run could not still be stamping.
     const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
     assert.match(sel.sql, /main_check_at < NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
-    assert.deepEqual(sel.params, [1000]);
+    assert.deepEqual(sel.params, [1000, checkRuns.ORPHAN_MS]);
     assert.equal(suite.calls.length, 1, 'ONE run: the confirmation, not the first run again');
     assert.equal(suite.calls[0].ref, SHA);
     assert.equal(suite.calls[0].sessionId, 'main-12');
@@ -522,7 +586,7 @@ test('resumeInterrupted: nothing interrupted, nothing runs; the switch off, no q
     // else in the cluster is stamped within it.
     assert.equal(mainWatch.staleMs(), unitSuite.UNIT_SUITE_TIMEOUT_MS + 120000);
     const sel = pool.calls.find((c) => /main_check_state IN \('running', 'confirming'\)/.test(c.sql));
-    assert.deepEqual(sel.params, [mainWatch.staleMs()]);
+    assert.deepEqual(sel.params, [mainWatch.staleMs(), checkRuns.ORPHAN_MS]);
 
     process.env.MAIN_WATCH_ENABLED = '0';
     const off = await mainWatch.resumeInterrupted(config, { pool });
@@ -564,9 +628,10 @@ test('the schema carries the pause column and the backfill for the derived pause
   const fs = require('node:fs');
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR\(40\);/);
-  // Idempotent: red, not resumed for that red, and not yet carrying the
+  // Idempotent: red, not resumed for that red, not a red of known flakes
+  // alone (which pauses nothing on purpose), and not yet carrying the
   // column. Runs at every boot without moving anything twice.
-  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\);/);
+  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\)\s+AND \(main_check_detail -> 'flakesOnly'\) IS NULL;/);
   // The API serializes the column with its siblings.
   const access = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'app-access.js'), 'utf8');
   assert.match(access, /'main_check_resumed_sha', 'main_check_paused_sha',/);

@@ -25,6 +25,12 @@ export interface InstallEnv {
   native: boolean;
   /** Already installed — launched from a home-screen icon, not a tab. */
   standalone: boolean;
+  /**
+   * Signed in with platform access: somebody who is already in Homeroom
+   * (lib/platform-viewer.ts). False on the signed-out landing, an invite
+   * link's page before Join, the sign-in page and the waiting room.
+   */
+  member: boolean;
   dismissed: boolean;
   /** `null` until the fetch resolves. */
   urls: StoreUrls | null;
@@ -53,13 +59,12 @@ export type InstallOffer =
   | { kind: 'a2hs'; os: MobileOs };
 
 /**
- * The fallback name of each platform's store, when the URL says nothing more.
- * Each reads as the tail of "Get the app on …", article included where the
- * name takes one.
+ * The strip's line for each platform's store, when the URL says nothing more:
+ * a message id whose text is the whole line ("Get the app on the App Store").
  */
 export const STORE_LABEL: Record<MobileOs, string> = {
-  ios: 'the App Store',
-  android: 'Google Play',
+  ios: 'agent:install.banner.getOnAppStore',
+  android: 'agent:install.banner.getOnGooglePlay',
 };
 
 /**
@@ -82,9 +87,9 @@ export function storeLabel(os: MobileOs, url: string): string {
   } catch {
     return STORE_LABEL[os];
   }
-  if (host === 'testflight.apple.com') return 'TestFlight';
-  if (host === 'apps.apple.com' || host === 'itunes.apple.com') return 'the App Store';
-  if (host === 'play.google.com') return 'Google Play';
+  if (host === 'testflight.apple.com') return 'agent:install.banner.getOnTestFlight';
+  if (host === 'apps.apple.com' || host === 'itunes.apple.com') return 'agent:install.banner.getOnAppStore';
+  if (host === 'play.google.com') return 'agent:install.banner.getOnGooglePlay';
   return STORE_LABEL[os];
 }
 
@@ -133,6 +138,11 @@ export function installOffer(env: InstallEnv): InstallOffer | null {
   if (env.native) return null;
   // Already installed something — a home-screen launch is not a browser tab.
   if (env.standalone) return null;
+  // #4204: not before somebody is in. On an invite's page the strip asked a
+  // stranger to put Homeroom on their home screen before they knew what they
+  // were invited to, and sat above the one action that matters there: Join.
+  // It is offered once they are signed in and let in, wherever they land.
+  if (!env.member) return null;
   if (env.dismissed) return null;
   if (!env.urls) return null;
 
@@ -177,8 +187,34 @@ export function installOffer(env: InstallEnv): InstallOffer | null {
  * Telling somebody where the menu item is works on both, every time.
  */
 export const A2HS_STEPS: Record<MobileOs, string> = {
-  ios: 'Tap Share, then Add to Home Screen.',
-  android: 'Open the browser menu, then Add to Home screen.',
+  ios: 'agent:install.sentence.ios',
+  android: 'agent:install.sentence.android',
+};
+
+/** One numbered line of the banner's "How" sheet, with the glyph it names. */
+export interface A2hsStep {
+  text: string;
+  /** The toolbar control the line tells you to tap, drawn beside it. */
+  glyph?: 'share' | 'menu';
+}
+
+/**
+ * The same instructions as `A2HS_STEPS`, one line per step, for the install
+ * banner's "How" sheet (#4400). The sentence form stays for the app's About
+ * pane, which has one line to spend; the sheet has room to number them and to
+ * show the control the first step names.
+ */
+export const A2HS_STEP_LIST: Record<MobileOs, readonly A2hsStep[]> = {
+  ios: [
+    { text: 'agent:install.ios.step1', glyph: 'share' },
+    { text: 'agent:install.ios.step2' },
+    { text: 'agent:install.ios.step3' },
+  ],
+  android: [
+    { text: 'agent:install.android.step1', glyph: 'menu' },
+    { text: 'agent:install.android.step2' },
+    { text: 'agent:install.android.step3' },
+  ],
 };
 
 /**

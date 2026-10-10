@@ -220,6 +220,7 @@ function buildTurnSecretEnv({
   mode, agentBackend, agentHarness = null, workerSessionJwt, workerPushJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
   shotsJwt, shotsMemberToken, shotsAdminToken, shotsFullAdminToken,
+  shotsGuestToken = null,
   homeroomMcpToken = null,
 }) {
   const {
@@ -291,6 +292,11 @@ function buildTurnSecretEnv({
     env.SHOTS_MEMBER_TOKEN = requireNonEmptySecret(shotsMemberToken, 'shotsMemberToken');
     env.SHOTS_ADMIN_TOKEN = requireNonEmptySecret(shotsAdminToken, 'shotsAdminToken');
     env.SHOTS_FULL_ADMIN_TOKEN = requireNonEmptySecret(shotsFullAdminToken, 'shotsFullAdminToken');
+    // Optional: the guest browser is not signed in, and carries a guest
+    // token only for a view-public child app (shots-identities.js).
+    if (shotsGuestToken != null) {
+      env.SHOTS_GUEST_TOKEN = requireNonEmptySecret(shotsGuestToken, 'shotsGuestToken');
+    }
   }
   if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
   return env;
@@ -325,8 +331,13 @@ async function mintHomeroomReadGrant(sessionId, mode) {
     if (!rows.length) return null;
     // A benchmark trial replays a request as it stood at a past commit, and
     // these tools read the platform as it is now (later discussion, later
-    // proposals): they would hand it the answer.
-    if (require('./bench/runner').isBenchSession(rows[0])) return null;
+    // proposals): they would hand it the answer. The one exception is a trial
+    // in the App bench studio's own host app (services/bench/studio.js): a
+    // private project with no history of its own, where these reads are what
+    // a new app's first version is given (its conventions above all) and can
+    // hand it nothing later.
+    if (require('./bench/runner').isBenchSession(rows[0])
+        && !(await require('./bench/studio').isHostApp(pool, rows[0].app_id))) return null;
     const grant = await require('./mcp-oauth').issueDelegatedAccess(pool, {
       userId: rows[0].user_id,
       kind: 'worker_read',
@@ -521,7 +532,7 @@ function claudeTurnModel(mode, model) {
 // text, tool arguments/results, URLs, provider messages and journal lines can
 // contain private app data or credentials and must never enter a run trace.
 const SHOTS_DIAGNOSTIC_TOOLS = new Set([
-  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request',
+  'get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request',
   'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
   'browser_take_screenshot', 'browser_click', 'browser_type',
   'browser_fill_form', 'browser_press_key', 'browser_select_option',
@@ -534,14 +545,17 @@ const SHOTS_DIAGNOSTIC_PHASES = new Set([
   'shots_mcp_ready', 'claude', 'agent', 'done',
 ]);
 
+// Each persona's browser server, and its phone browser (`_phone`).
+const SHOTS_BROWSER_SERVER = /^browser_(member|admin|full_admin|guest)(_phone)?$/;
+// The personas a shots turn may give a phone browser (visible-changes.PERSONAS).
+const SHOTS_PERSONAS = new Set(['member', 'read_only_admin', 'full_admin', 'guest']);
+
 function shotsDiagnosticTool(name) {
   const parts = String(name || '').split(/__|[./]/);
   const tool = parts.at(-1);
   if (!SHOTS_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
-  const server = parts.includes('browser_member') ? 'member'
-    : parts.includes('browser_full_admin') ? 'full_admin'
-      : parts.includes('browser_admin') ? 'admin' : null;
-  return { tool, ...(server ? { persona: server } : {}) };
+  const server = parts.map((part) => SHOTS_BROWSER_SERVER.exec(part)).find(Boolean);
+  return { tool, ...(server ? { persona: server[1], ...(server[2] ? { phone: true } : {}) } : {}) };
 }
 
 function shotsNavigationTarget(state, input) {
@@ -612,6 +626,7 @@ function observeShotsTool(state, { phase, id, name, input = null, failed = false
     kind: 'tool_end',
     sequence: prior?.sequence || null,
     ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}),
+      ...(prior.phone ? { phone: true } : {}),
       ...(prior.side ? { side: prior.side } : {}),
       ...(prior.routeOrdinal ? { routeOrdinal: prior.routeOrdinal } : {}),
       ...(prior.routeHint ? { routeHint: prior.routeHint } : {}),
@@ -692,12 +707,165 @@ function noteFileChange(state, path) {
   addObservedValue(state.telemetryFileChanges, path);
 }
 
+// ── Where a coding turn's time went (2026-10-07) ────────────────────────
+// A first-version build on 7 Oct 2026 (session 6937) took 27.9 minutes over
+// 226 model requests, 94 browser calls, 70 commands and 38 edits, and its
+// metrics held only those totals: nothing said how the minutes split between
+// the model, the browser, the shell and the edits, or when the app was first
+// booted. The OpenRouter request listener stamps each request's start and
+// end with atMs, ms since it started (worker/*-openrouter-request.js). That
+// is the turn's own clock. A restarted platform reads the journal again, so
+// the moment it reads a line says nothing about when the line was written.
+//
+// From those stamps:
+//   - model time is the time at least one request was open;
+//   - a gap runs from a request ending with none left open to the next one
+//     starting. The agent was running the tools the last reply asked for, so
+//     the gap is split evenly between the kinds of tool first seen since the
+//     request before it started (a tool_use line can land on either side of
+//     its own request's end line), and goes to `other` when none was;
+//   - a milestone is when the reply that asked for the tool finished.
+// A listener that sends no atMs (an older worker image) records none of it:
+// the fields stay null, which the ledger leaves out rather than calling 0.
+const CODING_TOOL_KIND_FIELDS = Object.freeze({
+  browser: 'browserToolMs', shell: 'shellToolMs', edit: 'editToolMs',
+  read: 'readToolMs', other: 'otherToolMs',
+});
+const CODING_TOOL_KINDS = Object.keys(CODING_TOOL_KIND_FIELDS);
+const CODING_CLOCK_MAX_MS = 86_400_000;
+const APP_BOOT_COMMAND = /usernode-run-inloop/;
+
+function codingToolKind(name) {
+  const n = typeof name === 'string' ? name : '';
+  // An MCP tool is mcp__<server>__<tool>, and Playwright's are browser_*.
+  const bare = n.startsWith('mcp__') ? n.slice(n.lastIndexOf('__') + 2) : n;
+  if (/playwright/i.test(n) || /^browser_/i.test(bare)) return 'browser';
+  if (['Bash', 'BashOutput', 'KillShell', 'KillBash'].includes(n)) return 'shell';
+  if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(n)) return 'edit';
+  if (['Read', 'Glob', 'Grep', 'LS', 'NotebookRead'].includes(n)) return 'read';
+  return 'other';
+}
+
+function codexToolKind(event) {
+  if (event.kind === 'command_started' || event.kind === 'command_completed') return 'shell';
+  if (event.kind === 'file_changed') return 'edit';
+  if (event.kind === 'file_read' || event.kind === 'file_read_completed') return 'read';
+  return codingToolKind(event.toolName);
+}
+
+function stampCodingMilestone(state, field, at) {
+  const prior = state[field];
+  if (field === 'lastBrowserCallMs') state[field] = prior == null ? at : Math.max(prior, at);
+  else state[field] = prior == null ? at : Math.min(prior, at);
+}
+
+function attributeCodingGap(state, clock, gapMs) {
+  const kinds = CODING_TOOL_KINDS.filter((kind) => clock.kinds.has(kind));
+  if (!kinds.length) kinds.push('other');
+  // Whole milliseconds, the remainder to the first kinds, so the kinds
+  // always sum to exactly the gaps.
+  const share = Math.floor(gapMs / kinds.length);
+  let remainder = gapMs - share * kinds.length;
+  for (const kind of kinds) {
+    state[CODING_TOOL_KIND_FIELDS[kind]] += share + (remainder > 0 ? 1 : 0);
+    remainder -= 1;
+  }
+}
+
+// One provider_request_start or provider_request_end, with its atMs.
+function noteCodingRequestClock(state, kind, ordinal, atMs) {
+  if (state.telemetryDiagnosticsEnabled !== true) return;
+  if (!Number.isSafeInteger(atMs) || atMs < 0 || atMs > CODING_CLOCK_MAX_MS) return;
+  const starting = kind === 'provider_request_start';
+  let clock = state.codingClock;
+  if (!clock) {
+    clock = state.codingClock = {
+      seen: new Set(), offsetMs: 0, latestMs: 0, maxOrdinal: 0, open: new Set(),
+      busySinceMs: null, idleSinceMs: null, lastEndMs: null, kinds: new Set(), awaiting: [],
+    };
+    state.modelRequestMs = 0;
+    for (const field of Object.values(CODING_TOOL_KIND_FIELDS)) state[field] = 0;
+  }
+  // Keyed by ordinal AND stamp: the same line read twice is one request,
+  // while a second listener's request 1 (below) is a different line.
+  const key = `${starting ? 'start' : 'end'}:${ordinal}:${atMs}`;
+  if (clock.seen.has(key)) return;
+  if (starting) {
+    // Ordinals only climb within one listener. A repeated one is a new
+    // listener: run-cc.sh starts Claude Code a second time when a resume
+    // fails, and that one counts again from request 1 and from 0 ms. Its
+    // clock is placed after the last stamp the first one sent, a floor
+    // since the time between the two goes unseen, and no gap spans them.
+    if (ordinal <= clock.maxOrdinal) {
+      if (clock.open.size) state.modelRequestMs += Math.max(0, clock.latestMs - clock.busySinceMs);
+      clock.offsetMs = clock.latestMs;
+      clock.maxOrdinal = 0;
+      clock.open.clear();
+      clock.busySinceMs = null;
+      clock.idleSinceMs = null;
+      clock.lastEndMs = null;
+      clock.kinds.clear();
+      clock.awaiting = [];
+    }
+    clock.seen.add(key);
+    clock.maxOrdinal = Math.max(clock.maxOrdinal, ordinal);
+    const at = clock.offsetMs + atMs;
+    clock.latestMs = Math.max(clock.latestMs, at);
+    if (!clock.open.size) {
+      if (clock.idleSinceMs != null) attributeCodingGap(state, clock, Math.max(0, at - clock.idleSinceMs));
+      clock.idleSinceMs = null;
+      clock.kinds.clear();
+      clock.busySinceMs = at;
+    }
+    clock.open.add(ordinal);
+    return;
+  }
+  // An end whose start was never seen, or that already ended, adds nothing.
+  if (!clock.open.has(ordinal)) return;
+  clock.seen.add(key);
+  clock.open.delete(ordinal);
+  const at = clock.offsetMs + atMs;
+  clock.latestMs = Math.max(clock.latestMs, at);
+  clock.lastEndMs = at;
+  for (const field of clock.awaiting) stampCodingMilestone(state, field, at);
+  clock.awaiting = [];
+  if (!clock.open.size) {
+    state.modelRequestMs += Math.max(0, at - clock.busySinceMs);
+    clock.busySinceMs = null;
+    clock.idleSinceMs = at;
+  }
+}
+
+// A tool the agent called, once per call (the callers' item-id dedupe).
+// Only a client-side tool runs between requests; a server tool's time is
+// inside its request already.
+function noteCodingToolClock(state, kind, { bootsApp = false } = {}) {
+  const clock = state.codingClock;
+  if (!clock) return;
+  clock.kinds.add(kind);
+  const milestones = [];
+  if (kind === 'edit') milestones.push('firstFileChangeMs');
+  if (kind === 'browser') milestones.push('firstBrowserCallMs', 'lastBrowserCallMs');
+  if (bootsApp) milestones.push('firstAppBootMs');
+  // Seen while a reply is still streaming: it is that reply's, and is
+  // stamped when that reply ends. Otherwise the last reply asked for it.
+  if (clock.open.size) clock.awaiting.push(...milestones);
+  else if (clock.lastEndMs != null) {
+    for (const field of milestones) stampCodingMilestone(state, field, clock.lastEndMs);
+  }
+}
+
 function noteClaudeToolCall(state, block) {
   const itemKey = block && block.id ? `claude:${block.id}` : null;
   if (itemKey && state.telemetryStartedItemIds.has(itemKey)) return false;
   if (itemKey) state.telemetryStartedItemIds.add(itemKey);
   const name = typeof block?.name === 'string' ? block.name : String(block?.type || 'tool');
   const input = block && block.input && typeof block.input === 'object' ? block.input : {};
+  if (block?.type === 'tool_use') {
+    noteCodingToolClock(state, codingToolKind(name), {
+      bootsApp: name === 'Bash' && APP_BOOT_COMMAND.test(String(input.command || '')),
+    });
+  }
   state.toolCallCount += 1;
   noteToolName(state, name);
   if (block?.type === 'server_tool_use' || block?.type === 'mcp_tool_use') {
@@ -726,6 +894,10 @@ function noteCodexToolStart(state, event) {
   if (key && state.telemetryStartedItemIds.has(key)) return false;
   if (key) state.telemetryStartedItemIds.add(key);
   noteFirstAgentOutput(state);
+  noteCodingToolClock(state, codexToolKind(event), {
+    bootsApp: event.kind === 'command_started'
+      && APP_BOOT_COMMAND.test(String(event.command || event.text || '')),
+  });
   state.toolCallCount += 1;
   state.responseToolCallCount += 1;
   noteToolName(state, event.toolName || event.kind);
@@ -765,18 +937,79 @@ function isClaudeOnOpenRouter(state) {
 // to Anthropic Claude Code sessions. Idempotent; a no-op for other turns.
 //
 // It also fills the per-turn usage sum a Codex turn gets from its relay
-// (`relayUsage`, #3038), from the usage each model call reported as it
-// streamed. Claude Code reports a run's usage only on its result event, so a
-// turn stopped before that (the Homeroom bot's wall clock) had none at all
-// and was priced at nothing; this is what it can be priced from instead.
+// (`relayUsage`, #3038). Claude Code reports a run's usage only on its result
+// event, so a turn stopped before that (the Homeroom bot's wall clock) had
+// none at all and was priced at nothing; this is what it can be priced from
+// instead. First choice, the counts each finished model request's reply
+// closed on, as the request listener read them (observeCodingProviderResult):
+// exact for every request but the one the stop cut off. Otherwise what Claude
+// Code's own events said as they streamed, which through OpenRouter is
+// nearly nothing: its message_start reports no input, and the counts arrive
+// only on the closing message_delta (a 40-minute GLM build on 2026-10-06 was
+// priced at 0 input tokens and $0 that way).
 function finalizeHarnessResult(state) {
   if (!isClaudeOnOpenRouter(state)) return state;
   const claudeSessionId = state.sessionId || state.initSessionId || null;
   if (claudeSessionId) state.agentThreadId = claudeSessionId;
   state.sessionId = null;
   state.initSessionId = null;
-  if (!state.relayUsage) state.relayUsage = liveAgentSpend.usageTotals(state.liveSpend);
+  if (!state.relayUsage) {
+    state.relayUsage = state.providerUsage?.requests > 0
+      ? { ...state.providerUsage, source: 'requests' }
+      : liveAgentSpend.usageTotals(state.liveSpend);
+  }
   return state;
+}
+
+// One finished model request's token counts, as the Claude Code request
+// listener reports them in Anthropic's split, added to the turn's sum in the
+// relay's shape: input counts cache reads and writes, as OpenRouter bills it.
+// Counts only, each bounded.
+function noteCodingProviderUsage(usage, state) {
+  if (!usage || typeof usage !== 'object') return;
+  const count = (n) => (Number.isSafeInteger(n) && n >= 0 && n <= 100_000_000 ? n : 0);
+  const input = count(usage.inputTokens);
+  const output = count(usage.outputTokens);
+  const cacheRead = count(usage.cacheReadInputTokens);
+  const cacheWrite = count(usage.cacheWriteInputTokens);
+  if (!input && !output && !cacheRead && !cacheWrite) return;
+  const sum = state.providerUsage || (state.providerUsage = {
+    requests: 0, inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0,
+  });
+  sum.requests += 1;
+  sum.inputTokens += input + cacheRead + cacheWrite;
+  sum.cachedInputTokens += cacheRead;
+  sum.cacheWriteInputTokens += cacheWrite;
+  sum.outputTokens += output;
+}
+
+// What one model request did with its images, as the same listener counts
+// them (applyTurnPolicy): sent to the model, moved out of a tool result for
+// a non-Anthropic model, or left out for a text-only one. Summed for the
+// turn's telemetry_metrics. A request carries the whole conversation, so a
+// screenshot counts once for every request that carries it. Counts only.
+function noteCodingProviderImages(images, state) {
+  if (!images || typeof images !== 'object') return;
+  const count = (n) => (Number.isSafeInteger(n) && n >= 0 && n <= 100_000 ? n : 0);
+  state.imageSentCount = (state.imageSentCount || 0) + count(images.sent);
+  state.imageMovedCount = (state.imageMovedCount || 0) + count(images.moved);
+  state.imageOmittedCount = (state.imageOmittedCount || 0) + count(images.omitted);
+}
+
+// The text blocks a Claude turn wrote since its last tool call, oldest
+// first: its final answer, when that answer came in more than one message.
+// Claude Code continues an answer cut at the output-token limit in a new
+// message, and its result (lastResultText) is the last message alone
+// (agent-result-text.js finalAnswerText). Bounded, oldest dropped first.
+const MAX_ANSWER_PARTS = 16;
+const MAX_ANSWER_CHARS = 1500000;
+
+function noteAnswerPart(state, text) {
+  const parts = Array.isArray(state.answerParts) ? state.answerParts : [];
+  parts.push(text);
+  let total = parts.reduce((sum, p) => sum + p.length, 0);
+  while (parts.length > 1 && (parts.length > MAX_ANSWER_PARTS || total > MAX_ANSWER_CHARS)) total -= parts.shift().length;
+  state.answerParts = parts;
 }
 
 function applyStreamEvent(event, onProgress, state) {
@@ -840,6 +1073,11 @@ function applyStreamEvent(event, onProgress, state) {
       browserMemberToolCount: mcpToolCount(systemEvent.tools, 'browser_member'),
       browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
       browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
+      browserGuestToolCount: mcpToolCount(systemEvent.tools, 'browser_guest'),
+      // Every phone browser's together: a turn has one per persona that needs it.
+      browserPhoneToolCount: collectionCount(systemEvent.tools) == null ? null
+        : ['member', 'admin', 'full_admin', 'guest'].reduce((sum, persona) => (
+          sum + mcpToolCount(systemEvent.tools, `browser_${persona}_phone`)), 0),
     });
   }
   if (event.type === 'assistant' && event.message?.content) {
@@ -860,6 +1098,7 @@ function applyStreamEvent(event, onProgress, state) {
         }
         if (block.text) {
           state.lastResultText = block.text;
+          noteAnswerPart(state, block.text);
           onProgress(block.text.substring(0, 300));
         }
       } else if (block.type === 'thinking') {
@@ -879,9 +1118,11 @@ function applyStreamEvent(event, onProgress, state) {
       } else if (block.type === 'redacted_thinking') {
         if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
       } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
+        state.answerParts = [];
         if (observeDiagnostics) noteClaudeToolCall(state, block);
         observeShotsTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
       } else if (block.type === 'tool_use') {
+        state.answerParts = [];
         if (observeDiagnostics) noteClaudeToolCall(state, block);
         observeShotsTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
         const input = block.input || {};
@@ -898,6 +1139,10 @@ function applyStreamEvent(event, onProgress, state) {
           label = `Editing ${input.file_path}`;
         } else if (block.name === 'Bash' && input.command) {
           label = `$ ${input.command.substring(0, 150)}`;
+        } else if (block.name === 'Skill' && typeof (input.skill || input.command) === 'string') {
+          // Which skill, so a turn's record says what it reached for (the App
+          // bench studio counts them: services/bench/progress.js).
+          label = `Using skill ${String(input.skill || input.command).substring(0, 80)}`;
         } else {
           label = `Using ${block.name}`;
         }
@@ -1009,6 +1254,56 @@ const CODING_PROVIDER_OUTCOMES = new Set(['ok', 'http_error', 'cancelled', 'netw
 function codingProviderCount(value, maximum) {
   return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
 }
+// What one model request came to, as the Claude Code listener reports it
+// (worker/claude-openrouter-request.js, provider_request_result): kept as
+// the turn's routed provider for its ledger row, and, when it failed, said
+// on the progress line and logged with the ids that find it in OpenRouter's
+// own log. Nothing here is the request's content: the listener sends a
+// status, ids, a provider name and an error's type and clipped message.
+const SAFE_PROVIDER_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
+const SAFE_PROVIDER_NAME = /^[a-zA-Z0-9 ._:/()-]{1,80}$/;
+const SAFE_PROVIDER_ERROR_TYPE = /^[a-z0-9_.-]{1,64}$/i;
+function observeCodingProviderResult(event, ordinal, onProgress, state) {
+  const pick = (value, re) => (typeof value === 'string' && re.test(value) ? value : null);
+  const status = Number.isSafeInteger(event.httpStatus) && event.httpStatus >= 100 && event.httpStatus <= 599
+    ? event.httpStatus : null;
+  const providerName = pick(event.providerName, SAFE_PROVIDER_NAME);
+  const errorType = pick(event.errorType, SAFE_PROVIDER_ERROR_TYPE);
+  const errorMessage = typeof event.errorMessage === 'string'
+    ? event.errorMessage.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) || null
+    : null;
+  if (providerName) {
+    state.routedProvider = providerName;
+    // Every provider the turn's requests went to, in order, not only the
+    // last: whether a build that quits early follows a provider is read
+    // from this (homeroom-bot-live.js turnFacts). A few names at most.
+    const seen = Array.isArray(state.routedProviders) ? state.routedProviders : (state.routedProviders = []);
+    if (!seen.includes(providerName) && seen.length < 8) seen.push(providerName);
+  }
+  noteCodingProviderUsage(event.usage, state);
+  noteCodingProviderImages(event.images, state);
+  const failed = (status != null && status >= 400) || !!errorType || !!errorMessage;
+  if (!failed) return;
+  state.providerRequestFailures = (state.providerRequestFailures || 0) + 1;
+  const detail = {
+    sessionId: state.hostSessionId || null,
+    requestOrdinal: ordinal,
+    httpStatus: status,
+    providerName,
+    requestId: pick(event.requestId, SAFE_PROVIDER_ID),
+    generationId: pick(event.generationId, SAFE_PROVIDER_ID),
+    errorType,
+    errorMessage,
+  };
+  log.warn('worker', 'Coding provider request failed', detail);
+  // OpenRouter's envelope carries the status again as its code: said once.
+  const what = [status != null ? `HTTP ${status}` : null, errorType !== String(status) ? errorType : null]
+    .filter(Boolean).join(' ');
+  const said = errorMessage ? `: ${errorMessage.slice(0, 160)}` : '';
+  const via = providerName ? ` (via ${providerName})` : '';
+  onProgress(`OpenRouter request #${ordinal} failed${what ? ` with ${what}` : ''}${said}${via}`);
+}
+
 function observeCodingProviderTiming(event, onProgress, state) {
   if (event?.kind === 'codex_output_idle') {
     const durationMs = event.durationMs;
@@ -1033,7 +1328,14 @@ function observeCodingProviderTiming(event, onProgress, state) {
   }
   const ordinal = event?.requestOrdinal;
   if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 1_000_000) return;
+  if (event.kind === 'provider_request_start' || event.kind === 'provider_request_end') {
+    noteCodingRequestClock(state, event.kind, ordinal, event.atMs);
+  }
   const requests = state.codingProviderRequests || (state.codingProviderRequests = new Map());
+  if (event.kind === 'provider_request_result') {
+    observeCodingProviderResult(event, ordinal, onProgress, state);
+    return;
+  }
   if (event.kind === 'provider_request_start') {
     const request = { lastReportedMs: null, lastReportedStage: null, contextReported: false };
     requests.set(ordinal, request);
@@ -1160,6 +1462,9 @@ function parseLine(line, onProgress, state) {
       // The agent ended on a line that does not build on the session branch
       // (worker/session-branch.sh): nothing was committed or pushed.
       else if (k === 'branch_mismatch') state.branchMismatch = v === '1';
+      // How many times the stop guard sent the agent back (run-cc.sh,
+      // STOP_GUARD=1 only): telemetry_metrics.stop_hook_blocks.
+      else if (k === 'stop_hook_blocks') state.stopHookBlocks = /^\d+$/.test(v || '') ? parseInt(v, 10) : null;
     }
     state.resultSeen = true;
     const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
@@ -1306,6 +1611,7 @@ function newWatchState() {
     // host-owned and never parsed from untrusted runner output.
     turnId: null,
     lastResultText: '',
+    answerParts: [],
     costUsd: 0,
     liveSpend: liveAgentSpend.createTracker(),
     liveSpendEnabled: false,
@@ -1398,6 +1704,25 @@ function newWatchState() {
     subagentCallCount: 0,
     webToolCallCount: 0,
     toolSearchCount: 0,
+    // Claude Code over OpenRouter only (noteCodingProviderImages); unknown
+    // stays null for every other turn.
+    imageSentCount: null,
+    imageMovedCount: null,
+    imageOmittedCount: null,
+    // Where an OpenRouter turn's time went, read off its request listener's
+    // own clock (noteCodingRequestClock). All null when the listener sent
+    // no clock: an Anthropic turn, or a worker image from before atMs.
+    codingClock: null,
+    modelRequestMs: null,
+    browserToolMs: null,
+    shellToolMs: null,
+    editToolMs: null,
+    readToolMs: null,
+    otherToolMs: null,
+    firstFileChangeMs: null,
+    firstAppBootMs: null,
+    firstBrowserCallMs: null,
+    lastBrowserCallMs: null,
     requestMode: null,
     requestMessageCount: null,
     requestUserMessageCount: null,
@@ -1442,6 +1767,10 @@ function newWatchState() {
     // The build ended off the session branch, on work that does not build
     // on it; the runner committed and pushed nothing (session-branch.sh).
     branchMismatch: false,
+    // Times the stop guard kept the agent from ending a turn that had
+    // changed nothing (worker/build-stop-hook.js). Null for a turn without
+    // the guard, so "none asked for" stays apart from "none needed".
+    stopHookBlocks: null,
     // #361: conflicted file paths from a MODE=sync turn's
     // __USERNODE_RESULT__ line. Defaults empty.
     conflictFiles: [],
@@ -1754,6 +2083,30 @@ const TURN_SYSTEM_PROMPT_PATH = '/home/node/.claude/turn-system-prompt.txt';
 // context saving on resume and the old fully-specified fresh-run behavior.
 const TURN_RESUME_FALLBACK_PROMPT_PATH = '/home/node/.claude/turn-resume-fallback-prompt.txt';
 
+// #4575: each turn writes its prompt files under its own id. The fixed paths
+// above were shared by every turn on the session, and a dispatch writes its
+// prompt BEFORE it claims chat_sessions.active_turn: a second dispatch that
+// then lost that claim (the shots agent racing the Homeroom bot) had already
+// overwritten the winner's prompt, so the winner could run with the loser's
+// task. The fixed paths remain the fallback for an id that is not
+// path-safe, and finishTurn still removes them for a turn an older release
+// dispatched.
+function turnPromptPaths(turnId) {
+  const id = String(turnId || '');
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(id)) {
+    return {
+      prompt: TURN_PROMPT_PATH,
+      system: TURN_SYSTEM_PROMPT_PATH,
+      resumeFallback: TURN_RESUME_FALLBACK_PROMPT_PATH,
+    };
+  }
+  return {
+    prompt: `/home/node/.claude/turn-prompt-${id}.txt`,
+    system: `/home/node/.claude/turn-system-prompt-${id}.txt`,
+    resumeFallback: `/home/node/.claude/turn-resume-fallback-prompt-${id}.txt`,
+  };
+}
+
 // Shell script that writes arbitrary turn context to a fixed private path.
 // The base64
 // payload is split into bounded chunks appended by `printf` (a shell
@@ -1776,31 +2129,31 @@ function buildTurnContextFileScript(content, targetPath) {
   return lines.join('\n') + '\n';
 }
 
-function buildTurnPromptScript(prompt) {
-  return buildTurnContextFileScript(prompt, TURN_PROMPT_PATH);
+function buildTurnPromptScript(prompt, targetPath = TURN_PROMPT_PATH) {
+  return buildTurnContextFileScript(prompt, targetPath);
 }
 
-function buildTurnSystemPromptScript(systemPrompt) {
-  return buildTurnContextFileScript(systemPrompt, TURN_SYSTEM_PROMPT_PATH);
+function buildTurnSystemPromptScript(systemPrompt, targetPath = TURN_SYSTEM_PROMPT_PATH) {
+  return buildTurnContextFileScript(systemPrompt, targetPath);
 }
 
-function buildTurnResumeFallbackPromptScript(prompt) {
-  return buildTurnContextFileScript(prompt, TURN_RESUME_FALLBACK_PROMPT_PATH);
+function buildTurnResumeFallbackPromptScript(prompt, targetPath = TURN_RESUME_FALLBACK_PROMPT_PATH) {
+  return buildTurnContextFileScript(prompt, targetPath);
 }
 
 // Materialize the dispatch prompt into the warm worker's CC volume ahead
 // of the detached exec. Unlike syncUserAgentFiles this file is required:
 // a failure here fails the turn (before active_turn is persisted, so
 // there is nothing to clean up).
-async function writeTurnPrompt(sessionId, prompt) {
+async function writeTurnPrompt(sessionId, prompt, targetPath = TURN_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
     throw new Error(`writeTurnPrompt: no warm worker registered for session ${sessionId}`);
   }
   if (usesKubernetesWorkers()) {
-    await execWorkerCommand(meta.containerName, ['sh', '-s'], buildTurnPromptScript(prompt));
+    await execWorkerCommand(meta.containerName, ['sh', '-s'], buildTurnPromptScript(prompt, targetPath));
   } else {
-    await docker.execShellStdin(meta.containerName, buildTurnPromptScript(prompt), {
+    await docker.execShellStdin(meta.containerName, buildTurnPromptScript(prompt, targetPath), {
       timeoutMs: 20000, label: 'writeTurnPrompt',
     });
   }
@@ -1810,7 +2163,7 @@ async function writeTurnPrompt(sessionId, prompt) {
 // aborts before active_turn is persisted or the provider is dispatched; the
 // platform must never silently run a shortened task prompt without its
 // authoritative conventions.
-async function writeTurnSystemPrompt(sessionId, systemPrompt) {
+async function writeTurnSystemPrompt(sessionId, systemPrompt, targetPath = TURN_SYSTEM_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
     throw new Error(`writeTurnSystemPrompt: no warm worker registered for session ${sessionId}`);
@@ -1819,10 +2172,10 @@ async function writeTurnSystemPrompt(sessionId, systemPrompt) {
     await execWorkerCommand(
       meta.containerName,
       ['sh', '-s'],
-      buildTurnSystemPromptScript(systemPrompt),
+      buildTurnSystemPromptScript(systemPrompt, targetPath),
     );
   } else {
-    await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt), {
+    await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt, targetPath), {
       timeoutMs: 20000, label: 'writeTurnSystemPrompt',
     });
   }
@@ -1832,7 +2185,7 @@ async function writeTurnSystemPrompt(sessionId, systemPrompt) {
 // fails and run-cc.sh retries fresh. It is required whenever supplied: failing
 // to materialize it aborts before dispatch rather than running without the
 // session's authoritative spec.
-async function writeTurnResumeFallbackPrompt(sessionId, prompt) {
+async function writeTurnResumeFallbackPrompt(sessionId, prompt, targetPath = TURN_RESUME_FALLBACK_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
     throw new Error(`writeTurnResumeFallbackPrompt: no warm worker registered for session ${sessionId}`);
@@ -1841,12 +2194,12 @@ async function writeTurnResumeFallbackPrompt(sessionId, prompt) {
     await execWorkerCommand(
       meta.containerName,
       ['sh', '-s'],
-      buildTurnResumeFallbackPromptScript(prompt),
+      buildTurnResumeFallbackPromptScript(prompt, targetPath),
     );
   } else {
     await docker.execShellStdin(
       meta.containerName,
-      buildTurnResumeFallbackPromptScript(prompt),
+      buildTurnResumeFallbackPromptScript(prompt, targetPath),
       { timeoutMs: 20000, label: 'writeTurnResumeFallbackPrompt' },
     );
   }
@@ -1871,9 +2224,13 @@ function _getPoolSafe() {
   }
 }
 
+// Resolves { ok: true } or { ok: false, code }: the code says why the record
+// could not be written (#4575), so execInWorker can tell a session another
+// turn already owns (session_busy, which a caller may wait out) from a
+// database failure.
 async function _persistActiveTurn(sessionId, turn) {
   const pool = _getPoolSafe();
-  if (!pool) return false;
+  if (!pool) return { ok: false, code: 'db_unavailable' };
   try {
     const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
     if (current) {
@@ -1890,15 +2247,43 @@ async function _persistActiveTurn(sessionId, turn) {
         && current.phase === turnLifecycle.PHASE_DISPATCH_PENDING
         && String(current.journal || '') === String(turn.journal || '')
       );
-      if (isRegisteredAttempt) return true;
+      if (isRegisteredAttempt) return { ok: true };
       const err = new Error('turn-lifecycle: session already owns a different turn');
       err.code = 'session_busy';
       throw err;
     }
     await turnLifecycle.persistNewTurn(pool, sessionId, turn);
+    return { ok: true };
+  } catch (err) {
+    log.warn('worker', 'Failed to persist active_turn', { sessionId, err: err.message, code: err.code });
+    const code = typeof err?.code === 'string' && /^[A-Za-z0-9_]{1,48}$/.test(err.code)
+      ? err.code
+      : 'persist_error';
+    return { ok: false, code };
+  }
+}
+
+// A dispatch that a pending stop skipped before it began (execInWorker's
+// #937 gate). Only the exact record registered for it is touched, and only
+// while it is still dispatch_pending: a turn that replaced it, or one that
+// somehow moved on, is never someone this may clear. A tail-holding caller
+// gets the record handed to its tail, as a finished exec's would be; any
+// other caller gets it cleared. A later finishTurn by the caller finds it
+// gone and returns true. Never throws.
+async function releaseSkippedDispatch(sessionId, turnId, { holdTurnRecord = false } = {}) {
+  if (!turnId) return false;
+  const pool = _getPoolSafe();
+  if (!pool) return false;
+  try {
+    const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (!current
+      || String(turnLifecycle.turnIdentity(current) || '') !== String(turnId)
+      || turnLifecycle.phaseOf(current) !== turnLifecycle.PHASE_DISPATCH_PENDING) return false;
+    if (holdTurnRecord) await markTurnTail(sessionId, {}, { turnId });
+    else if (!(await finishTurn(sessionId, { turnId }))) return false;
     return true;
   } catch (err) {
-    log.warn('worker', 'Failed to persist active_turn', { sessionId, err: err.message });
+    log.warn('worker', 'Could not release a skipped dispatch\'s turn record', { sessionId, turnId, err: err.message });
     return false;
   }
 }
@@ -2095,11 +2480,20 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   // An idempotent call after the row is already gone may remove only UUID-
   // unique journals; it never owns the shared prompt path.
   const filesToRemove = [...journalPaths];
-  if (ownsCleanup) filesToRemove.push(
-    TURN_PROMPT_PATH,
-    TURN_SYSTEM_PROMPT_PATH,
-    TURN_RESUME_FALLBACK_PROMPT_PATH,
-  );
+  if (ownsCleanup) {
+    filesToRemove.push(
+      TURN_PROMPT_PATH,
+      TURN_SYSTEM_PROMPT_PATH,
+      TURN_RESUME_FALLBACK_PROMPT_PATH,
+    );
+    // The turn's own prompt files (#4575), named by the identity it carried.
+    if (cleanupTurnId) {
+      const own = turnPromptPaths(cleanupTurnId);
+      for (const path of [own.prompt, own.system, own.resumeFallback]) {
+        if (!filesToRemove.includes(path)) filesToRemove.push(path);
+      }
+    }
+  }
   if (filesToRemove.length) {
     const containerName = _registryGet(sessionId)?.containerName
       || workerRuntimeName(sessionId);
@@ -2354,6 +2748,18 @@ async function _bootstrapWarmContainer(sessionId, {
   // catches that case before we waste a container slot. Imports that
   // pre-date the public-only enforcement are caught here as well.
   const privacy = await github.checkRepoPublic(repoOwner, repoName);
+  if (!privacy.ok && privacy.code === 'rate_limited') {
+    // GitHub refused the check because Homeroom's hourly budget is used up.
+    // This message reaches people as it is (a dev chat's turn error, a
+    // before/after shots card), so it says that in plain words and when the
+    // budget resets, rather than "Cannot bootstrap worker ... API rate limit
+    // exceeded for user ID ...".
+    const err = new Error(
+      `Homeroom could not start working on ${repoOwner}/${repoName}. ${privacy.message} Nothing was changed.`
+    );
+    err.code = 'github_rate_limited';
+    throw err;
+  }
   if (!privacy.ok) {
     throw new Error(
       `Cannot bootstrap worker for ${repoOwner}/${repoName}: ${privacy.message}`
@@ -2697,7 +3103,9 @@ async function ensureWorker(sessionId, {
       // rollout from ever becoming a reason to interrupt paid work.
       if (existing?.inFlight) {
         if (staleReason === 'storage-mode') {
-          throw new Error('Cannot change worker storage while a turn is running');
+          // #4533: the session is busy, not the platform broken: the code
+          // lets a caller wait for the turn rather than report a fault.
+          throw Object.assign(new Error('Cannot change worker storage while a turn is running'), { code: 'session_busy' });
         }
         log.info('worker', 'Deferring stale warm worker replacement until turn completion', {
           containerName, staleReason,
@@ -2821,6 +3229,12 @@ async function execInWorker(sessionId, {
   // pushes is what it proposes, or a revision of a proposal up for a vote. A
   // person's dev chat keeps a failed turn's work, as it always has.
   discardFailedTurn = false,
+  // The stop guard: a Claude Code Stop hook (worker/build-stop-hook.js) that
+  // sends the agent back to work, twice at most, when it tries to end a turn
+  // that has changed nothing. The Homeroom bot's build and review-fix turns
+  // ask for it (homeroom-bot-live.js buildTurnRunner); it reaches run-cc.sh
+  // as STOP_GUARD=1 for a build that Claude Code runs, and nothing else.
+  stopGuard = false,
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
@@ -2830,7 +3244,12 @@ async function execInWorker(sessionId, {
   shotsRecordClips = false,
   // The size clips are recorded at, WIDTHxHEIGHT: the motion screens' own,
   // so a phone clip is not a phone in the corner of a desktop-sized frame.
+  // The phone browsers record at the phone motion screens' size.
   shotsClipSize = null,
+  shotsPhoneClipSize = null,
+  // The personas that get a phone browser beside their desktop one: those
+  // with a phone screen (visible-changes.phonePersonas).
+  shotsPhonePersonas = [],
   // The app under test is a child app: the shots proxy serves its
   // /usernode-bridge|native|tailwind/ requests from the platform, as the
   // production edge does. The platform's own pairs serve their own.
@@ -2936,6 +3355,14 @@ async function execInWorker(sessionId, {
     stopped.agentHarness = resolveTurnBackend(agentBackend, agentHarness).harness;
     stopped.execExitSeen = true;
     stopped.exitCode = 143;
+    // The record that attempt registration already wrote for this very turn
+    // is released here, the way this function's `finally` releases a turn
+    // that ran: returning before that `try` left it in dispatch_pending with
+    // nothing to clear it. A caller that does not finish turns itself (the
+    // Homeroom bot's follow-ups) left its proposal "running" for good, and
+    // every later turn on it waited behind a turn that had never started
+    // (change 7490, 9 Oct 2026).
+    await releaseSkippedDispatch(sessionId, preRegisteredTurnId, { holdTurnRecord });
     return stopped;
   }
 
@@ -2962,7 +3389,9 @@ async function execInWorker(sessionId, {
   if (systemPrompt && !runsClaude) {
     throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
   }
-  if (resumeFallbackPrompt && !isClaude) {
+  // Claude Code makes the fresh run itself when --resume fails (run-cc.sh),
+  // on Anthropic or on OpenRouter; Codex asks the host for one instead.
+  if (resumeFallbackPrompt && !isClaude && !isClaudeOpenRouter) {
     throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
   }
   if (resumeFallbackPrompt && mode !== 'build') {
@@ -2989,8 +3418,14 @@ async function execInWorker(sessionId, {
     if (typeof shotsRecordClips !== 'boolean') {
       throw new Error('execInWorker: shots clip recording must be boolean');
     }
-    if (shotsClipSize != null && !/^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(String(shotsClipSize))) {
-      throw new Error('execInWorker: shots clip size must be WIDTHxHEIGHT');
+    for (const size of [shotsClipSize, shotsPhoneClipSize]) {
+      if (size != null && !/^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(String(size))) {
+        throw new Error('execInWorker: shots clip size must be WIDTHxHEIGHT');
+      }
+    }
+    if (!Array.isArray(shotsPhonePersonas)
+        || !shotsPhonePersonas.every((persona) => SHOTS_PERSONAS.has(persona))) {
+      throw new Error('execInWorker: shots phone personas must be a list of personas');
     }
     if (typeof shotsPlatformAssets !== 'boolean') {
       throw new Error('execInWorker: shots platform assets must be boolean');
@@ -3039,16 +3474,19 @@ async function execInWorker(sessionId, {
   // (conventions block + spec doc) legitimately exceed it. See
   // TURN_PROMPT_PATH. Written before active_turn is persisted so a
   // failure here surfaces as a plain turn error with nothing to reap.
+  // #4575: under this turn's own id, so a dispatch that loses the race for
+  // active_turn below never overwrites the prompt of the turn that won it.
+  const promptPaths = turnPromptPaths(durableTurnId);
   if (!reusePromptFile) {
-    await writeTurnPrompt(sessionId, prompt);
+    await writeTurnPrompt(sessionId, prompt, promptPaths.prompt);
   }
   if (resumeFallbackPrompt) {
-    await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt);
+    await writeTurnResumeFallbackPrompt(sessionId, resumeFallbackPrompt, promptPaths.resumeFallback);
   }
   // A reused task prompt is a Codex recovery concern today, but keep this
   // write independent so any future Claude recovery cannot point the runner
   // at an absent or stale system-context file.
-  if (systemPrompt) await writeTurnSystemPrompt(sessionId, systemPrompt);
+  if (systemPrompt) await writeTurnSystemPrompt(sessionId, systemPrompt, promptPaths.system);
 
   // Anthropic-proxy: when the caller provides a BYOK key (anthropicApiKey
   // truthy), the worker hits api.anthropic.com directly with that key
@@ -3082,6 +3520,7 @@ async function execInWorker(sessionId, {
       shotsMemberToken: shotsAuthTokens?.member,
       shotsAdminToken: shotsAuthTokens?.read_only_admin,
       shotsFullAdminToken: shotsAuthTokens?.full_admin,
+      shotsGuestToken: shotsAuthTokens?.guest ?? null,
       homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
     });
   } catch (err) {
@@ -3089,8 +3528,8 @@ async function execInWorker(sessionId, {
     throw err;
   }
   const safeEnv = {
-    PROMPT_FILE: TURN_PROMPT_PATH,
-    SYSTEM_PROMPT_FILE: systemPrompt ? TURN_SYSTEM_PROMPT_PATH : '',
+    PROMPT_FILE: promptPaths.prompt,
+    SYSTEM_PROMPT_FILE: systemPrompt ? promptPaths.system : '',
     MODE: mode,
     BRANCH: branchName || '',
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
@@ -3103,13 +3542,15 @@ async function execInWorker(sessionId, {
       SHOTS_NAVIGATION_HINTS: JSON.stringify(shotsNavigationHints || {}),
       SHOTS_RECORD_CLIPS: shotsRecordClips ? '1' : '0',
       ...(shotsRecordClips && shotsClipSize ? { SHOTS_CLIP_SIZE: String(shotsClipSize) } : {}),
+      ...(shotsRecordClips && shotsPhoneClipSize ? { SHOTS_PHONE_CLIP_SIZE: String(shotsPhoneClipSize) } : {}),
+      SHOTS_PHONE_PERSONAS: JSON.stringify([...new Set(shotsPhonePersonas)]),
       SHOTS_PLATFORM_ASSETS: shotsPlatformAssets ? '1' : '0',
     } : {}),
     ...(isClaude ? {
       MODEL: claudeModel,
       CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
       RESUME_FALLBACK_PROMPT_FILE: resumeFallbackPrompt
-        ? TURN_RESUME_FALLBACK_PROMPT_PATH
+        ? promptPaths.resumeFallback
         : '',
       // Retarget the Anthropic SDK through the proxy only for Claude when
       // not BYOK. Never set for Codex.
@@ -3136,6 +3577,13 @@ async function execInWorker(sessionId, {
     safeEnv.AGENT_MODEL_MAX_OUTPUT_TOKENS = agentModelMetadata?.maxOutputTokens != null
       ? String(agentModelMetadata.maxOutputTokens)
       : '';
+    // The catalog's context window, which the adapter hands Claude Code with
+    // the window it compacts at (claudeChildEnv): an OpenRouter model is one
+    // Claude Code does not know, and without them a build resent its whole
+    // history, up to 1.2 MB, on every request.
+    safeEnv.AGENT_MODEL_CONTEXT_WINDOW = agentModelMetadata?.contextWindow != null
+      ? String(agentModelMetadata.contextWindow)
+      : '';
     // The thinking level, which the adapter sends as output_config.effort.
     safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
     // #3426: '1' lets the adapter pass image blocks through to a model the
@@ -3145,7 +3593,10 @@ async function execInWorker(sessionId, {
     // the catalog lists as taking files; anything else is a note.
     safeEnv.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata?.supportsFiles === true ? '1' : '';
     safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
-    safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
+    // The Homeroom bot's nudge (homeroom-bot-live.js buildTurnRunner): the
+    // whole build prompt, for the fresh run run-cc.sh makes when the build's
+    // conversation cannot be resumed. Empty for every other turn.
+    safeEnv.RESUME_FALLBACK_PROMPT_FILE = resumeFallbackPrompt ? promptPaths.resumeFallback : '';
     safeEnv.TURN_UUID = turnUuid || '';
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
     safeEnv.DISCARD_FAILED_TURN = discardFailedTurn === true ? '1' : '';
@@ -3179,6 +3630,9 @@ async function execInWorker(sessionId, {
     // the (already-validated) base so generation and catalog agree.
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
   }
+  // Only a Claude Code build has the hook: a scout changes nothing by design,
+  // and the Codex runner has no Stop hook to install.
+  if (stopGuard === true && mode === 'build' && runsClaude) safeEnv.STOP_GUARD = '1';
   const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
@@ -3226,6 +3680,17 @@ async function execInWorker(sessionId, {
   // `journal` is recorded so stopTurn() can append the exit marker to the
   // turn's own journal (#889) instead of leaving the consumer to discover
   // the kill via its 10s liveness watchdog.
+  // What this call is about to overwrite, so a dispatch that loses the race
+  // for active_turn puts it back rather than wiping it (#4575).
+  const registryBefore = _registryGet(sessionId);
+  const replacedRegistryFields = registryBefore ? {
+    activeTurnMode: registryBefore.activeTurnMode ?? null,
+    journal: registryBefore.journal ?? null,
+    activeTurnId: registryBefore.activeTurnId ?? null,
+    turnByokCents: registryBefore.turnByokCents,
+    turnByokSwitched: registryBefore.turnByokSwitched,
+    unpushed: registryBefore.unpushed ?? null,
+  } : null;
   _registryUpsert(sessionId, {
     inFlight: true, activeTurnMode: mode, journal, activeTurnId: durableTurnId,
     turnByokCents: 0, turnByokSwitched: false,
@@ -3234,7 +3699,7 @@ async function execInWorker(sessionId, {
     // worker's to rescue.
     unpushed: null,
   });
-  const activeTurnPersisted = await _persistActiveTurn(sessionId, {
+  const activeTurnPersist = await _persistActiveTurn(sessionId, {
     turnId: durableTurnId,
     phase: turnLifecycle.PHASE_DISPATCH_PENDING,
     mode,
@@ -3267,16 +3732,33 @@ async function execInWorker(sessionId, {
     // even if the user adds/removes their key while the turn is detached.
     byok: !!anthropicApiKey,
   });
-  if (!activeTurnPersisted) {
+  if (!activeTurnPersist.ok) {
+    // Put back what this call replaced: this dispatch never ran, so the
+    // turn that owns the session (or the last one's remembered state) keeps
+    // its in-memory record.
     _registryUpsert(sessionId, {
-      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
-      journal: null, activeTurnId: null,
+      ...(replacedRegistryFields || {
+        activeTurnMode: null, journal: null, activeTurnId: null,
+      }),
+      inFlight: false, lastUsedMs: Date.now(),
     });
     await revokeHomeroomReadGrant(sessionId, homeroomGrant);
-    const err = new Error('execInWorker: durable active turn could not be persisted');
+    // This turn's own prompt files are not used by anyone else (#4575).
+    if (promptPaths.prompt !== TURN_PROMPT_PATH) {
+      await execWorkerCommand(containerName, [
+        'rm', '-f', promptPaths.prompt, promptPaths.system, promptPaths.resumeFallback,
+      ], null, { timeoutMs: 5000 }).catch(() => {});
+    }
+    const err = new Error(activeTurnPersist.code === 'session_busy'
+      ? 'execInWorker: another turn already owns this session'
+      : 'execInWorker: durable active turn could not be persisted');
     err.code = requireActiveTurnPersistence
       ? 'durable_retry_persist_failed'
       : 'durable_turn_persist_failed';
+    // Why (#4575): session_busy means another turn holds the session and a
+    // caller may wait for it to finish and dispatch again.
+    err.persistCode = activeTurnPersist.code;
+    err.sessionBusy = activeTurnPersist.code === 'session_busy';
     throw err;
   }
 
@@ -4107,28 +4589,58 @@ async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
 // committed, pushed or journaled, and the active-turn record is untouched.
 const BENCH_CAPTURE_SCRIPT_PATH = '/tmp/usernode-bench-capture.js';
 const BENCH_ENV_KEY = /^[A-Z][A-Z0-9_]{0,63}$/;
+// #4387: another of the platform's scripts run the same way (the first
+// version's first look, services/first-version-screens.js) is written to a
+// file of its own, so it never overwrites a capture running beside it.
+const BENCH_SCRIPT_PATH_RE = /^\/tmp\/usernode-[a-z0-9-]{1,40}\.js$/;
 
-function buildBenchCaptureCommand(env = {}) {
+function buildBenchCaptureCommand(env = {}, scriptPath = BENCH_CAPTURE_SCRIPT_PATH) {
+  if (!BENCH_SCRIPT_PATH_RE.test(scriptPath)) throw new Error(`runBenchCapture: invalid script path ${scriptPath}`);
   const pairs = Object.entries(env).map(([key, value]) => {
     if (!BENCH_ENV_KEY.test(key)) throw new Error(`runBenchCapture: invalid env key ${key}`);
     return shellQuote(`${key}=${String(value)}`);
   });
-  return ['sh', '-c', `cd /home/node/workspace && exec env ${pairs.join(' ')} node ${BENCH_CAPTURE_SCRIPT_PATH}`];
+  return ['sh', '-c', `cd /home/node/workspace && exec env ${pairs.join(' ')} node ${scriptPath}`];
 }
 
-async function runBenchCapture(containerName, { source, env = {}, timeoutMs, maxBuffer = 96 * 1024 * 1024 } = {}) {
+async function runBenchCapture(containerName, {
+  source, env = {}, timeoutMs, maxBuffer = 96 * 1024 * 1024, scriptPath = BENCH_CAPTURE_SCRIPT_PATH,
+} = {}) {
   if (!containerName) throw new Error('runBenchCapture: no worker');
   if (typeof source !== 'string' || !source) throw new Error('runBenchCapture: no script');
-  const write = buildTurnContextFileScript(source, BENCH_CAPTURE_SCRIPT_PATH);
+  const command = buildBenchCaptureCommand(env, scriptPath);
+  const write = buildTurnContextFileScript(source, scriptPath);
   if (usesKubernetesWorkers()) await execWorkerCommand(containerName, ['sh', '-s'], write);
   else await docker.execShellStdin(containerName, write, { timeoutMs: 20000, label: 'runBenchCapture' });
-  const { stdout } = await execWorkerCommand(containerName, buildBenchCaptureCommand(env), null, { timeoutMs, maxBuffer });
+  const { stdout } = await execWorkerCommand(containerName, command, null, { timeoutMs, maxBuffer });
   return String(stdout || '');
 }
 
 // Tear down a warm worker container (eviction). Volume is preserved so
 // the next `ensureWorker` re-warms with CC's session memory intact. A
 // finished build's unpushed commit is pushed first (rescueUnpushedCommit).
+// #4449: Live (services/first-version-live.js), a watcher run beside a
+// first version's build turn, outside it: its files written, started in the
+// background, its stream read and finally stopped, each by a short shell
+// script the platform builds (first-version-live.js). `files` are
+// { path, content } under /tmp/usernode-live/; a read answers the script's
+// stdout. Nothing here touches the turn, its journal or its checkout.
+const LIVE_FILE_PATH_RE = /^\/tmp\/usernode-live\/[a-z0-9-]{1,40}\.(js|cjs)$/;
+
+async function runLiveScript(containerName, script, { files = [], args = [], timeoutMs = 20000, maxBuffer = null } = {}) {
+  if (!containerName) throw new Error('runLiveScript: no worker');
+  for (const file of files) {
+    if (!LIVE_FILE_PATH_RE.test(file.path)) throw new Error(`runLiveScript: invalid file path ${file.path}`);
+    const write = `mkdir -p /tmp/usernode-live\n${buildTurnContextFileScript(file.content, file.path)}`;
+    // eslint-disable-next-line no-await-in-loop
+    await execWorkerCommand(containerName, ['sh', '-s'], write, { timeoutMs: 30000 });
+  }
+  const { stdout } = await execWorkerCommand(containerName, ['sh', '-c', script, 'sh', ...args.map(String)], null, {
+    timeoutMs, ...(maxBuffer ? { maxBuffer } : {}),
+  });
+  return String(stdout || '');
+}
+
 async function evictWorker(sessionId) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
@@ -4744,6 +5256,7 @@ module.exports = {
   syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,
+  releaseSkippedDispatch,
   // post-agent tail lifecycle (holdTurnRecord callers)
   TURN_PHASE_TAIL,
   markTurnTail,
@@ -4755,6 +5268,8 @@ module.exports = {
   // #3737: the benchmark's screenshot step, outside any agent turn
   runBenchCapture,
   buildBenchCaptureCommand,
+  // #4449: Live's watcher, beside a first version's build turn
+  runLiveScript,
   BENCH_CAPTURE_SCRIPT_PATH,
   warmRegistrySnapshot,
   adoptWarmWorker,
@@ -4812,6 +5327,7 @@ module.exports = {
   TURN_PROMPT_PATH,
   TURN_SYSTEM_PROMPT_PATH,
   TURN_RESUME_FALLBACK_PROMPT_PATH,
+  turnPromptPaths,
   buildTurnPromptScript,
   buildTurnSystemPromptScript,
   buildTurnResumeFallbackPromptScript,

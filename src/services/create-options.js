@@ -10,12 +10,14 @@
  * ── Who it is for ───────────────────────────────────────────────────────
  *
  * `audience` is the create screen's first question in the platform's own
- * words (services/communities.js): `solo` (Just me), `invited` (A group) or
- * `open` (A community). It is not stored — audience is derived, never
- * stored — so it resolves here to the two visibility columns it implies:
+ * words (services/communities.js): `solo` (Just me), `invited` (A private
+ * community) or `open` (A public community). It is not stored — audience is
+ * derived, never stored — so it resolves here to the two visibility columns
+ * it implies:
  *
  *   solo, invited → collab private, view private. A private project; it
- *                   reads as a Group once anyone else is in it or invited.
+ *                   reads as a Private community once anyone else is in it
+ *                   or invited.
  *   open          → collab public, view public. Anyone can see, join and
  *                   build.
  *
@@ -27,10 +29,10 @@
  * ── Who is invited ─────────────────────────────────────────────────────
  *
  * `invitees` is a list of usernames and `inviteEmails` a list of addresses,
- * both for a Group only: an invite into a project anyone can already build
- * is meaningless (the invites route refuses it for the same reason), and
- * into a Just-me project it would make it a Group, which is a different
- * answer to the first question. An address is for somebody who may not be
+ * both for a private community only: an invite into a project anyone can
+ * already build is meaningless (the invites route refuses it for the same
+ * reason), and into a Just-me project it would make it a private community,
+ * which is a different answer to the first question. An address is for somebody who may not be
  * on Homeroom yet (services/email-invites.js); together the two lists hold
  * at most MAX_INVITEES people.
  *

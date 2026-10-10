@@ -167,3 +167,15 @@ test('a level of the screen, not an overlay: in flow, the rest of the screen ste
   assert.match(src, /if \(openKey != null\) el\.scrollTop = 0;/);
   assert.equal((src.match(/href=\{/g) || []).length, 1, 'still exactly one href, the guarded action');
 });
+
+// #3253, #3248: the note on what the rule counts sits under the task, muted.
+test('the count note reads under the task, and is absent without one', () => {
+  const note = 'Counts when you press Propose to group, which puts your change to a vote.';
+  const html = render({ ...VIEW, countNote: note });
+  const task = html.indexOf('Up to 2,000 pts a week');
+  const at = html.indexOf(note);
+  assert.ok(task >= 0 && at > task, 'after the task');
+  assert.ok(at < html.indexOf('role="progressbar"'), 'before the rail');
+  assert.match(html, /<p class="text-\[0\.8125rem\] text-zinc-500 dark:text-zinc-400">Counts when/);
+  assert.doesNotMatch(render(VIEW), /Propose to group/);
+});

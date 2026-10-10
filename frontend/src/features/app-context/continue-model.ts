@@ -1,7 +1,9 @@
-// The rows under "Agent sessions" in the Homeroom menu (#2779 follow-up; it
-// was "Continue" until the UI overhaul): your agent
-// sessions, so going back to one is a tap from anywhere. Pure, so tests can
-// read the rules without a browser.
+// The rows under "Agent chats" in the Homeroom menu (#2779 follow-up; it was
+// "Continue" until the UI overhaul, then "Agent sessions", then "More"): your
+// agent sessions, so going back to one is a tap from anywhere. Pure, so tests
+// can read the rules without a browser. The section itself shows only once
+// the viewer has had an agent session (../agent-session/store.ts
+// agentChatsShown, first-session run-through, 5 Oct 2026).
 //
 // The rules:
 //   - every app's, not only the one the menu is open on, and on Home too: a
@@ -26,6 +28,8 @@
 //     what is left of the five; the rows stay newest first. More than five
 //     working at once are all listed, since each is something in progress.
 
+import { t } from '../../lib/i18n/runtime';
+import { releaseMinutes, releaseOf } from '../../lib/release-eta';
 import { agentActivity, type AgentActivity } from '../agent-session/activity';
 
 export interface ContinueAgentSession {
@@ -35,7 +39,14 @@ export interface ContinueAgentSession {
   lastActivityAt: string | null;
   createdAt?: string | null;
   focusApp: { slug: string | null; name?: string | null } | null;
-  activeChange: { appSlug: string | null; appName?: string | null; status: string | null; title: string | null } | null;
+  activeChange: {
+    appSlug: string | null;
+    appName?: string | null;
+    status: string | null;
+    title: string | null;
+    /** A merge of Homeroom itself not live yet: when its release comes (../../lib/release-eta.ts). */
+    release?: unknown;
+  } | null;
   busy?: boolean;
   doneUnseen?: boolean;
 }
@@ -76,22 +87,85 @@ function agentApp(session: ContinueAgentSession): string | null {
     || null;
 }
 
-/** "Run Club · in progress", or "In progress" with no app to name. */
-export function agentSub(app: string | null, detail: string): string {
-  return app ? `${app} · ${detail.charAt(0).toLowerCase()}${detail.slice(1)}` : detail;
+/**
+ * Where a session's work stands, as the row's second line says it. The
+ * release kinds are a merge of Homeroom itself, which says when the
+ * platform's next release carries it instead of "Going live" (the words of
+ * releaseShort in ../../lib/release-eta.ts): "Homeroom · goes live in about
+ * 8 minutes".
+ */
+export type AgentDetailKind = 'session' | 'approval' | 'goingLive' | 'live' | 'inProgress'
+  | 'releaseWaiting' | 'releaseNow' | 'releaseNext' | 'releaseMinutes';
+
+/** A kind, and for `releaseMinutes` the whole minutes until it goes live. */
+interface AgentDetail {
+  kind: AgentDetailKind;
+  minutes?: number;
 }
 
-function agentDetail(session: ContinueAgentSession): string {
+// Message ids. The line alone ("In progress"), and the line after the app's
+// name ("Run Club · in progress"): two wordings, so two messages each.
+const DETAIL: Record<AgentDetailKind, string> = {
+  session: 'agent:appContext.continue.detail.session',
+  approval: 'agent:appContext.continue.detail.approval',
+  goingLive: 'agent:appContext.continue.detail.goingLive',
+  live: 'agent:appContext.continue.detail.live',
+  inProgress: 'agent:appContext.continue.detail.inProgress',
+  releaseWaiting: 'agent:appContext.continue.detail.releaseWaiting',
+  releaseNow: 'agent:appContext.continue.detail.releaseNow',
+  releaseNext: 'agent:appContext.continue.detail.releaseNext',
+  releaseMinutes: 'agent:appContext.continue.detail.releaseMinutes',
+};
+const SUB_WITH_APP: Record<AgentDetailKind, string> = {
+  session: 'agent:appContext.continue.sub.session',
+  approval: 'agent:appContext.continue.sub.approval',
+  goingLive: 'agent:appContext.continue.sub.goingLive',
+  live: 'agent:appContext.continue.sub.live',
+  inProgress: 'agent:appContext.continue.sub.inProgress',
+  releaseWaiting: 'agent:appContext.continue.sub.releaseWaiting',
+  releaseNow: 'agent:appContext.continue.sub.releaseNow',
+  releaseNext: 'agent:appContext.continue.sub.releaseNext',
+  releaseMinutes: 'agent:appContext.continue.sub.releaseMinutes',
+};
+
+/**
+ * "Run Club · in progress", or "In progress" with no app to name.
+ * `minutes` is the count `releaseMinutes` says.
+ */
+export function agentSub(app: string | null, kind: AgentDetailKind, minutes?: number): string {
+  const values = kind === 'releaseMinutes' ? { count: minutes ?? 1 } : {};
+  return app ? t(SUB_WITH_APP[kind], { app, ...values }) : t(DETAIL[kind], values);
+}
+
+/**
+ * When a merge going live goes live: by its release block when the server
+ * sent one (only the platform's own app has one), else just "Going live".
+ * The same cases as releaseShort, in kinds.
+ */
+function releaseDetail(release: unknown, now: number): AgentDetail {
+  const r = releaseOf(release);
+  if (!r) return { kind: 'goingLive' };
+  if (r.state === 'waiting') return { kind: 'releaseWaiting' };
+  const minutes = releaseMinutes(r, now);
+  if (minutes != null) return { kind: 'releaseMinutes', minutes };
+  // Nothing counting down: a next release with no time yet is just the next
+  // one; rolling out, or past its estimate, is now.
+  return { kind: r.state === 'next' && !r.etaAt ? 'releaseNext' : 'releaseNow' };
+}
+
+function agentDetailOf(session: ContinueAgentSession, now: number): AgentDetail {
   const change = session.activeChange;
-  if (!change) return 'Agent session';
-  if (change.status === 'promoted') return 'In vote';
-  if (change.status === 'merged') return 'Merged';
-  return 'In progress';
+  if (!change) return { kind: 'session' };
+  if (change.status === 'promoted') return { kind: 'approval' };
+  if (change.status === 'merging') return releaseDetail(change.release, now);
+  if (change.status === 'merged') return { kind: 'live' };
+  return { kind: 'inProgress' };
 }
 
 export function continueRows(
   agentSessions: ContinueAgentSession[],
   max = CONTINUE_MAX,
+  now: number = Date.now(),
 ): ContinueList {
   const current = agentSessions
     .filter((session) => session.status === 'open' && (session.title || session.activeChange))
@@ -101,14 +175,17 @@ export function continueRows(
   const others = new Set(current.filter((session) => agentActivity(session) !== 'working').slice(0, room));
   const shown = current.filter((session) => others.has(session) || agentActivity(session) === 'working');
   const rows = shown
-    .map((session): ContinueRow => ({
-      key: `agent:${session.id}`,
-      sessionId: session.id,
-      href: `#messages/agent/${session.id}`,
-      title: session.title || (session.activeChange && session.activeChange.title) || 'Agent session',
-      detail: agentDetail(session),
-      sub: agentSub(agentApp(session), agentDetail(session)),
-      activity: agentActivity(session),
-    }));
+    .map((session): ContinueRow => {
+      const detail = agentDetailOf(session, now);
+      return {
+        key: `agent:${session.id}`,
+        sessionId: session.id,
+        href: `#messages/agent/${session.id}`,
+        title: session.title || (session.activeChange && session.activeChange.title) || t('agent:appContext.continue.untitled'),
+        detail: agentSub(null, detail.kind, detail.minutes),
+        sub: agentSub(agentApp(session), detail.kind, detail.minutes),
+        activity: agentActivity(session),
+      };
+    });
   return { rows, more: current.length > shown.length };
 }

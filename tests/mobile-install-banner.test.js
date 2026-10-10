@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -176,6 +177,7 @@ function env(over = {}) {
     maxTouchPoints: 5,
     native: false,
     standalone: false,
+    member: true,
     dismissed: false,
     urls: URLS,
     ...over,
@@ -221,6 +223,31 @@ test('installOffer: suppressed inside the native app', () => {
 test('installOffer: suppressed when already installed as a PWA', () => {
   const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
   assert.equal(installOffer(env({ standalone: true })), null);
+});
+
+test('#4204: suppressed until the visitor is signed in and let in', () => {
+  // The signed-out landing (an invite link's page before Join), the sign-in
+  // page and the waiting room: nothing is offered, store listing or not.
+  const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.equal(installOffer(env({ member: false })), null);
+  assert.equal(installOffer(env({ member: false, urls: { ios: null, android: null } })), null);
+  assert.equal(installOffer(env({ member: false, ua: ANDROID })), null);
+  // Once in, the offer is what it was.
+  assert.deepEqual(installOffer(env({ urls: { ios: null, android: null } })), { kind: 'a2hs', os: 'ios' });
+});
+
+test('#4204: the island asks only once there is a platform viewer', () => {
+  // The fetch and the member flag both wait on the authed shell, so an
+  // anonymous document never requests /api/public/mobile-app, and a sign-in
+  // without a reload (sv:authed) still turns the strip on.
+  const src = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/mobile-install/install-banner.tsx'), 'utf8');
+  assert.match(src, /from '\.\.\/\.\.\/lib\/platform-viewer'/);
+  const gate = src.indexOf('whenPlatformViewer(');
+  assert.ok(gate > 0, 'the island waits for a platform viewer');
+  assert.ok(src.indexOf("fetch('/api/public/mobile-app')") > gate,
+    'the store-listing fetch runs inside the viewer gate');
+  assert.match(src, /member: member && hasPlatformViewer\(\)/);
 });
 
 test('installOffer: suppressed once dismissed', () => {
@@ -331,21 +358,22 @@ test('storeLabel: a TestFlight invite is not called the App Store', () => {
   // live case, not a hypothetical: saying "the App Store" while opening a
   // beta invite tells the visitor something untrue about what they join.
   const { storeLabel } = loadTsx('frontend/src/features/mobile-install/detect.ts');
-  assert.equal(storeLabel('ios', 'https://testflight.apple.com/join/H9puE1gu'), 'TestFlight');
+  // storeLabel answers with the strip's whole line, as a message id.
+  assert.equal(message(storeLabel('ios', 'https://testflight.apple.com/join/H9puE1gu')), 'Get the app on TestFlight');
 });
 
 test('storeLabel: real store listings get their store name', () => {
   const { storeLabel } = loadTsx('frontend/src/features/mobile-install/detect.ts');
-  assert.equal(storeLabel('ios', IOS_URL), 'the App Store');
-  assert.equal(storeLabel('android', PLAY_URL), 'Google Play');
+  assert.equal(message(storeLabel('ios', IOS_URL)), 'Get the app on the App Store');
+  assert.equal(message(storeLabel('android', PLAY_URL)), 'Get the app on Google Play');
 });
 
 test('storeLabel: an unrecognised or unparseable URL falls back to the platform store', () => {
   // update_url is one free-text field and nobody is asked what kind of link
   // it is, so an enterprise or self-hosted destination must still read sanely.
   const { storeLabel } = loadTsx('frontend/src/features/mobile-install/detect.ts');
-  assert.equal(storeLabel('android', 'https://downloads.example.com/usernode.apk'), 'Google Play');
-  assert.equal(storeLabel('ios', 'not a url'), 'the App Store');
+  assert.equal(message(storeLabel('android', 'https://downloads.example.com/usernode.apk')), 'Get the app on Google Play');
+  assert.equal(message(storeLabel('ios', 'not a url')), 'Get the app on the App Store');
 });
 
 // ── The island's first render ───────────────────────────────────────
@@ -374,10 +402,13 @@ test('#1513: the a2hs steps are instructions, one per OS, and name no store', ()
   assert.deepEqual(Object.keys(A2HS_STEPS).sort(), ['android', 'ios']);
   // iOS Safari exposes no install API and Android's beforeinstallprompt is
   // not guaranteed to fire, so both are directions to a menu item.
-  assert.match(A2HS_STEPS.ios, /Share.*Add to Home Screen/i);
-  assert.match(A2HS_STEPS.android, /menu.*Add to Home screen/i);
+  assert.match(message(A2HS_STEPS.ios), /Share.*Add to Home Screen/i);
+  assert.match(message(A2HS_STEPS.android), /menu.*Add to Home screen/i);
   for (const os of ['ios', 'android']) {
-    assert.ok(!A2HS_STEPS[os].includes(STORE_LABEL[os]),
+    // STORE_LABEL is the strip's whole line now ("Get the app on Google
+    // Play"), so the store's name is what follows "on".
+    const store = message(STORE_LABEL[os]).replace(/^Get the app on (the )?/, '');
+    assert.ok(store && !message(A2HS_STEPS[os]).includes(store),
       'the home-screen path must not name a store');
   }
 });
@@ -396,12 +427,90 @@ test('#1513: the control is a button when there is nowhere to link to', () => {
   assert.doesNotMatch(button, /bg-violet-600/, 'the fill comes from the variant');
   assert.match(button, /id="mobile-install-open"/);
   assert.match(button, /type="button"/);
-  assert.match(button, /aria-expanded=\{showSteps\}/,
-    'it discloses, so it says so');
+  assert.match(button, /aria-haspopup="dialog"/,
+    'it opens the steps sheet, so it says so');
+  assert.match(button, /aria-expanded=\{stepsOpen\}/);
   assert.doesNotMatch(button, /href=/, 'there is no destination');
   // The store branch keeps its anchor and its safe rel.
   const anchorBranch = src.slice(src.indexOf('<a\n          id="mobile-install-open"'));
   assert.match(anchorBranch.slice(0, 400), /rel="noopener noreferrer"/);
+});
+
+// ── The "How" sheet (#4400) ─────────────────────────────────────────
+
+test('#4400: How opens a sheet; the strip keeps its line and its button', () => {
+  const src = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/mobile-install/install-banner.tsx'), 'utf8');
+  // The strip no longer swaps its second line for the steps, nor its button
+  // for "Got it": the sheet has both.
+  assert.doesNotMatch(src, /A2HS_STEPS/);
+  assert.doesNotMatch(src, /showSteps/);
+  assert.doesNotMatch(src, /'Got it'/);
+  assert.match(src, /: t\('agent:install\.banner\.addToHomeScreen'\)\}/);
+  assert.equal(message('agent:install.banner.addToHomeScreen'), 'Add it to your home screen');
+  assert.match(src, /onClick=\{\(\) => setStepsOpen\(true\)\}/);
+  // Closing the sheet only closes the sheet: the banner's dismissal stays the ✕'s.
+  assert.match(src, /<InstallStepsSheet os=\{offer\.os\} onClose=\{\(\) => setStepsOpen\(false\)\} \/>/);
+  // Only ever mounted after a tap, so the prerendered strip is unchanged.
+  assert.match(src, /useState\(false\);\n\n  \/\/ The fetch is skipped/);
+});
+
+test('#4400: the steps are numbered lines per OS, the first naming its control', () => {
+  const { A2HS_STEP_LIST, STORE_LABEL } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.deepEqual(Object.keys(A2HS_STEP_LIST).sort(), ['android', 'ios']);
+  assert.deepEqual(A2HS_STEP_LIST.ios.map((s) => message(s.text)), [
+    "Tap Share in Safari's toolbar",
+    'Choose Add to Home Screen',
+    'Open Homeroom from its icon',
+  ]);
+  assert.equal(A2HS_STEP_LIST.ios[0].glyph, 'share');
+  assert.equal(A2HS_STEP_LIST.android.length, 3);
+  assert.equal(A2HS_STEP_LIST.android[0].glyph, 'menu');
+  assert.match(message(A2HS_STEP_LIST.android[1].text), /Add to Home screen/);
+  for (const os of ['ios', 'android']) {
+    for (const step of A2HS_STEP_LIST[os]) {
+      const store = message(STORE_LABEL[os]).replace(/^Get the app on (the )?/, '');
+      assert.ok(store && !message(step.text).includes(store), 'the home-screen path must not name a store');
+    }
+  }
+});
+
+test('#4400: the sheet shows a title, one card of steps and a full-width Got it', () => {
+  const mod = loadTsx('frontend/src/features/mobile-install/install-steps-sheet.tsx');
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const html = renderToHtml(createElement(mod.InstallStepsContent, { os: 'ios', onClose() {} }));
+  assert.match(html, /id="mobile-install-steps-title"[^>]*>Add Homeroom to your home screen</);
+  assert.match(html, /id="mobile-install-steps-close"[^>]*aria-label="Close"/);
+  // The card is the shell's GroupedList: 20px, one hairline, white.
+  assert.match(html, /rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\] bg-white/);
+  const items = [...html.matchAll(/<li /g)];
+  assert.equal(items.length, 3);
+  assert.match(html, /Tap Share in Safari&#x27;s toolbar/);
+  assert.ok(html.indexOf('Tap Share') < html.indexOf('Choose Add to Home Screen'));
+  assert.ok(html.indexOf('Choose Add to Home Screen') < html.indexOf('Open Homeroom from its icon'));
+  // The share glyph rides the first step only.
+  assert.equal((html.match(/<li [\s\S]*?<\/li>/g) || []).filter((li) => li.includes('<svg')).length, 1);
+  // "Got it" is the shell's primary Button, full width.
+  assert.match(html, /<button[^>]*id="mobile-install-steps-done"[^>]*class="[^"]*w-full[^"]*bg-violet-600[^"]*"[^>]*>Got it<\/button>/);
+
+  const android = renderToHtml(createElement(mod.InstallStepsContent, { os: 'android', onClose() {} }));
+  assert.match(android, /data-a2hs-os="android"/);
+  assert.match(android, /Choose Add to Home screen/);
+});
+
+test('#4400: the sheet is presented through the kit sheet seam, and back closes it', () => {
+  const src = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/mobile-install/install-steps-sheet.tsx'), 'utf8');
+  assert.match(src, /adoptKitSurface\(\{\s*kind: 'sheet'/);
+  assert.match(src, /createPortal\(/);
+  assert.match(src, /pushDismissible\(/);
+  assert.match(src, /role="dialog"/);
+  assert.match(src, /aria-modal="true"/);
+  // Without the kit: a sheet from the floor, over a scrim, above the strip (z-59).
+  assert.match(src, /'fixed inset-0 z-\[70\] bg-black\/60 flex items-end justify-center'/);
+  // The panel the kit adopts keeps one class string, or React would erase the
+  // kit's `platform-sheet-adopted` on the re-render that adoption causes.
+  assert.match(src, /id="mobile-install-steps"[\s\S]*?className="w-full max-w-md rounded-t-\[20px\]/);
 });
 
 test('#1513: the first render is still the hidden, offer-less strip', () => {

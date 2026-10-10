@@ -67,6 +67,7 @@ import type { HTMLAttributes, KeyboardEvent, ReactNode } from 'react';
 import { IconTile } from '@/components/ui/icon-tile';
 import { CheckIcon } from '@/components/ui/icons';
 import { resolveIllustration } from '../../lib/challenge-illustrations';
+import { useMessages } from '../../lib/i18n/react';
 
 export type ChallengeState = 'new' | 'progress' | 'done';
 
@@ -158,6 +159,7 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
   counted?: boolean;
   size?: PartSize;
 }): ReactNode {
+  const t = useMessages('leaderboard');
   const pct = fill == null ? null : Math.round(Math.max(0, Math.min(fill, 1)) * 100);
   const bar = counted && state !== 'done' && pct != null;
   return (
@@ -169,7 +171,7 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
       // The spoken value is the visible one: a rounded percent says 0% at
       // 1/500 and 100% at 499/500.
       aria-valuetext={label}
-      aria-label={name ? `${name}: ${label}` : label}
+      aria-label={name ? t('leaderboard:challenges.state.named', { challenge: name, state: label }) : label}
       className={`${RAIL} ${RAIL_SIZE[size]} ${RAIL_TONE[state]}`}
     >
       {bar ? <span className={RAIL_FILL} style={{ width: pct ? `max(${RAIL_STUB}, ${pct}%)` : RAIL_STUB }} /> : null}
@@ -187,8 +189,10 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
 // rail. It takes only the room the others leave (basis 0), so on a narrow
 // phone it is what truncates, never the reward. Nothing to say is no line at
 // all, never a stray dot.
-export function ChallengeMeta({ deadline = null, text = null, earned = false, cadence = null, size = 'md' }: {
+export function ChallengeMeta({ deadline = null, ends = null, text = null, earned = false, cadence = null, size = 'md' }: {
   deadline?: string | null;
+  /** #3203: the detail page's "ends Mon 12 Oct, 02:00", after the deadline. */
+  ends?: string | null;
   text?: string | null;
   earned?: boolean;
   cadence?: string | null;
@@ -196,6 +200,7 @@ export function ChallengeMeta({ deadline = null, text = null, earned = false, ca
 }): ReactNode {
   const parts = [
     deadline ? <span key="deadline" className={META_DEADLINE}>{deadline}</span> : null,
+    ends ? <span key="ends" className={META_DEADLINE}>{ends}</span> : null,
     text ? <span key="amount" className={earned ? META_EARNED : META_REWARD}>{text}</span> : null,
     cadence ? <span key="cadence" className={META_CADENCE}>{cadence}</span> : null,
   ].filter(Boolean);

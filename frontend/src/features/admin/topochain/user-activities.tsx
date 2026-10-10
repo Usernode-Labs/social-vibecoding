@@ -495,6 +495,7 @@ function UserActivitiesScreen() {
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
   const [events, setEvents] = useState<SeasonEvent[]>([]);
+  const [search, setSearch] = useState('');
   const [open, setOpen] = useState<OpenPanel>({ kind: 'none' });
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -508,6 +509,7 @@ function UserActivitiesScreen() {
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ page: String(page), per_page: '20' });
+    if (search) params.set('search', search);
     const res = await fetchJson(`/api/v4/admin/user-activities?${params}`);
     if (!alive.current) return;
     if (res.ok && res.data?.success) {
@@ -519,9 +521,15 @@ function UserActivitiesScreen() {
     setItems([]);
     setMeta(null);
     setError({ status: res.status, message: (res.data && res.data.error) || null });
-  }, [page]);
+  }, [page, search]);
 
   useEffect(() => { load(); }, [load]);
+
+  const commitSearch = useCallback((raw: string) => {
+    const next = raw.trim();
+    setSearch((current) => (current === next ? current : next));
+    setPage(1);
+  }, []);
 
   const remove = useCallback(async (id: number) => {
     if (!canWrite()) return;
@@ -538,6 +546,8 @@ function UserActivitiesScreen() {
   }, [load]);
 
   const close = useCallback(() => setOpen({ kind: 'none' }), []);
+
+  const filtered = !!search;
 
   return (
     <>
@@ -566,6 +576,20 @@ function UserActivitiesScreen() {
                 Import JSON…
               </button>
             ) : null}
+            {/* Commits on blur or Enter, not per keystroke — a paged server
+                query, same rule as the other search boxes in this console. */}
+            <Input
+              id="admin-topo-act-search"
+              type="text"
+              placeholder="Search user…"
+              aria-label="Search activities by user"
+              className="sm:w-56"
+              defaultValue={search}
+              onBlur={(e) => commitSearch(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
+              }}
+            />
             <button
               id="admin-topo-act-totals"
               type="button"
@@ -604,9 +628,11 @@ function UserActivitiesScreen() {
         ) : null}
         {items !== null && !error && !items.length ? (
           <EmptyState
-            title="No activities yet"
-            body="Activities are recorded when users complete challenges. You can also add one by hand."
-            action={write ? (
+            title={filtered ? 'No activities match these filters' : 'No activities yet'}
+            body={filtered
+              ? 'Clear the search box to see every activity.'
+              : 'Activities are recorded when users complete challenges. You can also add one by hand.'}
+            action={!filtered && write ? (
               <button
                 id="admin-topo-act-empty-new"
                 type="button"

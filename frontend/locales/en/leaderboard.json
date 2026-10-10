@@ -1,0 +1,1414 @@
+{
+  "tabs.challenges": {
+    "text": "Challenges",
+    "description": "Tab at the top of the Leaderboard screen: the season's challenges, tasks that earn points."
+  },
+  "tabs.kudos": {
+    "text": "Kudos",
+    "description": "Tab at the top of the Leaderboard screen: the rankings by kudos, the thank-yous members give for changes. \"Kudos\" is the feature's name."
+  },
+  "tabs.standings": {
+    "text": "Standings",
+    "description": "Tab at the top of the Leaderboard screen: the ranking of participants by points."
+  },
+  "tabs.history": {
+    "text": "History",
+    "description": "Tab at the top of the Leaderboard screen: past seasons and who won them."
+  },
+  "eventBar.label": {
+    "text": "Event",
+    "description": "Accessible name of the drop-down on the Leaderboard screen that chooses which event (a season or a competition within it) is shown."
+  },
+  "eventBar.loading": {
+    "text": "Loading…",
+    "description": "Only option in the event drop-down on the Leaderboard screen while the list of events is being fetched."
+  },
+  "eventBar.noEvents": {
+    "text": "No events",
+    "description": "Only option in the event drop-down on the Leaderboard screen when there is no event to choose."
+  },
+  "eventBar.option.season": {
+    "text": "{{event}} (season)",
+    "description": "Option in the event drop-down on the Leaderboard screen: {{event}} is a season's name, and choosing it shows the whole season combined."
+  },
+  "eventBar.option.current": {
+    "text": "{{event}} (current)",
+    "description": "Option in the event drop-down on the Leaderboard screen: {{event}} is the name of the event running now."
+  },
+  "eventBar.option.past": {
+    "text": "{{event}} (past)",
+    "description": "Option in the event drop-down on the Leaderboard screen: {{event}} is the name of an event that has ended."
+  },
+  "eventBar.pastSeasons": {
+    "text": "Past seasons →",
+    "description": "Link under the event drop-down on the Challenges tab: goes to the History tab. Keep the arrow."
+  },
+  "eventBar.noneSelected": {
+    "text": "No event selected.",
+    "description": "Shown under the event drop-down on the Leaderboard screen when no event is chosen."
+  },
+  "eventBar.loadFailed": {
+    "text": "Failed to load this event.",
+    "description": "Error shown under the event drop-down on the Leaderboard screen when the chosen event's details could not be fetched and the server gave no reason."
+  },
+  "eventBar.status.season": {
+    "text": "season",
+    "description": "Small label beside the event's name on the Standings tab: the whole season is shown, not one event. Lower case."
+  },
+  "eventBar.status.activeNow": {
+    "text": "active now",
+    "description": "Small label beside the event's name on the Standings tab: the event is running at this moment. Lower case."
+  },
+  "eventBar.status.active": {
+    "text": "active",
+    "description": "Small label beside the event's name on the Standings tab: the event is open but is not the one running now. Lower case."
+  },
+  "eventBar.status.past": {
+    "text": "past",
+    "description": "Small label beside the event's name on the Standings tab: the event has ended. Lower case."
+  },
+  "eventBar.dates": {
+    "text": "{{start}} – {{end}}",
+    "description": "Under the event's name on the Standings tab: the dates it runs from and to. {{start}} and {{end}} are dates such as \"Mar 4, 2026\", or a dash when unknown. Only the separator is translated."
+  },
+  "eventBar.datesTakingPart_one": {
+    "text": "{{start}} – {{end}} · {{count}} taking part",
+    "description": "Under the event's name on the Standings tab: the dates it runs from and to, then how many people take part. {{start}} and {{end}} are dates such as \"Mar 4, 2026\", or a dash when unknown."
+  },
+  "eventBar.datesTakingPart_other": {
+    "text": "{{start}} – {{end}} · {{count}} taking part",
+    "description": "Under the event's name on the Standings tab: the dates it runs from and to, then how many people take part. {{start}} and {{end}} are dates such as \"Mar 4, 2026\", or a dash when unknown."
+  },
+  "eventBar.seasonNote": {
+    "text": "Whole-season standings: every public event in this season, combined. Pick a single event above to see just its results.",
+    "description": "Note on the Standings tab when the whole season is chosen in the event drop-down. \"Above\" is that drop-down."
+  },
+  "eventBar.fallbackNote": {
+    "text": "Nothing is running right now, so this shows the most recent event.",
+    "description": "Note on the Standings tab when no event is running and the last one that ended is shown instead."
+  },
+  "challenges.loading": {
+    "text": "Loading challenges",
+    "description": "Accessible name of the grey placeholder shown on the Challenges tab while the challenges are being fetched."
+  },
+  "challenges.empty": {
+    "text": "No challenges for this event yet.",
+    "description": "Shown on the Challenges tab when the chosen event has no challenges."
+  },
+  "challenges.loadFailed": {
+    "text": "Failed to load challenges.",
+    "description": "Error shown on the Challenges tab when the challenges could not be fetched and the server gave no reason."
+  },
+  "challenges.toFirst": {
+    "text": "Go to First challenges",
+    "description": "Link on the Challenges tab for a new member looking at another event: switches to the event that holds their first challenges. \"First challenges\" is that group's name."
+  },
+  "challenges.locked.notice": {
+    "text": "Finish Getting started to unlock the rest of the season.",
+    "description": "Note under the list on the Challenges tab while the member's first challenges are unfinished. \"Getting started\" is the title of the card of first steps on Home."
+  },
+  "challenges.group.setup": {
+    "text": "First challenges",
+    "description": "Heading on the Challenges tab over a new member's first challenges, and the first line of such a challenge's page."
+  },
+  "challenges.group.week": {
+    "text": "This week",
+    "description": "Heading on the Challenges tab over the challenges that end with the current week, and the first line of such a challenge's page."
+  },
+  "challenges.group.always": {
+    "text": "Always open",
+    "description": "Heading on the Challenges tab over the challenges with no deadline, and the first line of such a challenge's page. \"Open\" is an adjective: available."
+  },
+  "challenges.group.other": {
+    "text": "Season challenges",
+    "description": "Heading on the Challenges tab over the season's remaining challenges, and the first line of such a challenge's page."
+  },
+  "challenges.group.completed": {
+    "text": "Completed",
+    "description": "Heading on the Challenges tab over the challenges the viewer has finished, when the list is not divided into groups."
+  },
+  "challenges.group.meta.allDone_one": {
+    "text": "{{done}}/{{count}} done",
+    "description": "At the right of a group's heading on the Challenges tab when every challenge in it is finished. {{done}} and {{count}} are the same number: finished out of total."
+  },
+  "challenges.group.meta.allDone_other": {
+    "text": "{{done}}/{{count}} done",
+    "description": "At the right of a group's heading on the Challenges tab when every challenge in it is finished. {{done}} and {{count}} are the same number: finished out of total."
+  },
+  "challenges.group.meta.timed": {
+    "text": "{{done}}/{{total}} · {{timeLeft}}",
+    "description": "At the right of a group's heading on the Challenges tab: how many of its challenges are finished, then the time remaining. {{timeLeft}} is a finished phrase such as \"5d left\". Only the separator is translated."
+  },
+  "challenges.group.meta.noDeadline": {
+    "text": "{{done}}/{{total}} · no deadline",
+    "description": "At the right of a group's heading on the Challenges tab, for a group that never ends: {{done}} of its {{total}} challenges are finished."
+  },
+  "challenges.group.timed": {
+    "text": "{{group}} · {{timeLeft}}",
+    "description": "First line of a challenge's page: the name of its group, then the time that group has left. {{group}} is the group's heading (\"This week\") and {{timeLeft}} a finished phrase such as \"5d left\". Only the separator is translated."
+  },
+  "challenges.timeLeft.hours_one": {
+    "text": "{{count}}h left",
+    "description": "Time remaining for a challenge or a group of challenges on the Challenges tab, under a day. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "challenges.timeLeft.hours_other": {
+    "text": "{{count}}h left",
+    "description": "Time remaining for a challenge or a group of challenges on the Challenges tab, under a day. {{count}} is a number of hours; \"h\" abbreviates hours."
+  },
+  "challenges.timeLeft.days_one": {
+    "text": "{{count}}d left",
+    "description": "Time remaining for a challenge or a group of challenges on the Challenges tab, a day or more. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "challenges.timeLeft.days_other": {
+    "text": "{{count}}d left",
+    "description": "Time remaining for a challenge or a group of challenges on the Challenges tab, a day or more. {{count}} is a number of days; \"d\" abbreviates days."
+  },
+  "challenges.ends": {
+    "text": "ends {{when}}",
+    "description": "On a challenge's page, beside the time left: the moment it ends. {{when}} is a weekday, date and time such as \"Mon 12 Oct, 02:00\". Lower case: it follows other facts on the line."
+  },
+  "challenges.endsTitle": {
+    "text": "Ends {{when}}",
+    "description": "Tooltip of the time left at the right of a group's heading on the Challenges tab: the moment the group ends. {{when}} is a weekday, date and time such as \"Mon 12 Oct, 02:00\"."
+  },
+  "challenges.points_one": {
+    "text": "{{points}} pts",
+    "description": "What a challenge pays, on its card and page, and what a participant has earned in it. {{points}} is a number of points, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "challenges.points_other": {
+    "text": "{{points}} pts",
+    "description": "What a challenge pays, on its card and page, and what a participant has earned in it. {{points}} is a number of points, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "challenges.earned_one": {
+    "text": "Earned {{points}} pts",
+    "description": "On a finished challenge's card and page. {{points}} is the points the viewer earned in it, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "challenges.earned_other": {
+    "text": "Earned {{points}} pts",
+    "description": "On a finished challenge's card and page. {{points}} is the points the viewer earned in it, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "challenges.soFar_one": {
+    "text": "{{points}} pts so far",
+    "description": "On an unfinished challenge's page. {{points}} is the points the viewer has earned in it up to now, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "challenges.soFar_other": {
+    "text": "{{points}} pts so far",
+    "description": "On an unfinished challenge's page. {{points}} is the points the viewer has earned in it up to now, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "challenges.state.done": {
+    "text": "Done",
+    "description": "Label in the progress bar of a challenge the viewer has finished."
+  },
+  "challenges.state.started": {
+    "text": "Started",
+    "description": "Label in the progress bar of a challenge the viewer has begun, where no count can be shown."
+  },
+  "challenges.state.notStarted": {
+    "text": "Not started",
+    "description": "Label in the progress bar of a challenge the viewer has not begun."
+  },
+  "challenges.state.named": {
+    "text": "{{challenge}}: {{state}}",
+    "description": "Accessible name of a challenge's progress bar. {{challenge}} is the challenge's title and {{state}} what the bar shows (\"Done\", \"3/5 changes\")."
+  },
+  "challenges.cadence.next": {
+    "text": "next count {{when}}",
+    "description": "On a challenge whose progress is counted at intervals: when the next count happens. {{when}} is a time, or a date and time. \"Count\" is a noun. Lower case."
+  },
+  "challenges.cadence.now": {
+    "text": "counting now",
+    "description": "On a challenge whose progress is counted at intervals: a count is under way at this moment. Lower case."
+  },
+  "challenges.cadence.last": {
+    "text": "last count {{when}}",
+    "description": "On a challenge whose progress is counted at intervals: when the last count happened, shown when the next one is overdue. {{when}} is a time, or a date and time. \"Count\" is a noun. Lower case."
+  },
+  "challenges.locked.title_one": {
+    "text": "{{count}} challenge unlocks after Getting started",
+    "description": "Title of the dashed card at the foot of the challenges list while the member's first steps are unfinished. {{count}} is how many challenges are still hidden. \"Getting started\" is the title of the card of first steps on Home."
+  },
+  "challenges.locked.title_other": {
+    "text": "{{count}} challenges unlock after Getting started",
+    "description": "Title of the dashed card at the foot of the challenges list while the member's first steps are unfinished. {{count}} is how many challenges are still hidden. \"Getting started\" is the title of the card of first steps on Home."
+  },
+  "challenges.locked.hint": {
+    "text": "Finish Getting started on Home to see them",
+    "description": "Under the title of the locked-challenges card when the hidden challenges' names are not known. \"Getting started\" is the title of the card of first steps; \"Home\" is the Home screen."
+  },
+  "challenges.locked.namesAnd": {
+    "text": "{{names}} and {{last}}",
+    "description": "Under the title of the locked-challenges card: the names of the hidden challenges. {{names}} is all but the last name, already joined with commas, and {{last}} the last one."
+  },
+  "challenges.locked.namesAndMore_one": {
+    "text": "{{names}} and {{count}} more",
+    "description": "Under the title of the locked-challenges card: the names of some hidden challenges, then how many more there are. {{names}} is the names, already joined with commas."
+  },
+  "challenges.locked.namesAndMore_other": {
+    "text": "{{names}} and {{count}} more",
+    "description": "Under the title of the locked-challenges card: the names of some hidden challenges, then how many more there are. {{names}} is the names, already joined with commas."
+  },
+  "challenges.intro.title": {
+    "text": "How challenges work",
+    "description": "Title of the explainer card at the top of the Challenges tab, its accessible name, and the link that brings the card back once closed."
+  },
+  "challenges.intro.close": {
+    "text": "Close How challenges work",
+    "description": "Accessible name of the × button on the \"How challenges work\" card: hides the card. \"Close\" is a verb; keep the card's title as it is translated there."
+  },
+  "challenges.intro.counts.title": {
+    "text": "Do it, and it counts",
+    "description": "First row of the \"How challenges work\" card: doing what a challenge asks is enough, nothing has to be claimed."
+  },
+  "challenges.intro.counts.text": {
+    "text": "Complete challenges.",
+    "description": "Under \"Do it, and it counts\" on the \"How challenges work\" card. An instruction."
+  },
+  "challenges.intro.points.title": {
+    "text": "Earn points",
+    "description": "Second row of the \"How challenges work\" card."
+  },
+  "challenges.intro.points.text": {
+    "text": "Each card shows what it earns. Points add up in standings.",
+    "description": "Under \"Earn points\" on the \"How challenges work\" card. \"Card\" is a challenge's card; \"standings\" is the ranking on the Standings tab."
+  },
+  "challenges.intro.weekly.title": {
+    "text": "New ones each week",
+    "description": "Third row of the \"How challenges work\" card: new challenges arrive every week."
+  },
+  "challenges.intro.weekly.text": {
+    "text": "This week starts again on Monday. Always open has no deadline.",
+    "description": "Under \"New ones each week\" on the \"How challenges work\" card. \"This week\" and \"Always open\" are the names of two groups of challenges; use the same words as their headings."
+  },
+  "progress.plain_one": {
+    "text": "<0>{{done}}/{{count}}</0><1>done</1>",
+    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it."
+  },
+  "progress.plain_other": {
+    "text": "<0>{{done}}/{{count}}</0><1>done</1>",
+    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it."
+  },
+  "progress.plainLabel_one": {
+    "text": "{{done}} of {{count}} done",
+    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are."
+  },
+  "progress.plainLabel_other": {
+    "text": "{{done}} of {{count}} done",
+    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are."
+  },
+  "progress.first_one": {
+    "text": "<0>{{done}}/{{count}}</0><1>done in First challenges</1>",
+    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. Used while a new member's first challenges are unfinished; \"First challenges\" is that group's name, as its heading says it."
+  },
+  "progress.first_other": {
+    "text": "<0>{{done}}/{{count}}</0><1>done in First challenges</1>",
+    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. Used while a new member's first challenges are unfinished; \"First challenges\" is that group's name, as its heading says it."
+  },
+  "progress.firstLabel_one": {
+    "text": "{{done}} of {{count}} done in First challenges",
+    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. Used while a new member's first challenges are unfinished; \"First challenges\" is that group's name."
+  },
+  "progress.firstLabel_other": {
+    "text": "{{done}} of {{count}} done in First challenges",
+    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. Used while a new member's first challenges are unfinished; \"First challenges\" is that group's name."
+  },
+  "progress.season_one": {
+    "text": "<0>{{done}}/{{count}}</0><1>done in {{season}}</1>",
+    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. {{season}} is the season's name."
+  },
+  "progress.season_other": {
+    "text": "<0>{{done}}/{{count}}</0><1>done in {{season}}</1>",
+    "description": "At the top of a list of challenges, on the Challenges tab and on Home: how many the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. {{season}} is the season's name."
+  },
+  "progress.seasonLabel_one": {
+    "text": "{{done}} of {{count}} done in {{season}}",
+    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. {{season}} is the season's name."
+  },
+  "progress.seasonLabel_other": {
+    "text": "{{done}} of {{count}} done in {{season}}",
+    "description": "Accessible name of the progress bar at the top of a list of challenges, on the Challenges tab and on Home. {{done}} is the number finished and {{count}} how many there are. {{season}} is the season's name."
+  },
+  "progress.event_one": {
+    "text": "<0>{{done}}/{{count}}</0><1>done in this event</1>",
+    "description": "At the top of the Challenges tab's list, once an event is chosen in the drop-down above it: how many of that event's challenges the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. The event is not named here on purpose: its name can be the season's."
+  },
+  "progress.event_other": {
+    "text": "<0>{{done}}/{{count}}</0><1>done in this event</1>",
+    "description": "At the top of the Challenges tab's list, once an event is chosen in the drop-down above it: how many of that event's challenges the viewer has finished. {{done}} is the number finished and {{count}} how many there are. The first tag shows the figure in bold; the second holds the words beside it. The event is not named here on purpose: its name can be the season's."
+  },
+  "progress.eventLabel_one": {
+    "text": "{{done}} of {{count}} done in this event",
+    "description": "Accessible name of the progress bar at the top of the Challenges tab's list, once an event is chosen in the drop-down above it. {{done}} is the number of that event's challenges finished and {{count}} how many there are."
+  },
+  "progress.eventLabel_other": {
+    "text": "{{done}} of {{count}} done in this event",
+    "description": "Accessible name of the progress bar at the top of the Challenges tab's list, once an event is chosen in the drop-down above it. {{done}} is the number of that event's challenges finished and {{count}} how many there are."
+  },
+  "challenges.detail.header": {
+    "text": "Challenge",
+    "description": "Title in the app's header while one challenge's page is open. A noun."
+  },
+  "challenges.detail.headerFallback": {
+    "text": "Leaderboard",
+    "description": "Title in the app's header after a challenge's page is closed, when the screen's own title is not available."
+  },
+  "challenges.detail.go": {
+    "text": "Go",
+    "description": "Button on a challenge's page that leads to where the challenge is done, when the challenge supplies no label of its own."
+  },
+  "challenges.detail.linkUnavailable": {
+    "text": "{{label}} <0>(link unavailable)</0>",
+    "description": "On a challenge's page, in place of its button when the challenge's link cannot be used. {{label}} is the button's text; the note in the tag is shown in italics."
+  },
+  "challenges.detail.seeFeedback": {
+    "text": "See your feedback",
+    "description": "Link on the page of the feedback challenge: opens the list of feedback the viewer has sent."
+  },
+  "challenges.detail.requirements": {
+    "text": "Requirements",
+    "description": "Heading on a challenge's page over what must be done to complete it."
+  },
+  "challenges.detail.scoring": {
+    "text": "Scoring",
+    "description": "Heading on a challenge's page over how its points are awarded."
+  },
+  "challenges.detail.participants": {
+    "text": "Participants",
+    "description": "Heading on a challenge's page over the list of people who have scored in it."
+  },
+  "challenges.detail.participantsCount_one": {
+    "text": "Participants · {{number}}",
+    "description": "Heading on a challenge's page over the list of people who have scored in it. {{number}} is how many there are, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "challenges.detail.participantsCount_other": {
+    "text": "Participants · {{number}}",
+    "description": "Heading on a challenge's page over the list of people who have scored in it. {{number}} is how many there are, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "challenges.detail.pointsBetween_one": {
+    "text": "{{points}} pts between them",
+    "description": "Beside the \"Participants\" heading on a challenge's page: the total everyone has earned in it. {{points}} is that total, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "challenges.detail.pointsBetween_other": {
+    "text": "{{points}} pts between them",
+    "description": "Beside the \"Participants\" heading on a challenge's page: the total everyone has earned in it. {{points}} is that total, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "challenges.detail.showAll_one": {
+    "text": "Show all {{number}} →",
+    "description": "Link under the list of participants on a challenge's page when the rest fit in one more page. {{number}} is how many participants there are, already formatted (\"1,500\"); {{count}} is the same number, for the plural. Keep the arrow."
+  },
+  "challenges.detail.showAll_other": {
+    "text": "Show all {{number}} →",
+    "description": "Link under the list of participants on a challenge's page when the rest fit in one more page. {{number}} is how many participants there are, already formatted (\"1,500\"); {{count}} is the same number, for the plural. Keep the arrow."
+  },
+  "challenges.detail.showMore": {
+    "text": "Show more →",
+    "description": "Link under the list of participants on a challenge's page: fetches the next page. Keep the arrow."
+  },
+  "challenges.detail.loadingParticipants": {
+    "text": "Loading participants",
+    "description": "Accessible name of the grey placeholder shown on a challenge's page while its participants are being fetched."
+  },
+  "challenges.detail.noParticipants": {
+    "text": "No participants yet.",
+    "description": "Shown on a challenge's page when nobody has scored in it."
+  },
+  "challenges.detail.breakdownFailed": {
+    "text": "Failed to load the breakdown.",
+    "description": "Error shown on a challenge's page when its list of participants could not be fetched and the server gave no reason."
+  },
+  "challenges.detail.anonymous": {
+    "text": "Anonymous",
+    "description": "Stands in for a participant's name on a challenge's page and in the profile opened from it, when they have no public name."
+  },
+  "challenges.detail.nonPodium": {
+    "text": "{{name}}<0> (non-podium)</0>",
+    "description": "A participant's row on a challenge's page, for somebody who takes part but is excluded from the prize ranking. {{name}} is their name; the note in the tag is shown in lighter ink."
+  },
+  "challenges.detail.pointsRate": {
+    "text": "{{points}} · {{rate}}%",
+    "description": "At the right of a participant's row on a challenge's page: their points, then their success rate. {{points}} is a finished phrase such as \"1,500 pts\" and {{rate}} a percentage number."
+  },
+  "challenges.countNote.onPropose": {
+    "text": "Counts when you press Propose to group, which puts your change to a vote.",
+    "description": "Note on the page of a challenge that is completed by proposing a change. \"Propose to group\" is a button's label; \"change\" is a noun."
+  },
+  "challenges.countNote.weekAccepted_one": {
+    "text": "This challenge counts up to {{cap}} each week, and you have {{cap}} this week. More accepted changes this week don't add to it. It starts again on Monday.",
+    "description": "Note on the page of a weekly challenge about accepted changes once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"Changes\" is a noun."
+  },
+  "challenges.countNote.weekAccepted_other": {
+    "text": "This challenge counts up to {{cap}} each week, and you have {{cap}} this week. More accepted changes this week don't add to it. It starts again on Monday.",
+    "description": "Note on the page of a weekly challenge about accepted changes once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"Changes\" is a noun."
+  },
+  "challenges.countNote.week_one": {
+    "text": "This challenge counts up to {{cap}} each week, and you have {{cap}} this week. More this week don't add to it. It starts again on Monday.",
+    "description": "Note on the page of a weekly challenge once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"More\" means more of whatever the challenge counts."
+  },
+  "challenges.countNote.week_other": {
+    "text": "This challenge counts up to {{cap}} each week, and you have {{cap}} this week. More this week don't add to it. It starts again on Monday.",
+    "description": "Note on the page of a weekly challenge once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"More\" means more of whatever the challenge counts."
+  },
+  "challenges.countNote.accepted_one": {
+    "text": "This challenge counts up to {{cap}}, and you have {{cap}}. More accepted changes before it ends don't add to it.",
+    "description": "Note on the page of a challenge about accepted changes once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"Changes\" is a noun."
+  },
+  "challenges.countNote.accepted_other": {
+    "text": "This challenge counts up to {{cap}}, and you have {{cap}}. More accepted changes before it ends don't add to it.",
+    "description": "Note on the page of a challenge about accepted changes once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"Changes\" is a noun."
+  },
+  "challenges.countNote.other_one": {
+    "text": "This challenge counts up to {{cap}}, and you have {{cap}}. More before it ends don't add to it.",
+    "description": "Note on the page of a challenge once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"More\" means more of whatever the challenge counts."
+  },
+  "challenges.countNote.other_other": {
+    "text": "This challenge counts up to {{cap}}, and you have {{cap}}. More before it ends don't add to it.",
+    "description": "Note on the page of a challenge once the viewer has reached its limit. {{cap}} is the most the challenge counts, already formatted (\"1,500\"); {{count}} is the same number, for the plural. \"More\" means more of whatever the challenge counts."
+  },
+  "challenges.profile.loading": {
+    "text": "Loading the profile",
+    "description": "Accessible name of the grey placeholder shown while a participant's profile, opened from a challenge's page, is being fetched."
+  },
+  "challenges.profile.loadFailed": {
+    "text": "Failed to load this profile.",
+    "description": "Error shown when a participant's profile, opened from a challenge's page, could not be fetched and the server gave no reason."
+  },
+  "challenges.profile.rank": {
+    "text": "Rank",
+    "description": "Label of a figure in a participant's profile opened from a challenge's page: their position in the ranking."
+  },
+  "challenges.profile.totalPoints": {
+    "text": "Total points",
+    "description": "Label of a figure in a participant's profile opened from a challenge's page."
+  },
+  "challenges.profile.extraPoints": {
+    "text": "Extra points",
+    "description": "Label of a figure in a participant's profile opened from a challenge's page: bonus points awarded outside the challenges."
+  },
+  "challenges.profile.producedBlocks": {
+    "text": "Produced blocks",
+    "description": "Label of a figure in a participant's profile opened from a challenge's page: how many blocks of the blockchain their node produced."
+  },
+  "challenges.profile.wonSlots": {
+    "text": "VRF won slots",
+    "description": "Label of a figure in a participant's profile opened from a challenge's page: how many block-producing slots they won. VRF is the name of the lottery mechanism; keep it."
+  },
+  "challenges.profile.successRate": {
+    "text": "Success rate",
+    "description": "Label of a figure in a participant's profile opened from a challenge's page: the share of their won slots in which a block was produced."
+  },
+  "challenges.profile.activities": {
+    "text": "Activities",
+    "description": "Heading in a participant's profile opened from a challenge's page, over the list of things they earned points for."
+  },
+  "challenges.profile.noActivities": {
+    "text": "No activities recorded.",
+    "description": "Shown in a participant's profile opened from a challenge's page when nothing they did is recorded."
+  },
+  "bp.checking": {
+    "text": "Checking your block-production status…",
+    "description": "Shown on the block-production challenge's page while the viewer's wallet state is being fetched. \"Block production\" is running a node that produces blocks of the blockchain."
+  },
+  "bp.error.title": {
+    "text": "Could not check your block-production status",
+    "description": "Title of the card on the block-production challenge's page when the viewer's wallet state could not be fetched."
+  },
+  "bp.error.text": {
+    "text": "Check your connection and try again.",
+    "description": "Under \"Could not check your block-production status\" on the block-production challenge's page."
+  },
+  "bp.error.retry": {
+    "text": "Try again",
+    "description": "Button on the block-production challenge's page: fetches the viewer's wallet state again after it failed."
+  },
+  "bp.account.title": {
+    "text": "Choose how to produce blocks",
+    "description": "Heading on the block-production challenge's page once the viewer has a wallet: there are two ways to take part."
+  },
+  "bp.account.delegate.title": {
+    "text": "Delegate (recommended)",
+    "description": "Title of the first option on the block-production challenge's page: hand the wallet's stake to the platform's server. \"Delegate\" is a verb."
+  },
+  "bp.account.delegate.text": {
+    "text": "Your stake is delegated to Homeroom's block-production server, so nothing keeps running on your phone. When delegated, you receive half the points you would earn by producing blocks directly from your phone.",
+    "description": "Explanation of the \"Delegate\" option on the block-production challenge's page. Homeroom is the product's name."
+  },
+  "bp.account.onDevice.title": {
+    "text": "Or produce blocks on this phone",
+    "description": "Title of the second option on the block-production challenge's page, shown in the Android app."
+  },
+  "bp.account.onDevice.text": {
+    "text": "Producing directly on this phone earns full points.",
+    "description": "Explanation of the \"Or produce blocks on this phone\" option on the block-production challenge's page."
+  },
+  "bp.account.onDevice.warning": {
+    "text": "Only for phones that can stay on. A background service keeps running with a persistent notification, it uses more battery and data, and Android must let the app run unrestricted in the background and set exact alarms. If the phone stops the app, it misses its slots.",
+    "description": "Warning under the \"Or produce blocks on this phone\" option on the block-production challenge's page. \"Slots\" are the moments at which the phone must produce a block. Android is the operating system's name."
+  },
+  "bp.account.onDeviceNote": {
+    "text": "Producing blocks on the phone itself is available only in the Android app.",
+    "description": "Note on the block-production challenge's page where producing on the device is not offered. Android is the operating system's name."
+  },
+  "bp.account.manage": {
+    "text": "Manage delegation",
+    "description": "Button on the block-production challenge's page: opens the wallet, where the stake is delegated or taken back."
+  },
+  "bp.account.appNote": {
+    "text": "Delegation is managed from the wallet in the Homeroom app. If it is not offered there yet, update the app.",
+    "description": "Note on the block-production challenge's page, inside the Homeroom app, when this version of the app cannot manage delegation. Homeroom is the product's name."
+  },
+  "bp.account.webNote": {
+    "text": "Delegation is managed from your wallet in the Homeroom app. Open this challenge there.",
+    "description": "Note on the block-production challenge's page in a web browser. \"Open\" is a verb. Homeroom is the product's name."
+  },
+  "bp.pending.title": {
+    "text": "Wallet requested",
+    "description": "Title of the card on the block-production challenge's page after the viewer asked for a wallet and is waiting for it."
+  },
+  "bp.pending.text": {
+    "text": "An admin releases wallet keys in batches. Once yours are released, come back here to choose how your blocks are produced.",
+    "description": "Under \"Wallet requested\" on the block-production challenge's page."
+  },
+  "bp.locked.title": {
+    "text": "Not available yet",
+    "description": "Title of the card on the block-production challenge's page for an account that may not request a wallet yet."
+  },
+  "bp.locked.text": {
+    "text": "You can request a wallet once your account has platform access.",
+    "description": "Under \"Not available yet\" on the block-production challenge's page. \"Platform access\" is what an account has once it is let in from the waitlist."
+  },
+  "bp.request.title": {
+    "text": "First, request a wallet",
+    "description": "Title of the card on the block-production challenge's page for a viewer who has no wallet. \"Request\" is a verb."
+  },
+  "bp.request.text": {
+    "text": "Producing blocks needs a wallet with producer keys. Ask for one and an admin will release your keys in batches.",
+    "description": "Under \"First, request a wallet\" on the block-production challenge's page."
+  },
+  "bp.request.action": {
+    "text": "Request a wallet",
+    "description": "Button on the block-production challenge's page: asks the administrators for a wallet. \"Request\" is a verb."
+  },
+  "bp.request.pending": {
+    "text": "Requesting…",
+    "description": "Shown on the \"Request a wallet\" button of the block-production challenge's page while the request is being sent."
+  },
+  "bp.request.sent": {
+    "text": "Request sent. An admin will release your keys",
+    "description": "Brief message shown after the viewer asked for a wallet on the block-production challenge's page. \"Request\" is a noun."
+  },
+  "bp.request.failed": {
+    "text": "Request failed",
+    "description": "Brief message shown when asking for a wallet on the block-production challenge's page failed and the server gave no reason. \"Request\" is a noun."
+  },
+  "standing.label": {
+    "text": "Your standing",
+    "description": "Accessible name of the card at the top of the Challenges tab that shows the viewer's rank and points this season."
+  },
+  "standing.thisSeason": {
+    "text": "This season",
+    "description": "Title of the \"Your standing\" card when the season's name is not known."
+  },
+  "standing.takingPart_one": {
+    "text": "{{number}} taking part",
+    "description": "Under the season's name on the \"Your standing\" card. {{number}} is how many people take part in the season, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "standing.takingPart_other": {
+    "text": "{{number}} taking part",
+    "description": "Under the season's name on the \"Your standing\" card. {{number}} is how many people take part in the season, already formatted (\"1,500\"); {{count}} is the same number, for the plural."
+  },
+  "standing.yourStanding": {
+    "text": "Your standing",
+    "description": "Under the season's name on the \"Your standing\" card when the number of participants is not known."
+  },
+  "standing.pointsYou_one": {
+    "text": "{{points}} pts · you",
+    "description": "Under the viewer's rank on the \"Your standing\" card: their points, marked as their own. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "standing.pointsYou_other": {
+    "text": "{{points}} pts · you",
+    "description": "Under the viewer's rank on the \"Your standing\" card: their points, marked as their own. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "standing.pending_one": {
+    "text": "{{points}} pts earned, not in the standings yet",
+    "description": "On the \"Your standing\" card when the viewer has earned points that the ranking does not show yet. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "standing.pending_other": {
+    "text": "{{points}} pts earned, not in the standings yet",
+    "description": "On the \"Your standing\" card when the viewer has earned points that the ranking does not show yet. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "standing.updateNote": {
+    "text": "Standings update every few hours; points from challenges you just finished appear at the next update.",
+    "description": "Note on the \"Your standing\" card and on the Standings tab: the ranking is recalculated periodically."
+  },
+  "standing.byEvent": {
+    "text": "Points by event",
+    "description": "Link on the \"Your standing\" card that unfolds the list of where the viewer's points came from."
+  },
+  "standing.eventPoints_one": {
+    "text": "{{points}} pts",
+    "description": "At the right of a row in the \"Points by event\" list on the \"Your standing\" card. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "standing.eventPoints_other": {
+    "text": "{{points}} pts",
+    "description": "At the right of a row in the \"Points by event\" list on the \"Your standing\" card. {{points}} is a number, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "standing.token.withheld": {
+    "text": "Token allocation withheld",
+    "description": "Heading on the \"Your standing\" card when the viewer has not accepted the program's terms, so their share of tokens is not shown."
+  },
+  "standing.token.review": {
+    "text": "Review and accept the terms to see your token allocation.",
+    "description": "Under \"Token allocation withheld\" on the \"Your standing\" card."
+  },
+  "standing.token.reviewTerms": {
+    "text": "Review terms",
+    "description": "Button on the \"Your standing\" card: opens the program's terms to read and accept."
+  },
+  "standing.token.label": {
+    "text": "Token allocation",
+    "description": "Label on the \"Your standing\" card beside the number of tokens allotted to the viewer."
+  },
+  "standing.token.note": {
+    "text": "Your share of the season’s token pool. Allocations are provisional and subject to the program terms.",
+    "description": "Note under the token allocation on the \"Your standing\" card."
+  },
+  "standing.token.reveal": {
+    "text": "Reveal",
+    "description": "Button on the \"Your standing\" card: shows the token amount, which is blurred until pressed."
+  },
+  "standings.loading": {
+    "text": "Loading the standings",
+    "description": "Accessible name of the grey placeholder shown on the Standings tab while the ranking is being fetched."
+  },
+  "standings.loadFailed": {
+    "text": "Failed to load the leaderboard.",
+    "description": "Error shown on the Standings tab when the ranking could not be fetched and the server gave no reason."
+  },
+  "standings.noEvents": {
+    "text": "No events have been published yet.",
+    "description": "Shown on the Standings tab when there is no event at all."
+  },
+  "standings.noData": {
+    "text": "No data.",
+    "description": "Shown on the Standings tab when the server returned nothing for the chosen event."
+  },
+  "standings.private": {
+    "text": "The leaderboard for this event isn't public yet.",
+    "description": "Shown on the Standings tab for an event whose ranking the organisers have not opened."
+  },
+  "standings.noEntries": {
+    "text": "No leaderboard entries yet. Standings update every few hours; points from challenges you just finished appear at the next update.",
+    "description": "Shown on the Standings tab when nobody is ranked yet."
+  },
+  "standings.allExcluded": {
+    "text": "Everyone with a score on this board is excluded from the ranking.",
+    "description": "Shown on the Standings tab when every participant is marked non-podium, so the ranked list is empty."
+  },
+  "standings.challengesDone_one": {
+    "text": "{{done}} of {{count}} challenges done <0>· </0><1>View challenges →</1>",
+    "description": "Line at the top of the Standings tab for a signed-in viewer: how many of the event's challenges they have finished, then a link to the Challenges tab. {{done}} is the number finished and {{count}} the total. The first tag holds the separator, in lighter ink; the second is the link. Keep the arrow."
+  },
+  "standings.challengesDone_other": {
+    "text": "{{done}} of {{count}} challenges done <0>· </0><1>View challenges →</1>",
+    "description": "Line at the top of the Standings tab for a signed-in viewer: how many of the event's challenges they have finished, then a link to the Challenges tab. {{done}} is the number finished and {{count}} the total. The first tag holds the separator, in lighter ink; the second is the link. Keep the arrow."
+  },
+  "standings.viewChallenges": {
+    "text": "<0>· </0><1>View challenges →</1>",
+    "description": "Line at the top of the Standings tab for a viewer who is not signed in: a link to the Challenges tab. The first tag holds a separator, in lighter ink; the second is the link. Keep the arrow."
+  },
+  "standings.showNonPodium": {
+    "text": "Show non-podium users",
+    "description": "Filter chip on the Standings tab: also lists participants who are excluded from the prize ranking."
+  },
+  "standings.showNonPodiumCount_one": {
+    "text": "Show non-podium users ({{count}})",
+    "description": "Filter chip on the Standings tab: also lists participants who are excluded from the prize ranking. {{count}} is how many there are."
+  },
+  "standings.showNonPodiumCount_other": {
+    "text": "Show non-podium users ({{count}})",
+    "description": "Filter chip on the Standings tab: also lists participants who are excluded from the prize ranking. {{count}} is how many there are."
+  },
+  "standings.column.rank": {
+    "text": "Rank",
+    "description": "Column heading in the Standings table: a participant's position."
+  },
+  "standings.column.user": {
+    "text": "User",
+    "description": "Column heading in the Standings table: the participant's name."
+  },
+  "standings.column.points": {
+    "text": "Points",
+    "description": "Column heading in the Standings table for one event."
+  },
+  "standings.column.seasonPoints": {
+    "text": "Season points",
+    "description": "Column heading in the Standings table when the whole season is shown."
+  },
+  "standings.column.blocks": {
+    "text": "Blocks produced",
+    "description": "Column heading in the Standings table: how many blocks of the blockchain the participant's node produced."
+  },
+  "standings.column.success": {
+    "text": "Success rate",
+    "description": "Column heading in the Standings table: the share of the participant's won slots in which a block was produced."
+  },
+  "standings.anonymous": {
+    "text": "Anonymous",
+    "description": "Stands in for a participant's name in the Standings table, and over their details, when they have no public name."
+  },
+  "standings.nonPodium": {
+    "text": "<0>{{name}}</0><1> non-podium</1>",
+    "description": "A participant's cell in the Standings table, for somebody who takes part but is excluded from the prize ranking. {{name}} is their name, in the first tag; the note in the second tag is shown smaller, in lighter ink."
+  },
+  "standings.nonPodiumTip": {
+    "text": "Excluded from podium ranking",
+    "description": "Tooltip of the \"non-podium\" note beside a participant's name in the Standings table."
+  },
+  "standings.openDetails": {
+    "text": "Open {{name}}'s details",
+    "description": "Accessible name of a row in the Standings table: pressing it shows that participant's activities. \"Open\" is a verb. {{name}} is the participant's name."
+  },
+  "standings.openDetailsAnonymous": {
+    "text": "Open Anonymous's details",
+    "description": "Accessible name of a row in the Standings table: pressing it shows that participant's activities. \"Open\" is a verb. Used for a person with no display name, who is listed as \"Anonymous\"."
+  },
+  "standings.page_one": {
+    "text": "Page {{page}} of {{pages}} · {{count}} total",
+    "description": "Under the Standings table: which page is shown, how many pages there are, and how many participants in all."
+  },
+  "standings.page_other": {
+    "text": "Page {{page}} of {{pages}} · {{count}} total",
+    "description": "Under the Standings table: which page is shown, how many pages there are, and how many participants in all."
+  },
+  "standings.prev": {
+    "text": "Prev",
+    "description": "Button under the Standings table: shows the previous page. Short for \"previous\"."
+  },
+  "standings.next": {
+    "text": "Next",
+    "description": "Button under the Standings table: shows the next page."
+  },
+  "drill.activities": {
+    "text": "Activities",
+    "description": "Heading in a participant's details under the Standings table, over the list of things they earned points for."
+  },
+  "drill.activitiesLoading": {
+    "text": "Loading activities…",
+    "description": "Shown in a participant's details under the Standings table while their activities are being fetched."
+  },
+  "drill.activitiesEmpty": {
+    "text": "No activities recorded for this event.",
+    "description": "Shown in a participant's details under the Standings table when nothing they did in the event is recorded."
+  },
+  "drill.activitiesFailed": {
+    "text": "Could not load activities.",
+    "description": "Error shown in a participant's details under the Standings table when their activities could not be fetched and the server gave no reason."
+  },
+  "drill.noIdentifier": {
+    "text": "No identifier available for this row.",
+    "description": "Shown in place of a participant's activities under the Standings table when the row carries nothing to look them up by."
+  },
+  "drill.epoch.heading": {
+    "text": "Epoch breakdown",
+    "description": "Heading in a participant's details under the Standings table, over their block production epoch by epoch. An epoch is a fixed period of the network's time."
+  },
+  "drill.epoch.loading": {
+    "text": "Loading epoch breakdown…",
+    "description": "Shown in a participant's details under the Standings table while their epoch-by-epoch record is being fetched."
+  },
+  "drill.epoch.empty": {
+    "text": "No epoch data for this event.",
+    "description": "Shown in a participant's details under the Standings table when there is no epoch-by-epoch record."
+  },
+  "drill.epoch.failed": {
+    "text": "Could not load the epoch breakdown.",
+    "description": "Error shown in a participant's details under the Standings table when their epoch-by-epoch record could not be fetched and the server gave no reason."
+  },
+  "drill.epoch.perEvent": {
+    "text": "The epoch breakdown is per event. Pick a single event above to see it.",
+    "description": "Shown in a participant's details under the Standings table when the whole season is chosen. \"Above\" is the event drop-down."
+  },
+  "drill.epoch.noWallet": {
+    "text": "No wallet linked for this row.",
+    "description": "Shown in place of the epoch-by-epoch record under the Standings table when the participant has no wallet address."
+  },
+  "drill.epoch.column.epoch": {
+    "text": "Epoch",
+    "description": "Column heading in the epoch-by-epoch table of a participant's details: the epoch's number."
+  },
+  "drill.epoch.column.wonSlots": {
+    "text": "Won slots",
+    "description": "Column heading in the epoch-by-epoch table of a participant's details: block-producing slots won in that epoch."
+  },
+  "drill.epoch.column.produced": {
+    "text": "Produced",
+    "description": "Column heading in the epoch-by-epoch table of a participant's details: blocks produced in that epoch."
+  },
+  "drill.epoch.column.successRate": {
+    "text": "Success rate",
+    "description": "Column heading in the epoch-by-epoch table of a participant's details: the share of won slots in which a block was produced."
+  },
+  "drill.profile.heading": {
+    "text": "Your profile",
+    "description": "Heading in the viewer's own details under the Standings table, over their figures for the event."
+  },
+  "drill.profile.loading": {
+    "text": "Loading your profile…",
+    "description": "Shown in the viewer's own details under the Standings table while their figures are being fetched."
+  },
+  "drill.profile.failed": {
+    "text": "Could not load your profile.",
+    "description": "Error shown in the viewer's own details under the Standings table when their figures could not be fetched and the server gave no reason."
+  },
+  "drill.profile.rank": {
+    "text": "Rank",
+    "description": "Label of a figure in the viewer's own details under the Standings table: their position in the ranking."
+  },
+  "drill.profile.totalPoints": {
+    "text": "Total points",
+    "description": "Label of a figure in the viewer's own details under the Standings table."
+  },
+  "drill.profile.producedBlocks": {
+    "text": "Produced blocks",
+    "description": "Label of a figure in the viewer's own details under the Standings table: blocks their node produced."
+  },
+  "drill.profile.clientRate": {
+    "text": "Client success rate",
+    "description": "Label of a figure in the viewer's own details under the Standings table: the success rate as their own app reported it."
+  },
+  "drill.profile.canonicalRate": {
+    "text": "Canonical success rate",
+    "description": "Label of a figure in the viewer's own details under the Standings table: the success rate as the blockchain itself records it."
+  },
+  "activity.dayTime": {
+    "text": "{{day}} · {{time}}",
+    "description": "Under an activity in a participant's list: when it happened. {{day}} is a date such as \"Mon, Oct 12\" and {{time}} a time of day. Only the separator is translated."
+  },
+  "activity.dayTimeFull": {
+    "text": "{{day}}, {{time}}",
+    "description": "Tooltip of an activity's date in a participant's list. {{day}} is a full date such as \"Monday, October 12, 2026\" and {{time}} a time of day. Only the separator is translated."
+  },
+  "history.loading": {
+    "text": "Loading past seasons",
+    "description": "Accessible name of the grey placeholder shown on the History tab while past seasons are being fetched."
+  },
+  "history.loadFailed": {
+    "text": "Couldn’t load past seasons. Try again later.",
+    "description": "Error shown on the History tab when past seasons could not be fetched."
+  },
+  "history.empty": {
+    "text": "No season has ended yet. When one does, its winners are listed here.",
+    "description": "Shown on the History tab before any season has ended."
+  },
+  "history.fallbackName": {
+    "text": "Season",
+    "description": "Stands in for a season's name on the History tab when it has none."
+  },
+  "history.ended": {
+    "text": "ended {{date}}",
+    "description": "At the right of a season's name on the History tab. {{date}} is a month, or a month and year, such as \"March\" or \"March 2025\". Lower case."
+  },
+  "history.won_one": {
+    "text": "{{name}} won with {{points}} pts",
+    "description": "Result line of a past season on the History tab. {{name}} is the winner's name and {{points}} their points, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "history.won_other": {
+    "text": "{{name}} won with {{points}} pts",
+    "description": "Result line of a past season on the History tab. {{name}} is the winner's name and {{points}} their points, already formatted (\"1,500\"); {{count}} is the same number, for the plural; \"pts\" abbreviates points."
+  },
+  "history.noWinner": {
+    "text": "No winner was recorded",
+    "description": "Result line of a past season on the History tab when the season has no recorded winner."
+  },
+  "history.youFinished": {
+    "text": "you finished #{{rank}}",
+    "description": "Added to a past season's result line on the History tab: the viewer's final position. {{rank}} is that position. Lower case: it follows the winner."
+  },
+  "history.youTookPart": {
+    "text": "you took part",
+    "description": "Added to a past season's result line on the History tab when the viewer took part but has no final position. Lower case: it follows the winner."
+  },
+  "history.factPair": {
+    "text": "{{first}} · {{second}}",
+    "description": "Joins the two parts of a past season's result line on the History tab (\"Ada won with 1,500 pts · you finished #4\"). {{first}} and {{second}} are each already a complete phrase. Use the separator your language uses between such facts."
+  },
+  "history.eventWinners": {
+    "text": "Event winners",
+    "description": "Accessible name of the list of chips under a past season on the History tab: one per event, with its winner."
+  },
+  "history.eventWinner": {
+    "text": "{{event}} · {{winner}}",
+    "description": "Chip under a past season on the History tab: an event's name and who won it. Only the separator is translated."
+  },
+  "history.eventNoWinner": {
+    "text": "{{event}} · no winner",
+    "description": "Chip under a past season on the History tab, for an event that has no recorded winner. {{event}} is the event's name."
+  },
+  "kudos.loading": {
+    "text": "Loading the leaderboard",
+    "description": "Accessible name of the grey placeholder shown on the Kudos tab while a list is being fetched."
+  },
+  "kudos.tab.changes": {
+    "text": "Top changes",
+    "description": "Sub-tab of the Kudos tab: the changes that received the most kudos. \"Changes\" is a noun."
+  },
+  "kudos.tab.users": {
+    "text": "Top users",
+    "description": "Sub-tab of the Kudos tab: the people whose changes received the most kudos."
+  },
+  "kudos.tab.history": {
+    "text": "My history",
+    "description": "Sub-tab of the Kudos tab: the kudos and votes the viewer has given."
+  },
+  "kudos.window.all": {
+    "text": "All-time",
+    "description": "Filter on the Kudos tab: count kudos since the beginning."
+  },
+  "kudos.window.week": {
+    "text": "This week",
+    "description": "Filter on the Kudos tab: count only this week's kudos."
+  },
+  "kudos.subtitle_one": {
+    "text": "{{count}} kudos per week, resets {{day}} at {{time}}. Give them to changes you appreciate.",
+    "description": "Line at the top of the Kudos tab. {{count}} is how many kudos each member may give per week; the middle part says when that allowance starts again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". \"Changes\" is a noun."
+  },
+  "kudos.subtitle_other": {
+    "text": "{{count}} kudos per week, resets {{day}} at {{time}}. Give them to changes you appreciate.",
+    "description": "Line at the top of the Kudos tab. {{count}} is how many kudos each member may give per week; the middle part says when that allowance starts again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". \"Changes\" is a noun."
+  },
+  "kudos.subtitleUtc_one": {
+    "text": "{{count}} kudos per week, resets Monday 00:00 UTC. Give them to changes you appreciate.",
+    "description": "Line at the top of the Kudos tab when the reset time cannot be shown in the viewer's own time zone. {{count}} is how many kudos each member may give per week. Keep \"00:00 UTC\". \"Changes\" is a noun."
+  },
+  "kudos.subtitleUtc_other": {
+    "text": "{{count}} kudos per week, resets Monday 00:00 UTC. Give them to changes you appreciate.",
+    "description": "Line at the top of the Kudos tab when the reset time cannot be shown in the viewer's own time zone. {{count}} is how many kudos each member may give per week. Keep \"00:00 UTC\". \"Changes\" is a noun."
+  },
+  "kudos.historySubtitle": {
+    "text": "Everything you’ve given: kudos, bounty pledges, and votes, newest first. Only you can see this.",
+    "description": "Line at the top of the Kudos tab's \"My history\" sub-tab. A \"bounty pledge\" is kudos promised to whoever fulfils a request."
+  },
+  "kudos.loadFailed": {
+    "text": "Couldn’t load leaderboard. Try again later.",
+    "description": "Error shown on the Kudos tab when a ranking could not be fetched."
+  },
+  "kudos.empty.changes": {
+    "text": "No kudos yet. When someone gives a change kudos, it shows up here.",
+    "description": "Shown on the Kudos tab's \"Top changes\" list, all-time, when it is empty. \"Change\" is a noun."
+  },
+  "kudos.empty.changesWeek": {
+    "text": "No kudos this week yet. When someone gives a change kudos, it shows up here.",
+    "description": "Shown on the Kudos tab's \"Top changes\" list, this week, when it is empty. \"Change\" is a noun."
+  },
+  "kudos.empty.users": {
+    "text": "No kudos yet. When someone gets kudos on a change they made, they show up here.",
+    "description": "Shown on the Kudos tab's \"Top users\" list, all-time, when it is empty. \"Change\" is a noun."
+  },
+  "kudos.empty.usersWeek": {
+    "text": "No kudos this week yet. When someone gets kudos on a change they made, they show up here.",
+    "description": "Shown on the Kudos tab's \"Top users\" list, this week, when it is empty. \"Change\" is a noun."
+  },
+  "kudos.loadMore": {
+    "text": "Load more",
+    "description": "Button under a list on the Kudos tab: fetches the next page."
+  },
+  "kudos.loadingMore": {
+    "text": "Loading…",
+    "description": "Shown on the \"Load more\" button of the Kudos tab while the next page is being fetched."
+  },
+  "kudos.untitledChange": {
+    "text": "Untitled change",
+    "description": "Stands in for a change's title in the lists of the Kudos tab when it has none. \"Change\" is a noun."
+  },
+  "kudos.unnamedApp": {
+    "text": "app",
+    "description": "Stands in for an app's name in the lists of the Kudos tab when it is not known. Lower case."
+  },
+  "kudos.unknownUser": {
+    "text": "unknown",
+    "description": "Stands in for a username in the lists of the Kudos tab when it is not known. It is shown after an @ sign, as \"@unknown\", so keep it one lower-case word."
+  },
+  "kudos.row.by": {
+    "text": "by @{{username}}",
+    "description": "Under a change's title in the Kudos tab's lists: who made it. Keep the @ before the username."
+  },
+  "kudos.row.byUnknown": {
+    "text": "by @unknown",
+    "description": "Under a change's title in the Kudos tab's lists: who made it. Keep the @ before the username. Used when the author is not known; \"@unknown\" is written as the row has always shown it."
+  },
+  "kudos.row.byDeleted": {
+    "text": "by @deleted user",
+    "description": "Under a change's title in the Kudos tab's \"My history\" list when its author's account no longer exists. Keep the @."
+  },
+  "kudos.status.live": {
+    "text": "live",
+    "description": "Small status label on a change in the Kudos tab's lists: it was approved and is running. Lower case; an adjective."
+  },
+  "kudos.status.goingLive": {
+    "text": "going live",
+    "description": "Small status label on a change in the Kudos tab's lists: it was approved and is being put into the running project. Lower case."
+  },
+  "kudos.status.closed": {
+    "text": "closed",
+    "description": "Small status label on a change in the Kudos tab's lists: it ended without going live. Lower case; an adjective."
+  },
+  "kudos.status.open": {
+    "text": "open",
+    "description": "Small status label on a change in the Kudos tab's lists: it is still being worked on or voted on. Lower case; an adjective."
+  },
+  "kudos.user.changesKudosed_one": {
+    "text": "{{count}} change given kudos",
+    "description": "Under a person's name in the Kudos tab's \"Top users\" list. {{count}} is how many of their changes received kudos. \"Change\" is a noun."
+  },
+  "kudos.user.changesKudosed_other": {
+    "text": "{{count}} changes given kudos",
+    "description": "Under a person's name in the Kudos tab's \"Top users\" list. {{count}} is how many of their changes received kudos. \"Change\" is a noun."
+  },
+  "kudos.user.live_one": {
+    "text": "{{count}} live",
+    "description": "Under a person's name in the Kudos tab's \"Top users\" list. {{count}} is how many of their changes are running. An adjective."
+  },
+  "kudos.user.live_other": {
+    "text": "{{count}} live",
+    "description": "Under a person's name in the Kudos tab's \"Top users\" list. {{count}} is how many of their changes are running. An adjective."
+  },
+  "kudos.user.issues_one": {
+    "text": "{{count}} issue",
+    "description": "Under a person's name in the Kudos tab's \"Top users\" list. {{count}} is how many requests (issues) they have filed."
+  },
+  "kudos.user.issues_other": {
+    "text": "{{count}} issues",
+    "description": "Under a person's name in the Kudos tab's \"Top users\" list. {{count}} is how many requests (issues) they have filed."
+  },
+  "kudos.user.activeOn_one": {
+    "text": "active on {{count}} app",
+    "description": "Under a person's name in the Kudos tab's \"Top users\" list. {{count}} is how many apps they have recently worked on. Lower case."
+  },
+  "kudos.user.activeOn_other": {
+    "text": "active on {{count}} apps",
+    "description": "Under a person's name in the Kudos tab's \"Top users\" list. {{count}} is how many apps they have recently worked on. Lower case."
+  },
+  "kudos.user.activeOnTip": {
+    "text": "Active on: {{apps}}",
+    "description": "Tooltip of \"active on N apps\" in the Kudos tab's \"Top users\" list. {{apps}} is the list of those apps' names, already joined."
+  },
+  "kudos.user.notLiveYet_one": {
+    "text": "+{{count}} not live yet",
+    "description": "At the right of a person's row in the Kudos tab's \"Top users\" list. {{count}} is how many kudos they received on changes that are not running yet. Keep the + sign."
+  },
+  "kudos.user.notLiveYet_other": {
+    "text": "+{{count}} not live yet",
+    "description": "At the right of a person's row in the Kudos tab's \"Top users\" list. {{count}} is how many kudos they received on changes that are not running yet. Keep the + sign."
+  },
+  "kudos.user.notLiveTip": {
+    "text": "Kudos on changes that aren’t live yet, not counted toward ranking",
+    "description": "Tooltip of \"+N not live yet\" in the Kudos tab's \"Top users\" list. \"Changes\" is a noun."
+  },
+  "kudos.user.earnedTip": {
+    "text": "Kudos earned on live changes",
+    "description": "Tooltip of the kudos count at the right of a person's row in the Kudos tab's \"Top users\" list. \"Changes\" is a noun."
+  },
+  "kudos.person.back": {
+    "text": "← Top users",
+    "description": "Link at the top of a person's page on the Kudos tab: returns to the \"Top users\" list. Keep the arrow."
+  },
+  "kudos.person.intro": {
+    "text": "All changes this user has proposed, newest first.",
+    "description": "Under a person's name on their page on the Kudos tab. \"Changes\" is a noun."
+  },
+  "kudos.person.notFound": {
+    "text": "User not found.",
+    "description": "Shown on the Kudos tab when the person whose page was opened does not exist."
+  },
+  "kudos.person.loadFailed": {
+    "text": "Couldn’t load this profile. Try again later.",
+    "description": "Error shown on the Kudos tab when a person's page could not be fetched."
+  },
+  "kudos.person.onLive_one": {
+    "text": "{{count}} on live changes",
+    "description": "Chip at the top of a person's page on the Kudos tab, after a clapping-hands emoji. {{count}} is how many kudos they received on changes that are running. \"Changes\" is a noun."
+  },
+  "kudos.person.onLive_other": {
+    "text": "{{count}} on live changes",
+    "description": "Chip at the top of a person's page on the Kudos tab, after a clapping-hands emoji. {{count}} is how many kudos they received on changes that are running. \"Changes\" is a noun."
+  },
+  "kudos.person.onLiveTip": {
+    "text": "Kudos earned on live changes: the leaderboard ranking score",
+    "description": "Tooltip of the kudos chip at the top of a person's page on the Kudos tab. \"Changes\" is a noun."
+  },
+  "kudos.person.live_one": {
+    "text": "{{count}} live",
+    "description": "Chip at the top of a person's page on the Kudos tab. {{count}} is how many of their changes are running. An adjective."
+  },
+  "kudos.person.live_other": {
+    "text": "{{count}} live",
+    "description": "Chip at the top of a person's page on the Kudos tab. {{count}} is how many of their changes are running. An adjective."
+  },
+  "kudos.person.liveTip": {
+    "text": "Their changes that went live",
+    "description": "Tooltip of the \"N live\" chip at the top of a person's page on the Kudos tab. \"Changes\" is a noun."
+  },
+  "kudos.person.made_one": {
+    "text": "{{count}} change made",
+    "description": "Chip at the top of a person's page on the Kudos tab. {{count}} is how many changes they have proposed in all. \"Change\" is a noun."
+  },
+  "kudos.person.made_other": {
+    "text": "{{count}} changes made",
+    "description": "Chip at the top of a person's page on the Kudos tab. {{count}} is how many changes they have proposed in all. \"Change\" is a noun."
+  },
+  "kudos.person.madeTip": {
+    "text": "Everything they put up for the group, including open and closed changes",
+    "description": "Tooltip of the \"N changes made\" chip at the top of a person's page on the Kudos tab. \"Open\" and \"closed\" are adjectives; \"changes\" is a noun."
+  },
+  "kudos.person.none": {
+    "text": "No changes proposed yet.",
+    "description": "Shown on a person's page on the Kudos tab when they have proposed nothing. \"Changes\" is a noun."
+  },
+  "kudos.person.openOnGithub": {
+    "text": "Open on GitHub",
+    "description": "Tooltip and accessible name of the ↗ link on a change in a person's page on the Kudos tab: opens the change on GitHub. \"Open\" is a verb."
+  },
+  "kudos.history.filterKudos": {
+    "text": "👏 Kudos",
+    "description": "Filter chip on the Kudos tab's \"My history\" list: shows or hides the kudos the viewer gave. Keep the emoji."
+  },
+  "kudos.history.filterVotes": {
+    "text": "🗳️ Votes",
+    "description": "Filter chip on the Kudos tab's \"My history\" list: shows or hides the votes the viewer cast. Keep the emoji."
+  },
+  "kudos.history.loadFailed": {
+    "text": "Couldn’t load your history. Try again later.",
+    "description": "Error shown on the Kudos tab's \"My history\" list when it could not be fetched."
+  },
+  "kudos.history.empty": {
+    "text": "Nothing here yet. Kudos, bounty pledges, and votes you give will appear here.",
+    "description": "Shown on the Kudos tab's \"My history\" list when it is empty. A \"bounty pledge\" is kudos promised to whoever fulfils a request."
+  },
+  "kudos.history.bounty": {
+    "text": "bounty",
+    "description": "Small label on a row of the Kudos tab's \"My history\" list: the viewer pledged kudos as a bounty on a request. Lower case; a noun."
+  },
+  "kudos.history.yes": {
+    "text": "yes",
+    "description": "Small label on a row of the Kudos tab's \"My history\" list: the viewer voted yes on a change. Lower case."
+  },
+  "kudos.history.no": {
+    "text": "no",
+    "description": "Small label on a row of the Kudos tab's \"My history\" list: the viewer voted no on a change. Lower case."
+  },
+  "kudos.history.pledged": {
+    "text": "Pledged kudos on issue #{{number}}",
+    "description": "Title of a row of the Kudos tab's \"My history\" list: the viewer promised kudos to whoever fulfils a request. {{number}} is the request's number, or \"?\" when unknown."
+  },
+  "kudos.history.awardedTo": {
+    "text": "awarded to @{{username}} {{date}}",
+    "description": "Small label on a bounty row of the Kudos tab's \"My history\" list: the pledged kudos went to this person on this date. {{date}} is a date such as \"Mar 4, 2026\". Keep the @ before the username. Lower case."
+  },
+  "kudos.history.awardedToUndated": {
+    "text": "awarded to @{{username}}",
+    "description": "Small label on a bounty row of the Kudos tab's \"My history\" list: the pledged kudos went to this person; the date is not known. Keep the @ before the username. Lower case."
+  },
+  "kudos.history.awardedToDeleted": {
+    "text": "awarded to deleted user {{date}}",
+    "description": "Small label on a bounty row of the Kudos tab's \"My history\" list: the pledged kudos went to a person whose account no longer exists. {{date}} is a date such as \"Mar 4, 2026\". Lower case."
+  },
+  "kudos.history.awardedToDeletedUndated": {
+    "text": "awarded to deleted user",
+    "description": "Small label on a bounty row of the Kudos tab's \"My history\" list: the pledged kudos went to a person whose account no longer exists; the date is not known. Lower case."
+  },
+  "kudos.history.voided": {
+    "text": "voided",
+    "description": "Small label on a bounty row of the Kudos tab's \"My history\" list: the pledge was cancelled and returned. Lower case."
+  },
+  "kudos.history.voidedTip": {
+    "text": "Your own change closed this request, so the pledge went back to your weekly allowance",
+    "description": "Tooltip of the \"voided\" label on a bounty row of the Kudos tab's \"My history\" list. \"Change\" and \"request\" are nouns."
+  },
+  "kudos.history.open": {
+    "text": "open",
+    "description": "Small label on a bounty row of the Kudos tab's \"My history\" list: the pledge is still waiting to be awarded. Lower case; an adjective."
+  },
+  "kudos.history.currentVote": {
+    "text": "current vote",
+    "description": "Small italic note on a vote row of the Kudos tab's \"My history\" list: the row shows the viewer's vote as it stands now. Lower case."
+  },
+  "kudos.history.request": {
+    "text": "Request #{{number}}",
+    "description": "Stands in for the title of a community decision in the Kudos tab's \"My history\" list when it has none. {{number}} is its number, or \"?\" when unknown. \"Request\" is a noun."
+  },
+  "kudos.history.kind.secretChange": {
+    "text": "Secret change",
+    "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about changing a secret (a stored key or password) of the project. \"Change\" is a noun."
+  },
+  "kudos.history.kind.rename": {
+    "text": "Rename",
+    "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about renaming the project. A noun."
+  },
+  "kudos.history.kind.closeIssue": {
+    "text": "Close issue",
+    "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about closing a request. \"Close\" is a verb."
+  },
+  "kudos.history.kind.maintenance": {
+    "text": "Maintenance campaign",
+    "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about starting a round of maintenance work on the project."
+  },
+  "kudos.history.kind.featuredIllustration": {
+    "text": "Featured illustration",
+    "description": "Small label on a vote row of the Kudos tab's \"My history\" list: the decision was about the picture shown for the project where it is featured."
+  },
+  "kudos.button.collaboratorsOnly": {
+    "text": "Only collaborators can give kudos",
+    "description": "Tooltip of a disabled kudos button on a change, for a viewer who is not a collaborator on the project."
+  },
+  "kudos.button.ownChange": {
+    "text": "You can’t give kudos to your own change",
+    "description": "Tooltip of a disabled kudos button on a change the viewer made. \"Change\" is a noun."
+  },
+  "kudos.button.viaBounty": {
+    "text": "Credited via a bounty award, so it can’t be retracted",
+    "description": "Tooltip of a kudos button the viewer cannot undo, because their kudos came from a bounty they pledged."
+  },
+  "kudos.button.retract": {
+    "text": "You gave kudos to this change. Click again to retract",
+    "description": "Tooltip of a kudos button the viewer has already pressed. \"Change\" is a noun."
+  },
+  "kudos.button.thank": {
+    "text": "Thank {{username}} for putting this up",
+    "description": "Accessible name and tooltip of the kudos button on a change that is up for a vote. {{username}} is the author of the change. \"Putting this up\" means proposing it to the group."
+  },
+  "kudos.button.thankFace": {
+    "text": "Thank {{username}}<0> for putting this up</0>",
+    "description": "Text on the kudos button of a change that is up for a vote. {{username}} is the author of the change. The part in the tag is dropped when the button is narrow, so the words before it must make sense alone."
+  },
+  "kudos.popover.none": {
+    "text": "No kudos yet. Be the first.",
+    "description": "Shown in the pop-up of a kudos button when nobody has given the change kudos."
+  },
+  "kudos.popover.loading": {
+    "text": "Loading…",
+    "description": "Shown in the pop-up of a kudos button while the list of givers is being fetched."
+  },
+  "kudos.popover.givers_one": {
+    "text": "Kudos givers ({{count}})",
+    "description": "Heading of the pop-up of a kudos button, over the list of people who gave the change kudos. {{count}} is how many."
+  },
+  "kudos.popover.givers_other": {
+    "text": "Kudos givers ({{count}})",
+    "description": "Heading of the pop-up of a kudos button, over the list of people who gave the change kudos. {{count}} is how many."
+  },
+  "kudos.popover.failed": {
+    "text": "Couldn’t load who gave kudos.",
+    "description": "Shown in the pop-up of a kudos button when the list of givers could not be fetched."
+  },
+  "kudos.popover.someone": {
+    "text": "someone",
+    "description": "Stands in for a giver's username in the pop-up of a kudos button when it is not known. It is shown after an @ sign, as \"@someone\", so keep it one lower-case word."
+  },
+  "kudos.popover.you": {
+    "text": "you",
+    "description": "Stands in for the viewer's own username in the pop-up of a kudos button, just after they gave kudos, when their username is not known. It is shown after an @ sign, as \"@you\", so keep it one lower-case word."
+  },
+  "kudos.toast.quota": {
+    "text": "Weekly kudos quota exceeded.",
+    "description": "Brief message shown when giving kudos was refused because the viewer has none left this week, and the server gave no wording."
+  },
+  "kudos.toast.ownChange": {
+    "text": "You can’t give kudos to your own change.",
+    "description": "Brief message shown when the viewer tried to give kudos to a change they made. \"Change\" is a noun."
+  },
+  "kudos.toast.already": {
+    "text": "You already gave kudos to this change.",
+    "description": "Brief message shown when the viewer tried to give kudos to a change twice. \"Change\" is a noun."
+  },
+  "kudos.toast.notEligible": {
+    "text": "This change isn’t eligible for kudos.",
+    "description": "Brief message shown when a change cannot receive kudos and the server gave no wording. \"Change\" is a noun."
+  },
+  "kudos.toast.giveFailed": {
+    "text": "Failed to give kudos. Try again?",
+    "description": "Brief message shown when giving kudos failed for an unknown reason."
+  },
+  "kudos.toast.giveNetwork": {
+    "text": "Network error giving kudos.",
+    "description": "Brief message shown when giving kudos failed because the server could not be reached."
+  },
+  "kudos.toast.nothingToRetract": {
+    "text": "No kudos to retract.",
+    "description": "Brief message shown when the viewer tried to take back kudos they had not given, and the server gave no wording."
+  },
+  "kudos.toast.retractFailed": {
+    "text": "Failed to retract kudos. Try again?",
+    "description": "Brief message shown when taking kudos back failed for an unknown reason."
+  },
+  "kudos.toast.retractNetwork": {
+    "text": "Network error retracting kudos.",
+    "description": "Brief message shown when taking kudos back failed because the server could not be reached."
+  },
+  "kudos.budget.left_one": {
+    "text": "<0><1>{{remaining}}</1><2> of {{count}} left</2></0>",
+    "description": "The viewer's weekly kudos allowance, in the menu: {{remaining}} of the {{count}} kudos they may give this week are left. The first tag wraps one figure with its words, the second shows the number in strong ink and the third the words in dim ink."
+  },
+  "kudos.budget.left_other": {
+    "text": "<0><1>{{remaining}}</1><2> of {{count}} left</2></0>",
+    "description": "The viewer's weekly kudos allowance, in the menu: {{remaining}} of the {{count}} kudos they may give this week are left. The first tag wraps one figure with its words, the second shows the number in strong ink and the third the words in dim ink."
+  },
+  "kudos.budget.thanksBounties_one": {
+    "text": "<0><1>{{remaining}}</1><2> of {{limit}} thanks</2></0><3> · </3><0><1>{{bountiesRemaining}}</1><2> of {{count}} bounties</2></0>",
+    "description": "The viewer's two weekly allowances, in the menu: {{remaining}} of {{limit}} thanks (kudos) left, then {{bountiesRemaining}} of {{count}} bounties left. The first tag wraps one figure with its words, the second shows the number in strong ink and the third the words in dim ink. The fourth holds the separator, in dim ink."
+  },
+  "kudos.budget.thanksBounties_other": {
+    "text": "<0><1>{{remaining}}</1><2> of {{limit}} thanks</2></0><3> · </3><0><1>{{bountiesRemaining}}</1><2> of {{count}} bounties</2></0>",
+    "description": "The viewer's two weekly allowances, in the menu: {{remaining}} of {{limit}} thanks (kudos) left, then {{bountiesRemaining}} of {{count}} bounties left. The first tag wraps one figure with its words, the second shows the number in strong ink and the third the words in dim ink. The fourth holds the separator, in dim ink."
+  },
+  "kudos.budget.tip_one": {
+    "text": "{{remaining}} of {{count}} kudos left this week. Resets {{day}} at {{time}} ({{utc}}).",
+    "description": "Tooltip of the weekly kudos allowance in the menu. {{remaining}} of the {{count}} kudos are left; the second sentence says when the allowance starts again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
+  },
+  "kudos.budget.tip_other": {
+    "text": "{{remaining}} of {{count}} kudos left this week. Resets {{day}} at {{time}} ({{utc}}).",
+    "description": "Tooltip of the weekly kudos allowance in the menu. {{remaining}} of the {{count}} kudos are left; the second sentence says when the allowance starts again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
+  },
+  "kudos.budget.tipUtc_one": {
+    "text": "{{remaining}} of {{count}} kudos left this week. Resets Monday 00:00 UTC.",
+    "description": "Tooltip of the weekly kudos allowance in the menu when the reset time cannot be shown in the viewer's own time zone. {{remaining}} of the {{count}} kudos are left. Keep \"00:00 UTC\"."
+  },
+  "kudos.budget.tipUtc_other": {
+    "text": "{{remaining}} of {{count}} kudos left this week. Resets Monday 00:00 UTC.",
+    "description": "Tooltip of the weekly kudos allowance in the menu when the reset time cannot be shown in the viewer's own time zone. {{remaining}} of the {{count}} kudos are left. Keep \"00:00 UTC\"."
+  },
+  "kudos.budget.tipBounties_one": {
+    "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets {{day}} at {{time}} ({{utc}}).",
+    "description": "Tooltip of the two weekly allowances in the menu: thanks (kudos) and bounties. {{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties are left; the second sentence says when both start again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
+  },
+  "kudos.budget.tipBounties_other": {
+    "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets {{day}} at {{time}} ({{utc}}).",
+    "description": "Tooltip of the two weekly allowances in the menu: thanks (kudos) and bounties. {{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties are left; the second sentence says when both start again. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\". {{utc}} is the same moment in UTC, already formatted, for example \"Mon, Oct 5, 00:00 UTC\"."
+  },
+  "kudos.budget.tipBountiesUtc_one": {
+    "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets Monday 00:00 UTC.",
+    "description": "Tooltip of the two weekly allowances in the menu, thanks (kudos) and bounties, when the reset time cannot be shown in the viewer's own time zone. Keep \"00:00 UTC\"."
+  },
+  "kudos.budget.tipBountiesUtc_other": {
+    "text": "{{remaining}} of {{limit}} thanks and {{bountiesRemaining}} of {{count}} bounties left this week. Resets Monday 00:00 UTC.",
+    "description": "Tooltip of the two weekly allowances in the menu, thanks (kudos) and bounties, when the reset time cannot be shown in the viewer's own time zone. Keep \"00:00 UTC\"."
+  },
+  "progress.points_one": {
+    "text": "<0>{{earned}} of {{total}} pts</0><1>earned</1>",
+    "description": "Second line of the challenge progress at the top of a list of challenges, on the Challenges tab and on Home: the points the viewer has earned out of the points those challenges offer. {{earned}} and {{total}} are numbers of points, already formatted (\"1,000\"); {{count}} is the total, for the plural; \"pts\" abbreviates points. The first tag shows the figures in bold; the second holds the word beside them."
+  },
+  "progress.points_other": {
+    "text": "<0>{{earned}} of {{total}} pts</0><1>earned</1>",
+    "description": "Second line of the challenge progress at the top of a list of challenges, on the Challenges tab and on Home: the points the viewer has earned out of the points those challenges offer. {{earned}} and {{total}} are numbers of points, already formatted (\"1,000\"); {{count}} is the total, for the plural; \"pts\" abbreviates points. The first tag shows the figures in bold; the second holds the word beside them."
+  },
+  "progress.pointsLabel_one": {
+    "text": "{{earned}} of {{total}} pts earned",
+    "description": "Accessible name of the points bar under the challenge progress, on the Challenges tab and on Home. {{earned}} is the points the viewer has earned and {{total}} the points the challenges offer, both already formatted (\"1,000\"); {{count}} is the total, for the plural; \"pts\" abbreviates points."
+  },
+  "progress.pointsLabel_other": {
+    "text": "{{earned}} of {{total}} pts earned",
+    "description": "Accessible name of the points bar under the challenge progress, on the Challenges tab and on Home. {{earned}} is the points the viewer has earned and {{total}} the points the challenges offer, both already formatted (\"1,000\"); {{count}} is the total, for the plural; \"pts\" abbreviates points."
+  },
+  "kudos.status.goingLiveTitle": {
+    "text": "{{release}}.",
+    "description": "Tooltip on the \"going live\" status label of a change of Homeroom itself, in the Kudos tab's lists. {{release}} is a finished sentence saying when the change goes live, for example \"Merged; goes live in the next release (about 8 minutes)\"; this entry adds only the full stop that ends it."
+  }
+}

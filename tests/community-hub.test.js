@@ -23,6 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -58,12 +59,13 @@ const community = (over = {}) => ({
 });
 
 test('the bar reads Home, Discover, Messages, Communities, you — Messages in the middle', () => {
-  const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '([A-Za-z]+)'/g)].map((m) => [m[1], m[2]]);
+  // A tab's label is a message id; the word is what the English catalog holds for it.
+  const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '(core:tabs\.[A-Za-z]+)'/g)].map((m) => [m[1], message(m[2])]);
   assert.deepEqual(order.map((o) => o[0]), ['discover', 'messages', 'workshop', 'me'],
     'after Home, whose entry is written across lines');
   assert.deepEqual(order.find((o) => o[0] === 'workshop'), ['workshop', 'Communities'],
     'the key stays `workshop`; the word is Communities');
-  assert.match(TABS, /key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon/);
+  assert.match(TABS, /key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities', Icon: UserGroupIcon/);
   // The channels' count rides the Communities tab, the conversations' the
   // Messages tab, and the Messages store writes both.
   assert.match(TABS, /key === 'workshop' \? \(\s*<TabBadge count=\{communities\} id="platform-tabs-badge-communities"/);
@@ -71,61 +73,98 @@ test('the bar reads Home, Discover, Messages, Communities, you — Messages in t
   assert.match(STORE, /communities: state\.conversations\.filter\(\(item\) => item\.kind === 'channel' && item\.unreadCount > 0\)\.length\s*\+ state\.discussions\.filter\(\(item\) => item\.section !== 'more' && \(item\.unreadCount \|\| 0\) > 0\)\.length,/);
 });
 
-test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with All items the Workshop\'s page (#852)', () => {
+test('a project page is its places, Hub, Needs you, Workshop and #general, with All items the Workshop\'s page (#852, #4417)', () => {
   const { pageParent, pageTitle } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const band = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
-  assert.deepEqual(band.PROJECT_TABS.map((t) => [t.key, t.label]),
-    [['status', 'Hub'], ['discussion', 'Discussion'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
-  assert.equal(band.litTab('all'), 'workshop', 'the Workshop tab stays lit over All items');
+  const places = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
+  const { placeRows } = loadTsx('frontend/src/features/dev-board/workshop/project-places.tsx');
+  // A project with no topics: the three pages, then #general.
+  const rows = placeRows(null, 0);
+  assert.deepEqual(rows.pages.map((p) => [p.key, p.label]), [['status', 'Hub'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
+  assert.deepEqual([rows.general.key, rows.general.label], ['discussion', 'general']);
+  assert.deepEqual(rows.topics, []);
+  assert.equal(places.litPlace('all'), 'workshop', 'the Workshop stays lit over All items');
   assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
-  assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
-  // The band on every page; All items adds its way back under it.
-  assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
-  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
-  assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
+  // #4417: a channel's page is called by its handle: #general (was
+  // Discussion), and a topic's channel by its own. A page's title is what
+  // the English catalog holds for it.
+  assert.deepEqual(['needs', 'workshop', 'all', 'discussion', 'c:onboarding', 'status'].map(pageTitle),
+    ['Needs you', 'Workshop', 'All items', '#general', '#onboarding', 'Hub']);
+  assert.equal(message('project:page.title.hub'), 'Hub');
+  // The place bar on every page; All items adds its way back under it, the
+  // first thing in its pinned head's one row (#4486), with no eyebrow, and
+  // back is the Workshop place.
+  assert.ok(!/pageBar/.test(LANDER), 'no back bar of its own');
+  assert.equal(message('project:page.backToWorkshop'), 'Workshop');
+  assert.match(LANDER, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack\s+label=\{t\('project:page\.backToWorkshop'\)\}\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}\s+eyebrow=\{false\}/);
+  assert.match(LANDER, /\{band\}\s*\{tray\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
-  // can do, the fortnight), what landed since your last visit, Needs you (a
-  // quiet line when no vote is owed, #3408), the discussion's last two
-  // messages (or Share it, for Just you), and your work. One column at every
-  // width. Start a new change ended it until #852's review moved it into the
-  // hero's ⋯ (tests/improve-action-deduplication.test.js).
-  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'discussion' ? ("));
-  const order = ['<CommunityCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
-  assert.ok(order.every((n) => n >= 0), `all six on the hub: ${JSON.stringify(order)}`);
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, Needs you, discussion, Share it, your work');
+  // can do, the fortnight), the first version while Homeroom bot builds it
+  // (tests/hub-just-you.test.js), what landed since your last visit, Needs
+  // you (a quiet line when no vote is owed, #3408), the discussion's last
+  // two messages (or Share it, for Just you), and your work. One column at
+  // every width. Start a new change ended it until #852's review moved it
+  // into the hero's ⋯ (tests/improve-action-deduplication.test.js).
+  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{isChannelPlace(tab) ? ("));
+  const order = ['<CommunityCard', '<FirstVersionCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
+  assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, first version, summary, Needs you, discussion, Share it, your work');
   assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
-  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
-    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408)');
+  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} alone=\{alone \|\| weekOne\} \/>\}/,
+    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408), and none on a project nobody else is in or in its first week (#4045)');
   assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
     'the summary card\'s Week by week is the Workshop tab');
   assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
-    'the discussion is a preview whose Open is the Discussion tab');
-  assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| v\.mine\.viewer\) \? \(\s*<YourWorkCard/,
-    'your work for any signed-in viewer, with work or without (#3489)');
+    'the discussion is a preview whose Open is the Discussion tab, on every hub, a new one\'s too (#4045)');
+  const { ChannelCard: Preview } = loadTsx(HUB);
+  const quiet = renderToHtml(createElement(Preview, {
+    slug: 'garden', name: 'Garden', compact: true, onOpen: () => {},
+    data: { slug: 'garden', channel: { recent: [], unread_count: 0, href: '#messages/app/garden' } },
+  }));
+  assert.match(quiet, /<button type="button" class="dev-ws-hub-say-hi un-touch-target" data-ws-channel-empty="">Say hi to Garden<\/button>/,
+    'with nothing said yet it asks for the first word, and opens the Discussion tab');
+  assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| \(v\.mine\.viewer && workEmpty\)\) \? \(\s*<YourWorkCard/,
+    'your work for any signed-in viewer, with work or without (#3489), unless a project nobody else is in has nothing to say there');
   assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
-  // Discussion is the channel whole.
-  assert.match(LANDER, /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
-  // The Workshop tab: the approval rules, your work (its first three, #852
-  // review), All items with See all, then the since list by week.
-  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
+  // Discussion is the channel whole; #4417: and so is each topic's channel.
+  assert.match(LANDER, /\{isChannelPlace\(tab\) \? \(\s*<ProjectDiscussion\s+slug=\{slug\}/);
+  // The Workshop tab, in the owner's order (5 Oct 2026): All items with See
+  // all, the approval rules, your work (its first three, #852 review), then
+  // the since list by week.
+  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
-  assert.ok(w('data-ws-mine=""') < w('data-ws-dashboard=""') && w('data-ws-dashboard=""') < w('data-ws-since=""'),
-    'your work, All items, then what changed');
-  assert.match(ws, /v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
+  // #4457: then the weeks, one row each, whose page replaces the tab's body.
+  const wsOrder = ['data-ws-dashboard=""', '<ApprovalRules', '<WorkshopNotices', 'data-ws-mine=""', 'data-ws-since=""', 'data-ws-weeks=""'].map(w);
+  assert.ok(wsOrder.every((n) => n >= 0), `every section is on the tab: ${JSON.stringify(wsOrder)}`);
+  assert.deepEqual([...wsOrder].sort((a, b) => a - b), wsOrder,
+    'All items, the approval rules, the notices panel under them, your work, what changed, then week by week');
+  assert.match(ws, /rows=\{v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
   assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
-  assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
-  // The approval rules are the Workshop page's head (#3528): the page's foot
-  // for a round (#3487), and not the head of All items, where they sat before.
-  assert.ok(w('<ApprovalRules') >= 0 && w('<ApprovalRules') < w('<WorkshopNotices') && w('<ApprovalRules') < w('data-ws-mine=""'),
-    'the approval rules open the Workshop page');
-  assert.match(ws, /<>\s*\{\/\*[\s\S]*?\*\/\}\s*\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}/, 'as its first section');
+  assert.equal(message('project:workshop.allItems.title'), 'All items');
+  assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
+  // All items is the Workshop page's head now, its first section; the
+  // approval rules come straight after it. They were the head (#3528), the
+  // page's foot for a round (#3487), and the head of All items before that.
+  assert.match(ws, /^\{tab === 'workshop' && !weekUp \? \(\n\s*<>\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*\{v\.dashboard \? \(\s*<section\s+className="dev-ws-strip"\s+data-ws-dashboard=""/,
+    'All items opens the Workshop page');
+  assert.match(ws, /<\/section>\n\s*\) : null\}\n\n\s*\{\/\*(?:(?!\*\/)[\s\S])*\*\/\}\n\s*\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}/,
+    'and the approval rules follow it, with nothing between');
   assert.equal(ws.split('<ApprovalRules').length - 1, 1, 'and only there');
   const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
   assert.ok(!all.slice(0, all.indexOf('data-ws-pane=""')).includes('<ApprovalRules'), 'and All items no longer leads with them');
-  // `?ws=discussion` is a deep link like the others.
-  assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all'\],/);
+  // `?ws=discussion` is a deep link like the others, and so is `?ws=plan`,
+  // the plan for the people who joined (#4074), a page under the Hub that is
+  // visited and never reopened on.
+  const av = read('public/js/app-view.js');
+  assert.match(av, /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all', 'plan'\],/);
+  // #4417: and so is a topic's channel, `c:<handle>`, a place like the others.
+  assert.match(av, /_isWorkshopPlace\(key\) \{\n\s*return AppView\.WORKSHOP_TABS\.indexOf\(key\) !== -1\n\s*\|\| \(typeof key === 'string' && AppView\.WORKSHOP_CHANNEL_RE\.test\(key\)\);/);
+  assert.match(av, /const next = AppView\._isWorkshopPlace\(key\) && key !== 'plan' \? key : 'status';/);
+  assert.match(av, /if \(AppView\._isWorkshopPlace\(stored\) && stored !== 'plan'\) return stored;/);
+  const { litPlace } = loadTsx('frontend/src/features/dev-board/workshop/places.ts');
+  assert.equal(litPlace('plan'), 'status', 'Hub stays lit over the plan');
+  assert.equal(litPlace('all'), 'workshop');
 });
 
 test('the hub\'s channel card shows the last messages, what is new, and the way in', () => {
@@ -219,7 +258,9 @@ test('an open channel lights Communities and hangs off its hub; Messages lists p
   assert.match(screen, /const channelOpen = !!snap\.route\.appSlug\s*\|\| \(!!snap\.route\.conversationId && snap\.active\?\.id === snap\.route\.conversationId && snap\.active\?\.kind === 'channel'\);/);
   const inbox = read('frontend/src/features/messages/inbox.ts');
   assert.match(inbox, /if \(item\.kind === 'channel'\) continue;/);
-  assert.match(inbox, /return chats\.sort\(byClock\);/);
+  assert.match(inbox, /chats\.sort\(byClock\);/);
+  // B5: the Homeroom bot's DM first, the rest in the order things happened.
+  assert.match(inbox, /if \(at > 0\) chats\.unshift\(\.\.\.chats\.splice\(at, 1\)\);\n\s+return chats;/);
 });
 
 test('#general needs the Homeroom community to post in; Homeroom\'s old channel takes no post', () => {
@@ -254,8 +295,9 @@ test('#852 review: a project\'s own Discussion is a fitted pane, and Homeroom\'s
   // taken twice.
   const CSS = read('public/css/app.css');
   assert.doesNotMatch(CSS, /\.dev-ws-discussion \{[^}]*calc\(100dvh - 210px\)/);
-  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\] \{ min-height: 0; \}/);
-  assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="discussion"\] \{\s*height: var\(--ws-fit\);/);
+  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\],\s*#dev-workshop > \.dev-ws\[data-ws-tab\^="c:"\] \{ min-height: 0; \}/);
+  // #4417: a topic's channel (`c:<handle>`) is fitted the same way as #general.
+  assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="discussion"\],\s*html\[data-browser-scroller\] \.dev-ws\[data-ws-tab\^="c:"\] \{\s*height: var\(--ws-fit\);/);
   assert.match(CSS, /\.dev-ws-discussion \.platform-safe-bar \{ padding-bottom: 0\.5rem !important; \}/);
 });
 
@@ -313,7 +355,7 @@ test('a pull to refresh moves only the page under the tabs (pull-to-refresh unde
   const CSS = read('public/css/app.css');
   const APP_VIEW = read('public/js/app-view.js');
   // The project page opts into the kit's two options, and no other pull does.
-  assert.match(APP_VIEW, /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{\s*pullProperty: '--dev-ptr-pull',\s*topEl: \(\) => devScroll\.querySelector\('\.dev-ws > \.dev-ws-band'\),\s*\}\);/,
+  assert.match(APP_VIEW, /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{\s*pullProperty: '--dev-ptr-pull',\s*topEl: \(\) => \{\s*const band = devScroll\.querySelector\('\.dev-ws > \.dev-ws-band'\);\s*devScroll\.classList\.toggle\('dev-ws-has-band', !!band\);\s*return band;\s*\},\s*\}\);/,
     'the scroller carries the pull as a property, and the spinner hangs from the band');
   assert.equal((APP_VIEW.match(/pullProperty:/g) || []).length, 1);
   assert.doesNotMatch(read('public/js/app.js'), /pullProperty/, 'Home, Discover and Standings keep the kit\'s own pull');
@@ -321,7 +363,13 @@ test('a pull to refresh moves only the page under the tabs (pull-to-refresh unde
   // still loading) everything in the scroller. No fallback in the var(), so
   // at rest the declaration is invalid at computed-value time and leaves
   // `transform: none`: no stacking context or containing block until a pull.
-  assert.match(CSS, /\n#dev-forum-scroll \.dev-ws > \.dev-ws-band ~ \*,\n#dev-forum-scroll:not\(:has\(\.dev-ws-band\)\) > \* \{\n  transform: translateY\(var\(--dev-ptr-pull\)\);\n\}/);
+  // "No band" is a class the scroller carries (`dev-ws-has-band`, absent),
+  // not `:not(:has(.dev-ws-band))`: asked as `:has()` on the scroller, the
+  // answer could change with any node added to the board, and the browser
+  // re-applied the stylesheet to all of it each time. The pull reads the band
+  // again as it starts (the `topEl` above), so the class is right when used.
+  assert.match(CSS, /\n#dev-forum-scroll \.dev-ws > \.dev-ws-band ~ \*,\n#dev-forum-scroll:not\(\.dev-ws-has-band\) > \* \{\n  transform: translateY\(var\(--dev-ptr-pull\)\);\n\}/);
+  assert.doesNotMatch(CSS, /#dev-forum-scroll:not\(:has\(\.dev-ws-band\)\)\s*>\s*\*\s*\{/);
   assert.doesNotMatch(CSS, /var\(--dev-ptr-pull,/, 'no fallback: a 0px one would transform the tab body at rest');
   // #3514's paint for the gap under the header, and the hook that sized it,
   // are gone with the gap: a pull no longer opens one there.
@@ -345,7 +393,7 @@ test('#3520: a short growing tab keeps one pixel to scroll, so the installed app
   const at = CSS.indexOf('@media (max-width: 699.98px) and (pointer: coarse) {\n  html:not([data-browser-scroller]) #dev-forum-scroll:has(');
   assert.ok(at > -1, 'a phone block for the scroller holding a growing tab');
   const block = CSS.slice(at, CSS.indexOf('\n}\n', at) + 3);
-  const growing = '#dev-forum-scroll:has\\(> #dev-body > #dev-workshop > \\.dev-ws:not\\(\\[data-ws-tab="needs"\\]\\):not\\(\\[data-ws-tab="discussion"\\]\\)\\)';
+  const growing = '#dev-forum-scroll:has\\(> #dev-body > #dev-workshop > \\.dev-ws:not\\(\\[data-ws-tab="needs"\\]\\):not\\(\\[data-ws-tab="discussion"\\]\\):not\\(\\[data-ws-tab\\^="c:"\\]\\)\\)';
   // Only where the scroller is the element, not the document (a phone
   // browser pages the document, and the pixel would lengthen the page), and
   // not the two fitted tabs, which scroll inside themselves.

@@ -34,6 +34,11 @@ function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() 
   // (services/check-admission.js): no run is overdue because none was
   // started, and re-driving one would only defer it again.
   if (session?.check_phase === 'deferred') return false;
+  // Nor is a run waiting for a checks slot (services/checks-queue.js): it
+  // starts when one frees, and the harvest re-drives it in its place if its
+  // process dies. findStuckCheckSessions below is the backstop for one whose
+  // place in line was lost.
+  if (session?.check_phase === 'queued') return false;
   if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
   const checkedAt = session?.checks_checked_at == null
     ? NaN
@@ -83,6 +88,11 @@ async function markInterruptedBuilds(pool, sessionIds) {
 // One query shared by boot reconciliation and the live sweeper. Keeping the
 // scope here prevents the two recovery paths from drifting back to the old
 // promoted-only rule that stranded pre-vote CLI handoffs after a restart.
+//
+// A run waiting for a checks slot is not stuck, however long it has waited:
+// its row in the checks queue (services/checks-queue.js) is the queue's and,
+// if its process died, the harvest's. Only a 'queued' session with no row
+// left in line is overdue, by the same clock as any other.
 async function findStuckCheckSessions({
   pool,
   staleMs = checksStaleMs(),
@@ -104,6 +114,9 @@ async function findStuckCheckSessions({
         AND (cs.check_state IS NULL
              OR (cs.check_state = 'pending'
                  AND cs.check_phase IS DISTINCT FROM 'deferred'
+                 AND (cs.check_phase IS DISTINCT FROM 'queued'
+                      OR NOT EXISTS (SELECT 1 FROM check_runs cr
+                                      WHERE cr.session_id = cs.id AND cr.admitted_at IS NULL))
                  AND (cs.checks_checked_at IS NULL
                       OR cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
              OR (cs.check_state = 'error'
@@ -118,6 +131,34 @@ async function findStuckCheckSessions({
   // keeps a future query refactor from widening recovery to ordinary sessions.
   return { rows: rows.filter(isStuckCheckRecoveryScope) };
 }
+
+// #237: how many 'error' verdicts in a row the error lane above re-runs on
+// its own. storeChecks bumps consecutive_check_failures on every 'error'
+// (and schedules check_next_retry_at, 2m → 4m → … → 30m); past this count
+// the row is left 'error' until a new commit or a person re-runs it.
+// Tunable via CHECK_MAX_AUTO_RETRIES.
+const DEFAULT_CHECK_MAX_AUTO_RETRIES = 6;
+
+function checkMaxAutoRetries() {
+  const configured = Number.parseInt(
+    process.env.CHECK_MAX_AUTO_RETRIES || String(DEFAULT_CHECK_MAX_AUTO_RETRIES),
+    10
+  );
+  return Number.isFinite(configured) ? configured : DEFAULT_CHECK_MAX_AUTO_RETRIES;
+}
+
+// What a red run that overlapped a platform rollout used to record instead
+// of 'failing' (#3828). Nothing writes it any more: red runs followed load,
+// not rollouts (701 runs from 5 Oct 2026, red at 9% under 10 cores of check
+// Jobs and 24 to 29% above, a rollout adding little at equal load), so the
+// relabel excused real failures and the checks queue (services/checks-
+// queue.js) addresses the load. A run that crossed a restart is judged on its
+// own results now. The rows already stored with it were given a retry by
+// storeChecks and are run again by the error lane, so the surfaces that word
+// them as "will run again" (the card, the merge gate, the connector) still
+// read them that way until they settle. It is user-facing copy: plain words,
+// no em dashes.
+const ROLLOUT_RETRY_DETAIL = 'Checks ran while Homeroom was updating, so they will run again.';
 
 // Does a session need its staging preview (re)built?
 //
@@ -269,6 +310,12 @@ function checkTriggerForReason(reason) {
 // and must stay skippable.
 const FORCED_RECHECK_REASONS = new Set(['manual-recheck', 'testing-update']);
 
+// The reasons whose run REPLACES one of the same commit still on the cluster
+// (visuals.captureForSession `replaceRun`). The proposal's capture routes or
+// shots changed, so that run answers the old question. Every other recheck,
+// a manual one included, leaves such a run to be collected.
+const REPLACING_RECHECK_REASONS = new Set(['testing-update', 'shots-update']);
+
 // Rebuild the staging preview for a single session that has a branch +
 // commits ahead of main but a NULL/dead staging_url. Shared by the
 // startup recovery sweep (recoverSessions), the periodic sweeper's
@@ -314,9 +361,6 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     return 'skipped';
   }
 
-  const { Octokit } = await import('@octokit/rest');
-  const ok = new Octokit({ auth: pat });
-
   // #866: what identifies this session's code in the app's own repo.
   //
   // Native rows own their branch there, so `branch_name` compares and
@@ -342,6 +386,11 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // (or behind) main has nothing to preview.
   let compare;
   try {
+    // A read, so it goes through the App installation when the owner has
+    // one (services/github.js getReadOctokit), and is recorded and counted
+    // like every other GitHub request. It used to be a bot-token client of
+    // its own that the budget never saw.
+    const ok = await require('./github').getReadOctokit(owner);
     const { data } = await ok.rest.repos.compareCommits({
       owner, repo, base: 'main', head: compareHead,
     });
@@ -572,6 +621,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     // Deliberately NOT forced: a rebuild whose head already has a passing
     // verdict has nothing new to learn, and this path fires on every heal
     // sweep and every preview click.
+    replaceRun: REPLACING_RECHECK_REASONS.has(reason),
   })
     .catch((err) => log.warn('staging-recovery', 'Post-rebuild checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
@@ -677,6 +727,8 @@ async function recordChecksSkipped({
     log.warn('staging-recovery', 'skipped-verdict notify failed', { sessionId: session.id, err: err.message });
   }
   visuals.maybeAutoMergeAfterChecks(config, pool, session, 'skipped');
+  // B4: skipped checks make a bot's change ready to try, as passing ones do.
+  visuals.noteBotChecksAfterChecks?.(pool, session, 'skipped');
 }
 
 // #237: record a staging build/boot failure as a terminal proposal-checks
@@ -746,6 +798,17 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     detail,
   });
 
+  // A promoted proposal behind main can fail to start for main's sake, not
+  // its own: previews boot against production's database, which runs main's
+  // schema (#4186 against #4172). When it merges cleanly the platform syncs
+  // it, once per head, in the background; either way the plan says what the
+  // note below tells the author. Checked on every retry, before the streak
+  // gate, so a failure first measured while the mirror was down still gets
+  // its sync.
+  const catchUp = infrastructure ? null : await require('./boot-failure-sync').afterBootFailure({
+    config, pool, session, commitHash, err,
+  }).catch(() => null);
+
   const alreadyNotified = row && row.check_error_notified_at;
   if (!row || alreadyNotified) return;
 
@@ -764,6 +827,11 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // person who can act on it is the platform owner, who gets the escalation
   // the 'error' state already carries. The stamp above still runs, so the
   // backoff retries stay quiet either way.
+  // B4: a change the Homeroom bot built for somebody is not ready to try
+  // while its preview will not start, and its requester hears that, once per
+  // failure streak, rather than nothing (they hear "ready" only when it is).
+  require('./homeroom-bot-dm').noteChangeStopped(pool, session.id, { why: 'preview' }).catch(() => null);
+
   if (infrastructure) {
     log.warn('staging-recovery', 'Boot failure is infrastructure — author not nudged', {
       sessionId: session.id, detail,
@@ -785,7 +853,10 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // Still exactly one post per failure streak, either way: setChecksPending
   // clears check_error_notified_at when a new commit arrives, so a fresh
   // build failure always narrates, and quiet backoff retries never do.
-  const body = `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet. Reason: ${detail}`;
+  const aboutMain = require('./boot-failure-sync').explain(catchUp);
+  const body = catchUp && catchUp.sync
+    ? `⚠️ Staging preview failed to start. ${aboutMain} Reason: ${detail}`
+    : `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet.${aboutMain ? ` ${aboutMain}` : ''} Reason: ${detail}`;
   try {
     if (session.source === 'imported') {
       const { sendSystemMessage } = require('./ws');
@@ -827,7 +898,28 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // paths are fire-and-forget at the capture layer and never throw for the
 // no-op cases (no repo / no bot token → rebuildSessionStaging returns
 // 'skipped'); a genuine build failure propagates to the caller.
-async function recheckSessionChecks({ config, pool, session, reason }) {
+//
+// `queuedSince` is the place in the checks queue an interrupted run had
+// (check-harvest's re-drive): the direct re-run asks for its slot as of then.
+// A rebuild is a new run and queues anew once its preview is up.
+async function recheckSessionChecks({ config, pool, session, reason, queuedSince = null }) {
+  const replaceRun = REPLACING_RECHECK_REASONS.has(reason);
+  // A run of this commit still on the cluster, running or finished but not
+  // yet read, is the run a recheck asks for: the harvest collects it
+  // (services/check-harvest.js). Asked before the stamp below, which would
+  // set a run that is testing back to "building", and before a rebuild,
+  // which would replace the preview under it and take the lifecycle row its
+  // harvest writes through. Its verdict, when stored, clears its manifest,
+  // and a recheck after that starts a fresh run as before.
+  if (!replaceRun) {
+    const left = await require('./check-harvest').runToCollect(config, pool, session.id, session.checks_commit_sha || null);
+    if (left) {
+      log.info('staging-recovery', 'A run of this commit is still on the cluster; leaving it to the harvest', {
+        sessionId: session.id, reason, ...left,
+      });
+      return 'collecting';
+    }
+  }
   // #607: stamp 'pending' + tell open clients the moment the re-run is
   // requested — a needed staging rebuild can take minutes, and before this
   // the badge kept showing the stale verdict (or nothing at all for a
@@ -861,6 +953,8 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
     // routes (#1199) — is asking for a FRESH verdict, so these paths force
     // the run even when the row already reads passing.
     force: FORCED_RECHECK_REASONS.has(reason),
+    replaceRun,
+    ...(queuedSince ? { queuedSince } : {}),
   })
     .catch((err) => log.warn('staging-recovery', 'Direct checks re-run failed (non-fatal)', {
       sessionId: session.id, reason, err: err.message,
@@ -875,6 +969,9 @@ module.exports = {
   checkRunOverdue,
   isStuckCheckRecoveryScope,
   findStuckCheckSessions,
+  DEFAULT_CHECK_MAX_AUTO_RETRIES,
+  checkMaxAutoRetries,
+  ROLLOUT_RETRY_DETAIL,
   stagingNeedsRebuild,
   previewIsOfAnotherCommit,
   recheckHeadSha,

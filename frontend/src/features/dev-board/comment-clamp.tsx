@@ -33,6 +33,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } fr
 
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
+
 /**
  * How many lines a long comment shows before it is expanded.
  *
@@ -87,6 +89,7 @@ export function ClampedCommentBody({
   html?: { __html: string };
   children?: ReactNode;
 }) {
+  const t = useMessages('project');
   return (
     <>
       <div
@@ -112,7 +115,7 @@ export function ClampedCommentBody({
           // stopping here keeps that true of any host this lands in next.
           onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
         >
-          {expanded ? 'Show less' : 'Show more'}
+          {expanded ? t('project:clamp.showLess') : t('project:clamp.showMore')}
         </Button>
       ) : null}
     </>

@@ -50,6 +50,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useDialog } from './use-dialog';
 
@@ -68,6 +70,7 @@ interface Candidate {
 type ListState =
   | { kind: 'loading' }
   | { kind: 'rows'; rows: Candidate[] }
+  // `text` is a message id, read when the list renders.
   | { kind: 'note'; text: string }
   | { kind: 'error'; text: string };
 
@@ -88,13 +91,14 @@ export function importPrErrorMessage(
   prNumber: number,
 ): string {
   if (serverError) return serverError;
-  if (status === 404) return `PR #${prNumber} wasn’t found on GitHub. It may have been deleted.`;
-  if (status === 409) return `PR #${prNumber} can’t be imported right now.`;
-  if (status === 503) return 'The platform is restarting. Try the import again in a few seconds.';
-  return 'Something went wrong importing this PR. Please try again.';
+  if (status === 404) return translate('dialogs:importPr.error.notFound', { number: prNumber });
+  if (status === 409) return translate('dialogs:importPr.error.conflict', { number: prNumber });
+  if (status === 503) return translate('dialogs:importPr.error.restarting');
+  return translate('dialogs:importPr.error.generic');
 }
 
 export function ImportPrDialog() {
+  const t = useMessages('dialogs');
   const errorRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
   const slowRef = useRef<HTMLDivElement>(null);
@@ -104,7 +108,8 @@ export function ImportPrDialog() {
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [progressText, setProgressText] = useState('');
+  // The pull request being imported; the progress line is read from it.
+  const [progressPr, setProgressPr] = useState<number | null>(null);
   const [slow, setSlow] = useState(false);
 
   const busyRef = useRef(false);
@@ -155,7 +160,7 @@ export function ImportPrDialog() {
       ok = res.ok;
       data = await res.json().catch(() => ({}));
     } catch {
-      setList({ kind: 'error', text: 'Couldn’t load pull requests. Please try again.' });
+      setList({ kind: 'error', text: 'dialogs:importPr.list.loadFailed' });
       return;
     }
     if (!ok) {
@@ -163,7 +168,7 @@ export function ImportPrDialog() {
       // state rather than an error the user can't act on.
       setList({
         kind: 'note',
-        text: 'GitHub isn’t configured for this app, so there’s nothing to import.',
+        text: 'dialogs:importPr.list.notConfigured',
       });
       return;
     }
@@ -171,7 +176,7 @@ export function ImportPrDialog() {
     if (rows.length === 0) {
       setList({
         kind: 'note',
-        text: 'No open pull requests are available to import right now.',
+        text: 'dialogs:importPr.list.empty',
       });
       return;
     }
@@ -196,9 +201,7 @@ export function ImportPrDialog() {
     }
     setSlow(false);
     if (!on) return;
-    setProgressText(
-      `Importing PR #${prNumber}: checking it on GitHub and adding it to In progress…`,
-    );
+    setProgressPr(prNumber ?? null);
     slowTimer.current = setTimeout(() => {
       if (busyRef.current) setSlow(true);
     }, 8000);
@@ -211,7 +214,7 @@ export function ImportPrDialog() {
     if (!slug) return;
     if (busy) return;
     const pr = selected;
-    if (pr == null) return setError('Pick a pull request to import.');
+    if (pr == null) return setError(t('dialogs:importPr.error.pick'));
     setError('');
     setImportBusy(true, pr);
 
@@ -238,7 +241,7 @@ export function ImportPrDialog() {
       sessionId = data.sessionId;
     } catch {
       setImportBusy(false);
-      setError('Network error. Please try again.');
+      setError(t('dialogs:importPr.error.network'));
       return;
     }
 
@@ -257,7 +260,7 @@ export function ImportPrDialog() {
       // the staging build takes minutes, and until it lands the proposal shows
       // "Preview building…" with checks pending.
       window.PlatformUI?.toast?.(
-        `PR #${pr} was imported. Its preview is being built now. Find it in Dev under In progress.`,
+        t('dialogs:importPr.imported', { number: pr }),
       );
     }
     dialog.close();
@@ -271,10 +274,10 @@ export function ImportPrDialog() {
     >
       <DialogCard size="md">
         <h2 className="text-lg font-bold mb-1">
-          Import a pull request
+          {t('dialogs:importPr.title')}
         </h2>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          Pick an open pull request to add to In progress. It stays there until you put it up for vote.
+          {t('dialogs:importPr.intro')}
         </p>
         {/*
             #866: two expectations worth setting before the import, both of
@@ -285,11 +288,10 @@ export function ImportPrDialog() {
             code in the preview, so read the diff on GitHub first.
         */}
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear, and automated checks stay pending until it does. Rows marked "}
-          <span className="text-amber-800 dark:text-amber-400">
-            from a fork
-          </span>
-          {" are branches in someone else's repository: review the changes on GitHub before importing."}
+          <RichMessage
+            id="dialogs:importPr.previewNote"
+            components={[<span className="text-amber-800 dark:text-amber-400" />]}
+          />
         </p>
         <div
           id="import-pr-list"
@@ -300,11 +302,11 @@ export function ImportPrDialog() {
           }
         >
           {!dialog.isOpen ? null : list.kind === 'loading' ? (
-            <div className={NOTE_CLASS}>Loading open pull requests…</div>
+            <div className={NOTE_CLASS}>{t('dialogs:importPr.list.loading')}</div>
           ) : list.kind === 'note' ? (
-            <div className={NOTE_CLASS}>{list.text}</div>
+            <div className={NOTE_CLASS}>{t(list.text)}</div>
           ) : list.kind === 'error' ? (
-            <div className={ERROR_CLASS}>{list.text}</div>
+            <div className={ERROR_CLASS}>{t(list.text)}</div>
           ) : (
             list.rows.map((c) => {
               const num = Number(c.number);
@@ -329,7 +331,7 @@ export function ImportPrDialog() {
                       #{num} · {String(c.title || '')}
                     </span>
                     <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                      {`${String(c.author || 'unknown')} · `}
+                      {`${String(c.author || t('dialogs:importPr.row.unknownAuthor'))} · `}
                       <span className="font-mono">
                         {String(c.headBranch || '')} → {String(c.baseBranch || '')}
                       </span>
@@ -344,10 +346,20 @@ export function ImportPrDialog() {
                     {c.fromFork ? (
                       <span
                         className="block text-xs text-amber-800 dark:text-amber-400 mt-0.5"
-                        title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing."
+                        title={t('dialogs:importPr.row.forkTooltip')}
                       >
-                        {'from a fork: '}
-                        <span className="font-mono">{String(c.headRepo || 'unknown fork')}</span>
+                        {c.headRepo ? (
+                          <RichMessage
+                            id="dialogs:importPr.row.fromFork"
+                            values={{ repository: String(c.headRepo) }}
+                            components={[<span className="font-mono" />]}
+                          />
+                        ) : (
+                          <RichMessage
+                            id="dialogs:importPr.row.fromUnknownFork"
+                            components={[<span className="font-mono" />]}
+                          />
+                        )}
                       </span>
                     ) : null}
                     {c.htmlUrl ? (
@@ -358,7 +370,7 @@ export function ImportPrDialog() {
                         className="inline-block text-xs text-violet-700 hover:underline mt-1 dark:text-violet-400"
                         onClick={(event) => event.stopPropagation()}
                       >
-                        View on GitHub ↗
+                        {t('dialogs:importPr.row.viewOnGitHub')}
                       </a>
                     ) : null}
                   </span>
@@ -383,11 +395,11 @@ export function ImportPrDialog() {
             <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true">
             </span>
             <span id="import-pr-progress-text">
-              {progressText}
+              {progressPr == null ? '' : t('dialogs:importPr.progress', { number: progressPr })}
             </span>
           </div>
           <div id="import-pr-progress-slow" ref={slowRef} className="hidden mt-1 text-xs opacity-80">
-            Still working. GitHub is being slow, so don’t close this window.
+            {t('dialogs:importPr.slow')}
           </div>
         </div>
         <div id="import-pr-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden mt-3">
@@ -401,7 +413,7 @@ export function ImportPrDialog() {
             disabled={busy}
             onClick={() => dialog.close()}
           >
-            Cancel
+            {t('core:common.cancel')}
           </button>
           <Button
             type="button"
@@ -411,7 +423,7 @@ export function ImportPrDialog() {
             disabled={busy || selected == null}
             onClick={submit}
           >
-            {busy ? 'Importing…' : 'Import'}
+            {busy ? t('dialogs:importPr.submitting') : t('dialogs:importPr.submit')}
           </Button>
         </div>
       </DialogCard>

@@ -383,3 +383,16 @@ test('#2305: both bars trim the kit\'s top padding to the inset + 8px, matching 
   const kit = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'), 'utf8');
   assert.match(kit, /\.un-safe-top-extend \{\s*padding-top: calc\(0\.75rem \+ var\(--un-safe-inset-top, env\(safe-area-inset-top, 0px\)\)\) !important;/);
 });
+
+// #4037: the landing bar stays on the signed-out story. The story is a
+// stranger's first screen, so the Homeroom logo is there to say where they
+// are (the owner's ruling, after a build that hid the bar while the story was
+// up). No rule hides the bar for the story, and its markup is never hidden.
+test('the story keeps the landing bar', () => {
+  assert.equal((css.match(/#landing-header \{\s*display: none;/g) || []).length, 0,
+    'no rule hides #landing-header');
+  assert.doesNotMatch(css, /\[data-landing-story\][^{}]*#landing-header/,
+    'no rule reaches the bar from the story');
+  const bar = BARS.find((b) => b.id === 'landing-header').slice;
+  assert.doesNotMatch(openingTag(bar), /\bhidden\b/, 'the bar is not hidden in the markup');
+});

@@ -10,16 +10,29 @@ function handler(name) {
   const end = source.indexOf('\n  }', start) + 4;
   return source.slice(start, end).replace(': FormEvent', '').replace(': string', '');
 }
+// The handlers read their text through `t` (and `blockedCopy` through
+// `translate`). This is the English catalog source read directly, so the
+// suite still needs no frontend install; one/other is all English has.
+const catalog = JSON.parse(fs.readFileSync('frontend/locales/en/dialogs.json', 'utf8'));
+function t(id, values = {}) {
+  const key = id.slice(id.indexOf(':') + 1);
+  const entry = catalog[key] || catalog[`${key}_${values.count === 1 ? 'one' : 'other'}`];
+  if (!entry) throw new Error(`No English catalog entry for ${id}`);
+  return entry.text.replace(/{{\s*(\w+)\s*}}/g, (_, name) => String(values[name] ?? ''));
+}
 function setup(fetch) {
   const s = { app: {slug:'test-app',name:'Test App',repo_url:'https://github.com/o/r',self_hosted:false,
     can_manage:true,collab_visibility:'public',view_visibility:'public',can_delete:true,contributor_count:1},
     confirmation:'Test App',accessDraft:'private',accessChanged:true,accessProposalOpen:false,
-    sharedAck:false,setSharedAck(v){s.sharedAck=v;},JSON,
+    sharedAck:false,setSharedAck(v){s.sharedAck=v;},JSON,t,
     pending:{current:false},generation:{current:0},fetch,Error,Promise,
     setApp(v){s.app=v;},setConfirmation(v){s.confirmation=v;},setError(v){s.error=v;},
     setLoading(v){s.loading=v;},setBusy(v){s.busy=v;},
     setAccessDraft(v){s.accessDraft=v;},setAccessMessage(v){s.accessMessage=v;},
     setAccessMessageIsError(v){s.accessMessageIsError=v;},setAccessBusy(v){s.accessBusy=v;},
+    // #4659: the verify sheet's answer is configurable; a person who chooses
+    // Not now answers false. Default true keeps the retry path reachable.
+    askToVerifyForPublic(){return Promise.resolve(s.verifyChoice!==false);},
     setAccessProposalOpen(v){s.accessProposalOpen=v;},
     currentAccessMode(app){return app.collab_visibility==='public'?'public':(app.view_visibility==='private'?'private':'public-invite');},
     visibilityForAccess(mode){return ACCESS_MODES.find((item)=>item.id===mode);},
@@ -72,9 +85,20 @@ test('an existing visibility proposal is reported and prevents a duplicate retry
   let calls=0;const s=setup(async()=>{calls++;return {ok:false,status:409,json:async()=>({sessionId:55})};});
   await s.proposeAccess();
   assert.equal(s.accessProposalOpen,true);
-  assert.match(s.accessMessage,/already up for vote/);
+  assert.match(s.accessMessage,/already waiting for approval/);
   await s.proposeAccess();
   assert.equal(calls,1);
+});
+
+test('backing out of the verify sheet says the access did not change (#4659)',async()=>{
+  let calls=0;const s=setup(async()=>{calls++;return {ok:false,status:403,json:async()=>({code:'identity_required'})};});
+  s.verifyChoice=false;
+  await s.proposeAccess();
+  assert.equal(calls,1,'Not now does not retry the request');
+  assert.match(s.accessMessage,/Access not changed/);
+  assert.equal(s.accessMessageIsError,false,'declining to verify is not an error');
+  assert.equal(s.accessProposalOpen,false);
+  assert.equal(s.accessBusy,false);
 });
 
 test('deletion requires current permission and the exact app name',async()=>{
@@ -107,7 +131,7 @@ test('a blocked app (core or shared) never makes a request',async()=>{
 });
 test('the blocked notice names the reason the server gave (#2161)',()=>{
   const start=source.indexOf('function blockedCopy(');const end=source.indexOf('\n}',start)+2;
-  const ctx={};vm.createContext(ctx);vm.runInContext(source.slice(start,end).replace(': AppSettings',''),ctx);
+  const ctx={translate:t};vm.createContext(ctx);vm.runInContext(source.slice(start,end).replace(': AppSettings',''),ctx);
   assert.match(ctx.blockedCopy({delete_block:'core'}),/core platform app/);
   assert.match(ctx.blockedCopy({delete_block:'shared',contributor_count:2}),/1 other contributor,/);
   assert.match(ctx.blockedCopy({delete_block:'shared',contributor_count:4}),/3 other contributors,/);

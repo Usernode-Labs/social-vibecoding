@@ -101,7 +101,13 @@ const canWrite = () => !!topo()?.canWrite();
 
 type WaitlistRow = {
   id: number;
-  email: string;
+  /** Null on a phone row (#4223): joined from Home with a verified phone, no email. */
+  email: string | null;
+  phone_only?: boolean;
+  /** The phone row's number, its last four digits at most. */
+  phone_last4?: string | null;
+  /** A phone row waiting on outbound SMS (#4096): it cannot be admitted yet. */
+  needs_sms?: boolean;
   confirmed_at?: string | null;
   submitted_at?: string | null;
   released_at?: string | null;
@@ -357,9 +363,11 @@ function WaitlistDetails({ row }: { row: WaitlistRow }) {
       </summary>
       <div className="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">
         {detail('Signed up', fmt(row.submitted_at))}
-        {detail('Address confirmed', row.confirmed_at
-          ? fmt(row.confirmed_at)
-          : 'Never. The link in the join email was not followed.')}
+        {row.phone_only
+          ? detail('Joined with', `A verified phone${row.phone_last4 ? ` ending ${row.phone_last4}` : ''}, no email`)
+          : detail('Address confirmed', row.confirmed_at
+            ? fmt(row.confirmed_at)
+            : 'Never. The link in the join email was not followed.')}
         {detail('Admitted', row.released_at ? fmt(row.released_at) : 'Not yet.')}
         {detail('Invite email', mail)}
         {detail('Invite link used by', row.signals?.invited
@@ -868,97 +876,73 @@ function WaitlistAnalyticsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── Invites: the switch for invite links skipping the waitlist ──────────
+// ── Invites: retired ─────────────────────────────────────────────────────
 //
-// services/community-invites.js, "the invite tree". Somebody admitted here
-// (or granted access directly) gets `root_skips` invites: anyone new who
-// follows one of their invite links gets in at once instead of waiting.
-// Nobody else has any: not the people they let in (invites do not chain),
-// not accounts that already had access. The switch is a platform setting,
-// on unless turned off here; the body is split out so a test can render it.
-
-type InviteTree = {
-  enabled: boolean;
-  root_skips: number;
-  roots: number;
-  through_links: number;
-  updated_at?: string | null;
-  updated_by?: string | null;
-};
+// The switch for invite links skipping the waitlist ("the invite tree")
+// lived here. Private membership replaced it: anyone new an invite link
+// brings in joins its community straight away as a private member, and is
+// admitted from this queue like anybody else (services/community-invites.js).
 
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-function InviteTreeBody({ tree, write, onToggle }: {
-  tree: InviteTree;
-  write: boolean;
-  onToggle: (next: boolean) => void;
-}) {
-  const help = `Everyone you admit gets ${plural(tree.root_skips, 'invite', 'invites')}: `
-    + 'anyone new who follows one of their invite links gets in straight away. The people they '
-    + 'invite get none, and neither do accounts that already had access. Switched off, anyone new '
-    + 'who follows a link waits here until admitted.';
-  const usage = `${plural(tree.roots, 'person', 'people')} admitted can invite; `
-    + `${plural(tree.through_links, 'person', 'people')} got in through an invite so far.`;
-  return (
-    <>
-      {write ? (
-        <CheckField
-          id="admin-topo-wl-invites-enabled"
-          label="Invite links skip the waitlist"
-          help={help}
-          checked={tree.enabled}
-          onChange={onToggle}
-        />
-      ) : (
-        <p className="text-xs text-zinc-600 dark:text-zinc-400">
-          <span className="font-medium">
-            {tree.enabled ? 'Invite links skip the waitlist.' : 'Invite links do not skip the waitlist.'}
-          </span>
-          {` ${help}`}
-        </p>
-      )}
-      <p id="admin-topo-wl-invites-usage" className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-        {usage}
-        {tree.updated_at
-          ? ` Last switched ${fmt(tree.updated_at)}${tree.updated_by ? ` by ${tree.updated_by}` : ''}.`
-          : ''}
-      </p>
-    </>
-  );
-}
+// ── The story landing: what a signed-out visitor is asked to do ─────────
+//
+// On (the default), the landing tells the first-session story and asks them
+// to get started: an account is made on the spot (services/first-session.js).
+// Off, it points at the waitlist ("Join the waitlist"). It belongs beside the
+// invite setting because it is the same valve.
 
-function InviteTreePanel() {
-  const [tree, setTree] = useState<InviteTree | null>(null);
+type StoryLanding = { enabled: boolean; updated_at?: string | null; updated_by?: string | null };
+
+function StoryLandingPanel() {
+  const [story, setStory] = useState<StoryLanding | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
   const saving = useRef(false);
 
   const load = useCallback(async () => {
     setError(null);
-    const { status, ok, data } = await fetchJson('/api/v4/admin/invite-tree');
+    const { status, ok, data } = await fetchJson('/api/v4/admin/story-landing');
     if (!ok || !data?.success) { setError({ status, message: data?.error || null }); return; }
-    setTree(data.data);
+    setStory(data.data);
   }, []);
   useEffect(() => { load(); }, [load]);
 
   const toggle = useCallback(async (next: boolean) => {
     if (!canWrite() || saving.current) return;
     saving.current = true;
-    const { ok, data } = await send('PUT', '/api/v4/admin/invite-tree', { enabled: next });
+    const { ok, data } = await send('PUT', '/api/v4/admin/story-landing', { enabled: next });
     saving.current = false;
-    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the invite setting.'); return; }
-    setTree(data.data);
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the landing setting.'); return; }
+    setStory(data.data);
   }, []);
 
+  const help = 'Signed-out visitors see what Homeroom is and "Make an account", which then asks '
+    + 'them what to make. Off, they are sent to the waitlist instead. Anyone new still '
+    + 'waits here until admitted unless they already have access.';
   return (
-    <div id="admin-topo-wl-invites">
-      <Panel title="Invites">
+    <div id="admin-topo-wl-story">
+      <Panel title="Landing">
         {error ? (
-          <ErrorState title="Couldn't load the invite setting" status={error.status} message={error.message} onRetry={load} />
+          <ErrorState title="Couldn't load the landing setting" status={error.status} message={error.message} onRetry={load} />
         ) : null}
-        {!error && !tree ? <Skeleton rows={2} /> : null}
-        {!error && tree ? <InviteTreeBody tree={tree} write={canWrite()} onToggle={toggle} /> : null}
+        {!error && !story ? <Skeleton rows={1} /> : null}
+        {!error && story ? (
+          canWrite() ? (
+            <CheckField id="admin-topo-wl-story-enabled" label="Signed-out landing asks people to get started" help={help} checked={story.enabled} onChange={toggle} />
+          ) : (
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="font-medium">{story.enabled ? 'The landing asks people to get started.' : 'The landing points at the waitlist.'}</span>
+              {` ${help}`}
+            </p>
+          )
+        ) : null}
+        {story?.updated_at ? (
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {`Last switched ${fmt(story.updated_at)}${story.updated_by ? ` by ${story.updated_by}` : ''}.`}
+          </p>
+        ) : null}
       </Panel>
     </div>
   );
@@ -1005,6 +989,8 @@ type AdmitOutcome = {
   admitted: number[];
   already_admitted: number[];
   not_found: number[];
+  /** Phone rows skipped: they wait on outbound SMS (#4096). */
+  needs_sms?: number[];
   failed: number[];
 };
 
@@ -1081,6 +1067,8 @@ function admitOutcomeLine(o: AdmitOutcome): string {
   const already = o.already_admitted.length;
   if (already) parts.push(`${already} ${already === 1 ? 'was' : 'were'} already in.`);
   if (o.not_found.length) parts.push(`${o.not_found.length} had been deleted from the waitlist.`);
+  const sms = o.needs_sms?.length || 0;
+  if (sms) parts.push(`${sms} joined by phone and ${sms === 1 ? 'waits' : 'wait'} for texts (#4096).`);
   if (o.failed.length) {
     parts.push(`${o.failed.length} could not be admitted; look the list up again and retry.`);
   }
@@ -1258,12 +1246,29 @@ function BatchAdmitPanel({ onClose, onAdmitted }: { onClose: () => void; onAdmit
   );
 }
 
+// How a row is named in a sentence: its address, or for a phone row its
+// account, since that row has no address to show.
+function signupLabel(w: WaitlistRow): string {
+  if (w.email) return w.email;
+  return w.linked_username ? `@${w.linked_username}` : `signup #${w.id}`;
+}
+
 const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
   {
     label: 'Signup',
     primary: true,
     tdClass: 'font-mono',
-    cell: (w) => (
+    cell: (w) => (w.phone_only ? (
+      <>
+        {signupLabel(w)}
+        <span
+          className="text-zinc-500 dark:text-zinc-400 text-xs"
+          title="Joined from Home with the account's verified phone number, without an email"
+        >
+          {` Phone${w.phone_last4 ? ` ···${w.phone_last4}` : ''}`}
+        </span>
+      </>
+    ) : (
       <>
         {w.email}
         {w.confirmed_at ? (
@@ -1282,7 +1287,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
           </span>
         )}
       </>
-    ),
+    )),
   },
   {
     // Where the row is in the one process this screen runs, said in the two
@@ -1455,12 +1460,13 @@ function WaitlistScreen() {
   // "Admit", not "Release". The route, the column and the mail kind keep
   // their names; this is the only place a person reads the word.
   const admitWaitlist = useCallback(async (w: WaitlistRow, reload: () => void) => {
-    if (!canWrite()) return;
+    // A phone row waits on outbound SMS (#4096); its Admit is disabled too.
+    if (!canWrite() || w.needs_sms) return;
     const unconfirmed = !w.confirmed_at
       ? ' This address was never confirmed, so the email may not reach anyone.'
       : '';
     const okd = await topo()._confirm({
-      title: `Admit ${w.email} off the waitlist?`,
+      title: `Admit ${signupLabel(w)} off the waitlist?`,
       message: `They get platform access straight away if they already have an account, `
         + `otherwise the moment they create one. They will be emailed a link to sign in or `
         + `create their account.${unconfirmed} This cannot be undone from here.`,
@@ -1475,7 +1481,7 @@ function WaitlistScreen() {
   const deleteWaitlistEntry = useCallback(async (w: WaitlistRow, reload: () => void) => {
     if (!canWrite()) return;
     const okd = await topo()._confirm({
-      title: `Delete ${w.email} from the waitlist?`,
+      title: `Delete ${signupLabel(w)} from the waitlist?`,
       message: 'This removes the signup and its survey answers entirely. Anyone who used its invite '
         + 'link keeps their own place in line. This cannot be undone.',
       confirmLabel: 'Delete',
@@ -1535,7 +1541,7 @@ function WaitlistScreen() {
               <BatchAdmitPanel onClose={() => setShowBatch(false)} onAdmitted={onBatchAdmitted} />
             ) : null}
             {showAnalytics ? <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} /> : null}
-            <InviteTreePanel />
+            <StoryLandingPanel />
           </>
         )}
         exportCsv={write
@@ -1550,17 +1556,23 @@ function WaitlistScreen() {
             {!w.released_at ? (
               <button
                 data-release-wl={w.id}
-                data-email={w.email}
+                data-email={w.email || undefined}
                 type="button"
                 className={BTN.rowPrimary}
+                disabled={!!w.needs_sms}
                 onClick={() => admitWaitlist(w, reload)}
               >
                 Admit
               </button>
             ) : null}
+            {!w.released_at && w.needs_sms ? (
+              <span data-needs-sms-wl={w.id} className="text-xs text-zinc-500 dark:text-zinc-400">
+                Needs SMS (#4096)
+              </span>
+            ) : null}
             <button
               data-delete-wl={w.id}
-              data-email={w.email}
+              data-email={w.email || undefined}
               type="button"
               className={BTN.rowDanger}
               onClick={() => deleteWaitlistEntry(w, reload)}
@@ -1572,7 +1584,7 @@ function WaitlistScreen() {
         extra={(w) => <WaitlistDetails row={w} />}
         deleteAction={write ? {
           bulkPath: '/api/v4/admin/waitlist/bulk-delete',
-          itemLabel: (w) => w.email,
+          itemLabel: (w) => signupLabel(w),
           confirmTitle: (n) => `Delete ${n} waitlist ${n === 1 ? 'entry' : 'entries'}?`,
           confirmMessage: (n) => `This removes ${n === 1 ? 'this signup' : 'these signups'} and `
             + `${n === 1 ? 'its' : 'their'} survey answers entirely. This cannot be undone.`,
@@ -1620,14 +1632,11 @@ function WaitlistScreen() {
 // on `status: 'pending'`, whose server filter is `released_at IS NULL`, so an
 // admitted row is never in the table a check at `/#admin/waitlist` sees.
 //
-// InviteTreeBody is exported for tests/community-invites.test.js, which
-// renders the switch's copy for both kinds of admin.
-//
 // The batch-admit copy helpers and waitlistEmpty are exported for
 // tests/topochain-admin-waitlist-batch.test.js: a lookup's answer only exists
 // after a POST, so no static render or declared check reaches the sentences
 // an admin reads about each pasted address.
 export {
-  InviteTreeBody, SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS,
+  SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS,
   BatchAdmitPanel, admitOutcomeLine, resolutionSummary, resolvedDetail, waitlistEmpty,
 };

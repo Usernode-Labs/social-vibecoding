@@ -104,6 +104,20 @@
  * alerts ride above the keyboard out of the box. Apps may consume the
  * var for their own fixed bottom bars. No-op on desktop.
  *
+ * On mobile a tap outside a focused text field also closes the keyboard
+ * (blurs the field), as Chrome on Android already does and iOS does not.
+ * Taps on fields, controls (buttons, links, labels, ARIA widget roles,
+ * `.un-pressable`) and anything inside `[data-keep-keyboard]` keep it;
+ * `data-un-keyboard-dismiss="off"` on <html> or <body> turns it off.
+ * With a frame focused (the platform shell around an app), the same tap
+ * on the page around it posts `{ __usernode_keyboard: 'dismiss' }` to the
+ * frame, and the kit in a frame blurs its own field when that message
+ * comes from its parent window (its own opt-out still holds). A frame its
+ * parent marks `data-un-keyboard-relay` (the shell's side panel, a page of
+ * the same origin) runs it the other way: a dismissing tap in there with
+ * no field of its own posts `{ __usernode_keyboard: 'tap' }` up, and the
+ * parent applies its own rule as if the tap had landed on it.
+ *
  * A presented sheet or side panel also carries `--un-presence` on its own
  * element: 1 at rest, 0 off-screen, and 1:1 with the finger in between,
  * the same number the backdrop's opacity is driven from. Nothing in
@@ -545,6 +559,114 @@
     return isTextEntryField(input);
   }
 
+  // A tap outside the field closes the keyboard (request #4032). The
+  // Homeroom iOS app dropped WKWebView's accessory bar, and its check mark
+  // was the only way to put the keys away: WebKit does not blur a focused
+  // field when a finger taps content that cannot take focus (Chrome on
+  // Android does). These decide whether a touch was that tap and whether
+  // what it landed on wants the keyboard kept, for the listener below.
+  //
+  // A tap, not a scroll or a press: under KB_DISMISS_SLOP px from where it
+  // started at its furthest, no scroll in between, one finger, and shorter
+  // than a long press (iOS starts text selection and context menus at
+  // 500ms). input: { moved (the furthest the finger got, px), ms,
+  // scrolled?, multi? }.
+  var KB_DISMISS_SLOP = 10;
+  var KB_DISMISS_MAX_MS = 500;
+  function isKeyboardDismissTap(input) {
+    if (!input || input.scrolled || input.multi) return false;
+    var moved = Number(input.moved) || 0;
+    if (moved >= KB_DISMISS_SLOP) return false;
+    var ms = Number(input.ms);
+    return !(isFinite(ms) && ms > KB_DISMISS_MAX_MS);
+  }
+
+  // What keeps the keyboard: a tap on another field (focus moves there), on
+  // a control (it does its own thing with the field still up, as a native
+  // button does; the composers' Send buttons hold the field by preventing
+  // mousedown's default, and still get to), and on anything marked
+  // `data-keep-keyboard`. Matched by tag, role and attribute rather than a
+  // selector, so the rule can be tested without a DOM.
+  var KB_KEEP_TAGS = {
+    input: 1, textarea: 1, select: 1, button: 1, label: 1, summary: 1, iframe: 1,
+  };
+  var KB_KEEP_ROLES = {
+    button: 1, link: 1, option: 1, menuitem: 1, menuitemcheckbox: 1, menuitemradio: 1,
+    combobox: 1, listbox: 1, textbox: 1, searchbox: 1, spinbutton: 1, slider: 1,
+    'switch': 1, checkbox: 1, radio: 1, tab: 1,
+  };
+  // On <html> or <body>, `data-un-keyboard-dismiss="off"` turns the kit's
+  // listener off for an app that closes the keyboard its own way.
+  var KB_DISMISS_OFF_ATTR = 'data-un-keyboard-dismiss';
+  function kbAttr(el, name) {
+    try {
+      return el && typeof el.getAttribute === 'function' ? el.getAttribute(name) : null;
+    } catch (e) { return null; }
+  }
+  function kbTokens(value) {
+    return value == null ? [] : String(value).split(/\s+/).filter(Boolean);
+  }
+  // One element (anything with getAttribute; the document, the window and
+  // shadow roots in an event path have none, and keep nothing).
+  function keepsKeyboard(el) {
+    if (!el || typeof el.getAttribute !== 'function') return false;
+    var tag = String(el.tagName || '').toLowerCase();
+    if (KB_KEEP_TAGS[tag]) return true;
+    if ((tag === 'a' || tag === 'area') && kbAttr(el, 'href') != null) return true;
+    var editable = kbAttr(el, 'contenteditable');
+    if (editable != null && String(editable).toLowerCase() !== 'false') return true;
+    if (kbAttr(el, 'data-keep-keyboard') != null) return true;
+    var roles = kbTokens(kbAttr(el, 'role'));
+    for (var i = 0; i < roles.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(KB_KEEP_ROLES, roles[i].toLowerCase())) return true;
+    }
+    // The kit's own mark for a tappable row or tile that is not a button.
+    return kbTokens(kbAttr(el, 'class')).indexOf('un-pressable') !== -1;
+  }
+  // The whole tap: `path` is the event's path, the tapped element first (a
+  // composedPath(), or the parent chain); `field` is the focused field. An
+  // open suggestion list the field names in aria-controls / aria-owns keeps
+  // it too, whatever its rows are made of.
+  function tapKeepsKeyboard(path, field) {
+    if (!path || typeof path.length !== 'number') return false;
+    var owned = kbTokens(kbAttr(field, 'aria-controls')).concat(kbTokens(kbAttr(field, 'aria-owns')));
+    for (var i = 0; i < path.length; i++) {
+      var node = path[i];
+      if (keepsKeyboard(node)) return true;
+      if (owned.length && node && node.id && owned.indexOf(String(node.id)) !== -1) return true;
+    }
+    return false;
+  }
+
+  // A focused frame holds a field this page cannot see into (an app in the
+  // platform shell; keyboardCanBeUp above), and a tap on the page around
+  // the frame (the shell's header, say) reaches only this page, never the
+  // frame (request #4273). So the listener below tells the
+  // frame, and the kit inside it puts its own field away. The message is
+  // one of the `__usernode_*` family the bridge already passes between the
+  // shell and an app (`__usernode_theme`, `__usernode_visibility`, ...),
+  // and like those a frame takes it from its parent window only.
+  function keyboardDismissMessage() {
+    return { __usernode_keyboard: 'dismiss' };
+  }
+  function isKeyboardDismissMessage(data) {
+    return !!data && typeof data === 'object' && data.__usernode_keyboard === 'dismiss';
+  }
+  // And up (request #4314): the shell's side panel on iPad Safari is a
+  // document of its own beside the app, so a tap in it reaches neither the
+  // shell nor the app. A frame whose parent marks it with this attribute
+  // reports such a tap, made with no field of its own focused, to that
+  // parent, which takes it from that frame of its own origin only and
+  // closes the keyboard by its own rule (blur its field, or tell the
+  // focused frame).
+  var KB_RELAY_ATTR = 'data-un-keyboard-relay';
+  function keyboardTapMessage() {
+    return { __usernode_keyboard: 'tap' };
+  }
+  function isKeyboardTapMessage(data) {
+    return !!data && typeof data === 'object' && data.__usernode_keyboard === 'tap';
+  }
+
   // Keyboard-aware reveal math for a focused field inside a content
   // scroller. scrollIntoView({block:'nearest'}) is blind here: keyboard
   // clearance is CONTENT PADDING on the scroller, not a smaller
@@ -874,6 +996,17 @@
     layoutViewportHeight: layoutViewportHeight,
     isTextEntryField: isTextEntryField,
     keyboardCanBeUp: keyboardCanBeUp,
+    KB_DISMISS_SLOP: KB_DISMISS_SLOP,
+    KB_DISMISS_MAX_MS: KB_DISMISS_MAX_MS,
+    KB_DISMISS_OFF_ATTR: KB_DISMISS_OFF_ATTR,
+    isKeyboardDismissTap: isKeyboardDismissTap,
+    keepsKeyboard: keepsKeyboard,
+    tapKeepsKeyboard: tapKeepsKeyboard,
+    keyboardDismissMessage: keyboardDismissMessage,
+    isKeyboardDismissMessage: isKeyboardDismissMessage,
+    KB_RELAY_ATTR: KB_RELAY_ATTR,
+    keyboardTapMessage: keyboardTapMessage,
+    isKeyboardTapMessage: isKeyboardTapMessage,
     revealScrollDelta: revealScrollDelta,
     reorderDropIndex: reorderDropIndex,
     gridDropSide: gridDropSide,
@@ -1018,6 +1151,225 @@
     // Re-read a frame later as well, once focus has landed.
     document.addEventListener('focusin', schedule, true);
     document.addEventListener('focusout', onFocusOut, true);
+  })();
+
+  /* ────────────────────────────────────────────────────────────────────
+   * A tap outside the field closes the keyboard (request #4032). With a
+   * text field focused, one finger that lands and lifts without travelling
+   * (isKeyboardDismissTap) on something that keeps no keyboard
+   * (tapKeepsKeyboard) blurs the field, as the accessory bar's check mark
+   * did. The tap itself is untouched: nothing is prevented, so it still
+   * does whatever it did.
+   *
+   * Cheap on any page: passive listeners that return at once unless a text
+   * field was focused when the finger landed, and nothing written but the
+   * blur. Off on desktop (no on-screen keyboard), and for a page whose
+   * <html> or <body> says data-un-keyboard-dismiss="off" as the finger
+   * lands. One listener per document, every app's in its own frame: the
+   * platform shell loads this file too (frontend/src/head.html), so its
+   * own screens get exactly this, and lib/keyboard-open.ts reads the blur
+   * as one during a press, keeping the tab bar back for the tap's click.
+   *
+   * With a FRAME focused instead (the shell around an app whose field is
+   * up), the same tap posts `{ __usernode_keyboard: 'dismiss' }` to that
+   * frame (request #4273): the frame never hears a tap on the page around
+   * it. In a frame, the kit takes that message from its parent window only
+   * and, unless its own page opted out, blurs its focused text field, or
+   * passes the message on to a frame focused inside it. Posted, never
+   * waited on, so the tap's own click is no later for it.
+   *
+   * The other way (request #4314): in a frame its parent marked
+   * `data-un-keyboard-relay` (the shell's side panel, beside the app on an
+   * iPad), the same tap with no field or frame of its own focused posts
+   * `{ __usernode_keyboard: 'tap' }` to the parent. `window.frameElement`
+   * is null under a parent of another origin, so only a same-origin parent
+   * can ask for it. The parent takes it only from such a frame of its own,
+   * of its own origin, and does what a tap on its own page would: blur
+   * its field, or tell the frame that has focus. Each side's opt-out
+   * holds, and the tap's exceptions are checked where it landed.
+   *
+   * Touch events where the page has them (every phone), else pointer
+   * events from a finger; never a mouse or a pen. The start is heard in
+   * capture, before anything can stop it; the end in the window's bubble
+   * phase, after the page's own handlers, so a tap a handler took for
+   * itself (it cancelled or stopped the touchend) is left to it.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  (function keyboardDismiss() {
+    if (platform === 'desktop') return;
+    var tap = null; // { x, y, at, moved, scrolled, multi }: the finger down now
+
+    function now() {
+      return window.performance && typeof window.performance.now === 'function'
+        ? window.performance.now() : Date.now();
+    }
+    // What has focus, through any shadow roots, or null.
+    function focused() {
+      var el = document.activeElement;
+      while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+      return !el || el === document.body || el === document.documentElement ? null : el;
+    }
+    // The focused text field, or null.
+    function focusedField() {
+      var el = focused();
+      return el && isTextEntryField({
+        tag: el.tagName,
+        type: el.type,
+        readOnly: !!el.readOnly,
+        disabled: !!el.disabled,
+        contentEditable: !!el.isContentEditable,
+      }) ? el : null;
+    }
+    // The focused frame, or null: whatever field it holds is in there.
+    function focusedFrame() {
+      var el = focused();
+      return el && String(el.tagName || '').toLowerCase() === 'iframe' && el.contentWindow ? el : null;
+    }
+    function putAway(field) {
+      try { field.blur(); } catch (err) { /* nothing to put away */ }
+    }
+    // To any origin, as the shell's other messages to an app go: the frame
+    // is the app's origin (or none yet), and the message carries nothing.
+    function tell(frame) {
+      try {
+        frame.contentWindow.postMessage(keyboardDismissMessage(), '*');
+      } catch (err) { /* a frame mid-teardown has no keyboard */ }
+    }
+    function off() {
+      return kbAttr(document.documentElement, KB_DISMISS_OFF_ATTR) === 'off'
+        || kbAttr(document.body, KB_DISMISS_OFF_ATTR) === 'off';
+    }
+    var framed = false;
+    try { framed = !!window.parent && window.parent !== window; } catch (err) { /* no parent */ }
+    function origin() {
+      try { return window.location.origin; } catch (err) { return null; }
+    }
+    // In a frame: whether the parent asked to hear this page's taps.
+    function relays() {
+      if (!framed) return false;
+      try { return kbAttr(window.frameElement, KB_RELAY_ATTR) != null; } catch (err) { return false; }
+    }
+    // To the parent, at this page's own origin: relays() saw the parent's
+    // element, so the parent is of this origin too.
+    function report() {
+      try {
+        window.parent.postMessage(keyboardTapMessage(), origin());
+      } catch (err) { /* a parent mid-teardown has no keyboard */ }
+    }
+    // The frame of this page's that a relayed tap came from, or null: one
+    // marked to relay, in this document, of this origin.
+    function relayFrame(e) {
+      var o = origin();
+      if (!e.source || !o || e.origin !== o) return null;
+      try {
+        var el = e.source.frameElement;
+        return el && el.ownerDocument === document && kbAttr(el, KB_RELAY_ATTR) != null ? el : null;
+      } catch (err) { return null; }
+    }
+    function pathOf(e) {
+      try {
+        var path = typeof e.composedPath === 'function' ? e.composedPath() : null;
+        if (path && path.length) return path;
+      } catch (err) { /* fall back to the parent chain */ }
+      var chain = [];
+      for (var n = e.target; n; n = n.parentNode) chain.push(n);
+      return chain;
+    }
+
+    function down(x, y) {
+      tap = !off() && (focusedField() || focusedFrame() || relays())
+        ? { x: x, y: y, at: now(), moved: 0, scrolled: false, multi: false }
+        : null;
+    }
+    function move(x, y) {
+      if (!tap) return;
+      var d = Math.sqrt((x - tap.x) * (x - tap.x) + (y - tap.y) * (y - tap.y));
+      if (d > tap.moved) tap.moved = d;
+    }
+    function up(e) {
+      var t = tap;
+      tap = null;
+      if (!t || e.defaultPrevented) return;
+      if (!isKeyboardDismissTap({ moved: t.moved, ms: now() - t.at, scrolled: t.scrolled, multi: t.multi })) return;
+      var field = focusedField();
+      var frame = field ? null : focusedFrame();
+      var relay = !(field || frame) && relays();
+      if (!(field || frame || relay) || tapKeepsKeyboard(pathOf(e), field || frame)) return;
+      if (field) putAway(field); else if (frame) tell(frame); else report();
+    }
+
+    // In a frame: the page around it heard a tap that closes the keyboard.
+    // From the parent window only, as the bridge takes the shell's other
+    // messages; a top-level page has no parent to hear it from. Around a
+    // relaying frame: a tap in it that closes the keyboard, which this
+    // page treats as its own (never telling the frame it came from).
+    function onMessage(e) {
+      if (!e || off()) return;
+      var from = null;
+      if (isKeyboardDismissMessage(e.data)) {
+        if (!framed || e.source !== window.parent) return;
+      } else if (isKeyboardTapMessage(e.data)) {
+        from = relayFrame(e);
+        if (!from) return;
+      } else {
+        return;
+      }
+      var field = focusedField();
+      var frame = field ? null : focusedFrame();
+      if (field) putAway(field); else if (frame && frame !== from) tell(frame);
+    }
+
+    function first(list) { return list && list.length ? list[0] : null; }
+    function onTouchStart(e) {
+      if (e.touches && e.touches.length > 1) { if (tap) tap.multi = true; return; }
+      var p = first(e.touches) || first(e.changedTouches);
+      if (p) down(p.clientX, p.clientY); else tap = null;
+    }
+    function onTouchMove(e) {
+      if (!tap) return;
+      if (e.touches && e.touches.length > 1) { tap.multi = true; return; }
+      var p = first(e.touches);
+      if (p) move(p.clientX, p.clientY);
+    }
+    function onTouchEnd(e) {
+      if (!tap || (e.touches && e.touches.length)) return; // a finger is still down
+      var p = first(e.changedTouches);
+      if (p) move(p.clientX, p.clientY);
+      up(e);
+    }
+    function onPointerDown(e) {
+      if (e.pointerType !== 'touch') { tap = null; return; }
+      if (e.isPrimary === false) { if (tap) tap.multi = true; return; }
+      down(e.clientX, e.clientY);
+    }
+    function onPointerMove(e) {
+      if (tap && e.pointerType === 'touch' && e.isPrimary !== false) move(e.clientX, e.clientY);
+    }
+    function onPointerUp(e) {
+      if (!tap || e.pointerType !== 'touch' || e.isPrimary === false) return;
+      move(e.clientX, e.clientY);
+      up(e);
+    }
+    function onScroll() { if (tap) tap.scrolled = true; }
+    function onCancel() { tap = null; }
+
+    var quiet = { capture: true, passive: true };
+    if ('ontouchstart' in window) {
+      window.addEventListener('touchstart', onTouchStart, quiet);
+      window.addEventListener('touchmove', onTouchMove, quiet);
+      window.addEventListener('touchcancel', onCancel, quiet);
+      window.addEventListener('touchend', onTouchEnd, { passive: true });
+    } else {
+      window.addEventListener('pointerdown', onPointerDown, quiet);
+      window.addEventListener('pointermove', onPointerMove, quiet);
+      window.addEventListener('pointercancel', onCancel, quiet);
+      window.addEventListener('pointerup', onPointerUp, { passive: true });
+    }
+    // Element scrolls do not bubble, but they pass the window in capture.
+    window.addEventListener('scroll', onScroll, quiet);
+    // Every page: a frame hears its parent, and any page may hold a frame
+    // that relays.
+    window.addEventListener('message', onMessage, { passive: true });
   })();
 
   /* ────────────────────────────────────────────────────────────────────
@@ -4098,7 +4450,9 @@
    * ──────────────────────────────────────────────────────────────────── */
 
   // actionSheet({ title?, actions: [{ label, icon?, iconEl?, destructive?,
-  // handler? }], cancelLabel? }) — returns a Promise.
+  // highlighted?, handler? }], cancelLabel? }) — returns a Promise.
+  // `highlighted` lights one row (a tint behind it, its label bold): the
+  // action the menu leads with. Meant for one row, not a style for many.
   function actionSheet(options) {
     var opts = options || {};
     var actions = opts.actions || [];
@@ -4134,7 +4488,8 @@
         }
         var btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'un-action-btn' + (action.destructive ? ' un-destructive' : '');
+        btn.className = 'un-action-btn' + (action.destructive ? ' un-destructive' : '')
+          + (action.highlighted ? ' un-highlighted' : '');
         fillRowButton(btn, action, sheetAligned);
         btn.addEventListener('click', function () { settle(action); });
         card.appendChild(btn);
@@ -4858,13 +5213,66 @@
    *  - iOS can pan the visual viewport before the inset publishes — the
    *    settled pin resets window.scrollTo(0,0), but only when the page
    *    frame is actually a fixed shell.
+   *  - A chat's composer sits OUTSIDE its scroller, under it in a column
+   *    that reserves the inset itself. Its field's tap is the one that
+   *    panned and then snapped back (Homeroom app and iOS Safari, 5 Oct
+   *    2026: the composer overshot into the top half of the screen, then
+   *    the pin dropped it onto the keys a quarter second later).
+   *    opts.column names that column: its fields outside scrollEl take the
+   *    same interception, with no reveal (the column's padding is what
+   *    places them) and the caret at the end of any draft.
+   *  - And the column RIDES the keys (fixed shell, keys covering the page:
+   *    the Homeroom app once its web view stops resizing, an installed
+   *    app). The keyboard's height arrives about 50ms into its ~300ms
+   *    rise, all at once, so the column's padding snapped the composer and
+   *    the transcript to the top of where the keys would end while they
+   *    were 40% of the way up; on the way down the tab bar's band came back
+   *    in the blur while the padding eased out in 150ms, so the composer
+   *    hopped up 16pt and then outran the keys. A step of the scroller's
+   *    foot that big, this soon after a focus or a blur, is taken back and
+   *    played out on the column's padding along the keys' own curve (an
+   *    ease-out cubic over 300ms, measured), from where the keys already
+   *    are. Padding, not a transform: the transcript keeps following its
+   *    newest line on every frame of it (its own resize observer), so the
+   *    composer and the messages move as one.
    * ──────────────────────────────────────────────────────────────────── */
 
   var KB_TAP_SLOP = 8; // px of touchmove that turns a tap into a drag
   var KB_SETTLE_MS = 120; // quiet period after the last visualViewport event
   var KB_FOCUS_FALLBACK_MS = 250; // reveal anyway if no vv event follows a focus
+  var KB_RIDE_MS = 300; // the keys' rise and fall (iPhone simulator, iOS 26: ~300ms)
+  var KB_RIDE_MIN = 100; // px: only a keyboard-sized step of the column rides
+  var KB_RIDE_WINDOW_MS = 1000; // a step this soon after a focus or a blur is the keys'
+  // How far up the keys already are when a rise is reported, at most. In
+  // the Homeroom app's web view the visual viewport learns the keyboard's
+  // height ~90ms into its rise, with the keys ~84% of the way up (iPhone
+  // simulator, 5 Oct 2026); time since the focus overstates that, since the
+  // keys only start ~100ms after it. Safari reports near the start.
+  var KB_RIDE_OPEN_HEAD = 0.45;
+  var KB_RIDE_STEPS = 12; // keyframes sampled along the curve
 
-  // attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8, fields? }) —
+  // The keys' curve, measured frame by frame: 12% of the way at 28ms, 58%
+  // at 75ms, 90% at 158ms, 98% at 225ms of a 300ms move.
+  function kbEase(x) {
+    var t = Math.max(0, Math.min(1, x));
+    return 1 - Math.pow(1 - t, 3);
+  }
+
+  // The column's padding-bottom keyframes for a ride: the scroller's foot
+  // moved by `delta` px (down is positive) to land on `finalPad`; the keys
+  // are `x0` of the way through their move. Pure, for the tests.
+  function kbRideFrames(finalPad, delta, x0, steps) {
+    var n = steps || KB_RIDE_STEPS;
+    var frames = [];
+    for (var i = 0; i <= n; i++) {
+      var x = x0 + (1 - x0) * (i / n);
+      var pad = Math.max(0, finalPad + delta * (1 - kbEase(x)));
+      frames.push({ paddingBottom: Math.round(pad * 10) / 10 + 'px', offset: i / n });
+    }
+    return frames;
+  }
+
+  // attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8, fields?, column? }) —
   // scrollEl is the app's content scroller (the fixed-shell inner pane);
   // topEl an optional fixed bar overlaying its top (typically the
   // un-navbar also wired via attachNavBar); margin the breathing room
@@ -4872,7 +5280,9 @@
   // that REPLACES the default text-entry allowlist. Composes with
   // attachNavBar and element-mode attachPullToRefresh. Sheet/modal/alert
   // fields are body-mounted, outside scrollEl, and keep the kit's
-  // existing avoidance. Structural no-op on desktop or without
+  // existing avoidance. column is the element holding scrollEl and its
+  // composer: a field in it but outside scrollEl is focused without the
+  // native pan and is not revealed. Structural no-op on desktop or without
   // visualViewport. Returns { detach() }; never throws on bad input.
   function attachKeyboardAvoidance(scrollEl, options) {
     var noop = { detach: function () {} };
@@ -4891,6 +5301,8 @@
     var topEl = opts.topEl && opts.topEl.nodeType === 1 ? opts.topEl : null;
     var margin = opts.margin != null ? opts.margin : 8;
     var fieldsSel = typeof opts.fields === 'string' ? opts.fields : null;
+    var column = opts.column && opts.column.nodeType === 1 && opts.column !== scrollEl
+      && opts.column.contains(scrollEl) ? opts.column : null;
 
     scrollEl.classList.add('un-kb-avoid');
 
@@ -4900,20 +5312,94 @@
     var settleTimer = null;
     var suppressFocusin = null; // field being focused by the interception path
 
+    // The ride (see the header): the scroller's layout foot last seen, when
+    // a field last took or let go of the keys, and the running animation.
+    var rideAnim = null;
+    var lastFoot = null;
+    var keysMovedAt = -Infinity;
+    var RideObserver = typeof window.ResizeObserver === 'function' ? window.ResizeObserver : null;
+    var rides = !!column && !!RideObserver && typeof column.animate === 'function';
+    var priorTransition = rides ? column.style.transition : '';
+
+    function clock() {
+      return window.performance && typeof window.performance.now === 'function' ? window.performance.now() : Date.now();
+    }
+    function footOf() { return scrollEl.offsetTop + scrollEl.offsetHeight; }
+    function inFixedShell() {
+      try {
+        return getComputedStyle(document.documentElement).overflowY === 'hidden'
+          || getComputedStyle(document.body).overflowY === 'hidden';
+      } catch (e) { return false; }
+    }
+    // A focus or a blur in the column: the keys are about to move. A ride
+    // in flight stops where it is, so the next step starts from what is on
+    // screen rather than from where it was headed.
+    function onKeysMove() {
+      keysMovedAt = clock();
+      if (!rideAnim) return;
+      lastFoot = footOf();
+      var anim = rideAnim;
+      rideAnim = null;
+      anim.onfinish = anim.oncancel = null;
+      try { anim.cancel(); } catch (e) { /* ignore */ }
+    }
+    function onColumnResize() {
+      if (rideAnim) return; // our own padding, frame by frame
+      var foot = footOf();
+      var before = lastFoot;
+      lastFoot = foot;
+      if (before == null) return;
+      var delta = foot - before;
+      if (Math.abs(delta) < KB_RIDE_MIN || prefersReducedMotion || !inFixedShell()) return;
+      var since = clock() - keysMovedAt;
+      if (!(since >= 0 && since < KB_RIDE_WINDOW_MS)) return;
+      // Down (the keys going): they started with the blur. Up: see
+      // KB_RIDE_OPEN_HEAD.
+      var x0 = Math.min(delta > 0 ? 0.9 : KB_RIDE_OPEN_HEAD, since / KB_RIDE_MS);
+      var finalPad = 0;
+      try { finalPad = parseFloat(getComputedStyle(column).paddingBottom) || 0; } catch (e) { /* 0 */ }
+      try {
+        rideAnim = column.animate(kbRideFrames(finalPad, delta, x0), {
+          duration: Math.round(KB_RIDE_MS * (1 - x0)),
+          easing: 'linear',
+        });
+      } catch (e) { rideAnim = null; return; }
+      rideAnim.onfinish = rideAnim.oncancel = function () {
+        rideAnim = null;
+        lastFoot = footOf();
+      };
+    }
+    var rideObserver = null;
+    if (rides) {
+      // The kit's padding transition would outrank the animation (a running
+      // transition sits above animations in the cascade); the ride is it.
+      column.style.transition = 'none';
+      lastFoot = footOf();
+      rideObserver = new RideObserver(onColumnResize);
+      rideObserver.observe(scrollEl);
+      column.addEventListener('focusin', onKeysMove);
+      column.addEventListener('focusout', onKeysMove);
+    }
+
     function kbUp() {
       return document.documentElement.classList.contains('un-kb');
+    }
+
+    // Where a field may be: the scroller, or the composer column around it.
+    function inReach(node) {
+      return scrollEl.contains(node) || (!!column && column.contains(node));
     }
 
     // Resolve a tap/focus target to an interceptable field, or null.
     function matchField(target) {
       if (!target || target.nodeType !== 1 || !target.closest) return null;
-      if (!scrollEl.contains(target)) return null;
+      if (!inReach(target)) return null;
       if (fieldsSel) {
         var custom = target.closest(fieldsSel);
-        return custom && scrollEl.contains(custom) ? custom : null;
+        return custom && inReach(custom) ? custom : null;
       }
       var field = target.closest('input, textarea, [contenteditable]');
-      if (!field || !scrollEl.contains(field)) return null;
+      if (!field || !inReach(field)) return null;
       var tag = field.tagName.toLowerCase();
       return isTextEntryField({
         tag: tag,
@@ -4999,7 +5485,7 @@
       // Re-pin the focused field on any settle: late inset growth (e.g.
       // the iOS QuickType bar appearing) re-adjusts without a new focus.
       var active = matchField(document.activeElement);
-      if (active && document.activeElement === active) reveal(active);
+      if (active && document.activeElement === active && scrollEl.contains(active)) reveal(active);
     }
 
     function onVvEvent() {
@@ -5043,7 +5529,15 @@
         try { field.focus(); } catch (err2) { /* ignore */ }
       }
       suppressFocusin = null;
-      scheduleReveal(field);
+      if (scrollEl.contains(field)) { scheduleReveal(field); return; }
+      // The composer: its column already places it on the keys. The tap's
+      // own caret placement went with the default, so a draft is picked up
+      // where it ends.
+      try {
+        if (typeof field.setSelectionRange === 'function' && typeof field.value === 'string') {
+          field.setSelectionRange(field.value.length, field.value.length);
+        }
+      } catch (err3) { /* an input type without a selection */ }
     }
 
     // Non-tap focuses (programmatic .focus(), Tab / next-button hops):
@@ -5054,23 +5548,26 @@
       if (e.target === suppressFocusin) return; // interception path owns it
       if (!kbUp()) return; // cold focuses wait for the settled pin
       var field = matchField(e.target);
-      if (field) reveal(field);
+      if (field && scrollEl.contains(field)) reveal(field);
     }
 
-    scrollEl.addEventListener('touchstart', onTouchStart, { passive: true });
-    scrollEl.addEventListener('touchmove', onTouchMove, { passive: true });
-    scrollEl.addEventListener('touchend', onTouchEnd, { passive: false });
-    scrollEl.addEventListener('touchcancel', onTouchCancel, { passive: true });
+    // One set of touch listeners: on the column when there is one (a tap
+    // in the scroller bubbles to it), else on the scroller.
+    var host = column || scrollEl;
+    host.addEventListener('touchstart', onTouchStart, { passive: true });
+    host.addEventListener('touchmove', onTouchMove, { passive: true });
+    host.addEventListener('touchend', onTouchEnd, { passive: false });
+    host.addEventListener('touchcancel', onTouchCancel, { passive: true });
     scrollEl.addEventListener('focusin', onFocusIn);
     vv.addEventListener('resize', onVvEvent, { passive: true });
     vv.addEventListener('scroll', onVvEvent, { passive: true });
 
     return {
       detach: function () {
-        scrollEl.removeEventListener('touchstart', onTouchStart);
-        scrollEl.removeEventListener('touchmove', onTouchMove);
-        scrollEl.removeEventListener('touchend', onTouchEnd);
-        scrollEl.removeEventListener('touchcancel', onTouchCancel);
+        host.removeEventListener('touchstart', onTouchStart);
+        host.removeEventListener('touchmove', onTouchMove);
+        host.removeEventListener('touchend', onTouchEnd);
+        host.removeEventListener('touchcancel', onTouchCancel);
         scrollEl.removeEventListener('focusin', onFocusIn);
         vv.removeEventListener('resize', onVvEvent);
         vv.removeEventListener('scroll', onVvEvent);
@@ -5078,6 +5575,13 @@
         clearPending();
         touch = null;
         scrollEl.classList.remove('un-kb-avoid');
+        if (rides) {
+          if (rideObserver) rideObserver.disconnect();
+          column.removeEventListener('focusin', onKeysMove);
+          column.removeEventListener('focusout', onKeysMove);
+          if (rideAnim) { var anim = rideAnim; rideAnim = null; anim.onfinish = anim.oncancel = null; try { anim.cancel(); } catch (e) { /* ignore */ } }
+          column.style.transition = priorTransition;
+        }
       },
     };
   }

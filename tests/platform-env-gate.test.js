@@ -14,6 +14,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -110,8 +111,10 @@ test('a failing verdict names the missing keys and offers the fix in place', () 
   assert.match(detailFn, /fn: 'openPlatformVariables'/,
     'one click from the block to the panel is the difference between a '
     + '20-second fix and a hunt');
-  assert.match(detailFn, /'Set them now' : 'Propose a value'/,
+  assert.match(detailFn, /PlatformI18n\.t\('changes:envNote\.setNow'\) : PlatformI18n\.t\('changes:envNote\.proposeValue'\)/,
     'both audiences get an action: admins set it, everyone else proposes it');
+  assert.equal(message('changes:envNote.setNow'), 'Set them now');
+  assert.equal(message('changes:envNote.proposeValue'), 'Propose a value');
 });
 
 test('an error verdict is shown as non-blocking, not as a failure', () => {

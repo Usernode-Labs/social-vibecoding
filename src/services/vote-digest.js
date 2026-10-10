@@ -27,10 +27,13 @@
  * everybody gets one a day, near the time of day they first became
  * eligible, with no timezone anywhere in the code.
  *
- * The count is what a person is actually able to act on: promoted proposals
- * in apps they can see, that they have not already voted on, and that they
- * did not write. Somebody with nothing to do gets nothing, which is what
- * keeps a daily notification from becoming the noise it was meant to avoid.
+ * The count is the open proposals waiting on a person: promoted proposals
+ * in apps they have pinned or created, that they did not write, have not
+ * already voted on, and are not in an app they blocked. Somebody with
+ * nothing to do gets nothing, which is what keeps a daily notification
+ * from becoming the noise it was meant to avoid. Who counts as having a
+ * stake is spelled out on PENDING_SQL below, including what it does not
+ * check.
  */
 
 const log = require('./logger');
@@ -50,11 +53,23 @@ let timer = null;
 /**
  * Users who owe at least one vote, with the count.
  *
- * Stakeholder is the same definition the notifications themselves use —
- * creator, favoriters, and (for non-self-hosted apps) active users — so
- * "who cares about this app" does not get a third answer here. Collaborator
- * filtering is what keeps a collab-private app's proposals out of a
- * favoriter's count when they could not vote on them anyway.
+ * A stakeholder is one of exactly two things: someone with an
+ * app_favorites row for the app, or the app's creator. Nothing else is
+ * read. In particular:
+ *
+ *   - Active users are NOT included. The per-proposal notification
+ *     (services/notifications.js) also asks the members active on the app
+ *     lately; this query does not, so a member who never pinned the app
+ *     gets no digest for it. That is why Join (communities.join), an
+ *     invite link (apply_community_invite in src/db/schema.sql) and an
+ *     accepted invite (collab-invites.acceptInvite) all write the pin.
+ *   - There is NO collaborator or visibility filter. A favoriter of a
+ *     collab-private app they cannot vote on is still counted.
+ *   - `hidden` is not read, so a hidden opt-out row counts like a pin.
+ *
+ * Excluded: the proposal's own author, apps the person blocked, proposals
+ * they already voted on, and anyone who had a digest in the last
+ * MIN_GAP_HOURS.
  *
  * Deliberately ONE query rather than a loop: this runs over every user on
  * the platform, and per-user round trips would make an hourly sweep a
@@ -74,7 +89,11 @@ const PENDING_SQL = `
       FROM chat_sessions cs
      WHERE cs.status = 'promoted'
   )
-  SELECT s.user_id, COUNT(DISTINCT p.id) AS pending
+  SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
+         -- The one change, when there is exactly one: the row names it, so a
+         -- tap opens it rather than a list of one.
+         CASE WHEN COUNT(DISTINCT p.id) = 1 THEN MIN(p.id) END AS only_session_id,
+         CASE WHEN COUNT(DISTINCT p.id) = 1 THEN MIN(p.app_id) END AS only_app_id
     FROM open_proposals p
     JOIN stakeholders s ON s.app_id = p.app_id
    WHERE s.user_id IS DISTINCT FROM p.author_id
@@ -138,12 +157,16 @@ async function sweep(pool) {
       if (!allowedSet.has(userId)) continue;
       const pending = Math.min(Number(row.pending) || 0, MAX_COUNT);
       if (!pending) continue;
+      // One change waiting: the row carries its app and session, and opens
+      // it (notifications.js). Several: no app, and a tap opens the
+      // Communities screen's Needs you, which lists them all.
+      const one = pending === 1 && row.only_session_id && row.only_app_id;
       try {
         const { rows: created } = await pool.query(
-          `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
-           VALUES ($1, NULL, NULL, 'vote_digest', $2)
-           RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
-          [userId, String(pending)]
+          `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+           VALUES ($1, $3, $4, NULL, 'vote_digest', $2)
+           RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+          [userId, String(pending), one ? Number(row.only_app_id) : null, one ? Number(row.only_session_id) : null]
         );
         if (created[0]) {
           result.sent += 1;

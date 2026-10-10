@@ -68,7 +68,7 @@ const { parseRewardPoints } = require('../services/topochain/challenge-rules');
 // single row. It is the most honest signal available today; when a real
 // per-user progress feed lands, THIS is the one function to replace.
 const {
-  resolveProgress, loadOnboarding, challengeCategory, NEWEST_EVENT_BLOCKS_SQL,
+  resolveProgress, loadOnboarding, challengeCategory, NEWEST_EVENT_BLOCKS_SQL, COUNTS_THIS_WEEK_SQL,
   isLocked, gateSummary,
 } = require('../services/topochain/challenge-onboarding');
 
@@ -99,7 +99,8 @@ const DONE_SQL = `
 // (Postgres can't reference a SELECT-list alias from the same SELECT list,
 // so they're substituted in rather than named).
 const MY_COUNT_SQL = `(SELECT COUNT(*) FROM user_activities ua
-              WHERE ua.user_id = $1 AND ua.challenge_id = c.id)`;
+              WHERE ua.user_id = $1 AND ua.challenge_id = c.id
+                AND ${COUNTS_THIS_WEEK_SQL})`;
 // The snapshot read now lives beside resolveProgress, because the challenge
 // LISTS need the same number and a second copy of it is how the tab and Home
 // came to disagree (#2492). This name is kept: profile.js imports it from
@@ -308,6 +309,7 @@ async function buildChallengesPanel(pool, user, opts) {
     // so the area explains itself instead of vanishing.
     return {
       season: null, total: 0, all_total: 0, done: 0, points_remaining: null,
+      points_total: null, points_earned: null,
       challenges: [], expanded,
     };
   }
@@ -412,6 +414,13 @@ async function buildChallengesPanel(pool, user, opts) {
       + ` COALESCE(c.featured_order, 2147483647), c.display_order, c.id)`
       + ` FILTER (WHERE ${openScope} AND NOT (${gateFilter})))[1:${HIDDEN_NAMES}] AS hidden_names`
     : '';
+  // The points summary's two figures (#4565) ride the same statement:
+  // every row's effective reward beside the viewer's credited points on it,
+  // over the same set `all_total` counts (the gate's, while it is closed).
+  // Parsing happens below, so prose rewards are skipped there, one row at a
+  // time, instead of the whole figure being withheld as `points_remaining`'s
+  // all-or-nothing rule does.
+  const allRewardsFilter = gateFilter || 'TRUE';
   const { rows: totalRows } = await pool.query(
     `SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total,
             ${allTotalSql} AS all_total,
@@ -424,10 +433,23 @@ async function buildChallengesPanel(pool, user, opts) {
                 WHERE ${scopeFilter} AND NOT (${totalSql(doneExpr)})
               ),
               '{}'
-            ) AS open_rewards${hiddenCountSql}
+            ) AS open_rewards,
+            COALESCE(
+              array_agg(json_build_array(COALESCE(c.reward, ct.reward), COALESCE(ua.pts, 0)))
+                FILTER (WHERE ${allRewardsFilter}),
+              '{}'
+            ) AS all_rewards${hiddenCountSql}
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
        LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+       -- The viewer's credited points per challenge, pre-grouped so the join
+       -- keeps one row per challenge and every COUNT above is unchanged.
+       LEFT JOIN (
+         SELECT challenge_id, SUM(points) AS pts
+           FROM user_activities
+          WHERE user_id = $1
+          GROUP BY challenge_id
+       ) ua ON ua.challenge_id = c.id
       WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE}`,
     [user.id, season.id, ...onboardingParams]
   );
@@ -453,6 +475,24 @@ async function buildChallengesPanel(pool, user, opts) {
     pointsRemaining += n;
   }
 
+  // The summary's points pair (#4565): earned of on-offer, over the same set
+  // as `all_total`. Each row whose reward parses adds it to the total and the
+  // viewer's credited points on it to the earned figure; prose rows are
+  // skipped, so a mix of numeric and prose rewards totals only the numeric
+  // ones — deliberately unlike `points_remaining`, which withholds its whole
+  // figure. Null when nothing in view offers a number, so the client draws
+  // no "0 of 0 pts" line.
+  const allRewards = Array.isArray(totalRows[0]?.all_rewards) ? totalRows[0].all_rewards : [];
+  let pointsTotal = 0;
+  let pointsEarned = 0;
+  for (const pair of allRewards) {
+    const n = parseRewardPoints(pair && pair[0]);
+    if (n == null) continue;
+    pointsTotal += n;
+    pointsEarned += Math.max(0, Number(pair && pair[1]) || 0);
+  }
+  const hasPoints = pointsTotal > 0;
+
   return {
     // `ends_at` is the season's end: the deadline a card shows when its
     // challenge carries no `ends_at` of its own (no schedule_end and no event
@@ -467,6 +507,9 @@ async function buildChallengesPanel(pool, user, opts) {
     // Done over `all_total`'s set (see allDoneSql): the season progress.
     all_done: totalRows[0]?.all_done ?? totalRows[0]?.done ?? 0,
     points_remaining: pointsRemaining,
+    // Additive (#4565); an older cached client simply never reads them.
+    points_total: hasPoints ? pointsTotal : null,
+    points_earned: hasPoints ? pointsEarned : null,
     // `hidden_count` and `hidden_names` are additive and ride only while the
     // gate is closed; the block draws them as its one locked card in place of
     // the First challenges, which the Getting started card above it already
@@ -544,6 +587,7 @@ function demoChallengesPanel(opts) {
   if (variant === 'none') {
     return {
       season: null, total: 0, all_total: 0, done: 0, points_remaining: null,
+      points_total: null, points_earned: null,
       challenges: [], expanded,
       demo: true,
     };
@@ -716,6 +760,9 @@ function demoChallengesPanel(opts) {
       done: 1,
       all_done: 1,
       points_remaining: 1000,
+      // The gate's own four First challenges: 1,500 on offer, 500 earned.
+      points_total: 1500,
+      points_earned: 500,
       onboarding: {
         total: 4, completed: 1, unlocked: false, event_id: 900501,
         // The default payload's five open rows, which are what unlocking
@@ -749,6 +796,9 @@ function demoChallengesPanel(opts) {
       done: 0,
       all_done: 0,
       points_remaining: null,
+      // The two rows' own rewards: 2,100 + 250 on offer, 800 earned.
+      points_total: 2350,
+      points_earned: 800,
       challenges: few,
       expanded,
       demo: true,
@@ -774,6 +824,9 @@ function demoChallengesPanel(opts) {
     // 2026-09-24 Q17), so it does not jump when the block expands.
     all_done: 3,
     points_remaining: null,
+    // Every row the demo holds, either way: 5,800 on offer, 1,750 earned.
+    points_total: 5800,
+    points_earned: 1750,
     challenges: all,
     expanded,
     demo: true,
@@ -806,6 +859,13 @@ const PANEL_REGISTRY = [
 
 const PANEL_KEYS = new Set(PANEL_REGISTRY.map((p) => p.key));
 
+// A PRIVATE MEMBER's Home (middleware/auth.js isPrivateMember) is their
+// communities' apps, Discover (they use public apps; they do not vote on
+// them, services/communities.js privateVoteRefusal) and the waitlist card:
+// no Challenges, and no Create app, which they cannot do yet. The client
+// hides a section whose panel is not in the answer.
+const PRIVATE_MEMBER_PANELS = new Set(['discover']);
+
 function panelRegistryPublic() {
   return PANEL_REGISTRY.map((p) => ({
     key: p.key,
@@ -835,6 +895,7 @@ function homePanelRoutes() {
       const variant = typeof req.query.challenges === 'string' ? req.query.challenges : '';
       const panels = [];
       for (const panel of PANEL_REGISTRY) {
+        if (req.user.privateMember && !PRIVATE_MEMBER_PANELS.has(panel.key)) continue;
         const expanded = expandKey === panel.key;
         try {
           const data = demo && panel.demo

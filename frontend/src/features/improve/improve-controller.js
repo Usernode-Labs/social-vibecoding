@@ -45,6 +45,7 @@ import { iconViewFor } from '../apps/app-card.js';
 import { notificationsSheetStore } from '../notifications/notifications-sheet-store.js';
 import { boardHref, improveStore } from './improve-store.js';
 import { saveShellSnapshot } from '../../lib/shell-snapshot';
+import { t } from '../../lib/i18n/runtime';
 
 /** Sessions whose state means "an AI turn is in flight right now". */
 const BUSY_STATES = new Set(['running', 'starting', 'queued']);
@@ -114,12 +115,12 @@ function awaitsInput(session) {
  * that surface reads this one without relearning it.
  */
 function statusLabel(session) {
-  if (isBusy(session)) return 'Working…';
+  if (isBusy(session)) return t('agent:menu.row.status.working');
   // No 'Paused' (#2779 follow-up): a paused session is the platform's
   // bookkeeping, not a state of the work. It pauses by itself when idle and
   // resumes by itself when opened or messaged, so it reads like any other
   // session that is waiting for its owner.
-  if (awaitsInput(session)) return 'Needs you';
+  if (awaitsInput(session)) return t('agent:menu.row.status.needsYou');
   return null;
 }
 
@@ -159,7 +160,7 @@ function toRow(session, appNameFallback) {
     // sends `session_title` / `pr_title` / `branch_name` and no `title` at
     // all, so every row in the panel read "Untitled session".
     title: session.session_title || session.pr_title || session.branch_name
-      || `Session #${session.id}`,
+      || t('agent:menu.row.sessionFallback', { number: session.id }),
     // A row represents the change, not just its chat. The lifecycle-aware
     // page keeps the context around the workspace and still embeds it. A
     // change an agent session started is worked on in that conversation
@@ -202,7 +203,7 @@ function taskToRow(task, appNameFallback) {
     appSlug: task.app_slug || null,
     appName: task.app_name || appNameFallback || task.app_slug || '',
     icon: iconOf(task, appNameFallback),
-    title: task.title || `Work order #${task.id}`,
+    title: task.title || t('agent:menu.row.workOrderFallback', { number: task.id }),
     href: task.issue_number
       ? `#app/${task.app_slug}/dev/issues/${task.issue_number}`
       : `#app/${task.app_slug}/dev`,
@@ -223,7 +224,7 @@ function taskToRow(task, appNameFallback) {
 function agentLabel(agent) {
   if (agent === 'claude-code') return 'Claude Code';
   if (agent === 'codex') return 'Codex';
-  return 'Handed off';
+  return t('agent:menu.row.status.handedOff');
 }
 
 const Improve = {
@@ -723,38 +724,6 @@ const Improve = {
    */
   _tasks: [],
 
-  /**
-   * Publish a session that was just created in this tab.
-   *
-   * DevChat owns session creation, but the Improve panel owns a separate
-   * cross-app cache. Waiting for its next /active-sessions response leaves a
-   * successful new session looking absent, and a preload issued before the
-   * POST can arrive afterwards and erase a naive optimistic row. Invalidate
-   * that older request and publish the server-created row immediately; the
-   * normal load on panel open remains the authoritative follow-up.
-   */
-  onSessionCreated(session, appSlug) {
-    if (!session || session.id == null) return;
-    const existing = Improve._all.find((candidate) => (
-      String(candidate.id) === String(session.id)
-    ));
-    const row = {
-      ...(existing || {}),
-      ...session,
-      app_slug: session.app_slug || existing?.app_slug || appSlug || null,
-    };
-    if (!row.app_slug) return;
-
-    // Any request already in flight describes the world before this POST.
-    Improve._loadToken += 1;
-    Improve._all = [
-      row,
-      ...Improve._all.filter((existing) => String(existing.id) !== String(row.id)),
-    ];
-    improveStore.set({ loadingSessions: false, sessionsLoaded: true });
-    Improve._rebucket();
-  },
-
   _rebucket() {
     const { slug, name } = improveStore.get();
     const mine = [];
@@ -972,17 +941,16 @@ const Improve = {
   /**
    * Open the feedback dialog.
    *
-   * `fromDev: true` is the mode the Dev "+" menu's "File an issue" row uses: it
-   * preselects the open app as the target (falling back to Platform for the
-   * self-hosted row, or while the repo does not exist yet). That is the right
-   * default here for the same reason — the panel is unambiguously about one
-   * app, so the dialog should not open asking which one.
+   * `fromDev` opens it asking where the suggestion goes, with neither "This
+   * app" nor "Homeroom" chosen (#2707): a person in an app may well mean the
+   * platform, so the press does not answer that question (#4236). Getting
+   * started's "Suggest a change to <app>" still passes `target: 'app'`,
+   * because that button already named the app.
    */
   giveFeedback() {
     const { slug } = improveStore.get();
     Improve.close();
     if (!window.App?.openFeedbackModal) return;
-    // Already looking at this app: the dialog can resolve its own target.
     if (window.App.currentApp === slug) {
       window.App.openFeedbackModal({ fromDev: true });
       return;
@@ -1113,6 +1081,13 @@ const Improve = {
 
 if (typeof window !== 'undefined') {
   window.Improve = Improve;
+}
+
+// The language changed, or this namespace's text arrived: the rows carry
+// their status and fallback titles in words, so build them again from the
+// lists this module already holds.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => Improve._rebucket());
 }
 
 export { Improve };

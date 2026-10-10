@@ -14,6 +14,22 @@
 // (src/services/onboarding.js). Every account that existed before this step
 // reads false, so nobody who already uses the platform is walked through it.
 //
+// While the story landing is on (`App.user.storyFirstSession`), the step is
+// the first session's "What do you want to make?" instead (../first-session):
+// the question a new account made from the story's own sheet is asked, put
+// to every new account however it signed in. When nothing has to come first
+// (no username to choose, no invite to follow) it opens in the same tick as
+// the signed-in shell (firstSessionNow), not after a beat of Home.
+//
+// IT IS ASKED UNTIL IT IS ANSWERED. Showing it records only that it was
+// asked (POST /api/me/first-session/started); the flag stays set until Make
+// it makes a project or "Look around first" is chosen
+// (src/services/first-session.js). So every later boot of the shell for that
+// account asks it again: a reload, a new tab, the phone app reopened, a sign
+// out and back in. A reload from the session snapshot (app.js) draws it from
+// the snapshot's user at once, so Home is not painted first, and the
+// verified read then keeps it or takes it away (_showFromSnapshot below).
+//
 // ── What it shows ──────────────────────────────────────────────────────
 //
 // GET /api/me/join-suggestions: Homeroom first (the platform's own project,
@@ -22,10 +38,14 @@
 // most members. Each row ends in how many members the community has, a
 // people glyph and a figure just before the tick (`_members`), beside the
 // line under the name rather than instead of it. One button, which says
-// what it will do: "Join 3 communities". Unticking everything is allowed to
-// be a dead end on purpose ("Pick at least one"): a newcomer in no community
-// has nothing on Home and nothing in the Workshop, and the screen exists to
-// prevent that.
+// what it will do: "Join 3 communities". Homeroom is not counted in it: the
+// account is already in Homeroom, so keeping it ticked joins nothing, and it
+// never ticks "Join a community" on the Getting started card
+// (src/services/onboarding.js, COMMUNITY_JOINED), so the button and the
+// toast after it never call it a join. Homeroom ticked alone is "Continue".
+// Unticking everything is allowed to be a dead end on purpose ("Pick at
+// least one"): a newcomer in no community has nothing on Home and nothing in
+// the Workshop, and the screen exists to prevent that.
 //
 // ── Blocking, like the username step ───────────────────────────────────
 //
@@ -80,6 +100,10 @@
     _shownHere: false,
     _settle: null,
     _settled: null,
+    // The make screen drawn from the session snapshot's user, before the
+    // session was confirmed (_showFromSnapshot): the verified read decides
+    // whether it stays.
+    _madeFromSnapshot: false,
 
     // Does this document have a join step to show? Read by the tour, which
     // never copies this browser's "done" to an account whose join screen is
@@ -89,6 +113,104 @@
       if (CommunitiesFirstRun._answered) return false;
       return !!(window.App && window.App.user
         && window.App.user.needsCommunitiesChoice === true);
+    },
+
+    // Does signing in with `user` lead straight to its first session, "What
+    // do you want to make?", with nothing to come before it? While the
+    // story landing is on, an account still due this step is asked that
+    // instead (see maybePrompt), and when no username has to be chosen
+    // first and no invite is bringing it in, it is asked AT ONCE: opened in
+    // the same tick the shell starts, so nothing of Home shows before it.
+    // The story's sign-in sheet asks the same question before it signs in
+    // (firstSessionNext in ./shared.ts), so it can hand off to that screen.
+    firstSessionNow(user) {
+      return !!(user && typeof user === 'object'
+        && user.hasPlatformAccess !== false
+        && user.needsCommunitiesChoice === true
+        && user.storyFirstSession === true
+        && user.needsUsernameChoice !== true
+        && !CommunitiesFirstRun._onInvitePath());
+    },
+
+    _onInvitePath() {
+      const app = window.App;
+      return !!(app && typeof app._inviteTokenFromPath === 'function'
+        && app._inviteTokenFromPath(location.pathname));
+    },
+
+    _island() {
+      const firstSession = window.UsernodeReact && window.UsernodeReact.firstSession;
+      return firstSession && typeof firstSession.make === 'function' ? firstSession : null;
+    },
+
+    // The first session, opened in this tick: the island draws it before
+    // the browser paints the shell it was signed in to, and the start is
+    // recorded behind it the way the later branch below records it.
+    _startFirstSessionNow() {
+      const firstSession = CommunitiesFirstRun._island();
+      if (!firstSession) return false;
+      // An invite already being followed is waited for below.
+      if (window.App._inviteFollow) return false;
+      if (!CommunitiesFirstRun.firstSessionNow(window.App.user)) return false;
+      CommunitiesFirstRun._openFirstSession(firstSession);
+      return true;
+    },
+
+    // Open "What do you want to make?" and record that it was asked. This
+    // document's step is then done with (`_answered`), but the ACCOUNT's is
+    // not: `needsCommunitiesChoice` is left as the server said, TRUE, so the
+    // session snapshot keeps it and the next boot asks again. Only the
+    // island's two answers clear it (../first-session/index.tsx).
+    _openFirstSession(firstSession) {
+      CommunitiesFirstRun._madeFromSnapshot = false;
+      CommunitiesFirstRun._answered = true;
+      firstSession.make();
+      CommunitiesFirstRun._recordFirstSession();
+      CommunitiesFirstRun._resolve();
+    },
+
+    // A boot from the session snapshot (a reload, the app reopened) asks
+    // nothing before the session is confirmed, but the make screen is the
+    // one exception: drawn now, from the snapshot's user, in the same tick
+    // the shell starts, so a reload of somebody who has not answered it
+    // shows it again rather than a beat of Home first. Nothing is recorded
+    // and the step stays open: the verified read (app.js _reconcileSession
+    // calls maybePrompt again) keeps it, or takes it away for an account
+    // that answered it somewhere else (_dropSnapshotMake).
+    _showFromSnapshot() {
+      const firstSession = CommunitiesFirstRun._island();
+      if (!firstSession || window.App._inviteFollow) return;
+      if (!CommunitiesFirstRun.firstSessionNow(window.App.user)) return;
+      CommunitiesFirstRun._madeFromSnapshot = true;
+      firstSession.make();
+    },
+
+    // The verified user is here: a make screen the snapshot drew stays only
+    // if this account is still due it now.
+    _dropSnapshotMake() {
+      if (!CommunitiesFirstRun._madeFromSnapshot) return;
+      if (CommunitiesFirstRun.firstSessionNow(window.App && window.App.user)
+          && !(window.App && window.App._inviteFollow)) return;
+      CommunitiesFirstRun._madeFromSnapshot = false;
+      const firstSession = CommunitiesFirstRun._island();
+      if (firstSession && typeof firstSession.dismissMake === 'function') firstSession.dismissMake();
+    },
+
+    // POST /api/me/first-session/started for an account that signed in
+    // some other way than the story's own sheet. Kept once, so Journey can
+    // tell the two apart; it does not answer the question, so asking again
+    // on a later boot records nothing new.
+    async _recordFirstSession() {
+      try {
+        await fetch('/api/me/first-session/started', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ via: 'sign_in' }),
+        });
+      } catch (err) {
+        console.warn('[communities-first-run] first session start not recorded:', err);
+      }
     },
 
     // Has THIS document shown the real join screen (never the ?shot=
@@ -120,6 +242,22 @@
         CommunitiesFirstRun._settle = null;
         done();
       }
+    },
+
+    // Resolves true once an invite this page is following has brought the
+    // viewer into its group, false when there is none or they said Not now.
+    // The boot can get here a beat before the follow starts, so an invite
+    // address waits briefly for it to begin.
+    async _joinedByInvite() {
+      const app = window.App;
+      if (!app) return false;
+      const onInvitePath = typeof app._inviteTokenFromPath === 'function'
+        && !!app._inviteTokenFromPath(location.pathname);
+      for (let i = 0; onInvitePath && !app._inviteFollow && i < 20; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      if (!app._inviteFollow) return false;
+      try { return (await app._inviteFollow) === true; } catch (_) { return false; }
     },
 
     _params() {
@@ -159,19 +297,54 @@
         return;
       }
       if (window.App && window.App._sessionFromSnapshot) {
+        CommunitiesFirstRun._showFromSnapshot();
         CommunitiesFirstRun._resolve();
         return;
       }
+      CommunitiesFirstRun._dropSnapshotMake();
       if (!window.App || !window.App.user || window.App.user.needsCommunitiesChoice !== true) {
         CommunitiesFirstRun._answered = !!(window.App && window.App.user);
         CommunitiesFirstRun._resolve();
         return;
       }
 
+      // Before anything is awaited: from `sv:authed` this still runs inside
+      // the authed boot, ahead of the first paint of Home.
+      if (CommunitiesFirstRun._startFirstSessionNow()) return;
+
       await CommunitiesFirstRun._afterEarlierSteps();
       // A ghost-click window after the sheet before it, the same one the
       // terms gate leaves after the username step.
       await new Promise((resolve) => setTimeout(resolve, SETTLE_DELAY_MS));
+
+      // An invite being followed comes first (App._followInvite): somebody a
+      // link is bringing into a group is asked to join that group, not what
+      // to make or which communities to join. Once they are in, this step is
+      // done (the invite answered it on the server); "Not now", and it goes
+      // on as usual.
+      if (await CommunitiesFirstRun._joinedByInvite()) {
+        CommunitiesFirstRun._answered = true;
+        window.App.user.needsCommunitiesChoice = false;
+        // And on this device's snapshot, so the next boot does not draw the
+        // make screen from it before the session is confirmed.
+        try { window.App.saveSessionSnapshot?.(window.App.user); } catch (_) {}
+        CommunitiesFirstRun._resolve();
+        return;
+      }
+
+      // The first session in place of this screen (`storyFirstSession` on
+      // /api/auth/me, while the story landing is on): an account that
+      // signed in some other way than the story's own sheet (a password, a
+      // code, a provider, an admin-made test account) is asked "What do
+      // you want to make?" like one that did (../first-session), and
+      // recorded the way that sheet records it (POST /api/me/first-session/
+      // started). Getting started stays out of the first session. With no
+      // island to open it, the join screen is asked as before.
+      const firstSession = CommunitiesFirstRun._island();
+      if (window.App.user.storyFirstSession === true && firstSession) {
+        CommunitiesFirstRun._openFirstSession(firstSession);
+        return;
+      }
 
       let list = null;
       try {
@@ -251,7 +424,7 @@
       figure.setAttribute('aria-hidden', 'true');
       wrap.appendChild(figure);
       wrap.appendChild(el('span', 'sr-only',
-        `${n.toLocaleString('en-US')} ${n === 1 ? 'member' : 'members'}`));
+        PlatformI18n.t('onboarding:communities.memberCount', { count: n, memberCount: n.toLocaleString('en-US') })));
       return wrap;
     },
 
@@ -317,18 +490,18 @@
       panel.appendChild(scroller);
       // A welcome first: this is a new account's first screen after its
       // name and the terms, so it says what the place is before it asks.
-      scroller.appendChild(el('div', 'text-xl font-bold pt-3', 'Welcome to Homeroom!'));
+      scroller.appendChild(el('div', 'text-xl font-bold pt-3', PlatformI18n.t('onboarding:communities.welcome')));
       scroller.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-300 mt-1',
-        'Homeroom is a place where communities build the apps they use together.'));
+        PlatformI18n.t('onboarding:communities.intro')));
       scroller.appendChild(el('div',
         'text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100 mt-5 mb-2',
-        'What communities do you want to join?'));
+        PlatformI18n.t('onboarding:communities.question')));
 
       // One card of rows, the platform's grouped-list shape: the plane
       // colour, a 20px radius and one inset hairline.
       const group = el('div', 'rounded-[20px] shadow-[inset_0_0_0_1px_var(--app-sheet-line)] divide-y divide-zinc-200/70 dark:divide-zinc-800');
       group.setAttribute('role', 'group');
-      group.setAttribute('aria-label', 'Communities');
+      group.setAttribute('aria-label', PlatformI18n.t('onboarding:communities.listLabel'));
       scroller.appendChild(group);
 
       const picked = new Set(list.filter((c) => c.checked).map((c) => c.slug));
@@ -369,7 +542,7 @@
       }
 
       scroller.appendChild(el('p', 'text-[0.8125rem] text-zinc-500 dark:text-zinc-400 mt-3',
-        'You can join or leave any time from Discover, and start your own private or public community once you are in.'));
+        PlatformI18n.t('onboarding:communities.footnote')));
 
       // The foot: the error line and the two answers. Its top edge is a
       // hairline only while there is more of the body below it to scroll
@@ -398,28 +571,39 @@
       const skip = el('button',
         'w-full mt-1 py-2 text-sm font-medium text-zinc-500 hover:text-zinc-800 ' +
         'dark:text-zinc-400 dark:hover:text-zinc-100 disabled:opacity-50',
-        'Skip for now');
+        PlatformI18n.t('onboarding:communities.skip'));
       skip.type = 'button';
       skip.setAttribute('data-join-communities-skip', '');
       foot.appendChild(skip);
 
+      // What the button and the toast count: the ticked communities that are
+      // a join. Not Homeroom, which the account is already in and which never
+      // counts as joining one (the header above).
+      const platform = new Set(list.filter((c) => c.self_hosted).map((c) => c.slug));
+      const joins = (slugs) => slugs.filter((slug) => !platform.has(slug)).length;
+
       let busy = false;
       function paintButton() {
-        const n = picked.size;
+        const ticked = picked.size;
+        const n = joins([...picked]);
         skip.disabled = busy;
-        save.disabled = busy || n === 0;
-        save.textContent = n === 0 ? 'Pick at least one'
-          : `Join ${n} ${n === 1 ? 'community' : 'communities'}`;
-        save.setAttribute('data-picked', String(n));
+        save.disabled = busy || ticked === 0;
+        save.textContent = ticked === 0 ? PlatformI18n.t('onboarding:communities.pickOne')
+          : n === 0 ? PlatformI18n.t('onboarding:communities.continue')
+            : PlatformI18n.t('onboarding:communities.join', { count: n });
+        save.setAttribute('data-picked', String(ticked));
       }
       rows.forEach((paint) => paint());
       paintButton();
+      // The button's words follow the language on screen.
+      document.addEventListener('homeroom:language-changed', paintButton);
 
       let sheet = null;
       let watch = null;
       const dismiss = () => {
         CommunitiesFirstRun._answered = true;
         if (watch) watch.disconnect();
+        document.removeEventListener('homeroom:language-changed', paintButton);
         if (sheet && sheet.dismiss) sheet.dismiss();
         CommunitiesFirstRun._presented = false;
         CommunitiesFirstRun._resolve();
@@ -443,7 +627,7 @@
           });
           const body = await res.json().catch(() => ({}));
           if (!res.ok && !body.alreadyDone) {
-            status.textContent = body.error || 'Could not join those. Try again.';
+            status.textContent = body.error || PlatformI18n.t('onboarding:communities.error.notJoined');
             busy = false;
             paintButton();
             return;
@@ -460,13 +644,14 @@
             detail: { joined: body.joined || [] },
           }));
           try { window.Home?.load?.(); } catch (_) {}
-          const n = (body.joined || []).length;
+          // Keeping Homeroom is not a join: nothing to announce for it.
+          const n = joins(body.joined || []);
           if (n && window.PlatformUI) {
-            PlatformUI.toast(`You joined ${n} ${n === 1 ? 'community' : 'communities'}.`);
+            PlatformUI.toast(PlatformI18n.t('onboarding:communities.joinedToast', { count: n }));
           }
         } catch (err) {
           console.warn('[communities-first-run] answer failed:', err);
-          status.textContent = 'Network error. Try again.';
+          status.textContent = PlatformI18n.t('onboarding:communities.error.network');
           busy = false;
           paintButton();
         }

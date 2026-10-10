@@ -62,17 +62,23 @@ test('the app menu carries no platform destination at all', () => {
   // said twice. It came BACK when the strip retired (#2761): the owner asked
   // for a plain "Go to workshop" row, not a toggle. Still the app's own, so
   // the split holds: nothing here is the platform's. The discussion row left
-  // in the UI overhaul (the channel is on the hub), and Agent sessions, which
-  // are yours on every app, follow the app's own rows.
+  // in the UI overhaul (the channel is on the hub), and Agent chats, which
+  // are yours on every app, follow the app's own rows. They are not in the
+  // prerender: the section shows only for somebody who has had an agent
+  // session, which is known after mount (first-session run-through, 5 Oct
+  // 2026), so its place is read in the sheet's source.
   for (const row of ['app-menu-row-workshop', 'app-menu-row-about']) {
     assert.ok(nav.includes(`id="${row}"`), `#${row} is the app's own`);
   }
   assert.ok(!nav.includes('id="app-menu-row-discussion"'), 'the discussion is the hub\'s now');
-  assert.ok(nav.indexOf('id="app-menu-row-about"') < nav.indexOf('id="app-menu-sessions"'),
-    'Agent sessions follow the app\'s own rows');
+  assert.ok(!nav.includes('id="app-menu-sessions"'), 'Agent chats is drawn after mount, for a viewer who has built something');
+  const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  const menu = SHEET.slice(SHEET.indexOf('export function AppsSwitcherSheet('));
+  assert.ok(menu.indexOf('id="app-menu-row-about"') < menu.indexOf('<AgentChats '),
+    'Agent chats follow the app\'s own rows');
   const sheet = html.slice(html.indexOf('id="apps-switcher-sheet"'), html.indexOf('id="switcher-nav"'));
   assert.ok(!nav.includes('id="improve-row-feedback"') && sheet.includes('id="improve-row-feedback"'),
-    'Ask for a change is a button above the list, not a row in it');
+    'Suggest an improvement is a button above the list, not a row in it');
   assert.ok(!html.includes('id="app-context-row-workshop"')
     && !html.includes('id="improve-views"'),
     'and the Workshop is a row, not a toggle segment as well (#2761)');

@@ -33,6 +33,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -207,7 +208,7 @@ test('the tab strip reads Challenges, Kudos, Standings, History (#1917, the prot
   assert.ok(list.length > 0, 'SECTION_TABS located in the island');
   const labels = [...list.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]);
-  assert.deepEqual(labels, [
+  assert.deepEqual(labels.map(([key, id]) => [key, message(id)]), [
     ['challenges', 'Challenges'],
     ['kudos', 'Kudos'],
     ['topochain', 'Standings'],
@@ -584,8 +585,8 @@ test('pull-to-refresh dispatches on the active section', () => {
   assert.match(body, /TopochainLeaderboard\.loadLeaderboard\(\)/,
     'a pull on the Topochain tab reloads Topochain standings, not kudos panes');
   assert.match(body, /Leaderboard\.section === 'challenges'/, 'and on the challenges section');
-  assert.match(body, /TopochainChallenges\.loadChallenges\(\)/,
-    'a pull on the Challenges tab reloads the challenge grid');
+  assert.match(body, /TopochainChallenges\.loadChallenges\(\{ fresh: true \}\)/,
+    'a pull on the Challenges tab reloads the challenge grid, fresh (#3985)');
 });
 
 // ─── Duplicate titles ────────────────────────────────────────────────────
@@ -605,7 +606,7 @@ test('the challenges pane decorates the public grid with your own points', () =>
   assert.match(chJs, /\/challenges-api\/challenges\?season_event_id=/,
     'it fetches the session-scoped view');
   assert.match(chJs, /activities_total/, 'and reads your own per-challenge total');
-  const load = chJs.slice(chJs.indexOf('  async _loadMine(eventId) {'), chJs.indexOf('  // ── Challenge grid'));
+  const load = chJs.slice(chJs.indexOf('  async _loadMine(eventId, init) {'), chJs.indexOf('  // ── Challenge grid'));
   assert.ok(!/_challengesError/.test(load),
     'a personalization failure never paints an error — the public grid stands');
   // #1917: the "See where the season stands" link under the grid is gone —
@@ -649,17 +650,24 @@ test('the challenges grid summarises and groups the completed set', () => {
   assert.match(chTsx, /id="tc-se-challenge-summary"/,
     'the summary line carries a stable id the dapp.json check anchors on');
   // ITERATION 03 moved the tally into the shared season progress
-  // ("3/9 done in Season 2" over one segment per challenge) rather than
+  // ("3/9 done in this event" over one segment per challenge) rather than
   // "3 of 9 challenges completed". This pin moved with it, deliberately.
-  // QA 2026-09-24 Q17: an event's tally says it is an event's.
-  assert.match(chJs, /caption: name \? `done in this event · \$\{name\}` : 'done'/, 'and states the tally in words');
-  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length\)/,
+  // QA 2026-09-24 Q17: an event's tally says it is an event's; the event's
+  // own name stays out of the words (issue #4528).
+  assert.match(chJs, /view = name \? \{ done, total, scope: 'event' \} : \{ done, total \};/, 'and names the tally\'s scope');
+  assert.equal(message('leaderboard:progress.eventLabel', { done: 3, count: 9 }),
+    '3 of 9 done in this event', 'which the shared progress states in words');
+  assert.equal(message('leaderboard:progress.plainLabel', { done: 3, count: 9 }), '3 of 9 done');
+  // #4565: the tally also carries the points figures, so the shaping call
+  // hands it the challenge list its scope is made of.
+  assert.match(chJs, /progress: TopochainChallenges\._progressView\(doneCount, ordered\.length, null, ordered\)/,
     'which is what the summary line carries');
   assert.match(chTsx, /<SeasonProgress id="tc-se-challenge-summary"/,
     'drawn by the component Home shares');
   assert.match(chTsx, /\{g\.heading\}/,
     'the grouping subheading renders');
-  assert.match(chJs, /heading: 'Completed'/,
+  assert.equal(message('leaderboard:challenges.group.completed'), 'Completed');
+  assert.match(chJs, /heading: PlatformI18n\.t\('leaderboard:challenges\.group\.completed'\)/,
     'and the module is what names it');
   // Suppressed when everything (or nothing) is finished — every public event
   // in production is currently 100% completed, where the heading says nothing.
@@ -676,7 +684,8 @@ test('the challenges grid summarises and groups the completed set', () => {
   assert.match(chCardTsx,
     /done: 'bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400'/,
     'completed cards carry the done rail instead');
-  assert.match(chJs, /state: 'done', stateLabel: 'Done'/,
+  assert.equal(message('leaderboard:challenges.state.done'), 'Done');
+  assert.match(chJs, /state: 'done', stateLabel: PlatformI18n\.t\('leaderboard:challenges\.state\.done'\)/,
     'and the rail names the state in the board\'s word for it');
 });
 
@@ -770,6 +779,125 @@ test('a standings row the server could not name reads "Anonymous", never just it
   const { TL } = loadStandings();
   TL._drillRow = { ...SEASON_ROW, display_name: null };
   assert.equal(TL.drillView().displayName, 'Anonymous', 'and so does its drill-down header');
+});
+
+// ─── #3887: non-podium rows hidden by default, chip to show them grayed ──
+//
+// The server filters by default now and answers `non_podium_count` over the
+// unfiltered scope; the pane filters again on its side so a payload that
+// still carries excluded rows (an older server) can never render one as a
+// ranked row. The toggle is a module flag, session-sticky.
+
+// The excluded row sits ABOVE the ranked one on points, the way staging
+// seeds it — hidden by default, first thing you see when shown.
+const NON_PODIUM_ROW = {
+  ...SEASON_ROW, rank: 3, is_non_podium: true, total_points: 68000, display_name: 'PodiumSkipped',
+};
+
+test('#3887: the default view hides non-podium rows and offers the chip with the count', () => {
+  const view = renderStandings({
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [NON_PODIUM_ROW, SEASON_ROW],
+    non_podium_count: 1,
+  });
+  assert.equal(view.state, 'table');
+  assert.equal(view.rows.length, 1, 'the excluded row is not in the default table');
+  assert.equal(view.rows[0].rank, '1', 'and the ranked row keeps its stored rank');
+  assert.deepEqual(view.nonPodiumToggle, { count: 1, on: false },
+    'the chip knows both the number and that it is off');
+});
+
+test('#3887: the chip is absent when the board has no excluded user', () => {
+  const view = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW],
+    non_podium_count: 0,
+  });
+  assert.equal(view.state, 'table');
+  assert.equal(view.nonPodiumToggle, null, 'nothing to show, nothing to offer');
+});
+
+test('#3887: shown, the excluded row is rankless, flagged and grayed — and nobody moved', () => {
+  const { TL, store } = loadStandings();
+  TL._open = true;
+  TL._loading = false;
+  TL._showNonPodium = true;
+  TL._data = {
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [NON_PODIUM_ROW, SEASON_ROW],
+    non_podium_count: 1,
+  };
+  TL._meta = { page: 1, per_page: 25, total: 2, total_pages: 1 };
+  TL._renderBody();
+  const view = store.state.body;
+  assert.equal(view.state, 'table');
+  assert.deepEqual(view.nonPodiumToggle, { count: 1, on: true }, 'the chip is lit');
+  const excluded = view.rows[0];
+  assert.equal(excluded.rank, '—', 'still no ranking slot of its own');
+  assert.equal(excluded.nonPodium, true);
+  assert.equal(view.rows[1].rank, '1', 'the ranked user keeps the number they had');
+});
+
+test('#3887: a board whose every scorer is excluded reads as the filter working, not as empty', () => {
+  const { TL, store } = loadStandings();
+  TL._open = true;
+  TL._loading = false;
+  TL._data = {
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [{ ...NON_PODIUM_ROW, rank: 1, total_points: 68000 }],
+    non_podium_count: 1,
+  };
+  TL._meta = { page: 1, per_page: 25, total: 0, total_pages: 0 };
+  TL._renderBody();
+  const view = store.state.body;
+  assert.equal(view.state, 'allexcluded');
+  assert.ok(view.nonPodiumToggle, 'and the chip still offers the rows');
+  // The TSX spell of that state: the chip, then the sentence, and the
+  // sentence carries the same data-tc-lb-empty contract the noentries hint
+  // does — the declared check accepts "table or this hint".
+  assert.match(standingsTsx, /id="tc-lb-non-podium-toggle"/, 'the chip has its id');
+  assert.match(standingsTsx, /aria-pressed=\{toggle\.on\}/, 'and publishes its on-state');
+  assert.match(standingsTsx, /\{t\('leaderboard:standings\.allExcluded'\)\}/);
+  assert.equal(message('leaderboard:standings.allExcluded'), 'Everyone with a score on this board is excluded from the ranking.');
+  assert.match(standingsTsx,
+    /state === 'allexcluded'[\s\S]{0,600}?data-tc-lb-empty/,
+    'the all-excluded hint keeps the declared-check contract');
+});
+
+test('#3887: an older server payload still cannot render an excluded row as ranked', () => {
+  // No non_podium_count key: the payload predates the field and its rows
+  // are the full board. The pane filters on its side, and the chip it
+  // offers carries no count it would have to guess.
+  const view = renderStandings({
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [NON_PODIUM_ROW, SEASON_ROW],
+  });
+  assert.equal(view.state, 'table');
+  assert.equal(view.rows.length, 1, 'the excluded row is still hidden');
+  assert.deepEqual(view.nonPodiumToggle, { count: null, on: false }, 'no guessed number');
+});
+
+test('#3887: the drill opens the row the viewer sees, not the payload index', () => {
+  const { TL } = loadStandings();
+  TL._showNonPodium = false;
+  TL._data = {
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [NON_PODIUM_ROW, SEASON_ROW],
+    non_podium_count: 1,
+  };
+  // Index 0 of the SHOWN board is Ocank14 — against the raw payload it
+  // would have been the hidden excluded row.
+  TL._openRowAt(0);
+  assert.equal(TL._drillRow.display_name, 'Ocank14');
+});
+
+test('#3887: the chip goes through the module handler, which restarts at page 1', () => {
+  assert.match(topoJs, /_showNonPodium = !TopochainLeaderboard\._showNonPodium/,
+    'the flag flips in one place');
+  assert.match(topoJs, /_toggleNonPodium\(\) \{[\s\S]{0,300}?_page = 1;/,
+    'and the table restarts at page 1');
+  assert.match(topoJs, /include_non_podium', '1'/,
+    'the fetch carries the ask only while the chip is on');
 });
 
 test('the standings table drops the Success rate column on a season board', () => {
@@ -871,8 +999,10 @@ test('the season caption replaces the "nothing is running" caption', () => {
   assert.ok(!/_seasonDefault/.test(ctxJs),
     'the default-pick flag is gone — the selection is the single source of truth');
   // The picker and the hero must not label the season event "(past)".
-  assert.match(ctxJs, /if \(isSeason\) return ' \(season\)';/, 'the option reads (season)');
-  assert.match(ctxJs, /const statusLabel = isSeason \? 'season'/, 'so does the hero badge');
+  assert.match(ctxJs, /if \(isSeason\) return t\('leaderboard:eventBar\.option\.season', \{ event \}\);/, 'the option reads (season)');
+  assert.equal(message('leaderboard:eventBar.option.season', { event: 'Season 1' }), 'Season 1 (season)');
+  assert.match(ctxJs, /const statusLabel = isSeason \? t\('leaderboard:eventBar\.status\.season'\)/, 'so does the hero badge');
+  assert.equal(message('leaderboard:eventBar.status.season'), 'season');
 });
 
 test('both #981 checks are declared and the reader keeps them', () => {
@@ -991,8 +1121,9 @@ test('the standings tally counts the viewer\'s progress, in the word Home uses',
     'the organiser\'s closed flag is not the viewer\'s progress');
   assert.match(load, /c\.progress && c\.progress\.done === true/,
     'the tally counts done-ness per row');
-  assert.match(standingsTsx, /challenges done/,
+  assert.match(message('leaderboard:standings.challengesDone', { done: 3, count: 9 }), /^3 of 9 challenges done /,
     'and says "done", the word Home uses for this same number');
+  assert.doesNotMatch(message('leaderboard:standings.challengesDone', { done: 3, count: 9 }), /completed/);
   assert.doesNotMatch(standingsTsx, /challenges completed/,
     'never "completed", which on a challenge row means the organiser closed it');
 });
@@ -1003,7 +1134,7 @@ test('a signed-out reader gets the cross-link without a tally that is not theirs
   assert.match(load, /const signedIn = data\.data\.some\(\(c\) => c && c\.progress\)/,
     'progress rides along per row for a signed-in viewer only, which is the signal');
   assert.match(load, /done: signedIn/, 'so the tally is null when nobody is signed in');
-  assert.match(standingsTsx, /line\.done == null \? null :/,
+  assert.match(standingsTsx, /id=\{line\.done == null \? 'leaderboard:standings\.viewChallenges' : 'leaderboard:standings\.challengesDone'\}/,
     'and the line renders the link alone rather than a zero read as the reader\'s own');
   // The declared check anchors on the link INSIDE the paragraph, so the
   // paragraph must survive a null tally.

@@ -51,6 +51,7 @@ function makeAppView(renderMarkdown) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     `${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`,
@@ -73,24 +74,31 @@ test('both live and completed proposal rows include the full PR body', () => {
   );
   // #1367 split the topic head into a view MODEL and a component; the
   // ordering contract is the order of the model's fields, which is what
-  // topic/topic-head.tsx renders them in.
+  // topic/topic-head.tsx renders them in. The summary's fields come from
+  // `_changeSummaryView` (its lead, and on a change Homeroom bot built the
+  // rest one tap down: first-session run-through, 4 Oct 2026).
   assert.match(
     APP_VIEW_SRC,
-    /summaryHtml: AppView\._proposalSummaryHtml\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/,
+    /\.\.\.AppView\._changeSummaryView\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/,
     'the focused topic places the full body between its summary and metadata'
   );
   const HEAD_SRC = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'topic-head.tsx'),
     'utf8'
   );
-  // On the page the summary leads the hero, the steps sheet (the detail
-  // view's ledger) follows it, and the full body is the sheet the ⋯ menu's
-  // "Technical details" row opens (topic-head.tsx DetailsSheet) — reached
-  // from the page, never drawn on it.
+  // On the page the summary leads the change's root post (#4455,
+  // change-head.tsx), and the steps sheet (the detail view's ledger) and the
+  // full body are the sheet the ⋯ menu's "Details" row opens (topic-head.tsx
+  // DetailsSheet, B10b) — reached from the page, never drawn on it.
+  const CHANGE_SRC = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'change-head.tsx'),
+    'utf8'
+  );
+  assert.match(CHANGE_SRC, /<RequestWords html=\{body\.summaryHtml \|\| ''\} \/>/, 'the summary leads the post');
   assert.match(
     HEAD_SRC,
-    /body\.summaryHtml[\s\S]*?body\.details[\s\S]*?<DetailsSheet id=\{Number\(id\)\} html=\{body\.proposalBody\.html\} \/>/,
-    'and the component draws the summary, then the steps, with the body behind the ⋯'
+    /<ChangeThreadHead [^\n]*\/>[\s\S]*?<DetailsSheet\n\s+id=\{Number\(id\)\}\n\s+prRef=\{body\.hero\?\.ref \|\| null\}\n\s+steps=\{body\.steps\}\n\s+help=\{!!\(body\.details && body\.details\.help\)\}\n\s+html=\{body\.proposalBody\?\.html \|\| ''\}/,
+    'and the component draws the summary, with the steps and the body behind the ⋯'
   );
 });
 
@@ -148,7 +156,7 @@ test('every underway session topic renders summary, PR body and check details in
     APP_VIEW_SRC.indexOf('\n    } else {', APP_VIEW_SRC.indexOf("} else if (t.kind === 'session')") + 1)
   );
   assert.match(sessionBranch,
-    /body = \{[\s\S]*?summaryHtml: AppView\._proposalSummaryHtml\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/);
+    /body = \{[\s\S]*?\.\.\.AppView\._changeSummaryView\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/);
   assert.doesNotMatch(sessionBranch, /castVote|_cardVoteButtonSpecs|voteButtonsHtml/,
     'metadata reuse must not pull voting controls into Underway');
 });

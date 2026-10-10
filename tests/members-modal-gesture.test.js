@@ -32,6 +32,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -109,6 +110,7 @@ function makeHarness(elements) {
   const els = elements || {};
 
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console: { ...console, warn: (...a) => warnings.push(a), debug: () => {} },
     Date: { now: () => clock.t },
     relTime: () => 'just now',
@@ -159,6 +161,7 @@ function makeHarness(elements) {
 
 test('app-view.js exposes AppView on window (drawer handlers can reach it)', () => {
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console, Date, setTimeout, clearTimeout, setInterval, clearInterval,
     relTime: () => '', escapeHtml: (s) => s, escapeAttr: (s) => s, resolveDevHost: (u) => u,
     App: { user: { id: 1 } }, Kudos: { renderButton: () => '' }, ConfirmModal: {},
@@ -329,9 +332,13 @@ test('every dialog reveals through the shared synchronous seam', () => {
   // openedAt, drop `hidden`, lift the card. It must NOT depend on
   // requestAnimationFrame — the WebView dropped that frame and left the panel
   // closed, which is the bug at the top of this file.
+  //
+  // The slice is the OPEN branch: the close branch below it now legitimately
+  // waits (the phone sheet's slide-out, #4554) before it hides, and that wait
+  // is not a reveal dependency.
   const effect = STATIC_MODAL_SRC.slice(
     STATIC_MODAL_SRC.indexOf('    if (open) {'),
-    STATIC_MODAL_SRC.indexOf('  }, [rootRef, open, dismissFromKit]);'),
+    STATIC_MODAL_SRC.indexOf('    } else {', STATIC_MODAL_SRC.indexOf('    if (open) {')),
   );
   assert.ok(effect, 'found the reveal effect');
   assert.doesNotMatch(effect, /requestAnimationFrame|setTimeout/,

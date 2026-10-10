@@ -10,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -40,19 +41,21 @@ test('About never opens empty', () => {
   // it may never have deployed, a home screen the device may not have — and
   // all of them are absent at once often enough that a pane without an
   // unconditional line would regularly open blank. A row that sometimes leads
-  // nowhere is the one thing a menu row must not be. The address stands in
-  // the tagline's place when there is no tagline.
+  // nowhere is the one thing a menu row must not be. The name and the build
+  // line are always there; the address no longer stands in for a missing
+  // tagline (#4218).
   const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.match(bare, /id="app-about-identity"/);
   assert.match(bare, />Notes</, 'the app is named');
-  assert.match(bare, /\/app\/notes-ab12/, 'and addressed');
+  assert.match(bare, /id="app-about-note"/, 'and how it is built is said');
+  assert.doesNotMatch(bare, /\/app\/notes-ab12</, 'without its address under the name');
 });
 
 test('each fact appears only when there is one', () => {
   const bare = render({ target: 'app', name: 'Notes', slug: 'notes-ab12', repoUrl: null, canShare: false, version: null });
   assert.doesNotMatch(bare, /improve-row-github/, 'no repository, no row');
   assert.doesNotMatch(bare, /improve-row-share/, 'no share, no row');
-  assert.doesNotMatch(bare, /app-about-version/, 'no version, no pill');
+  assert.doesNotMatch(bare, /app-about-version/, 'no version, no row');
 
   const full = render({
     target: 'app', name: 'Notes', slug: 'notes-ab12',
@@ -60,14 +63,18 @@ test('each fact appears only when there is one', () => {
   });
   assert.match(full, /id="improve-row-github"[\s\S]{0,200}href="https:\/\/github\.com\/example\/notes"/);
   assert.match(full, /target="_blank"/, 'the repository opens away from the shell');
+  // The row says what the code is: every repository is public on GitHub
+  // (services/github.js createRepo), whoever the project lets open it.
+  assert.match(full, /id="improve-row-github"[^>]*>[\s\S]*?>Code<\/span><span class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Public on GitHub<\/span><\/a>/,
+    'Code, with Public on GitHub muted at the end of the row');
+  assert.doesNotMatch(full, /View on GitHub/);
   assert.match(full, /id="improve-row-share"/);
-  // The design draws the version as a PILL beside the builders' avatars —
-  // "v41 · 2h ago" — and it is still not a row: there is nowhere for it to
-  // go. The platform names a version by its commit, so the pill does too.
-  assert.match(full, /id="app-about-pills"[\s\S]*?id="app-about-version"[^>]*>14</,
-    'the version is a pill in the identity block, not a row');
+  // The version is a plain row at the foot of More (#4218), not the pill
+  // beside the builders' avatars it was: a newcomer reads the top first.
+  assert.match(full, /id="app-about-more"[\s\S]*?id="app-about-version"[^>]*>App version: 14</,
+    'the version is a plain row under More');
   // The design's MORE order: Share, Add to home screen, then the source
-  // (View on GitHub is its "Source code"), then Fork.
+  // (the Code row is its "Source code"), then Fork.
   assert.ok(full.indexOf('improve-row-share') < full.indexOf('improve-row-github'),
     'sharing leads, the repository follows — the design\'s order');
 });
@@ -77,9 +84,12 @@ test('two panes of ONE sheet, not two sheets', () => {
   // the ordering the wallet row already worked around — and About is where
   // the menu GOES rather than something that opens over it.
   // The invite pane is a third, on the same terms (./invite-pane.tsx).
-  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>\s*\) : \(/,
+  assert.match(SHEET, /view === 'about' \? <AboutPane label=\{appLabel\} unnamed=\{!appName\} \/> : view === 'invite' \? \(\s*<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} unnamed=\{!appName\} \/>\s*\) : \(/,
     'the pane replaces the rows inside the same scroller');
   assert.match(SHEET, /id="app-about-back"/, 'and the label row becomes the way back');
+  // The platform's back disc, at a 44pt hit box (#4218).
+  assert.match(SHEET, /id="app-about-back"[\s\S]{0,200}className=\{BACK_DISC\}/);
+  assert.match(SHEET, /const BACK_DISC = '[^']*w-9 h-9 rounded-full'[\s\S]{0,200}un-touch-target';/);
   // The label row's own text is the pane switch's other half: the menu names
   // the app, a second pane's back arrow (About's, Invite's) names it again
   // beside a chevron.
@@ -131,7 +141,8 @@ test('the Workshop row says what it owes you, and stays silent when it cannot', 
   assert.match(sheet, /id="app-menu-row-workshop"[\s\S]{0,400}trailing=\{owed \?/,
     'the badge is the Workshop row\'s trailing figure');
   assert.match(sheet, /id="app-menu-workshop-owed"/);
-  assert.match(sheet, /aria-label=\{`\$\{owed\} to vote`\}/);
+  assert.match(sheet, /aria-label=\{t\('agent:appContext\.row\.toVote', \{ count: owed \}\)\}/);
+  assert.equal(message('agent:appContext.row.toVote', { count: 3 }), '3 to vote');
 
   // ONE SOURCE, TWO READERS: /api/workshop/counts is the Workshop tab's own
   // endpoint, so this is the same figure that screen shows on the same app's

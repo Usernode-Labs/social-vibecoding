@@ -38,6 +38,10 @@
 //   row.githubSecret        — an existing row whose name exactly matches
 //                             one of those secrets; annotated rather than
 //                             duplicated.
+
+import { htmlRich, htmlText, t } from '../../lib/i18n/runtime';
+import { attachReturnKey, pressButton } from '../../lib/return-to-next';
+
 // The island's open/close controller, or null before hydration. Registered by
 // `useDialog('appSecrets')` — see use-dialog.ts. Looked up on every call
 // rather than captured, because the island unregisters on unmount.
@@ -69,16 +73,16 @@ const Secrets = {
     // imperatively here.
     redeploy?.addEventListener('click', async () => {
       if (!Secrets.currentSlug) return;
-      Secrets.setStatus('Triggering redeploy…', 'info');
+      Secrets.setStatus(t('dialogs:secrets.redeploy.triggering'), 'info');
       try {
         const res = await fetch(`/api/apps/${Secrets.currentSlug}/redeploy`, { method: 'POST' });
         if (!res.ok) {
           const { error } = await res.json().catch(() => ({}));
           throw new Error(error || `HTTP ${res.status}`);
         }
-        Secrets.setStatus('Redeploy started. Watch the version pill.', 'ok');
+        Secrets.setStatus(t('dialogs:secrets.redeploy.started'), 'ok');
       } catch (err) {
-        Secrets.setStatus(`Redeploy failed: ${err.message}`, 'err');
+        Secrets.setStatus(t('dialogs:secrets.redeploy.failed', { reason: err.message }), 'err');
       }
     });
   },
@@ -135,7 +139,7 @@ const Secrets = {
     Secrets.declareOpen = !!opts.declare;
     const list = document.getElementById('app-secrets-list');
     if (!list) return;
-    list.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>';
+    list.innerHTML = `<p class="text-sm text-zinc-500 dark:text-zinc-400">${htmlText('core:common.loading')}</p>`;
     Secrets.setStatus('', '');
     try {
       const res = await fetch(`/api/apps/${slug}/secrets`);
@@ -151,7 +155,7 @@ const Secrets = {
           ?.scrollIntoView({ block: 'start' });
       }
     } catch (err) {
-      list.innerHTML = `<p class="text-sm text-red-700 dark:text-red-400">Failed to load: ${escapeHtml(err.message)}</p>`;
+      list.innerHTML = `<p class="text-sm text-red-700 dark:text-red-400">${htmlText('dialogs:secrets.loadFailed', { reason: err.message })}</p>`;
     }
   },
 
@@ -185,12 +189,14 @@ const Secrets = {
   // the whole reason the states are worth distinguishing: "not set"
   // falling back to a committed default and "deploy-managed, not yours to
   // set" look identical without it.
+  // `label` is a message id (frontend/locales/en/dialogs.json), read when a
+  // row is drawn.
   STATE_BADGES: {
-    set: { label: 'Set', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
-    unset: { label: 'Not set', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' },
-    managed: { label: 'Deploy-managed', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
-    orphan: { label: 'No longer declared', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' },
-    proposed: { label: 'Up for vote', cls: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' },
+    set: { label: 'dialogs:secrets.state.set', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
+    unset: { label: 'dialogs:secrets.state.unset', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' },
+    managed: { label: 'dialogs:secrets.state.managed', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
+    orphan: { label: 'dialogs:secrets.state.orphan', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' },
+    proposed: { label: 'dialogs:secrets.state.proposed', cls: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' },
   },
 
   // The group heading the server files GitHub-Actions rows under. Kept in
@@ -219,15 +225,16 @@ const Secrets = {
     footer?.classList.toggle('hidden', !showFooter);
 
     if (title) {
-      title.textContent = isPlatform ? 'Platform variables' : 'App secrets';
+      title.textContent = isPlatform ? t('dialogs:secrets.title.platform') : t('dialogs:secrets.title.app');
     }
     if (subtitle) {
+      const code = (inner) => `<code class="text-xs">${inner}</code>`;
       subtitle.innerHTML = isPlatform
-        ? 'The platform\'s own environment variables, declared in its '
-          + '<code class="text-xs">dapp.json</code>. '
-          + '<span class="font-semibold text-zinc-700 dark:text-zinc-300">A change here is not live '
-          + 'immediately: it is applied by the platform\'s next deploy.</span>'
-        : 'Environment variables this app declares in <code class="text-xs">dapp.json</code>.';
+        ? htmlRich('dialogs:secrets.subtitle.platform', {}, [
+          code,
+          (inner) => `<span class="font-semibold text-zinc-700 dark:text-zinc-300">${inner}</span>`,
+        ])
+        : htmlRich('dialogs:secrets.subtitle.app', {}, [code]);
     }
 
     // Pre-first-deploy: there is no manifest snapshot to list declared
@@ -236,8 +243,7 @@ const Secrets = {
     // someone opening this panel needs to see (and not open twice).
     const manifestNotice = data.manifestKnown ? '' : `
         <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-          No manifest snapshot yet. Once this app's first deploy completes the
-          declared secrets show up here.
+          ${htmlText('dialogs:secrets.noManifest')}
         </p>`;
     if (!data.manifestKnown && (!data.secrets || !data.secrets.length)) {
       list.innerHTML = manifestNotice;
@@ -247,12 +253,10 @@ const Secrets = {
     if (!data.secrets || !data.secrets.length) {
       list.innerHTML = isPlatform
         ? `<p class="text-sm text-zinc-500 dark:text-zinc-400">
-             No platform variables are declared yet. Use “New variable” below to
-             declare the first one.
+             ${htmlText('dialogs:secrets.empty.platform')}
            </p>`
         : `<p class="text-sm text-zinc-500 dark:text-zinc-400">
-             This app's <code class="text-xs">dapp.json</code> doesn't declare any
-             secrets yet. Use “New secret” below to declare the first one.
+             ${htmlRich('dialogs:secrets.empty.app', {}, [(inner) => `<code class="text-xs">${inner}</code>`])}
            </p>`;
       Secrets.renderDeclareSection(data);
       return;
@@ -315,39 +319,38 @@ const Secrets = {
   groupNoteHtml(group, data) {
     if (group !== Secrets.GITHUB_GROUP) return '';
     const gh = data.githubSecrets || {};
-    const where = 'Read-only. Change these in the repo\'s '
-      + '<span class="font-medium">Settings → Secrets and variables → Actions</span> on GitHub. '
-      + 'GitHub never returns a secret\'s value to anyone, so only the name and when it last '
-      + 'changed can be shown here.';
+    // One whole message per case; the path into GitHub's settings is tag 0.
+    const path = (inner) => `<span class="font-medium">${inner}</span>`;
     if (gh.state === 'unavailable') {
       return `<p class="text-xs text-amber-800 dark:text-amber-400 mb-2">${
-        escapeHtml(gh.reason || 'Couldn\'t read the platform repo\'s Actions secrets.')}</p>`;
+        gh.reason ? escapeHtml(gh.reason) : htmlText('dialogs:secrets.github.unavailable')}</p>`;
     }
     if (gh.state === 'ok' && !gh.count) {
-      return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">No Actions secrets on this repo. ${where}</p>`;
+      return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${htmlRich('dialogs:secrets.github.noteNone', {}, [path])}</p>`;
     }
-    return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${where}${
-      gh.staged ? ' <span class="italic">(Staging preview: this list is demo data.)</span>' : ''}</p>`;
+    return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${gh.staged
+      ? htmlRich('dialogs:secrets.github.noteStaged', {}, [path, (inner) => `<span class="italic">${inner}</span>`])
+      : htmlRich('dialogs:secrets.github.note', {}, [path])}</p>`;
   },
 
   renderRow(s, canWrite) {
     const isGithubRow = s.source === 'github-actions';
     const isProposed = s.state === 'proposed';
     const requiredBadge = s.required
-      ? `<span class="text-[0.65rem] uppercase font-bold text-red-700 dark:text-red-400">required</span>`
+      ? `<span class="text-[0.65rem] uppercase font-bold text-red-700 dark:text-red-400">${htmlText('dialogs:secrets.badge.required')}</span>`
       : '';
     const sensitiveBadge = s.sensitive && !isGithubRow
-      ? `<span class="text-[0.65rem] uppercase font-bold text-amber-800 dark:text-amber-300" title="value never shown after save">sensitive</span>`
+      ? `<span class="text-[0.65rem] uppercase font-bold text-amber-800 dark:text-amber-300" title="${htmlText('dialogs:secrets.badge.sensitiveTitle')}">${htmlText('dialogs:secrets.badge.sensitive')}</span>`
       : '';
     const orphanBadge = s.orphan
-      ? `<span class="text-[0.65rem] uppercase font-bold text-zinc-500 dark:text-zinc-400">orphan</span>`
+      ? `<span class="text-[0.65rem] uppercase font-bold text-zinc-500 dark:text-zinc-400">${htmlText('dialogs:secrets.badge.orphan')}</span>`
       : '';
     // Present only on the platform-variables view; ordinary app secrets
     // send no `state` and keep exactly the badges they always had — except
     // a 'proposed' row, which needs its badge in both scopes.
     const badge = s.state && Secrets.STATE_BADGES[s.state];
     const stateBadge = badge
-      ? `<span class="rounded px-1.5 py-0.5 text-[0.6rem] font-medium ${badge.cls}">${badge.label}</span>`
+      ? `<span class="rounded px-1.5 py-0.5 text-[0.6rem] font-medium ${badge.cls}">${htmlText(badge.label)}</span>`
       : '';
 
     let valueDisplay;
@@ -355,61 +358,70 @@ const Secrets = {
       // Names + timestamps are the entire API surface here (see the header
       // comment), so there is deliberately no value, no last-4, and no
       // "reveal" affordance to offer — not even to an admin.
-      valueDisplay = `<span class="text-xs text-zinc-600 dark:text-zinc-400">Set on GitHub${
-        s.updatedAt ? ` · updated ${escapeHtml(Secrets.formatDate(s.updatedAt))}` : ''}</span>`;
+      valueDisplay = `<span class="text-xs text-zinc-600 dark:text-zinc-400">${s.updatedAt
+        ? htmlText('dialogs:secrets.value.githubUpdated', { date: Secrets.formatDate(s.updatedAt) })
+        : htmlText('dialogs:secrets.value.github')}</span>`;
     } else if (isProposed) {
       valueDisplay = s.hasValue
-        ? `<span class="text-xs text-violet-700 dark:text-violet-300">value included${
-          s.valueLast4 ? ` (…${escapeHtml(s.valueLast4)})` : ''}, applied when the proposal merges</span>`
-        : '<span class="text-xs text-zinc-500 dark:text-zinc-400">declaration only, no value proposed</span>';
+        ? `<span class="text-xs text-violet-700 dark:text-violet-300">${s.valueLast4
+          ? htmlText('dialogs:secrets.value.proposedEnding', { ending: s.valueLast4 })
+          : htmlText('dialogs:secrets.value.proposed')}</span>`
+        : `<span class="text-xs text-zinc-500 dark:text-zinc-400">${htmlText('dialogs:secrets.value.declarationOnly')}</span>`;
     } else if (s.hasValue && s.value != null) {
       // A non-private platform variable whose plaintext the server was
       // willing to return (admins only). Showing it in full is the point of
       // marking a variable non-private.
       valueDisplay = `<code class="text-xs font-mono text-zinc-700 dark:text-zinc-300 break-all">${escapeHtml(s.value)}</code>`;
     } else if (s.hasValue && s.private && s.state) {
-      valueDisplay = '<span class="text-xs text-zinc-500 dark:text-zinc-400 font-mono">•••••••• (private, never displayed)</span>';
+      valueDisplay = `<span class="text-xs text-zinc-500 dark:text-zinc-400 font-mono">${htmlText('dialogs:secrets.value.private')}</span>`;
     } else if (s.hasValue && s.state === 'set' && !s.private && s.valueLast4 == null) {
       // Stored, but the plaintext couldn't be decrypted (rotated
       // JWT_SECRET, corrupt row). listView() degrades to this rather than
       // erroring the whole panel, so say so instead of rendering "set".
-      valueDisplay = '<span class="text-xs text-amber-800 dark:text-amber-400">set, but the stored value could not be read</span>';
+      valueDisplay = `<span class="text-xs text-amber-800 dark:text-amber-400">${htmlText('dialogs:secrets.value.unreadable')}</span>`;
     } else if (s.hasValue) {
-      const last4 = s.valueLast4 ? `…${escapeHtml(s.valueLast4)}` : '••••••••';
-      valueDisplay = `<span class="font-mono text-xs text-emerald-700 dark:text-emerald-400">set ${last4}</span>`;
+      valueDisplay = `<span class="font-mono text-xs text-emerald-700 dark:text-emerald-400">${s.valueLast4
+        ? htmlText('dialogs:secrets.value.setEnding', { ending: s.valueLast4 })
+        : htmlText('dialogs:secrets.value.setHidden')}</span>`;
     } else if (s.required && !s.unwritable) {
-      valueDisplay = `<span class="text-xs font-medium text-red-700 dark:text-red-400">missing, deploys are blocked</span>`;
+      valueDisplay = `<span class="text-xs font-medium text-red-700 dark:text-red-400">${htmlText('dialogs:secrets.value.missing')}</span>`;
     } else if (s.default != null) {
-      valueDisplay = `<span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">default: ${escapeHtml(s.default)}</span>`;
+      valueDisplay = `<span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">${htmlText('dialogs:secrets.value.default', { fallback: s.default })}</span>`;
     } else {
-      valueDisplay = `<span class="text-xs text-zinc-500 dark:text-zinc-400">not set</span>`;
+      valueDisplay = `<span class="text-xs text-zinc-500 dark:text-zinc-400">${htmlText('dialogs:secrets.value.notSet')}</span>`;
     }
 
-    const setVerb = s.hasValue ? 'replace' : 'set';
+    // Each button's words are a whole message: "propose replace" is not
+    // "propose" with a verb added.
+    const setLabel = s.hasValue ? htmlText('dialogs:secrets.action.replace') : htmlText('dialogs:secrets.action.set');
+    const proposeSetLabel = s.hasValue
+      ? htmlText('dialogs:secrets.action.proposeReplace')
+      : htmlText('dialogs:secrets.action.proposeSet');
     const sensitiveAttr = s.sensitive ? '1' : '0';
     // Direct path (admin only): filled violet for set/replace, red-outline
     // for clear — these slam the change in via PUT/DELETE.
     const directButtons = `
       <button data-action="set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
-        class="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white">${setVerb}</button>
+        class="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white">${setLabel}</button>
       ${s.hasValue ? `<button data-action="clear" data-key="${escapeAttr(s.key)}"
-        class="text-xs px-2 py-1 rounded border border-red-400 text-red-700 hover:bg-red-50 dark:hover:bg-red-950 dark:text-red-400">clear</button>` : ''}
+        class="text-xs px-2 py-1 rounded border border-red-400 text-red-700 hover:bg-red-50 dark:hover:bg-red-950 dark:text-red-400">${htmlText('dialogs:secrets.action.clear')}</button>` : ''}
     `;
     // Vote path (everyone): muted outline styling so admins reach for
     // direct first by default, but can opt into the vote flow per row.
     const proposeButtons = `
       <button data-action="propose-set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
-        class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">propose ${setVerb}</button>
+        class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">${proposeSetLabel}</button>
       ${s.hasValue ? `<button data-action="propose-clear" data-key="${escapeAttr(s.key)}"
-        class="text-xs px-2 py-1 rounded border border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950">propose clear</button>` : ''}
+        class="text-xs px-2 py-1 rounded border border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950">${htmlText('dialogs:secrets.action.proposeClear')}</button>` : ''}
     `;
     // A row whose key isn't declared yet gets a link to the declaration
     // proposal and nothing else: there is no manifest entry for a value
     // change to attach to, and the value already rides on that proposal.
     const proposalLink = (p) => (p
       ? `<a href="#/app/${escapeAttr(Secrets.currentSlug || '')}" data-action="view-proposal"
-           class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">View proposal${
-  p.prNumber ? ` #${escapeHtml(String(p.prNumber))}` : ''}</a>`
+           class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">${p.prNumber
+    ? htmlText('dialogs:secrets.action.viewProposalNumbered', { number: String(p.prNumber) })
+    : htmlText('dialogs:secrets.action.viewProposal')}</a>`
       : '');
     // An `unwritable` row gets NEITHER path. Its value comes from a GitHub
     // secret at deploy time and the server refuses both the direct write and
@@ -426,8 +438,10 @@ const Secrets = {
         : proposeButtons;
     }
 
-    const alsoGithub = (g) => `Also a GitHub Actions secret on the platform repo${
-      g.updatedAt ? ` · updated ${escapeHtml(Secrets.formatDate(g.updatedAt))}` : ''}.`;
+    const alsoGithub = (g) => (g.updatedAt
+      ? htmlText('dialogs:secrets.row.alsoGithubUpdated', { date: Secrets.formatDate(g.updatedAt) })
+      : htmlText('dialogs:secrets.row.alsoGithub'));
+    const dappJson = (inner) => `<code class="text-[0.65rem]">${inner}</code>`;
 
     return `
       <div class="py-3 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0">
@@ -440,23 +454,21 @@ const Secrets = {
         </div>
         ${s.description ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${escapeHtml(s.description)}</p>` : ''}
         ${isGithubRow ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          Stored as an Actions secret on the platform repo. Its value can't be shown, because GitHub's
-          API never returns one. Change it in the repo's Settings → Secrets and variables →
-          Actions.</p>` : ''}
+          ${htmlText('dialogs:secrets.row.githubStored')}</p>` : ''}
         ${!isGithubRow && s.unwritable ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          Set by the deploy from a GitHub secret. It can't be edited here.</p>` : ''}
+          ${htmlText('dialogs:secrets.row.deployManaged')}</p>` : ''}
         ${!isGithubRow && s.githubSecret ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           ${alsoGithub(s.githubSecret)}</p>` : ''}
         ${isProposed ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
-          Not declared yet. A proposal adding it to <code class="text-[0.65rem]">dapp.json</code>
-          is up for vote${s.pending && s.pending.proposedBy
-    ? ` (opened by ${escapeHtml(s.pending.proposedBy)})` : ''}.</p>` : ''}
+          ${s.pending && s.pending.proposedBy
+    ? htmlRich('dialogs:secrets.row.proposedBy', { person: s.pending.proposedBy }, [dappJson])
+    : htmlRich('dialogs:secrets.row.proposed', {}, [dappJson])}</p>` : ''}
         ${!isProposed && s.pending ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
-          Value set · its declaration is up for vote${s.pending.prNumber
-    ? ` (PR #${escapeHtml(String(s.pending.prNumber))})` : ''}.</p>` : ''}
+          ${s.pending.prNumber
+    ? htmlText('dialogs:secrets.row.pendingDeclarationNumbered', { number: String(s.pending.prNumber) })
+    : htmlText('dialogs:secrets.row.pendingDeclaration')}</p>` : ''}
         ${s.state === 'orphan' ? `<p class="text-xs text-amber-800 dark:text-amber-400 mb-2">
-          No longer declared in <code class="text-[0.65rem]">dapp.json</code>. Its value is kept so a
-          rollback still works, so clear it once you're sure.</p>` : ''}
+          ${htmlRich('dialogs:secrets.row.orphan', {}, [dappJson])}</p>` : ''}
         <div class="flex items-center gap-2 flex-wrap">
           ${valueDisplay}
           <span class="flex-1"></span>
@@ -493,7 +505,6 @@ const Secrets = {
     host.classList.remove('hidden');
 
     const canWrite = !!App.user?.canAdminWrite;
-    const noun = isPlatform ? 'variable' : 'secret';
     // `canDeclare === false` (no repo, or GitHub unconfigured on the
     // platform) doesn't hide the affordance: the form still opens, states
     // the reason, and refuses to submit. Hiding it entirely would leave
@@ -507,12 +518,12 @@ const Secrets = {
         <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
           <button id="app-secrets-declare-open"
             class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white font-medium">
-            + New ${noun}</button>
+            ${isPlatform ? htmlText('dialogs:secrets.declare.open.variable') : htmlText('dialogs:secrets.declare.open.secret')}</button>
           <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-400">${blocked
-    ? escapeHtml(data.declareDisabledReason || 'Unavailable right now.')
+    ? (data.declareDisabledReason ? escapeHtml(data.declareDisabledReason) : htmlText('dialogs:secrets.declare.unavailable'))
     : (canWrite
-      ? 'Declares it in dapp.json (a proposal) and stores your value now.'
-      : 'Declaration and value go up for vote together.')}</span>
+      ? htmlText('dialogs:secrets.declare.hint.direct')
+      : htmlText('dialogs:secrets.declare.hint.proposal'))}</span>
         </div>`;
       document.getElementById('app-secrets-declare-open')?.addEventListener('click', () => {
         Secrets.declareOpen = true;
@@ -540,70 +551,83 @@ const Secrets = {
     host.innerHTML = `
       <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
         <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-2">
-          New ${isPlatform ? 'platform variable' : 'app secret'}</h3>
+          ${isPlatform ? htmlText('dialogs:secrets.declare.heading.platform') : htmlText('dialogs:secrets.declare.heading.app')}</h3>
         ${blocked ? `<p id="app-secrets-declare-blocked"
           class="text-xs text-amber-800 dark:text-amber-400 mb-2">${
-  escapeHtml(data.declareDisabledReason || 'New variables can\'t be declared right now.')}</p>` : ''}
+  data.declareDisabledReason ? escapeHtml(data.declareDisabledReason) : htmlText('dialogs:secrets.declare.blocked')}</p>` : ''}
         <div class="space-y-2">
           <div>
-            <label class="${lbl}" for="decl-key">Key</label>
+            <label class="${lbl}" for="decl-key">${htmlText('dialogs:secrets.declare.key.label')}</label>
             <input id="decl-key" class="${input} font-mono" placeholder="MY_NEW_TOKEN"
-              autocapitalize="characters" autocomplete="off" spellcheck="false">
-            <p class="${help}">UPPER_SNAKE_CASE: the name your code reads from the environment.</p>
+              autocapitalize="characters" autocomplete="off" spellcheck="false" enterkeyhint="next">
+            <p class="${help}">${htmlText('dialogs:secrets.declare.key.help')}</p>
           </div>
           <div>
-            <label class="${lbl}" for="decl-description">Description</label>
-            <input id="decl-description" class="${input}" placeholder="What this value is and where to get it">
+            <label class="${lbl}" for="decl-description">${htmlText('dialogs:secrets.declare.description.label')}</label>
+            <input id="decl-description" class="${input}" placeholder="${htmlText('dialogs:secrets.declare.description.placeholder')}"
+              enterkeyhint="next">
           </div>
           <div>
-            <label class="${lbl}" for="decl-value">Value</label>
-            <input id="decl-value" class="${input} font-mono" placeholder="leave blank to declare only"
-              autocomplete="off" spellcheck="false">
+            <label class="${lbl}" for="decl-value">${htmlText('dialogs:secrets.declare.value.label')}</label>
+            <input id="decl-value" class="${input} font-mono" placeholder="${htmlText('dialogs:secrets.declare.value.placeholder')}"
+              autocomplete="off" spellcheck="false" enterkeyhint="next">
             <p class="${help}">${canWrite
-    ? 'Stored as soon as you submit. Optional if you give a default below.'
-    : 'Held encrypted and stored when the proposal merges. Optional if you give a default below.'}</p>
+    ? htmlText('dialogs:secrets.declare.value.helpDirect')
+    : htmlText('dialogs:secrets.declare.value.helpProposal')}</p>
           </div>
           <div class="flex items-center gap-4 pt-0.5">
             <label class="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
-              <input type="checkbox" id="decl-required" class="rounded"> Required
+              <input type="checkbox" id="decl-required" class="rounded"> ${htmlText('dialogs:secrets.declare.required')}
             </label>
             <label class="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
-              <input type="checkbox" id="decl-private" class="rounded"> Private
+              <input type="checkbox" id="decl-private" class="rounded"> ${htmlText('dialogs:secrets.declare.private')}
             </label>
           </div>
-          <p class="${help}">Required blocks deploys until it has a value. Private means encrypted at
-            rest and never displayed again${isPlatform ? '' : ', and never copied into PR previews'}.</p>
+          <p class="${help}">${isPlatform
+    ? htmlText('dialogs:secrets.declare.flagsHelp.platform')
+    : htmlText('dialogs:secrets.declare.flagsHelp.app')}</p>
           <div>
-            <label class="${lbl}" for="decl-default">Default</label>
-            <input id="decl-default" class="${input} font-mono" placeholder="optional">
+            <label class="${lbl}" for="decl-default">${htmlText('dialogs:secrets.declare.default.label')}</label>
+            <input id="decl-default" class="${input} font-mono" placeholder="${htmlText('dialogs:secrets.declare.default.placeholder')}" enterkeyhint="next">
             <p class="${help}">${isPlatform
-    ? 'Documents the fallback your code already uses. The platform\'s deploy does not apply it, so set a value above if the variable really needs one.'
-    : 'Used at deploy time when no value is stored.'}</p>
+    ? htmlText('dialogs:secrets.declare.default.helpPlatform')
+    : htmlText('dialogs:secrets.declare.default.helpApp')}</p>
           </div>
           ${isPlatform ? `
           <div>
-            <label class="${lbl}" for="decl-group">Group</label>
-            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="General">
+            <label class="${lbl}" for="decl-group">${htmlText('dialogs:secrets.declare.group.label')}</label>
+            <input id="decl-group" class="${input}" list="decl-group-options" placeholder="General"
+              enterkeyhint="done">
             <datalist id="decl-group-options">${groups.map((g) => `<option value="${escapeAttr(g)}"></option>`).join('')}</datalist>
-            <p class="${help}">The heading this row files under in this panel.</p>
+            <p class="${help}">${htmlText('dialogs:secrets.declare.group.help')}</p>
           </div>` : `
           <div>
-            <label class="${lbl}" for="decl-staging-default">Staging default</label>
-            <input id="decl-staging-default" class="${input} font-mono" placeholder="optional">
-            <p class="${help}">What PR previews use. A required + private secret needs one (or a
-              default), otherwise no preview of this app can boot.</p>
+            <label class="${lbl}" for="decl-staging-default">${htmlText('dialogs:secrets.declare.stagingDefault.label')}</label>
+            <input id="decl-staging-default" class="${input} font-mono" placeholder="${htmlText('dialogs:secrets.declare.stagingDefault.placeholder')}"
+              enterkeyhint="done">
+            <p class="${help}">${htmlText('dialogs:secrets.declare.stagingDefault.help')}</p>
           </div>`}
         </div>
         <div class="flex items-center gap-2 mt-3">
           <button id="app-secrets-declare-submit" ${blocked ? 'disabled' : ''}
             class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white font-medium ${
   blocked ? 'opacity-50 cursor-not-allowed' : ''}">${
-  canWrite ? 'Add &amp; set value' : 'Propose new ' + noun}</button>
+  canWrite ? htmlText('dialogs:secrets.declare.submit.direct')
+    : isPlatform ? htmlText('dialogs:secrets.declare.submit.variable')
+    : htmlText('dialogs:secrets.declare.submit.secret')}</button>
           <button id="app-secrets-declare-cancel"
-            class="text-xs px-2.5 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300">Cancel</button>
+            class="text-xs px-2.5 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300">${htmlText('core:common.cancel')}</button>
         </div>
       </div>`;
 
+    // #3907: Return walks the five fields (the checkboxes are stepped over)
+    // and the last one presses the submit button, so a blocked form still
+    // refuses the same way a tap does. The iOS keyboard has no chevrons to
+    // walk them with any more. On the node this render just wrote, so a
+    // re-render never stacks a second listener.
+    attachReturnKey(host.firstElementChild, {
+      submit: () => { pressButton(document.getElementById('app-secrets-declare-submit')); },
+    });
     document.getElementById('app-secrets-declare-cancel')?.addEventListener('click', () => {
       Secrets.declareOpen = false;
       Secrets.setStatus('', '');
@@ -619,20 +643,19 @@ const Secrets = {
   // the form looks submittable. The server stays authoritative.
   validateDeclaration(f, isPlatform) {
     if (!/^[A-Z][A-Z0-9_]{0,127}$/.test(f.key)) {
-      return 'Key must be UPPER_SNAKE_CASE (letters, digits and underscores).';
+      return t('dialogs:secrets.declare.error.key');
     }
     if (f.required && !f.value && !f.default) {
-      return 'A required variable needs either a value or a default.';
+      return t('dialogs:secrets.declare.error.requiredValue');
     }
     if (!isPlatform && f.required && f.private && !f.stagingDefault && !f.default) {
-      return "PR previews of this app won't boot without a staging default for a required private secret.";
+      return t('dialogs:secrets.declare.error.stagingDefault');
     }
     // Same .env-representability rule platform-env.validateValue enforces
     // server-side: a single quote or a bare CR can't survive the
     // single-quoted line the platform's deploy writes.
     if (isPlatform && f.value && /['\r]/.test(f.value)) {
-      return "Values can't contain a single quote or a carriage return. They wouldn't survive being "
-        + "written to the platform's .env file.";
+      return t('dialogs:secrets.declare.error.quote');
     }
     return null;
   },
@@ -641,7 +664,7 @@ const Secrets = {
     // Belt to the disabled button's braces: the server would 503 anyway,
     // but saying why here beats a generic failure line.
     if (data.canDeclare === false) {
-      Secrets.setStatus(data.declareDisabledReason || 'New variables can\'t be declared right now.', 'err');
+      Secrets.setStatus(data.declareDisabledReason || t('dialogs:secrets.declare.blockedStatus'), 'err');
       return;
     }
     const isPlatform = data.scope === 'platform';
@@ -665,7 +688,7 @@ const Secrets = {
 
     const submit = document.getElementById('app-secrets-declare-submit');
     if (submit) submit.disabled = true;
-    Secrets.setStatus(`Opening a proposal for ${fields.key}…`, 'info');
+    Secrets.setStatus(t('dialogs:secrets.declare.opening', { key: fields.key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/secret-declaration-pr`, {
         method: 'POST',
@@ -675,18 +698,18 @@ const Secrets = {
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
       Secrets.declareOpen = false;
-      const opened = `Proposal opened for ${fields.key}${payload.prNumber ? ` (PR #${payload.prNumber})` : ''}.`;
-      Secrets.setStatus(`${opened} ${payload.valueApplied
-        ? 'Your value is stored; the declaration still needs a merge vote.'
-        : 'Vote on it in the group chat panel. The value applies when it merges.'}`, 'ok');
+      // One whole message for each outcome, with or without the PR number.
+      const values = { key: fields.key, number: payload.prNumber };
+      const opened = payload.valueApplied
+        ? (payload.prNumber ? t('dialogs:secrets.declare.opened.storedNumbered', values) : t('dialogs:secrets.declare.opened.stored', values))
+        : (payload.prNumber ? t('dialogs:secrets.declare.opened.pendingNumbered', values) : t('dialogs:secrets.declare.opened.pending', values));
+      Secrets.setStatus(opened, 'ok');
       Secrets.notifyDevChatRefresh();
       await Secrets.open(Secrets.currentSlug);
       // open() clears the status line, so re-post the outcome after it.
-      Secrets.setStatus(`${opened} ${payload.valueApplied
-        ? 'Your value is stored; the declaration still needs a merge vote.'
-        : 'Vote on it in the group chat panel. The value applies when it merges.'}`, 'ok');
+      Secrets.setStatus(opened, 'ok');
     } catch (err) {
-      Secrets.setStatus(`Failed: ${err.message}`, 'err');
+      Secrets.setStatus(t('dialogs:secrets.declare.failed', { reason: err.message }), 'err');
     } finally {
       if (submit) submit.disabled = false;
     }
@@ -694,13 +717,13 @@ const Secrets = {
 
   async handleSet(key, sensitive) {
     const value = await PlatformUI.prompt({
-      title: `Set ${key}`,
-      message: sensitive ? 'This value is sensitive: it is encrypted at rest and never shown again.' : undefined,
-      placeholder: 'value',
-      confirmLabel: 'Save',
+      title: t('dialogs:secrets.set.title', { key }),
+      message: sensitive ? t('dialogs:secrets.set.sensitive') : undefined,
+      placeholder: t('dialogs:secrets.set.placeholder'),
+      confirmLabel: t('core:common.save'),
     });
     if (value == null || !value.length) return;
-    Secrets.setStatus(`Setting ${key}…`, 'info');
+    Secrets.setStatus(t('dialogs:secrets.set.setting', { key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/secrets/${encodeURIComponent(key)}`, {
         method: 'PUT',
@@ -711,40 +734,40 @@ const Secrets = {
         const { error } = await res.json().catch(() => ({}));
         throw new Error(error || `HTTP ${res.status}`);
       }
-      Secrets.setStatus(`Saved ${key}.`, 'ok');
+      Secrets.setStatus(t('dialogs:secrets.set.saved', { key }), 'ok');
       Secrets.notifyDevChatRefresh();
       await Secrets.open(Secrets.currentSlug);
     } catch (err) {
-      Secrets.setStatus(`Failed to set ${key}: ${err.message}`, 'err');
+      Secrets.setStatus(t('dialogs:secrets.set.failed', { key, reason: err.message }), 'err');
     }
   },
 
   async handleClear(key) {
-    if (!await PlatformUI.confirm({ title: `Clear ${key}?`, confirmLabel: 'Clear', danger: true })) return;
-    Secrets.setStatus(`Clearing ${key}…`, 'info');
+    if (!await PlatformUI.confirm({ title: t('dialogs:secrets.clear.title', { key }), confirmLabel: t('dialogs:secrets.clear.confirm'), danger: true })) return;
+    Secrets.setStatus(t('dialogs:secrets.clear.clearing', { key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/secrets/${encodeURIComponent(key)}`, { method: 'DELETE' });
       if (!res.ok) {
         const { error } = await res.json().catch(() => ({}));
         throw new Error(error || `HTTP ${res.status}`);
       }
-      Secrets.setStatus(`Cleared ${key}.`, 'ok');
+      Secrets.setStatus(t('dialogs:secrets.clear.cleared', { key }), 'ok');
       Secrets.notifyDevChatRefresh();
       await Secrets.open(Secrets.currentSlug);
     } catch (err) {
-      Secrets.setStatus(`Failed to clear ${key}: ${err.message}`, 'err');
+      Secrets.setStatus(t('dialogs:secrets.clear.failed', { key, reason: err.message }), 'err');
     }
   },
 
   async handleProposeSet(key, sensitive) {
     const value = await PlatformUI.prompt({
-      title: `Propose setting ${key}`,
-      message: (sensitive ? 'This value is sensitive. ' : '') + 'A majority of active users must vote up before this applies.',
-      placeholder: 'value',
-      confirmLabel: 'Propose',
+      title: t('dialogs:secrets.proposeSet.title', { key }),
+      message: sensitive ? t('dialogs:secrets.proposeSet.messageSensitive') : t('dialogs:secrets.proposeSet.message'),
+      placeholder: t('dialogs:secrets.proposeSet.placeholder'),
+      confirmLabel: t('dialogs:secrets.proposeSet.confirm'),
     });
     if (value == null || !value.length) return;
-    Secrets.setStatus(`Opening proposal for ${key}…`, 'info');
+    Secrets.setStatus(t('dialogs:secrets.proposeSet.opening', { key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/issues`, {
         method: 'POST',
@@ -758,15 +781,15 @@ const Secrets = {
         const { error } = await res.json().catch(() => ({}));
         throw new Error(error || `HTTP ${res.status}`);
       }
-      Secrets.setStatus(`Proposal opened. Vote in the group chat tab.`, 'ok');
+      Secrets.setStatus(t('dialogs:secrets.proposeSet.opened'), 'ok');
     } catch (err) {
-      Secrets.setStatus(`Failed: ${err.message}`, 'err');
+      Secrets.setStatus(t('dialogs:secrets.proposeSet.failed', { reason: err.message }), 'err');
     }
   },
 
   async handleProposeClear(key) {
-    if (!await PlatformUI.confirm({ title: `Propose removing ${key}?`, confirmLabel: 'Propose', danger: true })) return;
-    Secrets.setStatus(`Opening proposal for ${key}…`, 'info');
+    if (!await PlatformUI.confirm({ title: t('dialogs:secrets.proposeClear.title', { key }), confirmLabel: t('dialogs:secrets.proposeClear.confirm'), danger: true })) return;
+    Secrets.setStatus(t('dialogs:secrets.proposeClear.opening', { key }), 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/issues`, {
         method: 'POST',
@@ -780,9 +803,9 @@ const Secrets = {
         const { error } = await res.json().catch(() => ({}));
         throw new Error(error || `HTTP ${res.status}`);
       }
-      Secrets.setStatus(`Proposal opened. Vote in the group chat tab.`, 'ok');
+      Secrets.setStatus(t('dialogs:secrets.proposeClear.opened'), 'ok');
     } catch (err) {
-      Secrets.setStatus(`Failed: ${err.message}`, 'err');
+      Secrets.setStatus(t('dialogs:secrets.proposeClear.failed', { reason: err.message }), 'err');
     }
   },
 
@@ -827,6 +850,15 @@ if (typeof window !== 'undefined') window.Secrets = Secrets;
 /** Called once from AppSecretsDialog's layout effect (was DOMContentLoaded). */
 export function init() {
   Secrets.init();
+  // The language changed, or this namespace's text arrived: draw the panel
+  // again from the data it already holds. Not while the "New variable" form
+  // is open, which would empty what has been typed into it; and the status
+  // line keeps the words it was written with.
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('homeroom:language-changed', () => {
+      if (Secrets.currentData && !Secrets.declareOpen) Secrets.render(Secrets.currentData);
+    });
+  }
 }
 
 export { Secrets };

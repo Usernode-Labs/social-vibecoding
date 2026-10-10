@@ -16,8 +16,10 @@
 //    person for the left-out list) and writes only the left-out list;
 //  - a reading the platform does not record reads "not recorded yet", and
 //    Hear back reads "coming", never a number;
-//  - it is drawn as six chart cards, and every mark carries its count: a
-//    percentage only ever sizes a mark, it is never printed;
+//  - it is drawn as eight chart cards, and every mark carries its count: a
+//    percentage only sizes a mark, except the invite funnel's conversion
+//    from step to step (#4176), printed beside its counts and only from
+//    enough people;
 //  - nothing from the API becomes a link;
 //  - the demo payloads ride on ?demo=1, and the demo list cannot be edited;
 //  - details open in dialogs, so nothing expands inside the page;
@@ -58,7 +60,7 @@ test('it reads the Journey routes and writes only the left-out list', () => {
     assert.ok(p.startsWith('/api/admin/journey/') || p === '/api/admin/support/search',
       `${p} is a Journey route or Support's search`);
   }
-  for (const route of ['summary', 'cohorts', 'first-mile', 'stages', 'loops', 'next-steps', 'people/', 'left-out']) {
+  for (const route of ['summary', 'cohorts', 'first-mile', 'stages', 'loops', 'next-steps', 'people/', 'left-out', 'creation', 'pairs']) {
     assert.ok(src.includes(`/api/admin/journey/${route}`), `the page reads ${route}`);
   }
   const writes = [...src.matchAll(/method: '(POST|DELETE|PUT|PATCH)'/g)].map((m) => m[1]);
@@ -77,13 +79,19 @@ test('a missing record reads "not recorded yet", and Hear back reads "coming"', 
   assert.match(src, /\(v as Coming\)\.status === 'coming'/);
 });
 
-test('six chart cards, every mark counted, no percentage printed, no links from data', () => {
-  for (const id of ['groups', 'checks', 'mile', 'stages', 'loop', 'invite', 'next', 'coverage', 'team']) {
+test('eight chart cards, every mark counted, no percentage printed, no links from data', () => {
+  for (const id of ['groups', 'checks', 'mile', 'stages', 'loop', 'invite', 'next', 'coverage', 'team', 'creation', 'pairs']) {
     assert.ok(src.includes(`id="admin-journey-${id}"`), `the ${id} card`);
   }
-  for (const line of src.split('\n').filter((l) => l.includes('%'))) {
-    assert.match(line, /(width|height): `\$\{[^`]*\}%`/, `a percentage only sizes a mark: ${line.trim()}`);
-  }
+  // The one share printed is the invite funnel's conversion, which the
+  // product owner asked for (#4176): beside its counts, and only once the
+  // step before has FUNNEL_RATE_FROM people, since at a handful a rate
+  // claims more than the data holds.
+  const printed = src.split('\n').filter((l) => l.includes('%') && !/(width|height): `\$\{[^`]*\}%`/.test(l));
+  assert.deepEqual(printed.map((l) => l.trim()), ['return `${n} of ${of} · ${Math.round((n / of) * 100)}%`;'],
+    'a percentage only sizes a mark, or follows the funnel\'s counts');
+  assert.match(src, /const FUNNEL_RATE_FROM = 10;\n[\s\S]*?if \(of < FUNNEL_RATE_FROM\) return `\$\{n\} of \$\{of\}`;/,
+    'below it, the counts alone');
   assert.match(src, /<Trend trend=\{trend\} shown=\{g\.week\} \/>/, 'the North Star carries its eight weeks');
   assert.match(src, /const STATUS_ORDER: Array<\[string, string\]> = \[/, 'groups sit under one heading per status');
   assert.match(src, /const UNIT_MAX = 24;/, 'small totals are drawn as countable units');
@@ -95,6 +103,23 @@ test('six chart cards, every mark counted, no percentage printed, no links from 
   assert.match(src, /location\.hash = `#admin\/support\/\$\{p\.userId\}`/,
     'the one jump is to Support, by a numeric id, through the hash');
   assert.ok(!/\bapp\b/.test(src.match(/>[^<{]*</g).join(' ')), 'on screen it says project, not app');
+});
+
+test('every first-mile column says what it counts on a tap, and onboard follows act', () => {
+  const keys = ['admitted', 'mail_sent', 'code_asked', 'account', 'access', 'opened', 'username', 'join', 'first_act', 'onboard'];
+  const help = src.match(/const MILE_HELP: Record<string, string> = \{([\s\S]*?)\n\};/);
+  assert.ok(help, 'one table of column notes');
+  for (const key of keys) assert.match(help[1], new RegExp(`\\n  ${key}: '`), `${key} has a note`);
+  const label = src.match(/function MileLabel\([\s\S]*?\n\}\n/)[0];
+  assert.match(label, /<button type="button" className=\{JUI\.mileLabel\} aria-expanded=\{open != null\}/,
+    'the label is a button that says whether its note is open');
+  assert.match(label, /onClick=\{\(\) => \(open === 'tap' \? onClose\(\) : onOpen\('tap'\)\)\}/, 'a tap opens and closes it');
+  assert.match(label, /e\.pointerType === 'mouse'/, 'hover only opens it for a mouse');
+  assert.ok(!/title=/.test(label), 'never a title: a phone has no hover');
+  assert.match(src, /e\.key === 'Escape'/, 'Escape closes it');
+  assert.match(src, /\{labelFor\('onboard', 'onboard'\)\}/, 'onboard is labelled like the steps');
+  assert.match(src, /<OnboardCell onboard=\{p\.onboard\} \/>/, 'every track ends in its onboard cell');
+  assert.match(src, /repeat\(10,minmax\(0,1fr\)\)/, 'the grid has the tenth column');
 });
 
 test('the demo rides on ?demo=1 and cannot be edited', () => {
@@ -118,13 +143,114 @@ test('filters: all time or a week, everyone or one cohort; a person gets a view 
   assert.match(src, /useState<Scope>\(\{ week: 'all', cohort: null \}\)/, 'the default is all time, for everyone');
   assert.match(src, /if \(week\) q\.set\('week', scope\.week\);\n  if \(scope\.cohort\) q\.set\('cohort', scope\.cohort\);/,
     'the summary, stages and loops reads carry the scope');
-  for (const read of ['summary', 'stages', 'loops']) {
+  for (const read of ['summary', 'stages', 'loops', 'creation', 'pairs', 'first-session']) {
     assert.ok(src.includes(`scoped('/api/admin/journey/${read}', scope)`), `${read} follows the filters`);
   }
   assert.match(src, /\{person != null \? <PersonView userId=\{person\}/, 'one person replaces the cards');
   assert.match(src, /\{scope\.cohort \? null : \(?\s*<div id="admin-journey-checks"/,
     'the platform-wide checks leave a cohort view instead of reading as the cohort\'s');
   assert.match(src, /\{scope\.cohort \? null : <div className="mt-1 mb-4" id="admin-journey-team">/);
+});
+
+test('the creation path and the pairs: steps against targets, by week, and the aha out of second members', () => {
+  assert.match(src, /<CreationCard scope=\{scope\} onOpen=\{openPerson\} \/>\n\s*<FirstSessionCard scope=\{scope\} onOpen=\{openPerson\} \/>\n\s*<PairsCard scope=\{scope\} onOpen=\{openPerson\} \/>/,
+    'both sit under the first mile and follow the filters, with the first session between them');
+  for (const [key, label] of [['created', 'Created'], ['running', 'Running'], ['first_version', 'First version ready'],
+    ['preview', 'Preview opened'], ['change_live', 'Requested change live']]) {
+    assert.ok(src.includes(`['${key}', '${label}', `), `the ${label} step`);
+  }
+  assert.match(src, /\{shown == null \? <Num v=\{st\.reached\} \/>/, 'a step not recorded yet reads so, never 0');
+  assert.match(src, /if \(!cell \|\| isNotRecorded\(cell\.reached\)\) \{/, 'and so does a week before it was recorded');
+  assert.match(src, /id="admin-journey-creation-weeks"/, 'by week');
+  assert.match(src, /median <span className=\{targetTone\(st\.medianSeconds, st\.targetSeconds\)\}>/,
+    'each step\'s median, coloured against its target');
+  assert.match(src, /id="admin-journey-pairs-count" className=\{JUI\.headline\}>\{data\.count\}</);
+  assert.match(src, /of \{plural\(data\.of, 'project', 'projects'\)\} that got a second member/);
+  assert.match(src, /<Trend trend=\{data\.trend\} shown=\{data\.week === 'all' \? last : data\.week\} label="Pairs" \/>/,
+    'a small weekly trend');
+  assert.match(src, /data-journey-pair=\{e\.slug\}/, 'and a few example rows');
+});
+
+test('the first session: a maker\'s and an invited person\'s first hour, timed from its start', () => {
+  for (const [key, label] of [['reward', 'Sketch shown'], ['invited', 'Invite sent'], ['running', 'Running'],
+    ['said', 'Wrote in its chat'], ['suggested', 'Filed a request']]) {
+    assert.ok(src.includes(`${key}: ['${label}', `), `the ${label} step`);
+  }
+  assert.match(src, /\{data\.make\.notRecorded \? <Num v=\{data\.make\.notRecorded\} \/>/,
+    'before projects from the first session were marked, it reads so, never 0');
+  assert.match(src, /of \$\{plural\(data\.make\.people, 'maker', 'makers'\)\} sent an invite within \$\{minutes\} min/);
+  assert.match(src, /of \$\{plural\(data\.join\.people, 'person', 'people'\)\} wrote or asked for something within \$\{minutes\} min/);
+  // The invite funnel (#4176): links opened, sign-ins through one, joins,
+  // and what dropped off between each. Everyone's, so a cohort view leaves
+  // it out, and before sign-ins through an invite were counted it reads so.
+  for (const [key, label] of [['opened', 'Opened the link'], ['signedIn', 'Signed in'], ['joined', 'Joined']]) {
+    assert.ok(src.includes(`['${key}', '${label}', `), `the ${label} step`);
+  }
+  assert.match(src, /\{scope\.cohort \? null : \(\s*<div id="admin-journey-first-session-opens">/);
+  assert.match(src, /\{isNotRecorded\(data\.opens\) \? <Num v=\{data\.opens\} \/> : <InviteFunnelRows funnel=\{data\.opens\} \/>\}/);
+  // #4272: Signed in is everyone who reached Homeroom signed in through a
+  // link, so it reads as a total, and its two ways are lines of their own:
+  // signed up or in from the link, the step's conversion out of the people
+  // who opened one, and already signed in, a count only. Joined is still
+  // out of everyone signed in.
+  assert.match(src, /\{before == null \|\| ways \? plural\(n, 'person', 'people'\) : conversion\(n, before\)\}/,
+    'each step after the first is counted out of the one before, but Signed in is a total');
+  assert.match(src, /const ways = key === 'signedIn';/);
+  for (const [key, label] of [['signedInByInvite', 'From the link'], ['signedInAlready', 'Already signed in']]) {
+    assert.ok(src.includes(`['${key}', '${label}', `), `the ${label} way`);
+  }
+  assert.match(src, /\{way === 'signedInByInvite' \? conversion\(funnel\[way\], funnel\.opened\) : plural\(funnel\[way\], 'person', 'people'\)\}/,
+    'the sign-ins the link brought are its conversion, from FUNNEL_RATE_FROM people like any other');
+  assert.match(src, /data-journey-invite-funnel-way=\{way\}/);
+  assert.match(src, /<UnitBar n=\{funnel\.signedInByInvite\} also=\{funnel\.signedInAlready\} of=\{most\}/,
+    'one bar in two parts');
+  assert.match(src, /i < n \? fill : i < n \+ also \? alsoFill : rest/);
+  assert.match(src, /\{before > n \? `\$\{before - n\} dropped off` : 'nobody dropped off'\}/, 'and says what dropped off');
+  assert.match(src, /median <span className=\{targetTone\(st\.medianSeconds, st\.targetSeconds\)\}>/);
+  assert.match(src, /data-journey-first-session-example=\{e\.path\}/, 'and the newest few');
+});
+
+// #4272: the funnel drawn, not only read. Signed in is a total with its two
+// ways under it; the ones the link brought are its conversion, printed as a
+// share only once FUNNEL_RATE_FROM people opened a link.
+test('the invite funnel renders Signed in as a total, split into from the link and already signed in', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx.js');
+  const mod = loadTsx('frontend/src/features/admin/admin-journey.tsx', {
+    stubs: {
+      './admin-console.js': {
+        AdminUI: new Proxy({}, {
+          get: (_t, key) => (['btn', 'badge'].includes(key)
+            ? new Proxy({}, { get: (_u, k) => `${key}-${String(k)}` })
+            : String(key)),
+        }),
+      },
+      '../../lib/legacy-portals': { mountLegacyPortal() {}, unmountLegacyPortal() {} },
+    },
+  });
+  const draw = (funnel) => renderToHtml(createElement(mod.InviteFunnelRows, { funnel: { from: '2026-09-28T00:00:00.000Z', ...funnel } }));
+  const text = (html) => html.replace(/<[^>]+>/g, '|').replace(/\|+/g, '|');
+  const html = draw({ opened: 26, signedIn: 12, signedInByInvite: 8, signedInAlready: 4, joined: 7 });
+  const step = (key) => text(html.slice(html.indexOf(`data-journey-invite-funnel-step="${key}"`)).split('data-journey-invite-funnel-step=')[1]);
+  assert.match(step('opened'), /\|Opened the link\|26 people\|/);
+  assert.match(step('signedIn'), /\|Signed in\|12 people\|/, 'the total, not a share');
+  assert.match(step('signedIn'), /\|From the link\|8 of 26 · 31%\|/, 'the sign-ins the link brought, out of everyone who opened one');
+  assert.match(step('signedIn'), /\|Already signed in\|4 people\|/, 'counted, never a share');
+  assert.match(step('signedIn'), /\|14 dropped off\|/, 'everyone who opened a link and never got signed in');
+  assert.match(step('joined'), /\|Joined\|7 of 12 · 58%\|5 dropped off\|/, 'joined out of everyone signed in');
+  assert.ok(html.indexOf('data-journey-invite-funnel-way="signedInByInvite"') < html.indexOf('data-journey-invite-funnel-way="signedInAlready"'));
+  // The bar: 26 is past UNIT_MAX, so one bar in two parts, sized by share.
+  assert.match(html, /bg-violet-500" style="width:31%"><\/div><div class="h-2 bg-violet-300 dark:bg-violet-400\/50" style="width:15%">/);
+
+  // Below FUNNEL_RATE_FROM people opening a link, the counts alone; and a
+  // small total is countable units, the two ways in their own fills.
+  const few = draw({ opened: 6, signedIn: 3, signedInByInvite: 1, signedInAlready: 2, joined: 1 });
+  assert.match(text(few), /\|From the link\|1 of 6\|Already signed in\|2 people\|3 dropped off\|/);
+  assert.equal(few.includes('%'), false);
+  const units = few.slice(few.indexOf('data-journey-invite-funnel-step="signedIn"'), few.indexOf('data-journey-invite-funnel-way='));
+  assert.deepEqual(units.match(/h-2 flex-1 rounded-sm [^"]+/g),
+    ['h-2 flex-1 rounded-sm bg-violet-500', 'h-2 flex-1 rounded-sm bg-violet-300 dark:bg-violet-400/50',
+      'h-2 flex-1 rounded-sm bg-violet-300 dark:bg-violet-400/50', 'h-2 flex-1 rounded-sm bg-zinc-200 dark:bg-zinc-700',
+      'h-2 flex-1 rounded-sm bg-zinc-200 dark:bg-zinc-700', 'h-2 flex-1 rounded-sm bg-zinc-200 dark:bg-zinc-700']);
 });
 
 test('one declared check opens the demo page', () => {

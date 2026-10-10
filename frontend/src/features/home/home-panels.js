@@ -79,6 +79,7 @@
 // alone for good.
 'use strict';
 
+import { t as message } from '../../lib/i18n/runtime';
 import { panelsStore } from './panels-store';
 
 const HomePanels = {
@@ -128,7 +129,9 @@ const HomePanels = {
   formatReward(reward) {
     const s = String(reward == null ? '' : reward).trim();
     if (!s) return '';
-    return /^[\d][\d.,]*$/.test(s) ? `${s} pts` : s;
+    if (!/^[\d][\d.,]*$/.test(s)) return s;
+    // The number is shown as it was written; its digits pick the plural form.
+    return message('home:challenges.reward.points', { points: s, count: Number(s.replace(/[.,]/g, '')) || 0 });
   },
 
   // Bar fill, 0-100. A missing/zero/NaN target is 0 (the caller renders no
@@ -240,26 +243,62 @@ const HomePanels = {
     if (!panel) return '';
     const total = Number(panel.total) || 0;
     const done = Number(panel.done) || 0;
-    let line = `${done} of ${total}`;
     const remaining = panel.points_remaining;
     if (typeof remaining === 'number' && Number.isFinite(remaining) && remaining > 0) {
-      line += ` · ${remaining.toLocaleString('en-US')} pts left`;
+      return message('home:challenges.summary.withPointsLeft', {
+        done, total, points: remaining.toLocaleString('en-US'), count: remaining,
+      });
     }
-    return line;
+    return message('home:challenges.summary.progress', { done, total });
   },
 
   // ── Data ───────────────────────────────────────────────────────────
 
   // Called from Home.load(). At most one fetch per TTL, and concurrent
   // callers share the in-flight promise.
+  //
+  // A FORCED read is a refresh, not a boot. Its caller knows the copy is
+  // behind something that just happened (a join the server has counted, the
+  // block expanded, Getting started finished), so two things that suit a
+  // boot are wrong for it:
+  //   * sharing a read already in flight, which may have left before that
+  //     thing happened. It waits for that read and then reads again, once,
+  //     however many forced callers arrive meanwhile (Home.load()'s rule);
+  //   * the service worker's zero-deadline lane, which answers
+  //     /api/home-panels from its cache on a device that has drawn Home
+  //     before. It is told first (App._announceRefreshIntent), as a pull and
+  //     a board refresh tell it.
+  //
+  // `fresh` (a pull, a live re-read) goes further: the worker waits for the
+  // network instead of answering from its saved copy after its one-second
+  // deadline (public/sw.js, wantsFreshAnswer; lib/live-reads.ts's FRESH).
+  _queued: null,
+  _queuedFresh: false,
+
   ensureLoaded(opts) {
     const force = !!(opts && opts.force);
+    const fresh = force && !!(opts && opts.fresh);
     if (!window.App || !App.user) return Promise.resolve();
-    if (HomePanels._inflight) return HomePanels._inflight;
+    HomePanels._watchLiveReads();
+    if (HomePanels._inflight) {
+      if (!force) return HomePanels._inflight;
+      if (fresh) HomePanels._queuedFresh = true;
+      if (!HomePanels._queued) {
+        const again = () => {
+          const queuedFresh = HomePanels._queuedFresh;
+          HomePanels._queued = null;
+          HomePanels._queuedFresh = false;
+          return HomePanels.ensureLoaded({ force: true, fresh: queuedFresh });
+        };
+        HomePanels._queued = HomePanels._inflight.then(again, again);
+      }
+      return HomePanels._queued;
+    }
     if (!force && HomePanels._data
         && Date.now() - HomePanels._fetchedAt < HomePanels.TTL_MS) {
       return Promise.resolve();
     }
+    if (force) App._announceRefreshIntent?.();
     // ?demo=1 rides along exactly like Home.load()'s own demoQS — the
     // server only honours it in staging. `expand` names the one panel the
     // viewer has opened in place, so the fetch brings its full list.
@@ -283,7 +322,9 @@ const HomePanels = {
     if (expandKey) params.set('expand', expandKey);
     const qs = params.toString() ? `?${params.toString()}` : '';
 
-    HomePanels._inflight = fetch(`/api/home-panels${qs}`, { credentials: 'same-origin' })
+    const init = { credentials: 'same-origin' };
+    if (fresh) init.cache = 'no-cache';
+    HomePanels._inflight = fetch(`/api/home-panels${qs}`, init)
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (json && Array.isArray(json.panels)) {
@@ -300,6 +341,27 @@ const HomePanels = {
         HomePanels.render();
       });
     return HomePanels._inflight;
+  },
+
+  // Live reads (#3985, lib/live-reads.ts): coming back to the tab after a
+  // while, the socket reconnecting or the browser coming back online reads
+  // the block again, past its minute, while Home is the screen showing it. A
+  // challenge finished in another app then shows its new count on return.
+  //
+  // It also owns /api/home-panels, so the service worker's correction of it
+  // reaches the block. App._onApiUpdated's Home.load() could not: the copy the
+  // worker served had just restarted the minute, so that ordinary call read
+  // nothing and the old numbers stayed up after a reload. Registered once, on
+  // the first read.
+  _unwatchLive: null,
+  _watchLiveReads() {
+    if (HomePanels._unwatchLive) return;
+    const live = typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.liveReads;
+    if (!live || typeof live.watch !== 'function') return;
+    HomePanels._unwatchLive = live.watch(() => {
+      if (!HomePanels._data || !window.App?._isScreenVisible?.('home-screen')) return undefined;
+      return HomePanels.ensureLoaded({ force: true, fresh: true });
+    }, { reads: (url) => url.pathname === '/api/home-panels' });
   },
 
   panelFor(key) {
@@ -362,6 +424,13 @@ const HomePanels = {
     });
   },
 
+  // A NEW ACCOUNT SEES CHALLENGES (first-session run-through, 2026-10-05).
+  // #3847 hid this block for an account's first seven days (the first
+  // chapter, without points). Evan reversed that: a brand-new account found
+  // Challenges missing from Home and expected it there, with its Getting
+  // started challenges. So nothing about an account's age hides it, and GET
+  // /api/auth/me no longer reports `firstWeek`.
+
   // `_stampState` and `STATE_ATTRS` lived here. They mirrored a block's own
   // state attributes (`data-create-enabled`, Discover's two lane counts) from
   // the markup up onto its HOST, because a selector written the way the spec,
@@ -393,7 +462,7 @@ const HomePanels = {
     // rather than heading the action sheet "Widget".
     const built = data && Array.isArray(data.panels)
       ? data.panels.find((p) => p && p.key === key) : null;
-    return (built && built.title) || 'Widget';
+    return (built && built.title) || message('home:panels.fallbackTitle');
   },
 
   // The widget CONTENT for one key, whether or not the server built a
@@ -450,12 +519,18 @@ const HomePanels = {
     // server still sends are the gate's own, and wait for it to open. With
     // nothing hidden to count (a season of First challenges only) there is no
     // card to draw, and the block falls back to drawing them, as it always has.
-    const locked = HomePanels.lockedOnboarding(panel);
+    //
+    // Only while that card IS on Home (`App.user.showGettingStarted`). An
+    // account its first session brought in has no card (first-session.js:
+    // communities_onboarded_at stays unset), and a locked card pointing at a
+    // list it cannot see said nothing; the block draws the First challenges
+    // itself instead, done or not, with the unlock note under them.
+    const locked = HomePanels.gettingStartedOnHome() ? HomePanels.lockedOnboarding(panel) : null;
     if (locked) {
       if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
       return {
         key: panel.key,
-        title: panel.title || 'Challenges',
+        title: panel.title || message('home:challenges.fallbackTitle'),
         summary: HomePanels.summaryLine(panel),
         season: null,
         onboardingNote: null,
@@ -481,7 +556,7 @@ const HomePanels = {
     if (empty) {
       return {
         key: panel.key,
-        title: panel.title || 'Challenges',
+        title: panel.title || message('home:challenges.fallbackTitle'),
         summary: null,
         season: null,
         total,
@@ -510,7 +585,7 @@ const HomePanels = {
     const groups = HomePanels.challengeGroups(rows, views, panel, doneFrom);
     return {
       key: panel.key,
-      title: panel.title || 'Challenges',
+      title: panel.title || message('home:challenges.fallbackTitle'),
       // Still computed, and still the one-line form of the same counts
       // the season progress draws — it is the block's accessible summary and what the ⋮
       // menu and the tests read. It is no longer rendered in the section
@@ -524,7 +599,7 @@ const HomePanels = {
       // challenges only), drawn as before: the cards, then the note. Once
       // unlocked there is nothing to say: no note.
       onboardingNote: panel.onboarding && !panel.onboarding.unlocked
-        ? 'Finish Getting started to unlock the rest of the season.'
+        ? message('home:challenges.onboardingNote')
         : null,
       // Always 0 here: a count above 0 is the locked branch above.
       lockedCount: 0,
@@ -546,6 +621,12 @@ const HomePanels = {
   // (the server's additive `hidden_count` and `hidden_names`). Null once
   // unlocked, for a viewer the gate does not apply to (whose payload has no
   // `onboarding` at all), and when there is nothing hidden to count.
+  // Whether Home draws the Getting started card (./getting-started.tsx reads
+  // the same flag).
+  gettingStartedOnHome() {
+    return !!(typeof window !== 'undefined' && window.App && App.user && App.user.showGettingStarted === true);
+  },
+
   lockedOnboarding(panel) {
     const o = panel && panel.onboarding;
     if (!o || o.unlocked) return null;
@@ -569,22 +650,41 @@ const HomePanels = {
   // group's rank while setup is unfinished; groupRankOf moves a finished Get
   // started to the end.
   CHALLENGE_GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
-    WEEKLY: { key: 'week', heading: 'This week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
+    ONBOARDING: { key: 'setup', heading: 'home:challenges.group.setup', order: 0 },
+    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 1 },
+    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 2 },
   },
-  OTHER_GROUP: { key: 'other', heading: 'Season challenges', order: 3 },
+  OTHER_GROUP: { key: 'other', heading: 'home:challenges.group.other', order: 3 },
   // The collapsed block's finished fill (visibleSlots' `doneFrom`), headed
   // after every group that still has something to do (#2490). Home only: the
   // tab draws every card, so a finished card stays in its own group there. No
   // `order`, because no category resolves to it and it never ranks.
-  DONE_GROUP: { key: 'done', heading: 'Done' },
+  DONE_GROUP: { key: 'done', heading: 'home:challenges.group.done' },
 
   // A challenge's group, from its label: the category, trimmed and uppercased.
   groupOf(c) {
     const category = String(c && c.label != null ? c.label : '').trim().toUpperCase();
     return Object.prototype.hasOwnProperty.call(HomePanels.CHALLENGE_GROUPS, category)
       ? HomePanels.CHALLENGE_GROUPS[category] : HomePanels.OTHER_GROUP;
+  },
+
+  // When a row's time runs out, for its countdown: its own `ends_at`, else
+  // `fallback` (the season's end). A This week challenge's cap starts again
+  // every Monday 00:00 UTC, the week the scorer counts by, so its clock runs
+  // to the end of this week when that comes first. The same rule as the
+  // Challenges tab's TopochainChallenges._endOf.
+  endsOf(c, fallback = null) {
+    const raw = (c && c.ends_at) || fallback || null;
+    if (HomePanels.groupOf(c).key !== 'week') return raw;
+    const weekEnd = HomePanels.weekEnd();
+    return !raw || Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw;
+  },
+
+  // The next Monday 00:00 UTC, as an ISO string.
+  weekEnd(now = Date.now()) {
+    const d = new Date(now);
+    const sinceMonday = (d.getUTCDay() + 6) % 7;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday + 7)).toISOString();
   },
 
   // Whether setup is behind the viewer, which decides where the First challenges group sits.
@@ -653,7 +753,7 @@ const HomePanels = {
       for (const c of payload) {
         if (!c || HomePanels.groupOf(c).key !== key) continue;
         if (c.open === false || (c.progress && c.progress.done)) continue;
-        const ends = c.ends_at || seasonEnd;
+        const ends = HomePanels.endsOf(c, seasonEnd);
         if (!HomePanels.timeLeft(ends)) continue;
         if (soonest == null || Date.parse(ends) < Date.parse(soonest)) soonest = ends;
       }
@@ -669,12 +769,12 @@ const HomePanels = {
     });
     return runs.map(({ group, views: members }) => {
       let meta = null;
-      if (group.key === 'always') meta = 'no deadline';
+      if (group.key === 'always') meta = message('home:challenges.group.noDeadline');
       else if (group.key !== 'setup' && group.key !== 'done') meta = clockOf(group.key);
       if (group.key !== 'setup') {
         for (const view of members) view.deadline = null;
       }
-      return { key: group.key, heading: group.heading, meta, rows: members };
+      return { key: group.key, heading: message(group.heading), meta, rows: members };
     });
   },
 
@@ -699,8 +799,8 @@ const HomePanels = {
   // the content had to follow: a phone got the title bar and the featured
   // lane and nothing else, because the second lane would not fit the one row
   // it owned. THE UI OVERHAUL made Discover a fixed section, so the Popular
-  // lane — the most-used apps this viewer doesn't have yet
-  // (Home.popularApps) — renders everywhere. That is the point of an area
+  // lane — the public communities this viewer hasn't joined, most members
+  // first (Home.popularApps) — renders everywhere. That is the point of an area
   // called Discover rather than a strip of curated tiles: the curated lane
   // alone is whatever an admin got round to featuring.
   //
@@ -728,7 +828,7 @@ const HomePanels = {
       ? Home.popularApps(Home._apps || []) : [];
     return {
       key: panel.key,
-      title: panel.title || 'Discover',
+      title: panel.title || message('home:discover.fallbackTitle'),
       featured: featured.map((a) => HomePanels.discoverTileView(a)),
       popular: popular.map((a) => HomePanels.discoverTileView(a)),
     };
@@ -833,20 +933,21 @@ const HomePanels = {
     const points = Number(c.earned_points) > 0 ? Number(c.earned_points) : 0;
     let rail;
     if (done) {
-      rail = { state: 'done', stateLabel: 'Done', fill: 1, counted: false };
+      rail = { state: 'done', stateLabel: message('home:challenges.row.done'), fill: 1, counted: false };
     } else if (numeric && target > 1) {
       const count = Math.min(current, target);
-      const unit = c.metric.label ? ` ${c.metric.label}` : '';
       rail = {
         state: count > 0 || points ? 'progress' : 'new',
-        stateLabel: `${count}/${target}${unit}`,
+        stateLabel: c.metric.label
+          ? message('home:challenges.row.countOfUnit', { current: count, target, unit: c.metric.label })
+          : message('home:challenges.row.countOf', { current: count, target }),
         fill: count / target,
         counted: true,
       };
     } else if (points) {
-      rail = { state: 'progress', stateLabel: 'Started', fill: null, counted: false };
+      rail = { state: 'progress', stateLabel: message('home:challenges.row.started'), fill: null, counted: false };
     } else {
-      rail = { state: 'new', stateLabel: 'Not started', fill: 0, counted: false };
+      rail = { state: 'new', stateLabel: message('home:challenges.row.notStarted'), fill: 0, counted: false };
     }
     const eventId = Number(c.season_event_id);
     return {
@@ -880,8 +981,10 @@ const HomePanels = {
       // carries while it is not open (organiser-closed, or outside its
       // window). `ends_at` is the challenge's own end, else its event's.
       deadline: done || c.open === false ? null
-        : HomePanels.timeLeft(c.ends_at || (panel && panel.season && panel.season.ends_at)),
-      earned: done && points ? `Earned ${points.toLocaleString('en-US')} pts` : null,
+        : HomePanels.timeLeft(HomePanels.endsOf(c, panel && panel.season && panel.season.ends_at)),
+      earned: done && points
+        ? message('home:challenges.row.earned', { points: points.toLocaleString('en-US'), count: points })
+        : null,
     };
   },
 
@@ -912,13 +1015,25 @@ const HomePanels = {
       && Number(panel.all_total) > 0;
     const total = hasAll ? Number(panel.all_total) : open;
     if (!total) return null;
+    // The points line (#4565), carried into the summary on both branches: the
+    // server's pair already covers the scope the branch names (the gate's
+    // First challenges while it is closed, the season's whole set after).
+    // Absent (an older payload) or nothing on offer, no line.
+    const pointsTotal = Number(panel && panel.points_total);
+    const points = Number.isFinite(pointsTotal) && pointsTotal > 0
+      ? {
+        earned: Math.max(0, Math.min(pointsTotal, Math.floor(Number(panel.points_earned) || 0))),
+        total: pointsTotal,
+      }
+      : null;
     const gate = panel.onboarding;
     if (gate && !gate.unlocked && Number(gate.total) > 0) {
       const t = Number(gate.total);
       return {
         done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
         total: t,
-        caption: 'done in First challenges',
+        scope: 'first',
+        ...(points ? { points } : {}),
       };
     }
     const name = panel.season && typeof panel.season.name === 'string'
@@ -926,7 +1041,9 @@ const HomePanels = {
     return {
       done: Math.max(0, Math.min(total, Number(hasAll ? panel.all_done : panel.done) || 0)),
       total,
-      caption: name ? `done in ${name}` : 'done',
+      scope: name ? 'season' : null,
+      name: name || null,
+      ...(points ? { points } : {}),
     };
   },
 
@@ -943,7 +1060,9 @@ const HomePanels = {
     const ms = ends - Date.now();
     if (ms <= 0) return null;
     const hours = Math.ceil(ms / 3600000);
-    return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
+    return hours < 24
+      ? message('home:challenges.timeLeft.hours', { count: hours })
+      : message('home:challenges.timeLeft.days', { count: Math.ceil(ms / 86400000) });
   },
 
   // Real hash navigation (not a router call) so the Challenges screen gets a
@@ -1028,3 +1147,37 @@ const HomePanels = {
 // Home calls this module through the legacy global. Guard the
 // publication for the shell's server-side prerender, where window is absent.
 if (typeof window !== 'undefined') window.HomePanels = HomePanels;
+
+// A boot paints from the device's snapshot of the session and verifies it
+// afterwards (App._reconcileSession). Repaint once the verified user lands,
+// so `showGettingStarted` (HomePanels.gettingStartedOnHome) is the server's
+// current answer rather than the snapshot's: the card can have been closed
+// between two visits. Only once there is something to paint; before the
+// first read, render() would mark the sections settled with nothing in them.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('sv:session', () => {
+    if (HomePanels._data) HomePanels.render();
+  });
+  // The views pushed to the store hold text, so a language change rebuilds
+  // them from the same payload.
+  document.addEventListener('homeroom:language-changed', () => {
+    if (HomePanels._data) HomePanels.render();
+  });
+}
+
+// A join or a leave has landed: Home.setMembership's `sv:membership-changed`
+// (Discover's Join pill and detail page, the join-required prompt, the
+// Mayor's join card, a project page's Leave) or the join screen's
+// `sv:communities-joined`. The server counted a join before it answered
+// ("Join a community", challengeScorer.scoreOnJoin), so the block reads
+// again now rather than at the end of its minute, and the challenge ticks on
+// Home as it does on the Challenges tab. Only once there is a block to
+// correct, or a first read under way that may predate the write: before
+// that, Home's own first load brings the current answer.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  const reread = () => {
+    if (HomePanels._data || HomePanels._inflight) HomePanels.ensureLoaded({ force: true });
+  };
+  document.addEventListener('sv:membership-changed', reread);
+  document.addEventListener('sv:communities-joined', reread);
+}

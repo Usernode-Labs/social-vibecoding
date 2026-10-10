@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
@@ -39,6 +40,7 @@ function harness() {
   assert.ok(body, 'the helper is defined in app.js');
   const loads = [];
   const sandbox = { loads };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     'var Home = { load: function () { loads.push(1); } };'
@@ -92,5 +94,29 @@ test('it is reached exactly when there is no card for that slug', () => {
 
 test('the tile already has the words for a building app', () => {
   // This change puts the card there; the label was never the missing part.
-  assert.match(HOME, /app\.status === 'creating' \? 'Spinning up\.\.\.'/);
+  // A project whose first version Homeroom bot makes says its build line
+  // first (#4053); "Spinning up..." is left for one it does not.
+  assert.match(HOME, /const statusLabel = buildLine \? message\(BUILD_LINE_WORDS\[buildLine\]\)\s*: isRunning \? ''\s*: app\.status === 'creating' \? message\('home:grid\.tile\.status\.creating'\)/);
+  assert.equal(message('home:grid.tile.status.creating'), 'Spinning up...');
+});
+
+test('#4053: a first version on its way says its build line on the tile, for every status but a failed set-up', () => {
+  const tileBuildLine = HOME.match(/  tileBuildLine\(app\) \{[\s\S]*?\n  \},/);
+  assert.ok(tileBuildLine, 'Home.tileBuildLine is defined');
+  const WORDS = fs.readFileSync(path.join(ROOT, 'frontend/src/features/first-session/build-line-words.js'), 'utf8')
+    .replace(/^export\s+/gm, '');
+  const fn = vm.runInNewContext(`${WORDS}\n({ ${tileBuildLine[0].trim().replace(/,$/, '')} })`, {});
+  assert.equal(fn.tileBuildLine({ status: 'creating', first_version_line: 'planning' }), 'planning');
+  assert.equal(fn.tileBuildLine({ status: 'running', first_version_line: 'plan' }), 'plan');
+  assert.equal(fn.tileBuildLine({ status: 'running', first_version_line: null }), null);
+  assert.equal(fn.tileBuildLine({ status: 'error', first_version_line: 'planning' }), null, 'Error and Retry say it failed');
+  assert.equal(fn.tileBuildLine({ status: 'running', first_version_line: 'Build it' }), null);
+  // Both tiles draw it: the React grid's view and the string one.
+  assert.equal((HOME.match(/const buildLine = Home\.tileBuildLine\(app\);/g) || []).length, 2);
+  assert.match(HOME, /`<p class="\$\{buildLineTileClass\(buildLine\)\}" data-build-line="\$\{buildLine\}">\$\{statusLabel\}<\/p>`/);
+  const GRID = fs.readFileSync(path.join(ROOT, 'frontend/src/features/home/app-grid.tsx'), 'utf8');
+  assert.match(GRID, /app\.buildLine \? \([\s\S]*?<p className=\{buildLineTileClass\(app\.buildLine\)\} data-build-line=\{app\.buildLine\}>/);
+  // The server says it per viewer, in the list (GET /api/apps).
+  const APPS = fs.readFileSync(path.join(ROOT, 'src/routes/apps.js'), 'utf8');
+  assert.match(APPS, /first_version_line: firstVersionLines\.get\(Number\(a\.id\)\) \|\| null,/);
 });

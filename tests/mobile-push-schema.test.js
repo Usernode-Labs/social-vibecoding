@@ -110,7 +110,19 @@ test('closed database kind registry matches the reviewed service mapping and def
   // thread_reply (an app-chat reply-thread reply, direct_interactions).
   // 33 → 34: #3181's session_stalled (developer_sessions).
   // 34 → 35: platform_limit (server-wide cap alerts, app_alerts).
-  assert.equal(new Set(rows.map((row) => row.kind)).size, 35);
+  // 35 → 36: B7's change_ready (proposal_alerts).
+  // 36 → 43: WP-E's four build moments (builds) and three invite kinds
+  // (invite_activity).
+  // 43 → 44: channel_message, a person's message in a small private group's
+  // discussion (messages; services/group-channel-notify.js).
+  // 44 → 45: #3952's issue_mention, named with @ in a request
+  // (direct_interactions, beside mention).
+  // 45 → 46: #4296's platform_incident (unexpected events alerts for full
+  // admins, app_alerts beside platform_limit).
+  // 46 → 47: #4535's issue_thread_reply, a message in a request's
+  // discussion you filed or posted in (direct_interactions, beside
+  // thread_reply).
+  assert.equal(new Set(rows.map((row) => row.kind)).size, 47);
   assert.match(schema, /DELETE FROM mobile_push_kind_categories[\s\S]*kind NOT IN/,
     'stale policy rows cannot silently keep a removed kind push-enabled');
 });

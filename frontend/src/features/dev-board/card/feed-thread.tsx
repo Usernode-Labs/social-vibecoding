@@ -19,8 +19,8 @@
  *
  * ── Keyed by thread, loaded on sight ───────────────────────────────────
  *
- * State lives in ./feed-thread-store.ts, keyed `${type}:${ref}` rather than by
- * row — see that file for why. Loading waits for the row to come into view,
+ * State lives in ./feed-thread-store.ts, keyed `${slug}/${type}:${ref}`
+ * rather than by row — see that file for why. Loading waits for the row to come into view,
  * the same rule (and roughly the same 200px margin) the GitHub preview's
  * IntersectionObserver uses: a 20-row feed would otherwise open 20 requests on
  * paint to fill three lines each.
@@ -32,6 +32,8 @@ import { Button } from '@/components/ui/button';
 import { ArrowUpIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
+import { useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -81,7 +83,7 @@ export function feedThreadPreview(rows: any[]): {
   return {
     messages: human.slice(-PREVIEW).map((r: any) => ({
       id: r.id,
-      author: r.username || 'someone',
+      author: r.username || translate('project:feedThread.unknownAuthor'),
       userId: r.user_id != null ? Number(r.user_id) : null,
       content: String(r.content || ''),
       createdAt: r.created_at,
@@ -170,6 +172,7 @@ export function FeedReplyComposer({
   onDraftChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
 }): ReactNode {
+  const t = useMessages('project');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(inputRef, draft);
   const mention = useMentionTypeahead({ slug, inputRef, value: draft, onChange: onDraftChange });
@@ -196,8 +199,8 @@ export function FeedReplyComposer({
         hint="muted"
         ring={false}
         className="focus:outline-none focus:ring-1 focus:ring-violet-500"
-        placeholder="Reply…"
-        aria-label="Reply to this item"
+        placeholder={t('project:feedThread.reply.placeholder')}
+        aria-label={t('project:feedThread.reply.name')}
         value={draft}
         disabled={posting}
         onChange={(e) => { onDraftChange(e.target.value); syncMenus(); }}
@@ -232,8 +235,12 @@ export function FeedReplyComposer({
         ink="none"
         className="dev-feed-send shrink-0 un-touch-target inline-flex items-center justify-center"
         disabled={posting || !draft.trim()}
-        title="Send reply"
-        aria-label="Send reply"
+        title={t('project:feedThread.reply.send')}
+        aria-label={t('project:feedThread.reply.send')}
+        // The field keeps focus through the press, so the keyboard and the
+        // composer stay where the tap landed (lib/keyboard-open.ts). The
+        // press still closes the suggestion lists, as the blur did.
+        onMouseDown={(event) => { event.preventDefault(); mention.close(); refs.close(); }}
       >
         {posting ? '…' : <ArrowUpIcon aria-hidden="true" />}
       </Button>
@@ -268,9 +275,10 @@ export function FeedThread({
   refId: number;
   canPost: boolean;
 }): ReactNode {
-  const key = threadKey(type, refId);
+  const key = threadKey(slug, type, refId);
   const all = useStoreState(feedThreadStore);
   const state = all[key] || readThread(key);
+  const t = useMessages('project');
   const hostRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState('');
 
@@ -354,13 +362,13 @@ export function FeedThread({
           the box. It used to sit under the bubbles, reading as a footer. */}
       {hidden > 0 ? (
         <div className="dev-feed-earlier text-xs text-zinc-400 dark:text-zinc-500">
-          {`${hidden} earlier ${hidden === 1 ? 'reply' : 'replies'}`}
+          {t('project:feedThread.earlier', { count: hidden })}
         </div>
       ) : null}
       {state.messages.map((m) => <MessageLine key={m.id} m={m} />)}
       {state.error === 'post' ? (
         <div className="text-xs text-rose-600 dark:text-rose-400">
-          That didn’t send. Try again, or open the item to reply there.
+          {t('project:feedThread.postFailed')}
         </div>
       ) : null}
       {canPost ? (

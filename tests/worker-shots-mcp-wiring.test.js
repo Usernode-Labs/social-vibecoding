@@ -62,7 +62,7 @@ test('planner origin list rejects stale or malformed hosted-app catalogs', () =>
   }
 });
 
-const SHOTS_TOOLS = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'fail_request'];
+const SHOTS_TOOLS = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'note_change', 'note_problem', 'fail_request'];
 const RETIRED_TOOLS = /evidence_(?:get_context|run_plan|finish|capture|report_blocker|set_request_failure|reset_pair|reset_side)/;
 
 // Run the real config writer against a temporary state directory.
@@ -122,6 +122,7 @@ test('the shots agent launches Playwright through the content-free timing observ
       ['browser_member', 'member.json'],
       ['browser_admin', 'read_only_admin.json'],
       ['browser_full_admin', 'full_admin.json'],
+      ['browser_guest', 'guest.json'],
     ]) {
       const args = config.mcpServers[server].args;
       assert.equal(config.mcpServers[server].command, 'node');
@@ -140,12 +141,142 @@ test('the shots agent launches Playwright through the content-free timing observ
   assert.match(claudeRunner, /SHOTS_HOSTED_ORIGINS_FILE/);
 });
 
+test('every shots browser, the guest\'s included, is denied the tools that run code or touch files', () => {
+  const claudeRunner = read('run-cc.sh');
+  const flags = /elif \[ "\$MODE" = "shots" \]; then[\s\S]*?PERMISSION_FLAGS="([^"]*)"/.exec(claudeRunner)?.[1];
+  assert.ok(flags, 'the shots permission flags are found');
+  const denied = new Set(flags.split(/\s+/));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-denied-tools-'));
+  try {
+    // Every phone browser too, whichever personas a run gives one.
+    const servers = Object.keys(writeConfig(dir, {
+      SHOTS_PHONE_PERSONAS: '["member","read_only_admin","full_admin","guest"]',
+    }).config.mcpServers).filter((name) => name.startsWith('browser_'));
+    assert.deepEqual(servers.sort(), ['browser_admin', 'browser_admin_phone', 'browser_full_admin',
+      'browser_full_admin_phone', 'browser_guest', 'browser_guest_phone', 'browser_member', 'browser_member_phone']);
+    for (const server of servers) {
+      for (const tool of ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install']) {
+        assert.ok(denied.has(`mcp__${server}__${tool}`), `${server} is denied ${tool}`);
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the guest browser is never signed in, and its optional token never outlives the bootstrap', () => {
+  const claudeRunner = read('run-cc.sh');
+  const bootstrap = read('shots-browser-bootstrap.js');
+  // The bootstrap exchanges the three fixture tokens and writes the guest an
+  // empty state; it never reads the guest token.
+  assert.equal(require('../worker/shots-browser-bootstrap.js').SIGNED_OUT_STATE, '{"cookies":[],"origins":[]}\n');
+  assert.match(bootstrap, /path\.join\(outputDir, 'guest\.json'\)/);
+  assert.doesNotMatch(bootstrap, /SHOTS_GUEST_TOKEN/);
+  assert.equal(require('../worker/shots-browser-bootstrap.js')
+    .failureEvent(new Error('x'), { persona: 'guest', stage: 'storage_state' }).persona, 'guest');
+  // Optional for the runner, its own proxy listener, and unset with the others.
+  assert.match(claudeRunner, /: "\$\{SHOTS_GUEST_TOKEN:=\}"/);
+  assert.match(claudeRunner, /"guest":17895/);
+  assert.match(claudeRunner,
+    /unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN\n/);
+});
+
+test('on Homeroom\'s own pairs every signed-in persona makes the copies\' first-view demo data on both sides', async () => {
+  const bootstrapModule = require('../worker/shots-browser-bootstrap.js');
+  // The routes Homeroom's copies make first-view demo data on, with ?demo=1
+  // (and only then), for the person asking: the conversations list makes the
+  // staging Messages fixture, and opening the bot's DM its under-way card.
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'conversations.js'), 'utf8');
+  assert.match(routes, /router\.get\('\/api\/conversations', async \(req, res\) => \{\s*try \{\s*if \(isDemo\(req\)\) \{\s*await stagingMessages\.ensureFixtures\(pool, req\.user\);/);
+  assert.match(routes, /router\.post\('\/api\/conversations\/homeroom-bot\/activity', [^\n]*\n\s*try \{\s*if \(isDemo\(req\)\) return res\.json\(await stagingMessages\.ensureDemoUnderWayCard\(pool, req\.user\)\);/);
+  assert.deepEqual(bootstrapModule.DEMO_DATA_REQUESTS.map(({ method, path: route }) => `${method} ${route}`), [
+    'GET /api/conversations?demo=1',
+    'POST /api/conversations/homeroom-bot/activity?demo=1',
+  ]);
+  // Only where the pair is the platform's own (worker.js sends '0' there)
+  // and some path the run may open shows the demo.
+  const hints = (paths) => JSON.stringify({ intentPaths: ['/#messages'], testingPaths: [], ...paths });
+  const warms = (env) => bootstrapModule.warmsDemoData(env);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: hints({ intentPaths: ['/?demo=1#messages'] }) }), true);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: hints({ declaredPaths: ['/?x=2&demo=1'] }) }), true);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: hints({ testingPaths: ['/?demo=10'] }) }), false);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: hints({}) }), false);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '0', SHOTS_NAVIGATION_HINTS: '{' }), false);
+  assert.equal(warms({ SHOTS_PLATFORM_ASSETS: '1', SHOTS_NAVIGATION_HINTS: hints({ intentPaths: ['/?demo=1'] }) }), false);
+  assert.equal(warms({}), false);
+  const worker = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  assert.match(worker, /SHOTS_PLATFORM_ASSETS: shotsPlatformAssets \? '1' : '0',/);
+  const orchestrator = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'shots-orchestrator.js'), 'utf8');
+  assert.match(orchestrator, /platformAssets: app\.slug !== config\.selfAppSlug,/);
+  // Each persona, each side, before the browsers' storage is saved; never the guest.
+  const bootstrap = read('shots-browser-bootstrap.js');
+  const warm = bootstrap.indexOf('await warmDemoData(context, origin');
+  assert.ok(warm > bootstrap.indexOf('for (const [index, origin] of origins.entries())'));
+  assert.ok(warm < bootstrap.indexOf("progress.stage = 'storage_state';"));
+  assert.match(bootstrap, /const warmDemo = warmsDemoData\(\);/);
+  assert.match(bootstrap, /if \(warmDemo\) \{/);
+  // As that persona (the context's own cookies), status only, and never fatal.
+  const calls = [];
+  const reports = [];
+  const context = (answer) => ({
+    request: {
+      async fetch(url, options) {
+        calls.push({ url, options });
+        if (answer instanceof Error) throw answer;
+        return { status: () => answer, dispose: async () => {} };
+      },
+    },
+  });
+  await bootstrapModule.warmDemoData(context(200), 'http://shots-base.invalid:3000', (r) => reports.push(r));
+  await bootstrapModule.warmDemoData(context(404), 'http://shots-head.invalid:3000', (r) => reports.push(r));
+  await bootstrapModule.warmDemoData(context(new Error('ECONNRESET http://shots-head.invalid')),
+    'http://shots-head.invalid:3000', (r) => reports.push(r));
+  assert.deepEqual(calls.map(({ url, options }) => `${options.method} ${url}`), [
+    'GET http://shots-base.invalid:3000/api/conversations?demo=1',
+    'POST http://shots-base.invalid:3000/api/conversations/homeroom-bot/activity?demo=1',
+    'GET http://shots-head.invalid:3000/api/conversations?demo=1',
+    'POST http://shots-head.invalid:3000/api/conversations/homeroom-bot/activity?demo=1',
+    'GET http://shots-head.invalid:3000/api/conversations?demo=1',
+    'POST http://shots-head.invalid:3000/api/conversations/homeroom-bot/activity?demo=1',
+  ]);
+  assert.ok(calls.every(({ options }) => options.maxRedirects === 0 && options.failOnStatusCode === false));
+  assert.deepEqual(reports, [
+    { outcome: 'ok', httpStatus: 200 }, { outcome: 'ok', httpStatus: 200 },
+    { outcome: 'http_error', httpStatus: 404 }, { outcome: 'http_error', httpStatus: 404 },
+    { outcome: 'network_error' }, { outcome: 'network_error' },
+  ]);
+  // The local dry-run pair does the same.
+  const dryRun = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'shots-dry-run-pair.js'), 'utf8');
+  assert.match(dryRun, /await warmDemoData\(context, ORIGINS\[side\]\);/);
+});
+
+test('a shots turn carries a guest token only when the platform minted one', () => {
+  const worker = require('../src/services/worker');
+  const shots = (extra = {}) => worker.buildTurnSecretEnv({
+    mode: 'shots', agentBackend: 'claude_code', anthropicProxyJwt: 'p', shotsJwt: 'e',
+    shotsMemberToken: 'm', shotsAdminToken: 'a', shotsFullAdminToken: 'f', ...extra,
+  });
+  assert.equal('SHOTS_GUEST_TOKEN' in shots(), false, 'no guest token, no variable');
+  assert.equal('SHOTS_GUEST_TOKEN' in shots({ shotsGuestToken: null }), false);
+  assert.equal(shots({ shotsGuestToken: 'g' }).SHOTS_GUEST_TOKEN, 'g');
+  assert.throws(() => shots({ shotsGuestToken: '' }), /shotsGuestToken required/,
+    'an empty value is a bug upstream, not a token');
+  // Never on any other turn.
+  const build = worker.buildTurnSecretEnv({
+    mode: 'build', agentBackend: 'claude_code', workerSessionJwt: 'w', issuesReadJwt: 'i',
+    anthropicProxyJwt: 'p', shotsGuestToken: 'g',
+  });
+  assert.equal('SHOTS_GUEST_TOKEN' in build, false);
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  assert.match(source, /shotsGuestToken: shotsAuthTokens\?\.guest \?\? null,/);
+});
+
 test('the browsers reach the public internet only through the shots proxy, and the catalog is still checked', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-egress-config-'));
   try {
     for (const assets of [undefined, '0', '1']) {
       const { config } = writeConfig(dir, { SHOTS_PLATFORM_ASSETS: assets });
-      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin']) {
+      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
         const args = config.mcpServers[server].args;
         assert.ok(!args.some((arg) => /allowed-origins|blocked-origins|tailwindcss/.test(arg)), server);
         assert.match(args[args.indexOf('--proxy-server') + 1], /^http:\/\/127\.0\.0\.1:\d+$/, server);
@@ -176,7 +307,7 @@ test('the config writer gives each persona its own shots directory and records c
       SHOTS_JWT: 'secret-shots-jwt', SHOTS_MEMBER_TOKEN: 'secret-member-token',
     });
     assert.deepEqual(Object.keys(config.mcpServers).sort(),
-      ['browser_admin', 'browser_full_admin', 'browser_member', 'shots']);
+      ['browser_admin', 'browser_full_admin', 'browser_guest', 'browser_member', 'shots']);
     // The bridge is named "shots" (Claude sees mcp__shots__*) and its
     // credentials come from the environment, never from this file.
     assert.deepEqual(config.mcpServers.shots, { command: 'node', args: ['/usr/local/bin/shots-mcp.js'] });
@@ -186,6 +317,7 @@ test('the config writer gives each persona its own shots directory and records c
 
     for (const [server, persona] of [
       ['browser_member', 'member'], ['browser_admin', 'admin'], ['browser_full_admin', 'full_admin'],
+      ['browser_guest', 'guest'],
     ]) {
       const args = config.mcpServers[server].args;
       assert.equal(args.filter((arg) => arg === '--output-dir').length, 1);
@@ -195,7 +327,7 @@ test('the config writer gives each persona its own shots directory and records c
     }
 
     const clips = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1' }).config;
-    for (const server of ['browser_member', 'browser_admin', 'browser_full_admin']) {
+    for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
       assert.equal(clips.mcpServers[server].args.filter((arg) => arg === '--save-video=1280x800').length, 1);
       assert.equal(clips.mcpServers[server].args.filter((arg) => arg.startsWith('--save-video')).length, 1);
     }
@@ -210,7 +342,7 @@ test('the config writer gives each persona its own shots directory and records c
       .some((arg) => arg.startsWith('--save-video')), false, 'a size alone records nothing');
     for (const value of ['0', 'true', 'yes', '']) {
       const off = writeConfig(dir, { SHOTS_RECORD_CLIPS: value }).config;
-      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin']) {
+      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
         assert.equal(off.mcpServers[server].args.some((arg) => arg.startsWith('--save-video')), false,
           `SHOTS_RECORD_CLIPS=${JSON.stringify(value)} records nothing`);
       }
@@ -225,6 +357,75 @@ test('the config writer gives each persona its own shots directory and records c
   }
 });
 
+test('a persona with a phone screen gets a phone browser: its sign-in, its proxy listener, a phone\'s device', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-phone-config-'));
+  const ports = '{"member":17892,"read_only_admin":17893,"full_admin":17894,"guest":17895}';
+  try {
+    const shotsDir = path.join(dir, 'shots');
+    // No phone screen, no phone browser.
+    for (const value of [undefined, '[]']) {
+      const { config } = writeConfig(dir, { SHOTS_PHONE_PERSONAS: value, SHOTS_PROXY_PERSONA_PORTS: ports });
+      assert.deepEqual(Object.keys(config.mcpServers).filter((name) => name.endsWith('_phone')), [], String(value));
+      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
+        assert.equal(config.mcpServers[server].args.includes('--device'), false, `${server} stays a desktop browser`);
+      }
+    }
+
+    const { config } = writeConfig(dir, {
+      SHOTS_PHONE_PERSONAS: '["member","read_only_admin","guest"]', SHOTS_PROXY_PERSONA_PORTS: ports,
+    });
+    assert.deepEqual(Object.keys(config.mcpServers).filter((name) => name.endsWith('_phone')).sort(),
+      ['browser_admin_phone', 'browser_guest_phone', 'browser_member_phone'], 'only the personas named');
+    for (const [desktop, persona] of [['browser_member', 'member'], ['browser_admin', 'admin'], ['browser_guest', 'guest']]) {
+      const phone = config.mcpServers[`${desktop}_phone`];
+      const desktopArgs = config.mcpServers[desktop].args;
+      const args = phone.args;
+      assert.equal(phone.command, 'node');
+      assert.deepEqual(phone.env, config.mcpServers[desktop].env);
+      // The same observer, under the phone browser's own name.
+      assert.equal(args[0], '/usr/local/bin/shots-browser-observer.js');
+      assert.equal(args[1], `${persona}_phone`);
+      // Presents as an iPhone: Playwright's device descriptor sets its user
+      // agent, touch, isMobile and screen density.
+      assert.equal(args[args.indexOf('--device') + 1], 'iPhone 15');
+      // Saves beside the persona's directory, never into it: one closed
+      // session record per directory (shots-boundary.js).
+      assert.equal(args[args.indexOf('--output-dir') + 1], path.join(shotsDir, `${persona}_phone`));
+      assert.ok(fs.statSync(path.join(shotsDir, `${persona}_phone`)).isDirectory());
+      // Everything else is the persona's own browser: the same storage state
+      // (signed in as the same persona, or the guest's signed-out state), the
+      // same proxy listener (the same identity on a hosted app), the same
+      // init script and limits.
+      const strip = (list) => list.filter((arg, index) => index > 1
+        && !['--device', 'iPhone 15', '--output-dir'].includes(arg) && !arg.startsWith(shotsDir));
+      assert.deepEqual(strip(args), strip(desktopArgs), desktop);
+      assert.equal(args[args.indexOf('--proxy-server') + 1], desktopArgs[desktopArgs.indexOf('--proxy-server') + 1]);
+      assert.equal(args[args.indexOf('--storage-state') + 1], desktopArgs[desktopArgs.indexOf('--storage-state') + 1]);
+    }
+    assert.equal(fs.existsSync(path.join(shotsDir, 'full_admin_phone')), false, 'no directory for a browser that is not there');
+
+    // The phone browsers record at the phone motion screens' size, the
+    // others at theirs; a phone browser with no size of its own takes theirs.
+    const clips = writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_RECORD_CLIPS: '1',
+      SHOTS_CLIP_SIZE: '1280x800', SHOTS_PHONE_CLIP_SIZE: '390x844' }).config;
+    assert.ok(clips.mcpServers.browser_member.args.includes('--save-video=1280x800'));
+    assert.ok(clips.mcpServers.browser_member_phone.args.includes('--save-video=390x844'));
+    const shared = writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_RECORD_CLIPS: '1',
+      SHOTS_CLIP_SIZE: '1280x800', SHOTS_PHONE_CLIP_SIZE: '390' }).config;
+    assert.ok(shared.mcpServers.browser_member_phone.args.includes('--save-video=1280x800'));
+    assert.equal(writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_PHONE_CLIP_SIZE: '390x844' })
+      .config.mcpServers.browser_member_phone.args.some((arg) => arg.startsWith('--save-video')), false,
+    'a size alone records nothing');
+
+    // A persona list the platform did not write is refused, not guessed at.
+    for (const odd of ['["admin"]', '["member","../state"]', '"member"', '{}', 'not json']) {
+      assert.throws(() => writeConfig(dir, { SHOTS_PHONE_PERSONAS: odd }), /inputs are invalid/, odd);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the Claude runner gives the shots bridge its directory; the Codex runner has no shots bridge', () => {
   const claudeRunner = read('run-cc.sh');
   const codexRunner = read('run-codex-agent.sh');
@@ -232,7 +433,7 @@ test('the Claude runner gives the shots bridge its directory; the Codex runner h
   // Every shots turn takes shots now; nothing depends on a mode flag.
   assert.match(claudeRunner, /export SHOTS_DIR="\$SHOTS_TMP\/shots"/);
   assert.match(claudeRunner,
-    /mkdir -p "\$SHOTS_DIR\/member" "\$SHOTS_DIR\/admin" "\$SHOTS_DIR\/full_admin"/);
+    /mkdir -p "\$SHOTS_DIR\/member" "\$SHOTS_DIR\/admin" "\$SHOTS_DIR\/full_admin" "\$SHOTS_DIR\/guest"/);
   assert.doesNotMatch(claudeRunner, /EVIDENCE_MODE/);
   assert.doesNotMatch(claudeRunner, /EVIDENCE_COMPLETION_REMINDER/);
   assert.doesNotMatch(claudeRunner, RETIRED_TOOLS);
@@ -296,7 +497,7 @@ function bridgeFixture(t, { declaredChanges } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-bridge-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const shotsDir = path.join(dir, 'shots');
-  for (const persona of ['member', 'admin', 'full_admin']) fs.mkdirSync(path.join(shotsDir, persona), { recursive: true });
+  for (const persona of ['member', 'admin', 'full_admin', 'guest']) fs.mkdirSync(path.join(shotsDir, persona), { recursive: true });
   const hostedFile = path.join(dir, 'hosted-origins.json');
   fs.writeFileSync(hostedFile, JSON.stringify({
     version: 2, baseOrigin: 'http://base.example.invalid', headOrigin: 'http://head.example.invalid',
@@ -350,7 +551,7 @@ function bridgeFixture(t, { declaredChanges } = {}) {
   return { dir, shotsDir, runId, env, calls, tools, serverInfo, call, platformFetch };
 }
 
-test('the shots bridge offers exactly six tools and talks only to its own run', async (t) => {
+test('the shots bridge offers exactly seven tools and talks only to its own run', async (t) => {
   const bridge = bridgeFixture(t);
   assert.equal(bridge.serverInfo.name, 'usernode-before-after-shots');
   assert.deepEqual([...bridge.tools.keys()], SHOTS_TOOLS);
@@ -368,17 +569,44 @@ test('the shots bridge offers exactly six tools and talks only to its own run', 
   assert.equal(one.isError, false);
   const note = await bridge.call('note_change', { change: 'saved-toast', note: 'The undo link needs a second list.' });
   assert.equal(note.isError, false);
+  // A problem noticed on the after build goes to its own route, with only
+  // the fields the agent gave.
+  const problem = await bridge.call('note_problem', {
+    change: 'invite-suggestions', screen: 'phone', problem: 'The results table is cut off at the right edge.',
+    alsoBefore: false, shot: 'screen',
+  });
+  assert.equal(problem.isError, false);
+  const unsure = await bridge.call('note_problem', {
+    change: 'invite-suggestions', screen: 'desktop', problem: 'The sort control overlaps a column heading.',
+  });
+  assert.equal(unsure.isError, false);
 
   assert.deepEqual(bridge.calls.map((sent) => [sent.method, sent.origin, sent.path]), [
     ['GET', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/context`],
     ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/skip`],
     ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/skip`],
     ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/note`],
+    ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/problem`],
+    ['POST', 'http://platform.test:3000', `/api/internal/shots/${bridge.runId}/problem`],
   ]);
   assert.ok(bridge.calls.every((sent) => sent.headers.authorization === 'Bearer run-scoped-jwt'));
   assert.deepEqual(JSON.parse(bridge.calls[1].body), { change: null, reason: 'Every screen shows a sign-in page.' });
   assert.deepEqual(JSON.parse(bridge.calls[2].body), { change: 'invite-suggestions', reason: 'Needs a second member.' });
   assert.deepEqual(JSON.parse(bridge.calls[3].body), { change: 'saved-toast', note: 'The undo link needs a second list.' });
+  assert.deepEqual(JSON.parse(bridge.calls[4].body), {
+    change: 'invite-suggestions', screen: 'phone', problem: 'The results table is cut off at the right edge.',
+    alsoBefore: false, shot: 'screen',
+  });
+  assert.deepEqual(JSON.parse(bridge.calls[5].body), {
+    change: 'invite-suggestions', screen: 'desktop', problem: 'The sort control overlaps a column heading.',
+  });
+  const problemTool = /registerTool\('note_problem', \{[\s\S]*?\n\}, async/.exec(read('shots-mcp.js'))[0];
+  assert.match(problemTool, /not about the declared change itself/);
+  assert.match(problemTool, /never a matter of taste, style or wording/);
+  assert.match(problemTool, /"Also noticed" and changes nothing about the shots/);
+  assert.match(problemTool, /At most five per run/);
+  assert.match(problemTool, /problem: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(300\)/);
+  assert.match(problemTool, /alsoBefore: z\.union\(\[z\.boolean\(\), z\.literal\('unknown'\)\]\)\.optional\(\)/);
 
   // A bridge without its run, token or platform refuses to start.
   for (const broken of [{ SHOTS_JWT: '' }, { SHOTS_RUN_ID: 'not-a-run' }, { PLATFORM_URL: 'file:///etc' }]) {
@@ -547,6 +775,98 @@ test('save_clip publishes the newest recording and retires every older one', asy
   fs.symlinkSync(path.join(bridge.dir, 'elsewhere.webm'), path.join(member, 'linked.webm'));
   assert.equal((await clip('saved-toast', 'after')).value.code, 'clip_not_found');
   assert.equal(uploads(bridge).length, 3);
+});
+
+test('the guest browser\'s shots and clips are read from its own directory', async (t) => {
+  const bridge = bridgeFixture(t, { declaredChanges: [
+    { id: 'signed-out-landing', persona: 'guest', intent: { animation: 'motion' } },
+  ] });
+  const guest = path.join(bridge.shotsDir, 'guest');
+  fs.writeFileSync(path.join(guest, 'landing-desktop-after.png'), 'guest still');
+  stamp(bridge, 'guest', 'landing-desktop-after.png', `${HEAD}/`);
+  const saved = await bridge.call('save_shot', { shots: [{
+    change: 'signed-out-landing', screen: 'desktop', side: 'after', file: 'landing-desktop-after.png',
+  }] });
+  assert.equal(saved.isError, false);
+  assert.equal(Buffer.from(uploads(bridge).at(-1).body).toString(), 'guest still');
+
+  const clipFile = path.join(guest, 'landing.webm');
+  fs.writeFileSync(clipFile, 'guest clip');
+  const when = new Date(Date.now() - 1000);
+  fs.utimesSync(clipFile, when, when);
+  boundary.recordSession(guest, [`${BASE}/`]);
+  const clip = await bridge.call('save_clip', { change: 'signed-out-landing', screen: 'desktop', side: 'before' });
+  assert.equal(clip.isError, false);
+  assert.equal(Buffer.from(uploads(bridge).at(-1).body).toString(), 'guest clip');
+});
+
+test('a phone screen\'s shots and clips are read from its phone browser\'s directory', async (t) => {
+  const bridge = bridgeFixture(t, { declaredChanges: [
+    { id: 'install-strip', persona: 'member', intent: { animation: 'motion' } },
+    { id: 'admin-sheet', persona: 'read_only_admin', intent: { animation: 'motion' } },
+  ] });
+  // As the brief names them: each change's phone screen in the persona's
+  // phone browser, its desktop screen in the persona's own.
+  const context = (await bridge.call('get_brief')).value;
+  context.screenBrowsers = {
+    'install-strip': { desktop: 'browser_member', phone: 'browser_member_phone' },
+    'admin-sheet': { phone: 'browser_admin_phone' },
+  };
+  const platformFetch = bridge.platformFetch;
+  const { tools } = loadBridge(bridge.env, async (url, init) => (new URL(url).pathname.endsWith('/context')
+    ? new Response(JSON.stringify({ ok: true, context }), { status: 200 })
+    : platformFetch(url, init)));
+  const call = async (name, args) => {
+    const result = await tools.get(name)(args);
+    return { isError: result.isError === true, value: JSON.parse(result.content[0].text) };
+  };
+  const member = path.join(bridge.shotsDir, 'member');
+  const memberPhone = path.join(bridge.shotsDir, 'member_phone');
+  const adminPhone = path.join(bridge.shotsDir, 'admin_phone');
+  for (const dir of [memberPhone, adminPhone]) fs.mkdirSync(dir);
+  const record = (dir, name, content, secondsAgo, ...pages) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, content);
+    const when = new Date(Date.now() - secondsAgo * 1000);
+    fs.utimesSync(file, when, when);
+    if (pages.length) boundary.recordSession(dir, pages);
+  };
+  const lastBody = () => Buffer.from(uploads(bridge).at(-1).body).toString();
+
+  // A still the phone browser saved, stamped by its own observer.
+  fs.writeFileSync(path.join(memberPhone, 'strip-phone-after.png'), 'phone still');
+  stamp(bridge, 'member_phone', 'strip-phone-after.png', `${HEAD}/`);
+  const still = await call('save_shot', { shots: [
+    { change: 'install-strip', screen: 'phone', side: 'after', file: 'strip-phone-after.png' },
+  ] });
+  assert.equal(still.isError, false);
+  assert.equal(lastBody(), 'phone still');
+  // Two browsers that saved the same name: the one saved last is the one meant.
+  record(member, 'same-name.png', 'desktop, earlier', 30);
+  stamp(bridge, 'member', 'same-name.png', `${HEAD}/`);
+  record(memberPhone, 'same-name.png', 'phone, just now', 1);
+  stamp(bridge, 'member_phone', 'same-name.png', `${HEAD}/`);
+  assert.equal((await call('save_shot', { shots: [
+    { change: 'install-strip', screen: 'phone', side: 'after', file: 'same-name.png' },
+  ] })).isError, false);
+  assert.equal(lastBody(), 'phone, just now');
+
+  // The desktop browser's newer session never stands for the phone clip,
+  // nor the phone browser's for the desktop one.
+  record(memberPhone, 'phone-before.webm', 'phone clip', 20, `${BASE}/`);
+  record(member, 'desktop-after.webm', 'desktop clip', 10, `${HEAD}/`);
+  assert.equal((await call('save_clip', { change: 'install-strip', screen: 'phone', side: 'before' })).isError, false);
+  assert.equal(lastBody(), 'phone clip');
+  assert.equal((await call('save_clip', { change: 'install-strip', screen: 'desktop', side: 'after' })).isError, false);
+  assert.equal(lastBody(), 'desktop clip');
+  // The read-only admin's phone browser records into admin_phone.
+  record(adminPhone, 'sheet.webm', 'admin phone clip', 1, `${HEAD}/`);
+  assert.equal((await call('save_clip', { change: 'admin-sheet', screen: 'phone', side: 'after' })).isError, false);
+  assert.equal(lastBody(), 'admin phone clip');
+  // A brief without screenBrowsers reads the persona's own directory, as
+  // before: the phone directory only when the brief names that browser.
+  assert.equal((await bridge.call('save_clip', { change: 'install-strip', screen: 'phone', side: 'after' })).isError, false);
+  assert.equal(lastBody(), 'desktop clip');
 });
 
 test('save_clip publishes a recording only when its whole session stayed on its side\'s address', async (t) => {

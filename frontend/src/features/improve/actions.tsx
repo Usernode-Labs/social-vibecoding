@@ -18,6 +18,7 @@
 import { type ReactNode } from 'react';
 
 import { ArrowPathIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -54,17 +55,22 @@ function QuickAction({ id, label, onClick }: {
 }
 
 /**
- * Ask for a change: ONE BUTTON, where there were two (UI overhaul).
+ * Suggest an improvement: ONE BUTTON, where there were two (UI overhaul).
  *
  * The menu offered "Give feedback" and "New change" side by side, and people
  * found both confusing: feedback read as a note to nobody in particular, and
  * New change started an agent session without saying so. The two did the
  * same thing from where the viewer stands, asking for something to change,
  * and differed in who does the work. So the button asks for the change (the
- * same dialog, headed "Ask for a change", which posts a request members can
- * see, vote on and pick up), and starting one yourself is "Start a new
- * change" under Agent sessions in the list below, because what it opens is
- * an agent session (../app-context/app-context-sheet.tsx).
+ * same dialog, headed "Suggest an improvement", which posts a request members
+ * can see, vote on and pick up), and building it yourself is "Build it
+ * yourself", leading the list's Agent chats below, which shows once the
+ * viewer has had an agent session (../app-context/app-context-sheet.tsx
+ * AgentChats). Until then this button is the menu's one way to change the
+ * app, which is the point for a first-time user.
+ *
+ * It said "Ask for a change" until the first-session run-through (5 Oct
+ * 2026), which asked for words a first-time user would use.
  *
  * It needs nothing of the viewer (no collaborator bit, no session, no repo),
  * so it is always shown.
@@ -73,6 +79,7 @@ function QuickAction({ id, label, onClick }: {
  * self-hosted row (#1367), and so can this: on Home it asks Homeroom itself.
  */
 export function ImproveQuickActions(): ReactNode {
+  const t = useMessages('agent');
   return (
     <div
       id="improve-quick-actions"
@@ -80,7 +87,7 @@ export function ImproveQuickActions(): ReactNode {
     >
       <QuickAction
         id="improve-row-feedback"
-        label="Ask for a change"
+        label={t('agent:menu.suggestImprovement')}
         onClick={() => Improve.giveFeedback()}
       />
     </div>
@@ -119,6 +126,7 @@ export function ImproveQuickActions(): ReactNode {
  * the wording.
  */
 function UpdateStatus(): ReactNode {
+  const t = useMessages('agent');
   const { versionState, deploying, appUpdateReady } = useStoreState(improveStore);
   const platformBusy = versionState === 'deploying' || versionState === 'downloading';
   const ready = versionState === 'ready' || versionState === 'failed';
@@ -135,7 +143,7 @@ function UpdateStatus(): ReactNode {
       >
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
-          There is a new version available. Click here to get the new version.
+          {t('agent:menu.update.platformReady')}
         </span>
       </button>
     );
@@ -153,7 +161,7 @@ function UpdateStatus(): ReactNode {
       >
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
-          This app has a new version. Click here to reload it.
+          {t('agent:menu.update.appReady')}
         </span>
       </button>
     );
@@ -164,9 +172,9 @@ function UpdateStatus(): ReactNode {
     // says the more surprising of the two.
     const line = platformBusy
       ? (versionState === 'downloading'
-        ? 'A new version of the platform is downloading. The reload appears once it is ready.'
-        : 'A new version of the platform is being built.')
-      : 'A new version of this app is being built.';
+        ? t('agent:menu.update.platformDownloading')
+        : t('agent:menu.update.platformBuilding'))
+      : t('agent:menu.update.appBuilding');
     return (
       <div
         id="improve-update-note"

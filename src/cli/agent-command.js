@@ -69,7 +69,7 @@ const MODES = {
     verb: 'write code in',
   },
   scout: {
-    label: 'read-only spec turn',
+    label: 'read-only plan turn',
     readOnly: true,
     verb: 'read (no edits, no commits) in',
   },
@@ -152,13 +152,18 @@ function describeError(response) {
     lease_lost: 'This machine\'s lease expired or was released. Run `agent run` again to re-attach.',
     turn_not_offered: 'That turn is no longer waiting for this machine.',
     turn_not_running: 'That turn already ended (it may have been stopped from the web page).',
-    read_only_turn: 'That turn is read-only: it drafts a spec and cannot carry a commit.',
+    read_only_turn: 'That turn is read-only: it drafts a plan and cannot carry a commit.',
     insufficient_scope: 'This credential predates local coding agents. Run `social-vibecoding login` to re-authorize.',
     branch_moved: 'The branch moved underneath this turn. Re-run it.',
     tree_mismatch: 'The reconstructed commit did not match the local tree; nothing was pushed.',
     parent_tree_mismatch: 'The parent commit on the branch does not match the local parent; nothing was pushed.',
     github_unavailable: 'GitHub is not reachable from the platform right now.',
   };
+  // The platform says why when GitHub refused because its hourly budget is
+  // used up (services/github-budget.js), with when it resets.
+  if (code === 'github_unavailable' && typeof response?.data?.message === 'string' && response.data.message) {
+    return response.data.message;
+  }
   return map[code] || code || `HTTP ${response?.status}`;
 }
 
@@ -405,14 +410,14 @@ async function runOneTurn(api, turn, context, io) {
         ? (outcome.stderr || `claude exited ${outcome.exitCode}`)
         : (apiFailure
           ? describeAgentApiFailure(apiFailure)
-          : (specMd.trim() ? '' : 'The run produced no spec text.'))
+          : (specMd.trim() ? '' : 'The run produced no plan text.'))
       ).slice(0, 400) + dirtyNote || null,
       specMd: (specMd.trim() && !apiFailure) ? specMd : null,
     });
     if (!result.ok) io.err(`Could not report the turn result: ${describeError(result)}\n`);
     io.out(failed
       ? `✗ Turn ${turn.turnId} failed.\n`
-      : `✓ Turn ${turn.turnId} done: drafted a ${specMd.split('\n').length}-line spec.\n`);
+      : `✓ Turn ${turn.turnId} done: drafted a ${specMd.split('\n').length}-line plan.\n`);
     return;
   }
 
@@ -543,7 +548,7 @@ async function agentRun(args, io, deps) {
 
   io.out(
     `Waiting for a turn. Type in the Dev chat with "Run on: ${label}" selected. Ctrl-C to detach.\n`
-    + 'Both spec (read-only) and coding turns come here, and each one asks before it runs.\n'
+    + 'Both plan (read-only) and coding turns come here, and each one asks before it runs.\n'
   );
   let failures = 0;
   try {

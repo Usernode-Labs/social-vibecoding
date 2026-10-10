@@ -31,6 +31,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -77,6 +78,7 @@ function makeHarness(recordAnswers) {
   const answers = [...recordAnswers];
 
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console: { ...console, warn: () => {}, debug: () => {} },
     Date,
     escapeHtml: (s) => String(s),
@@ -163,6 +165,9 @@ function makeHarness(recordAnswers) {
     dataLoads.push(slug);
     if (!slug) return null;
     AppView._ghIssues = [{ number: 7, title: `Issue 7 of ${slug}`, app: slug }];
+    // What a real load does at the end of _fetchDevData (#4524): the lists
+    // above belong to this app, and only for this app do they answer.
+    AppView._devDataSlug = slug;
     return true;
   };
   AppView._renderTopicHead = () => {

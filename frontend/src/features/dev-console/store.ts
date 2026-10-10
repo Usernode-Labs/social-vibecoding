@@ -36,6 +36,11 @@
 // direct require the test does. `allowImportingTsExtensions` in
 // frontend/tsconfig.json is what lets tsc accept it. kit-surface.ts is itself
 // React-free and dependency-free, so the invariant otherwise holds.
+//
+// For the same reason its one message is read through the global the language
+// runtime publishes (window.PlatformI18n), the way a classic script reads it,
+// not through an import of the runtime: that would pull the bundler-resolved
+// catalog into a module node must be able to load by itself.
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface.ts';
 
 export type DevConsoleLevel = 'error' | 'warn' | 'info' | 'log' | 'debug' | string;
@@ -148,7 +153,8 @@ export class DevConsoleStore {
   countsLabel(): string {
     const by: Record<string, number> = { error: 0, warn: 0, info: 0, log: 0, debug: 0 };
     for (const e of this.entries) by[e.level] = (by[e.level] || 0) + 1;
-    return `${this.entries.length} total · ${by.error} err · ${by.warn} warn`;
+    const i18n = (globalThis as unknown as { PlatformI18n: { t: (id: string, values?: Record<string, unknown>) => string } }).PlatformI18n;
+    return i18n.t('devchat:console.counts', { total: this.entries.length, errors: by.error, warnings: by.warn });
   }
 
   setFilter(filter: string): void {

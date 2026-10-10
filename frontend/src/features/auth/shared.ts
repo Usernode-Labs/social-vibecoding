@@ -16,6 +16,7 @@
  */
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { t } from '../../lib/i18n/runtime';
 
 /** The route names `AuthScreens.show()` accepts, and their screen roots. */
 export const AUTH_SCREEN_IDS: Record<string, string> = {
@@ -37,8 +38,9 @@ export const AUTH_SCREEN_IDS: Record<string, string> = {
  * /api/auth/register and the email-code sign-up's username. The first-run
  * "Choose your username" step says the same thing in its own sentence.
  */
-export const USERNAME_RULE = 'Letters, numbers and underscores, 3 to 32 characters.';
-export const PASSWORD_RULE = 'At least 8 characters.';
+// The words are catalog entries now, one for each place they are said:
+// auth:register.usernameRule and .passwordRule, auth:login.signup.usernameRule,
+// auth:signInSheet.usernamePlaceholder and .providerUsernamePlaceholder.
 
 /**
  * Said next to every field where a new account types its handle (#3575):
@@ -51,7 +53,7 @@ export const PASSWORD_RULE = 'At least 8 characters.';
  * spells the same words; tests/username-first-choice.test.js holds the two
  * copies together.
  */
-export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom.';
+// Catalog entries: auth:register.usernamePublic and auth:login.signup.usernamePublic.
 
 /**
  * The attributes every username field carries, so a phone does not
@@ -60,6 +62,14 @@ export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users
  * capitalised name is still a different name in the register form.
  */
 export const HANDLE_FIELD = { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false } as const;
+
+/**
+ * What blockedOffline says. Exported so a form can tell this error from any
+ * other and clear it when the connection returns, in whatever language.
+ */
+export function offlineSignInText(): string {
+  return t('auth:offline.signIn');
+}
 
 /** One public app as `/api/public/apps` returns it. */
 export interface PublicApp {
@@ -104,6 +114,13 @@ interface LegacyWindow {
     // stale-session recovery in fetchSessionMint.
     _dropCachedSession?(): void;
     restoreFromHash?(): void;
+    // A sign-in has begun here, so a stale build is no longer swapped in
+    // under the signed-out screens (see noteSignInBegun below).
+    noteSignInBegun?(): void;
+    // Onto the live build before the signed-in shell starts, when this
+    // page is behind it. Resolves false when it stays; never once it
+    // reloads (public/js/app.js).
+    _moveToLiveShell?(moment: 'signed-in' | 'signed-out'): Promise<boolean>;
   };
   Settings?: { logout?(): void };
   NativeChrome?: {
@@ -124,9 +141,18 @@ interface LegacyWindow {
     resolvedTheme?(): 'light' | 'dark';
   };
   AuthScreens?: Record<string, unknown>;
+  // The join step (./communities-first-run.js), asked whether an account
+  // that has just signed in goes straight on to its first session.
+  CommunitiesFirstRun?: { firstSessionNow?(user: unknown): boolean };
   // The native bridge (usernode-native). Absent in a regular browser, which is
   // the NORMAL state for the wallet fast path — see LoginScreen's walletDetect.
-  usernode?: { isNative?: boolean; getBridgeDiagnostics?(): unknown };
+  usernode?: {
+    isNative?: boolean;
+    getBridgeDiagnostics?(): unknown;
+    getBridgeInfo?(): Promise<{ capabilities?: unknown } | null>;
+    // The app's own Apple or Google sheet (NATIVE-BRIDGE.md, Native sign-in).
+    signInWithProvider?(options: { provider: string; nonce: string }): Promise<{ idToken?: unknown } | null>;
+  };
   getNodeAddress?(): Promise<string | null>;
   signMessage?(message: string): Promise<{ publicKey: string; signature: string }>;
 }
@@ -207,14 +233,35 @@ export function blockedOffline(setError?: (msg: string) => void): boolean {
   } catch {
     offline = false;
   }
-  if (!offline) return false;
-  if (setError) setError("You're offline. Signing in needs a connection.");
+  if (!offline) {
+    // Every exchange on these screens runs this guard before it sends, so
+    // this is where the shell hears that a sign-in has begun.
+    noteSignInBegun();
+    return false;
+  }
+  if (setError) setError(offlineSignInText());
   try {
     legacy().Offline?.nudge();
   } catch {
     /* ignore */
   }
   return true;
+}
+
+/**
+ * A sign-in has begun on this page: a credential exchange is about to go out,
+ * or a provider's trip came back to finish one. From here the shell stops
+ * offering to swap a stale build in under the signed-out screens
+ * (App.noteSignInBegun in public/js/app.js): a request in flight is never cut
+ * off, and the sign-in moves to the live build once it has succeeded
+ * (AuthScreens.finishLogin), before the signed-in shell starts.
+ */
+export function noteSignInBegun(): void {
+  try {
+    legacy().App?.noteSignInBegun?.();
+  } catch {
+    /* no shell to tell: nothing on this page would swap the build */
+  }
 }
 
 /** Does a (possibly waiting-room) session exist right now? */
@@ -228,8 +275,6 @@ export function isNative(): boolean {
   return !!(w.usernode && w.usernode.isNative);
 }
 
-const NATIVE_LOGIN_PREPARATION_MESSAGE =
-  'Secure app session could not be prepared. Force-quit and reopen Homeroom, then try again.';
 const NATIVE_DIAGNOSTIC_RE = /^[a-z][a-z0-9_-]{0,95}$/;
 const BRIDGE_STATES = new Set([
   'ready', 'blocked-frame', 'unsupported', 'inconclusive', 'unattached', 'unknown',
@@ -328,7 +373,7 @@ function nativePreparationDetails(
 export class NativeLoginPreparationError extends Error {
   constructor(
     readonly diagnostic: string | null,
-    message = NATIVE_LOGIN_PREPARATION_MESSAGE,
+    message = t('auth:native.sessionNotPrepared'),
     readonly details: NativeLoginFailureDetails | null = null,
   ) {
     super(message);
@@ -337,7 +382,7 @@ export class NativeLoginPreparationError extends Error {
 }
 
 export function sessionMintFailureMessage(error: unknown): string {
-  return error instanceof NativeLoginPreparationError ? error.message : 'Network error';
+  return error instanceof NativeLoginPreparationError ? error.message : t('auth:session.networkError');
 }
 
 /**
@@ -352,7 +397,7 @@ async function prepareNativeMint(w: LegacyWindow): Promise<void> {
   if (!chrome || typeof chrome.prepareForLogin !== 'function') {
     throw new NativeLoginPreparationError(
       null,
-      'This Homeroom app version must be updated for secure sign-in',
+      t('auth:native.updateRequired'),
     );
   }
   try {
@@ -432,6 +477,7 @@ export async function fetchSessionMint(
   init?: RequestInit,
 ): Promise<Response> {
   const w = legacy();
+  noteSignInBegun();
   await prepareNativeMint(w);
   const res = await fetch(input, init);
   if (res.status !== 409) return res;
@@ -466,6 +512,98 @@ export async function finishLogin(): Promise<LoginCompletionFailure | null> {
     (() => Promise<LoginCompletionFailure | null>);
   if (!fn) return { stage: 'open-session', status: null, code: 'client-error' };
   return fn();
+}
+
+/** What a password sign-in came to: in, or what to say and (in the app) the bridge's report. */
+export type PasswordSignIn =
+  | { ok: true }
+  | { ok: false; error: string; details: NativeLoginFailureDetails | null };
+
+/**
+ * The password exchange, `POST /api/auth/login` with a username or an email
+ * and the password: the sign-in screen's form (./login.tsx) and the sign-in
+ * sheet's password step (./sign-in-sheet.tsx) both send it through here, so
+ * they cannot disagree about the route, the session-mint boundary or what a
+ * refusal says. The caller checks `blockedOffline` first and calls
+ * finishLogin after, as it does for every other exchange.
+ */
+export async function passwordSignIn(username: string, password: string): Promise<PasswordSignIn> {
+  try {
+    const res = await fetchSessionMint('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || t('auth:signIn.failed'), details: null };
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: sessionMintFailureMessage(error),
+      details: error instanceof NativeLoginPreparationError ? error.details : null,
+    };
+  }
+}
+
+/**
+ * What a waitlist "you're in" mail's link asked for. The mail links to
+ * `/?signup=1&t=<token>[&key=<one-time link>]` for a new account and `/?login=1` for one that
+ * exists (src/services/mail/index.js); AuthScreens.enter() reads either off
+ * the query, keeps it here and puts the address back to `/`, so the story
+ * (./landing.tsx) opens with the sign-in sheet over it at this step.
+ */
+export interface ReleaseLink {
+  route: 'signup' | 'login';
+  /** The waitlist row's more_token, which names the address to sign up with. */
+  token: string | null;
+  /**
+   * #4594: the mail's one-time sign-in link (src/services/release-links.js),
+   * spent by the sheet's POST to /api/auth/release-link. Null when the mail
+   * carried none; an expired or used one falls back to `token`'s code.
+   */
+  signIn?: string | null;
+}
+
+const RELEASE_TOKEN_RE = /^[A-Za-z0-9_-]{8,128}$/;
+const RELEASE_SIGN_IN_RE = /^[A-Za-z0-9_-]{43}$/;
+
+/** The release link, once: whoever shows it takes it. */
+export function takeReleaseLink(): ReleaseLink | null {
+  const host = legacy().AuthScreens;
+  const link = host?._releaseLink as Partial<ReleaseLink> | null | undefined;
+  if (!host || !link) return null;
+  host._releaseLink = null;
+  if (link.route !== 'signup' && link.route !== 'login') return null;
+  const token = typeof link.token === 'string' && RELEASE_TOKEN_RE.test(link.token) ? link.token : null;
+  const signIn = link.route === 'signup' && typeof link.signIn === 'string' && RELEASE_SIGN_IN_RE.test(link.signIn)
+    ? link.signIn : null;
+  return { route: link.route, token, signIn };
+}
+
+/** Hand the link on, for the sign-in screen to take when the story is switched off. */
+export function keepReleaseLink(link: ReleaseLink): void {
+  const host = legacy().AuthScreens;
+  if (host) host._releaseLink = link;
+}
+
+/**
+ * Does signing in with the session that now exists lead straight to its
+ * first session, "What do you want to make?" (../first-session)? Asked of
+ * /api/auth/me the way AuthScreens.finishLogin will ask it, and answered by
+ * the join step that opens it (./communities-first-run.js), so the two
+ * cannot disagree. False on anything unexpected: the sign-in then finishes
+ * as it always has.
+ */
+export async function firstSessionNext(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/auth/me', { credentials: 'same-origin', cache: 'no-store' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return legacy().CommunitiesFirstRun?.firstSessionNow?.(data?.user) === true;
+  } catch {
+    return false;
+  }
 }
 
 /**

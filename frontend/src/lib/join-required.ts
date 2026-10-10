@@ -43,6 +43,8 @@
  * prompt and the one in-flight question.
  */
 
+import { t } from './i18n/runtime';
+
 export type JoinRequired = {
   code: 'join_required';
   error?: string;
@@ -67,10 +69,13 @@ const asking = new Map<string, Promise<boolean>>();
  *
  * An anchor only ASKS: it resolves true for Join and false for anything
  * else, and the membership is written here either way, so there is one join
- * path whoever asked.
+ * path whoever asked. The one exception is a page opened from an invite link
+ * (#3700, dev-board/workshop/invite-offer.ts): its Join follows the link,
+ * which writes the membership itself, and the anchor resolves 'joined' to
+ * say it is already done.
  */
 export type JoinAnchor = {
-  ask: (body: JoinRequired) => Promise<boolean>;
+  ask: (body: JoinRequired) => Promise<boolean | 'joined'>;
   /** False while the card is mounted but not showing (a hidden screen). */
   visible: () => boolean;
 };
@@ -88,10 +93,10 @@ export function registerJoinAnchor(slug: string, anchor: JoinAnchor): () => void
 async function askInDialog(body: JoinRequired, name: string): Promise<boolean> {
   const w = window as any;
   return !!(await w.ConfirmModal?.show?.({
-    title: `Join ${name}?`,
-    message: 'Members start changes, file requests, vote and chat here. Join to take part.',
-    confirmLabel: 'Join',
-    cancelLabel: 'Not now',
+    title: t('core:join.prompt.title', { community: name }),
+    message: t('core:join.prompt.message'),
+    confirmLabel: t('core:join.prompt.join'),
+    cancelLabel: t('core:join.prompt.notNow'),
   }));
 }
 
@@ -110,6 +115,7 @@ export function offerJoin(body: JoinRequired): Promise<boolean> {
     const name = body.app?.name || slug;
     const anchor = anchors.get(slug);
     const ok = anchor && anchor.visible() ? await anchor.ask(body) : await askInDialog(body, name);
+    if (ok === 'joined') return true;
     if (!ok) return false;
     if (typeof w.Home?.setMembership !== 'function') return false;
     // The name rides along for the toast: Home may not have loaded this app

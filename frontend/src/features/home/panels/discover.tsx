@@ -28,7 +28,7 @@
  * flow into a single continuous rail under the one "Discover" heading.
  *
  * What did NOT change: the ORDER. Curated first (by `featured_order`), then
- * popular (by active users) — exactly the sequence the two rails drew in,
+ * popular (public communities you have not joined, by members) — exactly the sequence the two rails drew in,
  * concatenated. `discoverView` still derives the two lists separately and
  * both counts are still stamped on the article, because they describe the
  * block's composition and dapp.json selects on them; only the rendering is
@@ -73,6 +73,7 @@ import { CheckIcon, ChevronRightIcon, PlusWideIcon } from '@/components/ui/icons
 import { clampFrame } from '../../../lib/illustration-framing';
 
 import type { IconView } from '../grid-store';
+import { useMessages } from '../../../lib/i18n/react';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
 import { PanelShell, cardTint } from './ui';
 
@@ -160,6 +161,7 @@ export function activateOnKey(e: KeyboardEvent<HTMLDivElement>) {
 
 export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: DiscoverTileView; preview?: boolean; previewTheme?: 'light' | 'dark' }) {
   const { added } = tile;
+  const t = useMessages('home');
   return (
     <div
       // The tint saved with the illustration when its author picked one, and
@@ -194,8 +196,10 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
           }`}
           data-slug={tile.slug}
           data-added={String(added)}
-          title={added ? 'Added. Tap to remove from Shortcuts' : 'Add to Shortcuts'}
-          aria-label={added ? `Remove ${tile.name} from Shortcuts` : `Add ${tile.name} to Shortcuts`}
+          title={added ? t('home:discover.card.addedTip') : t('home:discover.card.addTip')}
+          aria-label={added
+            ? t('home:discover.card.removeNamed', { app: tile.name })
+            : t('home:discover.card.addNamed', { app: tile.name })}
           aria-pressed={added}
         >
           {added
@@ -223,7 +227,7 @@ export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: Di
             4.5:1 on two of the five pastel tints (4.39 and 4.36). */}
         {tile.contributors ? (
           <span className="home-discover-meta pt-0.5 text-[12px] leading-none text-zinc-600 dark:text-zinc-400">
-            {tile.contributors === 1 ? '1 contributor' : `${tile.contributors} contributors`}
+            {t('home:discover.card.contributors', { count: tile.contributors })}
           </span>
         ) : null}
       </div>
@@ -291,6 +295,7 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
  * continues (see `.home-discover-rail` in app.css).
  */
 export function DiscoverPanel({ view }: { view: DiscoverView }) {
+  const t = useMessages('home');
   // Curated first, then popular — the same order the two rails drew in, now
   // as one list. Deduped by slug because the two derivations are independent:
   // `popularApps` excludes `featured` today, but a flat lane is where that
@@ -328,10 +333,10 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
         >
           <span className="min-w-0 flex-1">
             <span className="block text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
-              Nothing to discover right now
+              {t('home:discover.empty.title')}
             </span>
             <span className="block text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
-              Browse the directory to find an app to try.
+              {t('home:discover.empty.detail')}
             </span>
           </span>
           <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />

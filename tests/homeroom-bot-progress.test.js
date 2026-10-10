@@ -17,10 +17,12 @@ const ago = (minutes) => new Date(NOW.getTime() - minutes * 60 * 1000).toISOStri
 const stage = (row) => progress.stageOf(row, { now: NOW });
 
 test('the steps a request and a first version go through, and which step each stage is', () => {
+  // #4053: a first version's steps say what is happening, never what to do
+  // ("Build it" read as an instruction). A request's steps keep their names.
   assert.deepEqual(progress.FIRST_VERSION_STEPS, [
-    'Set up the project', 'Read the description', 'Write a plan', 'Build it', 'Run its checks', 'Group vote', 'Live',
+    'Setting up the project', 'Reading the description', 'Planning it', 'Building it', 'Testing it', 'Ready to try', 'Live',
   ]);
-  assert.deepEqual(progress.REQUEST_STEPS, progress.FIRST_VERSION_STEPS.slice(1).map((s) => s.replace('description', 'request')));
+  assert.deepEqual(progress.REQUEST_STEPS, ['Read the request', 'Write a plan', 'Build it', 'Test it', 'Approval', 'Live']);
   assert.equal(progress.stepNumber('setting_up', true), 1);
   assert.equal(progress.stepNumber('reading', true), 2);
   assert.equal(progress.stepNumber('reading', false), 1);
@@ -31,6 +33,38 @@ test('the steps a request and a first version go through, and which step each st
   assert.equal(progress.stepNumber('nonsense', false), null);
 });
 
+test('#4053: the build line a first version\'s thumbnail shows, for its creator and for everyone else', () => {
+  const line = (s, o) => progress.buildLineOf(s, o);
+  const creator = { forCreator: true };
+  // Steps 1 to 3: Homeroom bot is planning it, for everyone.
+  for (const s of ['setting_up', 'queued', 'reading', 'held', 'stalled']) {
+    assert.equal(line(s), 'planning', s);
+    assert.equal(line(s, creator), 'planning', s);
+  }
+  // Its plan waits for Build it: blue for the person who started it alone.
+  assert.equal(line('plan', creator), 'plan');
+  assert.equal(line('plan'), 'plan-member');
+  // A question waits on the person who started it: theirs, else still planning.
+  assert.equal(line('question', { forCreator: true, question: true }), 'question');
+  assert.equal(line('question', { question: true }), 'planning');
+  assert.equal(line('question', creator), 'planning', 'not waiting on them');
+  // From Build it on, the build's own plan and its turn are the build.
+  for (const s of ['build_queued', 'starting', 'planning', 'building', 'proposing']) assert.equal(line(s), 'building', s);
+  for (const s of ['checks', 'checks_failed', 'fix_queued', 'fixing']) assert.equal(line(s), 'testing', s);
+  for (const s of ['vote', 'merging', 'followup_queued', 'revising']) assert.equal(line(s), 'ready', s);
+  assert.equal(line('nonsense'), null);
+  assert.deepEqual(progress.BUILD_LINE_STATES, ['planning', 'plan', 'plan-member', 'question', 'building', 'testing', 'ready', 'live']);
+  // The chat's step names for steps 4 to 7 are the line's own words
+  // (frontend/src/features/first-session/build-line-words.js).
+  const words = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/first-session/build-line-words.js'), 'utf8');
+  for (const [state, step] of [['building', 4], ['testing', 5], ['ready', 6], ['live', 7]]) {
+    // The table holds each line's message id; its English is the step's name.
+    const id = new RegExp(`\\b${state}: '(onboarding:buildLine\\.[A-Za-z]+)',`).exec(words);
+    assert.ok(id, state);
+    assert.equal(require('./lib/platform-i18n').message(id[1]), progress.FIRST_VERSION_STEPS[step - 1], state);
+  }
+});
+
 test('a request being read, asked about, or waiting in the queue', () => {
   assert.deepEqual(stage({ started_at: ago(3) }), {
     stage: 'reading', since: ago(3), doing: 'reading the request to decide whether to ask a question or build it', limit: 'reading',
@@ -39,7 +73,7 @@ test('a request being read, asked about, or waiting in the queue', () => {
   assert.deepEqual(stage({ question_at: ago(9) }), {
     stage: 'question', since: ago(9), doing: 'waiting for an answer to the question asked', waitingOn: 'them',
   });
-  assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }).doing, 'waiting in the queue (number 2) to be read');
+  assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }).doing, 'waiting for a free builder');
   assert.equal(stage({ verdict: 'person', mode: 'live' }), null, 'nothing in progress');
 });
 
@@ -68,15 +102,15 @@ test('a proposal: its checks, then the group\'s vote', () => {
   const running = stage({ ...open, check_state: 'pending', check_phase: 'testing', checks_at: ago(8),
     checks_progress: { ran: 120, expected: 338, failed: 0 } });
   assert.equal(running.stage, 'checks');
-  assert.equal(running.doing, 'its proposal is up, and its checks are running: 120 of 338 done, 0 failed so far');
+  assert.equal(running.doing, 'it\'s waiting for approval, and its tests are running: 120 of 338 done, 0 failed so far');
   assert.equal(running.since, ago(8));
   assert.equal(stage({ ...open, check_state: 'pending', check_phase: 'building' }).doing,
-    'its proposal is up, and its checks are running: building the preview first');
+    'it\'s waiting for approval, and its tests are running: building the preview first');
   const failing = stage({ ...open, check_state: 'failing', test_results: [{ status: 'pass' }, { status: 'fail' }, { status: 'fail' }] });
   assert.equal(failing.stage, 'checks_failed');
-  assert.equal(failing.doing, 'its proposal is up, and its checks failed (2 checks did not pass)');
+  assert.equal(failing.doing, 'it\'s waiting for approval, and its tests failed (2 tests did not pass)');
   assert.deepEqual(stage({ ...open, check_state: 'passing' }), {
-    stage: 'vote', since: ago(20), doing: 'its proposal is up for the group\'s vote', waitingOn: 'the group',
+    stage: 'vote', since: ago(20), doing: 'it\'s waiting for approval', waitingOn: 'the group',
   });
   assert.equal(stage({ ...open, check_state: 'skipped' }).stage, 'vote');
   assert.equal(stage({ ...open, check_state: 'failing', started_at: ago(1), queue_reason: 'checks_failing' }).stage, 'fixing');
@@ -84,12 +118,12 @@ test('a proposal: its checks, then the group\'s vote', () => {
   // #3734: a follow-up waiting its turn is the bot's next step, not the vote:
   // a change asked for in the DM (#3740), a reply, or its own red checks.
   assert.deepEqual(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'dm_revise', queue_position: 1 }), {
-    stage: 'followup_queued', since: ago(1), doing: 'waiting in the queue (number 1) to follow up on the newest replies on its proposal',
+    stage: 'followup_queued', since: ago(1), doing: 'waiting for a free builder to follow up on the newest replies on the change',
   });
   assert.equal(stage({ ...open, check_state: 'passing', queue_id: 8, enqueued_at: ago(1), question_at: ago(5) }).stage, 'followup_queued',
     'a reply since the question is read next');
   assert.deepEqual(stage({ ...open, check_state: 'failing', queue_id: 8, enqueued_at: ago(1), queue_reason: 'checks_failing' }), {
-    stage: 'fix_queued', since: ago(1), doing: 'waiting in the queue to fix its failing checks',
+    stage: 'fix_queued', since: ago(1), doing: 'waiting for a free builder to fix what its tests found',
   });
   assert.equal(stage({ proposal_status: 'merging', queue_id: 8, enqueued_at: ago(1) }).stage, 'merging',
     'a proposal being merged is not followed up on');
@@ -101,6 +135,8 @@ test('a proposal: its checks, then the group\'s vote', () => {
   assert.equal(progress.outcomeOf({ proposal_status: 'merged' }), 'approved and live');
   assert.equal(progress.outcomeOf({ mode: 'live', build_ok: false, build_error: 'the build ran past its time limit' }),
     'the build did not succeed: the build ran past its time limit');
+  assert.equal(progress.outcomeOf({ mode: 'live', build_ok: false, build_error: 'skipped: the request was closed before its build started' }),
+    'not built: the request was closed before its build started');
   assert.equal(progress.outcomeOf({ mode: 'shadow', verdict: 'person' }), null);
 });
 
@@ -168,17 +204,114 @@ test('the records, said in plain words when the model could not answer', () => {
 test('#3771: a request in the queue says what it waits for', () => {
   const row = { app_id: 7, issue_number: 14, name: 'Ear Trainer', slug: 'ear-trainer' };
   const now = new Date('2026-10-03T12:40:00Z');
-  const busy = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' }]]]);
+  const busy = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'reading' }]]]);
   assert.deepEqual(progress.queuedWait(row, { busy, now }), {
-    doing: 'waiting its turn: Ear Trainer is building request #12 first (one request per project at a time)',
-    waitingFor: { reason: 'project_busy', number: 12, doing: 'building', minutesSoFar: 14 },
+    doing: 'waiting its turn: Ear Trainer is reading request #12 first (one read per project at a time)',
+    waitingFor: { reason: 'project_busy', number: 12, doing: 'reading', minutesSoFar: 14 },
   });
+  // A build runs on a session of its own: it holds no read up.
+  const building = new Map([[7, [{ issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' }]]]);
+  assert.equal(progress.queuedWait(row, { busy: building, queuePosition: 1 }).doing, 'next in line for a free builder');
   // Its own row being read is not something it waits for.
   const self = new Map([[7, [{ issueNumber: 14, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
-  assert.equal(progress.queuedWait(row, { busy: self, queuePosition: 1 }).doing, 'next in line to be read');
+  assert.equal(progress.queuedWait(row, { busy: self, queuePosition: 1 }).doing, 'next in line for a free builder');
   assert.deepEqual(progress.queuedWait(row, { working: 2, perPerson: 2 }).waitingFor, { reason: 'person_limit', inProgress: 2, most: 2 });
   assert.equal(progress.queuedWait(row, { working: 2, perPerson: 2 }).doing,
     'waiting its turn: 2 things of theirs are in progress, the most at once for one person');
-  assert.equal(progress.queuedWait(row, { queuePosition: 4 }).doing, 'waiting in the queue to be read, with 3 requests ahead of it');
+  assert.equal(progress.queuedWait(row, { queuePosition: 4 }).doing, 'waiting for a free builder');
   assert.deepEqual(progress.queuedWait(row, {}), {}, 'with nothing known, the stage\'s own words stand');
+});
+
+test('a ready request waiting for its build slot says so, and what it waits for', () => {
+  const now = new Date('2026-10-03T12:40:00Z');
+  const row = {
+    app_id: 7, issue_number: 14, name: 'Ear Trainer', slug: 'ear-trainer', mode: 'live', verdict: 'ready',
+    build_ok: null, run_proposal: null, build_session_id: null, run_at: '2026-10-03T12:30:00Z',
+    build_waiting_at: '2026-10-03T12:31:00Z',
+  };
+  const state = progress.stageOf(row, { now });
+  assert.deepEqual(state, { stage: 'build_queued', since: '2026-10-03T12:31:00Z', doing: 'ready to build; waiting its turn to be built' });
+  assert.equal(progress.stepNumber('build_queued', false), 2, 'the plan is the next step');
+  assert.ok(progress.IN_FLIGHT_STAGES.has('build_queued') && !progress.BUSY_STAGES.has('build_queued'),
+    'in the bot\'s hands, not this minute');
+  // Its session exists: it is under way, not waiting.
+  assert.notEqual(progress.stageOf({ ...row, build_session_id: 5001, build_status: 'active' }, { now }).stage, 'build_queued');
+
+  // Newest first, as projectsBusy lists them.
+  const three = [
+    { issueNumber: 13, since: '2026-10-03T12:35:00Z', what: 'building' },
+    { issueNumber: 11, since: '2026-10-03T12:30:00Z', what: 'building' },
+    { issueNumber: 12, since: '2026-10-03T12:26:00Z', what: 'building' },
+  ];
+  const busy = new Map([[7, [...three, { issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
+  assert.deepEqual(progress.buildWait(row, { busy, now }), {
+    doing: 'ready to build; Ear Trainer is building requests #12, #11, #13 first (up to 3 builds per project at a time)',
+    waitingFor: { reason: 'project_building', number: 12, building: 3, most: 3, minutesSoFar: 14 },
+  }, 'three under way hold the next; the one started first is the one it waits on');
+  const two = new Map([[7, three.slice(0, 2)]]);
+  assert.equal(progress.buildWait(row, { busy: two, now }).doing, 'ready to build; its build starts next',
+    'two under way leave room for a third');
+  assert.equal(progress.buildWait(row, { busy: new Map([[7, three.slice(2)]]), now, perProject: 1 }).doing,
+    'ready to build; Ear Trainer is building request #12 first (up to 1 build per project at a time)');
+  const reading = new Map([[7, [{ issueNumber: 15, since: '2026-10-03T12:39:00Z', what: 'reading' }]]]);
+  assert.equal(progress.buildWait(row, { busy: reading, now }).doing, 'ready to build; its build starts next',
+    'a request being read on the project does not hold a build');
+  assert.equal(progress.buildWait(row, { working: 2, perPerson: 2 }).waitingFor.reason, 'person_limit');
+  const tray = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-tray.js'), 'utf8');
+  assert.match(tray, /build_queued: 'queued',/, 'the tray draws it as waiting its turn');
+});
+
+// #4539: a request closed while its plan waited for Build it, or while the
+// question about it was still open, no longer waits on the person: the
+// answer read from the records says it was not built because the request
+// was closed. Its stage is null, so the tray moves it out of Needs you.
+test('#4539: on a closed request the plan and the question stop waiting, and the outcome names the closure', () => {
+  // The plan is ready and waits for Build it.
+  const waiting = { mode: 'live', verdict: 'ready', build_ok: null, run_at: ago(50), plan_waiting_at: ago(49) };
+  assert.deepEqual(stage({ ...waiting }), {
+    stage: 'plan', since: ago(49), waitingOn: 'them', doing: 'the plan is ready and waits for Build it',
+  });
+  assert.equal(stage({ ...waiting, request_closed: true }), null, 'closed: the plan is not in progress any more');
+  // The question the bot asked about it stops waiting too.
+  assert.equal(stage({ question_at: ago(9), request_closed: true }), null);
+  // With a proposal still open, only the question yields: the proposal's
+  // own state is what shows.
+  assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9) }).stage, 'question');
+  assert.equal(stage({ proposal_status: 'promoted', check_state: 'passing', proposal_at: ago(20), question_at: ago(9), request_closed: true }).stage,
+    'vote', 'the closed request\'s open proposal still shows its state');
+  // A build already begun, or held back by a limit, is unchanged.
+  assert.equal(stage({ ...waiting, request_closed: true, build_session_id: 7, build_status: 'active', build_started_at: ago(40) }).stage,
+    'planning', 'a build under way builds on');
+  assert.equal(stage({ ...waiting, request_closed: true, cap_suppressed: 'proposals_per_app' }).stage, 'held');
+  // What it came to, for finishedLately and the DM's answer.
+  assert.equal(progress.outcomeOf({ ...waiting, request_closed: true }), 'not built: the request was closed');
+  assert.equal(progress.outcomeOf({ ...waiting }), null, 'open: nothing has come of it yet');
+});
+
+// WP1 (#10): a second build of one request was invisible to the bot's
+// answers, which read the request's newest look and newest proposal only.
+// The PostgreSQL side is tests/homeroom-bot-activity-postgres.test.js.
+test('WP1: another build of a request, and the build before, in plain words', () => {
+  assert.equal(progress.buildUnderWay({ live_build_waiting_at: ago(3) }), true, 'waiting its turn');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'active' }), true, 'under way');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'paused' }), true, 'being proposed');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'archived' }), false, 'put away');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'active', build_ok: false }), false, 'ended');
+  assert.equal(progress.buildUnderWay({ live_build_waiting_at: ago(3), cap_suppressed: 'proposals_per_app' }), false, 'held');
+  assert.equal(progress.buildUnderWay({ build_session_id: 5, build_status: 'promoted', proposal_session_id: 5 }), false, 'proposed');
+
+  const said = (run) => progress.attemptOutcome(run);
+  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'promoted' }), 'built; it\'s waiting for approval');
+  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'merged' }), 'built; approved and live');
+  assert.equal(said({ proposal_session_id: 6190, proposal_status: 'merging' }), 'built; it\'s going live now');
+  assert.equal(said({ proposal_session_id: 6191, proposal_status: 'archived' }), 'built; the change was closed');
+  assert.equal(said({ build_ok: true }), 'built');
+  assert.equal(said({ build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
+    'stopped before it was built: the request already has a proposal (6190)', 'a skip stopped; it did not fail');
+  assert.equal(said({ build_ok: false, build_error: 'blocked: needs a paid API' }), 'found it cannot be built as written: needs a paid API');
+  assert.equal(said({ build_ok: false, build_error: 'the build ran past its time limit' }), 'the build did not succeed: the build ran past its time limit');
+  assert.equal(said({ build_ok: false }), 'the build did not succeed');
+  assert.equal(said({ cap_suppressed: 'proposals_per_app' }), 'held back by a limit, never built');
+  assert.equal(said({ build_error: 'superseded: a later verdict on the same issue' }), 'never built: a later verdict on the same issue');
+  assert.equal(said({}), 'nothing recorded about how it ended');
 });

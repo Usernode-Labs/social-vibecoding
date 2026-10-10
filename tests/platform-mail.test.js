@@ -245,6 +245,7 @@ function makePool({ history = [], globalCount = 0, failWrites = false } = {}) {
   return {
     inserted,
     async query(sql, params) {
+      if (/SELECT reason FROM mail_suppressions/.test(sql)) return { rows: [] };
       if (/INSERT INTO mail_deliveries/.test(sql)) {
         if (failWrites) throw new Error('disk on fire');
         inserted.push({
@@ -348,6 +349,7 @@ test('the throttle fails OPEN when its history read breaks', async () => {
   const pool = {
     inserted: [],
     async query(sql, params) {
+      if (/SELECT reason FROM mail_suppressions/.test(sql)) return { rows: [] };
       if (/INSERT INTO mail_deliveries/.test(sql)) {
         pool.inserted.push({ status: params[3] });
         return { rowCount: 1 };
@@ -540,6 +542,10 @@ test('the release mail promises the code only on the arm that sends one (#1548)'
   // The figure must track OTP_TTL_MS, so pin it rather than the sentence.
   assert.match(fresh.text, /expires in 10 minutes/);
   assert.match(fresh.html, /emails you a 6-digit code/);
+  // The code goes to the address the link names, so the mail does not ask
+  // which address they joined with.
+  assert.doesNotMatch(fresh.text, /joined the waitlist with/);
+  assert.doesNotMatch(fresh.html, /joined the waitlist with/);
 
   // Somebody who already has an account is sent to #login and never asked
   // for a code, so promising one there would be a plain lie.
@@ -550,23 +556,76 @@ test('the release mail promises the code only on the arm that sends one (#1548)'
   assert.doesNotMatch(returning.html, /6-digit code/);
 });
 
+test('the release mail with a one-time sign-in link explains nothing, and tracking leaves that link alone (#4594)', () => {
+  const linked = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/?signup=1&t=tok&key=k', hasAccount: false, signInLink: true,
+  });
+  // The button signs them in, and the screen its fallback opens says itself
+  // that a code was sent, so no note under it. The link is bound to the
+  // released address, so no line asking which address they joined with.
+  for (const part of [linked.text, linked.html]) {
+    assert.doesNotMatch(part, /signs you in once|works for 7 days/);
+    assert.doesNotMatch(part, /6-digit code/);
+    assert.doesNotMatch(part, /joined the waitlist with/);
+  }
+  assert.match(linked.html, />Create my account<\/a>/);
+  // The text part has no button, so it names the action over the link.
+  assert.ok(linked.text.includes('Create my account:\nhttps://x.invalid/?signup=1&t=tok&key=k'));
+
+  // Click tracking stores each destination URL; one carrying a sign-in
+  // credential is never rewritten, so its token is never stored.
+  const tracking = require('../src/services/mail/tracking');
+  const prior = process.env.PLATFORM_MAIL_TRACKING_SECRET;
+  process.env.PLATFORM_MAIL_TRACKING_SECRET = 'test-secret';
+  try {
+    const credential = `https://x.invalid/?signup=1&amp;${tracking.CREDENTIAL_PARAM}=secret-token`;
+    const message = {
+      html: `<html><body><a href="${credential}">Create my account</a><a href="https://x.invalid/other">Other</a></body></html>`,
+      text: '',
+    };
+    const out = tracking.decorate('waitlist_released', message, { trackingEnabled: true, messageId: 'a'.repeat(48) });
+    assert.ok(out.html.includes(credential), 'the credential link is left as it is');
+    assert.ok(!out.trackingLinks.some((l) => l.includes('secret-token')), 'and never stored');
+    assert.deepEqual(out.trackingLinks, ['https://x.invalid/other'], 'other links are still tracked');
+  } finally {
+    if (prior === undefined) delete process.env.PLATFORM_MAIL_TRACKING_SECRET;
+    else process.env.PLATFORM_MAIL_TRACKING_SECRET = prior;
+  }
+});
+
 test('the release mail is the "you\'re in" welcome, with its list and sign-off', () => {
   const m = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?signup=1&t=tok', hasAccount: false,
   });
   assert.equal(m.subject, "You're in. Welcome to Homeroom");
   for (const part of [m.text, m.html]) {
-    assert.match(part, /AI app-building, now multiplayer\./);
-    assert.match(part, /Vibecode apps solo or with a friend\./);
-    assert.match(part, /Suggest, preview, and vote on changes\./);
+    assert.match(part, /Make and share apps with groups and friends\./);
+    assert.match(part, /Make an app for your group/);
+    assert.match(part, /Suggest, preview and vote on changes/);
     assert.match(part, /Evan from Homeroom/);
+    // Three points, not four (Evan, 10 Oct 2026): no challenges line.
+    assert.doesNotMatch(part, /challenges/i);
   }
   assert.ok(m.text.includes('https://x.invalid/?signup=1&t=tok'), 'the link is in the text part');
   // The preview line is hidden and comes before the logo, whose alt text
   // would otherwise be what the inbox shows.
   const pre = m.html.indexOf("Here's how to get started.");
   assert.ok(pre > -1 && pre < m.html.indexOf('<img '), 'preheader leads the body');
-  assert.match(m.html, /display:none[^"]*">AI app-building, now multiplayer\. Here's how/);
+  assert.match(m.html, /display:none[^"]*">Make and share apps with groups and friends\. Here's how/);
+  // #4570: the landing page's hero. The illustration sits between the
+  // frame's logo and the button, and is an <img>, not a link, so the pill
+  // stays the mail's first anchor.
+  assert.match(m.html, /\/brand\/people\.png" width="272" height="204" alt=""/);
+  const logo = m.html.indexOf('<img ');
+  const illustration = m.html.indexOf('/brand/people.png');
+  const pill = m.html.indexOf('border-radius:999px');
+  assert.ok(logo > -1 && illustration > logo && pill > illustration,
+    'illustration after the logo, before the pill');
+  // The landing page's eyebrow over the headline.
+  assert.match(m.html, /letter-spacing:0\.8px[^>]*>You're in</);
+  // The welcome sentences #4570 cut are gone from both parts.
+  assert.doesNotMatch(m.html, /Once you're inside|Thanks for your interest/);
+  assert.doesNotMatch(m.text, /Once you're inside|Thanks for your interest/);
 });
 
 test('the release mail offers mobile steps only for a published store link', () => {
@@ -575,8 +634,9 @@ test('the release mail offers mobile steps only for a published store link', () 
   const both = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?login=1', hasAccount: true, mobile: { ios: IOS, android: ANDROID },
   });
-  assert.match(both.text, /Want to test Homeroom on mobile\?/);
-  assert.ok(both.text.includes(`Open the Homeroom invite (${IOS}).`));
+  assert.match(both.text, /Try it on mobile/);
+  assert.match(both.html, /Try it on mobile/);
+  assert.ok(both.text.includes(`open the Homeroom invite (${IOS}).`));
   assert.ok(both.text.includes(`Open the Homeroom testing link (${ANDROID}) while signed into Google Play`));
   assert.ok(both.html.includes(`<a href="${IOS}"`));
   assert.ok(both.html.includes(`<a href="${ANDROID.replace(/&/g, '&amp;')}"`));
@@ -916,12 +976,12 @@ test('the staging mail fixture only writes when USERNODE_ENV=staging', async () 
     process.env.USERNODE_ENV = 'staging';
     await seedStagingPlatformMail(pool);
     const inserts = seen.filter((s) => /INSERT INTO mail_deliveries/.test(s));
-    assert.equal(inserts.length, 13,
+    assert.equal(inserts.length, 15,
       'one row per status the card renders, plus three admin_test rows, plus '
       + 'the admission mail behind the admitted waitlist fixture, plus the '
       + 'delivered and throttled shapes of a requested waitlist code, plus '
       + "#2201's two delivery states: a window filled to the daily ceiling "
-      + 'and a code delivered seconds ago');
+      + 'and a code delivered seconds ago, plus two synthetic tracking cohorts');
     for (const sql of inserts) {
       // Every fixture is idempotent, but #2201's capped one cannot say so
       // with WHERE NOT EXISTS: it needs TEN identical rows, and that guard

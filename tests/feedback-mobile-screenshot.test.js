@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -11,7 +12,9 @@ const dialog = read('frontend/src/features/dialogs/feedback.tsx');
 
 test('feedback offers native capture and a Photos fallback', () => {
   assert.match(dialog, /id="feedback-screenshot-picker-btn"/);
-  assert.match(dialog, /Choose from Photos/);
+  // #4127: the Photos fallback is the popover's "Photo" row under the paperclip.
+  assert.match(dialog, /role="menuitem"[\s\S]*?<PhotoIcon aria-hidden="true" \/>\s*\{t\('dialogs:feedback\.attach\.photo'\)\}\s*</);
+  assert.equal(message('dialogs:feedback.attach.photo'), 'Photo');
   assert.match(dialog, /id="feedback-screenshot-input"/);
   assert.match(dialog, /accept="image\/png,image\/jpeg"/);
   assert.match(controller, /capabilities\.includes\('captureScreenshot'\)/);
@@ -20,14 +23,16 @@ test('feedback offers native capture and a Photos fallback', () => {
 });
 
 test('all image sources converge on the existing attachment path', () => {
-  assert.match(controller, /const attachScreenshotBlob = async \(blob\) =>/);
+  // #4482: comment mode's hand-over passes the page's pin beside its picture.
+  assert.match(controller, /const attachScreenshotBlob = async \(blob, pins = null\) =>/);
   assert.equal(
     (controller.match(/await attachScreenshotBlob\(blob\)/g) || []).length,
     2,
     'capture and picker should share preview, upload, and offline handling'
   );
   assert.match(controller, /ScreenshotSelect/);
-  assert.match(controller, /Saved with your feedback/);
+  assert.match(controller, /shot\.stateEl\.textContent = t\('dialogs:feedback\.screenshot\.savedOffline'\)/);
+  assert.match(message('dialogs:feedback.screenshot.savedOffline'), /^Saved with your feedback/);
 });
 
 test('mobile screenshot controls keep 48px tap targets', () => {
@@ -59,9 +64,10 @@ test('one capture round trip serves the button and the reviewable state', () => 
   assert.match(controller, /const runCapture = async \(capture, \{ nativeAttempt \}\) =>/);
   // A native attempt suspends BEFORE the shot (the phone photographs what is
   // on screen); a display-capture attempt suspends only once the grant lands,
-  // which is why `hide` is passed in rather than called here.
-  assert.match(controller, /blob = await capture\(hideDialog\)/);
-  assert.match(controller, /onCaptureStart: hide/);
+  // which is why `hide` is passed in rather than called here. The signal
+  // beside it gives the attempt up while the browser has not answered.
+  assert.match(controller, /blob = await capture\(hideDialog, attempt\.signal\)/);
+  assert.match(controller, /onCaptureStart: hide, signal/);
   assert.match(controller, /App\._simulateFeedbackCaptureFailure = \(\) => runCapture\(/);
 });
 
@@ -84,6 +90,68 @@ test('a dismissal that lands mid-capture does not clear the draft', () => {
   assert.match(controller, /captureInFlight = false;\n\s*clearCaptureDraft\(\);/);
 });
 
+// ── A share the browser never answers ─────────────────────────────────────
+//
+// Firefox on a Mac hands the choice to the system picker, and a Firefox that
+// has been running a while can take "Share This Window" and never settle
+// getDisplayMedia. The dialog waited on it with both attach buttons disabled,
+// and captureInFlight (set at the start of the attempt) stayed true for the
+// life of the page, so no later close cleared the dialog again.
+
+test('a display capture waits with Photos still usable, and only a suspension sets captureInFlight', () => {
+  const round = controller.slice(
+    controller.indexOf('const runCapture = async'),
+    controller.indexOf("screenshotBtn.addEventListener('click'"),
+  );
+  const beforeHide = round.slice(0, round.indexOf('const hideDialog = () => {'));
+  assert.match(beforeHide, /screenshotBtn\.disabled = true;/);
+  assert.doesNotMatch(beforeHide, /setScreenshotActionsDisabled\(true\)/,
+    'the Photos button stays usable until the dialog actually goes');
+  assert.doesNotMatch(beforeHide, /captureInFlight = true/,
+    'a close before the grant is the viewer\'s own and must close for real');
+  const hide = round.slice(round.indexOf('const hideDialog = () => {'), round.indexOf('const restoreDialog = () => {'));
+  assert.match(hide, /setScreenshotActionsDisabled\(true\);\n\s*captureInFlight = true;\n\s*suspended = true;/);
+  // Released, and the stash cleared, only by the attempt that set them: an
+  // attempt given up for Photos must not clear the stash Photos just armed.
+  assert.match(round, /if \(suspended\) \{\n\s*captureInFlight = false;\n\s*clearCaptureDraft\(\);\n\s*\}/);
+});
+
+test('choosing an image or resetting the row gives up the unanswered share', () => {
+  assert.match(controller, /let pendingCapture = null;/);
+  assert.match(controller, /const resetScreenshotState = \(\) => \{\n\s*abandonPendingCapture\(\);/,
+    'every close, open and send resets the row, and with it the wait');
+  const picker = controller.slice(
+    controller.indexOf("screenshotPickerBtn.addEventListener('click'"),
+    controller.indexOf("screenshotInput.addEventListener('change'"),
+  );
+  assert.ok(picker.indexOf('abandonPendingCapture()') > 0
+    && picker.indexOf('abandonPendingCapture()') < picker.indexOf('stashCaptureDraft()'),
+    'the share is given up before Photos opens');
+  // Given up is not a failure: nothing is said.
+  assert.match(controller, /if \(err && err\.code === 'abandoned'\) \{\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*\} else if \(err && err\.code === 'denied'\)/);
+});
+
+test('a long wait says what to do, and the line goes once the browser answers', () => {
+  assert.match(controller, /const CAPTURE_WAIT_HINT_MS = 10 \* 1000;/);
+  assert.match(controller, /t\('dialogs:feedback\.capture\.waiting'\)/);
+  assert.equal(message('dialogs:feedback.capture.waiting'),
+    'Still waiting for your browser to share the screen. If you already chose what to share and nothing happened, restart the browser, or choose an image instead. Your feedback is safe.');
+  const round = controller.slice(
+    controller.indexOf('const runCapture = async'),
+    controller.indexOf("screenshotBtn.addEventListener('click'"),
+  );
+  // Same ownership rule as paintQueueState: only its own line is cleared.
+  assert.match(round, /if \(waitHintText && feedbackStatus\.textContent === waitHintText\) feedbackStatus\.classList\.add\('hidden'\);/);
+  assert.match(round, /const hideDialog = \(\) => \{\n\s*if \(modalHidden\) return undefined;\n\s*settleWait\(\);/);
+  assert.match(round, /\} finally \{\n\s*settleWait\(\);/);
+});
+
+test('a share far smaller than the page is named, not reported as a locate failure', () => {
+  assert.match(controller, /err\.code === 'wrong_surface'/);
+  assert.match(controller, /t\('dialogs:feedback\.capture\.smallWindow'\)/);
+  assert.match(message('dialogs:feedback.capture.smallWindow'), /^That was a small window, not this page\./);
+});
+
 test('every capture failure says the feedback itself is safe', () => {
   // The screenshot is retakeable; the paragraph the user just typed is not.
   const round = controller.slice(
@@ -92,11 +160,17 @@ test('every capture failure says the feedback itself is safe', () => {
   );
   const notices = round.match(/showFeedbackNotice\([^;]*\);/g) || [];
   assert.ok(notices.length >= 5, `every capture failure branch should be found: ${notices.length}`);
-  for (const notice of notices) {
-    assert.match(notice, /your feedback is safe/i, `capture notice should reassure: ${notice}`);
+  // Each notice names its message; the catalog holds the words.
+  const said = notices.map((notice) => {
+    const id = /showFeedbackNotice\(t\('(dialogs:feedback\.[\w.]+)'\)/.exec(notice);
+    assert.ok(id, `capture notice reads a catalog message: ${notice}`);
+    return message(id[1]);
+  });
+  for (const text of said) {
+    assert.match(text, /your feedback is safe/i, `capture notice should reassure: ${text}`);
   }
   // And one of them says it in the exact words dapp.json's check looks for.
-  assert.ok(round.includes('your feedback is safe'),
+  assert.ok(said.some((text) => text.includes('your feedback is safe')),
     'the native-failure branch carries the lowercase phrase /?shot=feedback-capture-failed asserts');
 });
 

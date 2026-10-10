@@ -51,6 +51,7 @@ function makeAppView({ fetchImpl } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -104,6 +105,9 @@ test('_fetchIssueByNumber caches a closed issue and _findItem resolves it', asyn
 
   // The live list still wins when it holds the number.
   const live = closedIssue({ state: 'open', title: 'live copy' });
+  // #4524: the lists answer only for the app they were loaded for — this
+  // one is loaded for the open app (demo).
+  AppView._devDataSlug = 'demo';
   AppView._ghIssues = [live];
   assert.equal(AppView._findItem('issue', 1069), live);
 });
@@ -159,23 +163,30 @@ test('a closed issue page offers no claim, kudos, close or start-work actions', 
       assert.ok(!menuLabels.includes(label), `no "${label}" menu row (noNav=${noNav})`);
     }
     assert.ok(menuLabels.includes('Share to…'), 'sharing it still works');
-    assert.deepEqual([...card.badges.map((b) => b.label)], ['Closed'], 'says Closed, and nothing to vote on');
+    // #4244: on its own page (noNav) the status band above the card says
+    // Closed, so the card does not; a list row still does.
+    assert.deepEqual([...card.badges.map((b) => b.label)], noNav ? [] : ['Closed'], 'says Closed once, and nothing to vote on');
     assert.equal(card.title.edit, undefined, 'no title edit on a closed issue');
   }
 
   // The whole topic screen, as _renderTopicHead publishes it: the card's one
-  // action line folds the detail pills in, so it is empty too, and the
-  // comments section still loads.
+  // action line folds the detail pills in, so it is empty too. #4453: its
+  // page is a thread whose root post says it is closed, with nothing to
+  // claim behind its ⋯, and its GitHub comments still load into the stream.
   const view = AppView._topicViewFor('issue', issue);
   assert.equal(view.card.actions.length, 0, 'no actions on the topic card');
-  assert.equal(view.body.comments, true, 'the GitHub comment thread still renders');
+  assert.match(view.body.request.status.closed, /^This request was closed/);
+  const rows = (AppView._cardMenus[view.body.request.menuKey] || []).map((m) => m.label);
+  for (const label of ['Pledge kudos', 'Claim it', 'Propose to close', 'Start more work', 'Set priority…']) {
+    assert.ok(!rows.includes(label), `no "${label}" row behind the request's ⋯`);
+  }
 
   // …while the same issue open keeps every one of them.
   const open = closedIssue({ state: 'open', closedAt: null });
   const openKeys = AppView._detailActionsView('issue', open).pills.map((p) => p.key);
   for (const key of ['claim', 'bounty', 'close']) assert.ok(openKeys.includes(key), `open issue keeps ${key}`);
   const openCard = AppView._issueCardModel(open, { noNav: true });
-  assert.ok(openCard.actions.some((a) => a.label === 'Start work'), 'open issue keeps Start work');
+  assert.ok(openCard.actions.some((a) => a.label === 'Build it now'), 'open issue keeps Build it now (B8)');
   assert.ok(!openCard.badges.some((b) => b.label === 'Closed'));
 });
 

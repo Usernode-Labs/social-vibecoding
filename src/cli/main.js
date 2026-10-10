@@ -2132,7 +2132,7 @@ async function runMcp(args, launcherPath) {
     stories: z.array(z.object({
       id: z.string().regex(/^[a-z0-9](?:[a-z0-9_-]{0,94}[a-z0-9])?$/),
       claim: z.string().min(1).max(1000),
-      persona: z.enum(['member', 'read_only_admin', 'full_admin']),
+      persona: z.enum(['member', 'read_only_admin', 'full_admin', 'guest']),
       viewports: z.array(visibleChangesViewportSchema).min(1).max(2),
       intent: z.object({
         startPath: z.string().min(1).max(512),
@@ -2154,7 +2154,7 @@ async function runMcp(args, launcherPath) {
           .describe('What you learned reaching this state: data to create first, short text that shows it was reached, and the element to point at. Guidance only; never executed.'),
       }).strict(),
     }).strict()).max(3),
-  }).strict().describe('Version-1 before & after shots declaration. Use impact ui or motion with 1-3 real user flows; use none with a concrete rationale and no stories. Never include credentials or screenshot-only application routes.');
+  }).strict().describe('Version-1 before & after shots declaration. Use impact ui or motion with 1-3 real user flows; use none with a concrete rationale and no stories. On an app built on Homeroom no persona is the app\'s creator or one of its admins (an app is told who is signed in, never their role), so a screen it keeps for particular accounts cannot be shot. Never include credentials or screenshot-only application routes.');
   // chat_sessions.id is PostgreSQL INTEGER. Keep the MCP contract aligned
   // with the HTTP route's canonical-ID parser so an accepted tool argument
   // cannot later turn into a misleading 404.
@@ -2420,7 +2420,7 @@ function usage() {
     '  social-vibecoding api <GET|POST|PUT|PATCH|DELETE> <path> [--profile <name>] [--data <json>]',
     '  social-vibecoding proposal push --session <id> --commit <sha> [--repo <path>] [--profile <name>]',
     '  social-vibecoding agent run --session <id> [--repo <path>] [--label <name>] [--model <name>] [--once]',
-    '      takes both spec (read-only) and coding turns; each one asks in this terminal first',
+    '      takes both plan (read-only) and coding turns; each one asks in this terminal first',
     '  social-vibecoding agent status [--profile <name>]',
     '  social-vibecoding agent detach --lease <id> [--profile <name>]',
     '  social-vibecoding codex setup [--profile <name>] [--forward-env-token]',

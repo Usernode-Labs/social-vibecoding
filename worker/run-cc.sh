@@ -43,11 +43,19 @@
 #                              claude-openrouter-request.js adapter, and needs
 #                              OPENROUTER_API_KEY + AGENT_MODEL (MODEL is the
 #                              same slug); OPENROUTER_API_BASE,
-#                              AGENT_MODEL_MAX_OUTPUT_TOKENS and
+#                              AGENT_MODEL_MAX_OUTPUT_TOKENS,
+#                              AGENT_MODEL_CONTEXT_WINDOW (sets the window
+#                              Claude Code compacts at) and
 #                              AGENT_REASONING_EFFORT are optional.
 #   DISCARD_FAILED_TURN        1: a build whose claude failed commits and
 #                              pushes nothing (the Homeroom bot's turns);
 #                              needs TURN_JOURNAL to read the final result
+#   STOP_GUARD                 1: a build installs build-stop-hook.js as a
+#                              Claude Code Stop hook, which sends the agent
+#                              back to work (twice at most) when it tries to
+#                              end a turn that has changed nothing (the
+#                              Homeroom bot's build and review-fix turns).
+#                              The result line then carries stop_hook_blocks
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -103,6 +111,9 @@ fi
 : "${SHOTS_MEMBER_TOKEN:=}"
 : "${SHOTS_ADMIN_TOKEN:=}"
 : "${SHOTS_FULL_ADMIN_TOKEN:=}"
+# Optional: the guest browser is signed out, and carries a guest token only
+# for a view-public child app (shots-origin-proxy.js).
+: "${SHOTS_GUEST_TOKEN:=}"
 : "${AGENT_PROVIDER:=anthropic}"
 
 SYSTEM_PROMPT_FLAGS=""
@@ -351,8 +362,10 @@ if [ "$MODE" = "scout" ]; then
 elif [ "$MODE" = "shots" ]; then
   # Shots turns operate only through platform-seeded MCP servers. Removing
   # every filesystem, shell, web and delegation tool prevents the model from
-  # reading browser storage state or inherited process credentials.
-  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install"
+  # reading browser storage state or inherited process credentials. Each
+  # persona's phone browser (browser_<persona>_phone, present only when a
+  # declared screen is a phone's) is denied the same browser tools.
+  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install mcp__browser_guest__browser_evaluate mcp__browser_guest__browser_run_code mcp__browser_guest__browser_file_upload mcp__browser_guest__browser_install mcp__browser_member_phone__browser_evaluate mcp__browser_member_phone__browser_run_code mcp__browser_member_phone__browser_file_upload mcp__browser_member_phone__browser_install mcp__browser_admin_phone__browser_evaluate mcp__browser_admin_phone__browser_run_code mcp__browser_admin_phone__browser_file_upload mcp__browser_admin_phone__browser_install mcp__browser_full_admin_phone__browser_evaluate mcp__browser_full_admin_phone__browser_run_code mcp__browser_full_admin_phone__browser_file_upload mcp__browser_full_admin_phone__browser_install mcp__browser_guest_phone__browser_evaluate mcp__browser_guest_phone__browser_run_code mcp__browser_guest_phone__browser_file_upload mcp__browser_guest_phone__browser_install"
 else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi
@@ -412,9 +425,10 @@ if [ "$MODE" = "shots" ]; then
   : > "$SHOTS_BROWSER_DIAGNOSTIC_FILE"
   # Each persona's browser saves the shots agent's named screenshots (and
   # clips, when a motion change is declared) here; the shots bridge reads
-  # them back by name to publish them.
+  # them back by name to publish them. A phone browser saves beside its
+  # persona's, in <persona>_phone, which the config writer creates.
   export SHOTS_DIR="$SHOTS_TMP/shots"
-  mkdir -p "$SHOTS_DIR/member" "$SHOTS_DIR/admin" "$SHOTS_DIR/full_admin" \
+  mkdir -p "$SHOTS_DIR/member" "$SHOTS_DIR/admin" "$SHOTS_DIR/full_admin" "$SHOTS_DIR/guest" \
     || die "could not create the shots directories"
   tail -n +1 -s 0.2 -f "$SHOTS_BROWSER_DIAGNOSTIC_FILE" &
   SHOTS_DIAGNOSTIC_TAIL_PID=$!
@@ -422,8 +436,9 @@ if [ "$MODE" = "shots" ]; then
   export SHOTS_PROXY_SERVER="http://127.0.0.1:$SHOTS_PROXY_PORT"
   # One proxy listener per fixture persona, so a hosted app's pages carry
   # that persona's identity on every load (shots-origin-proxy.js). The
-  # bootstrap and the control plane keep the shared port above.
-  export SHOTS_PROXY_PERSONA_PORTS='{"member":17892,"read_only_admin":17893,"full_admin":17894}'
+  # guest's listener adds the guest token when there is one, and nothing
+  # otherwise. The bootstrap and the control plane keep the shared port above.
+  export SHOTS_PROXY_PERSONA_PORTS='{"member":17892,"read_only_admin":17893,"full_admin":17894,"guest":17895}'
   export SHOTS_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
   export SHOTS_PROXY_READY="$SHOTS_TMP/proxy.ready"
   export SHOTS_ALLOWED_ORIGINS="[\"$SHOTS_BASE_ORIGIN\",\"$SHOTS_HEAD_ORIGIN\"]"
@@ -443,7 +458,7 @@ if [ "$MODE" = "shots" ]; then
   export SHOTS_BOOTSTRAP_FAILURE_FILE="$SHOTS_TMP/browser-bootstrap.failure"
   node /usr/local/bin/shots-browser-bootstrap.js \
     || die "$(head -c 300 "$SHOTS_BOOTSTRAP_FAILURE_FILE" 2>/dev/null | tr -d '\r\n' | grep . || echo 'shots browser authentication failed')"
-  unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN
+  unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN SHOTS_GUEST_TOKEN
   BROWSER_MCP_CONFIG="$SHOTS_TMP/mcp.json"
   node /usr/local/bin/write-shots-mcp-config.js "$BROWSER_MCP_CONFIG" \
     || die "could not create shots MCP config"
@@ -463,6 +478,30 @@ fi
 # the agent committed its own work this turn.
 TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
+# The stop guard (STOP_GUARD=1, build turns only): a Claude Code Stop hook,
+# build-stop-hook.js, installed through --settings for this invocation alone.
+# When the agent tries to end its turn while HEAD is still TURN_START_SHA and
+# the working tree is clean, it sends the agent back to work, at most twice.
+# It counts its blocks in a file of this turn's own, which the result line
+# below reports. Anything that goes wrong here leaves the turn without the
+# hook, exactly as it ran before, rather than failing it.
+STOP_GUARD_FLAGS=""
+STOP_GUARD_DIR=""
+if [ "$MODE" = "build" ] && [ "${STOP_GUARD:-}" = "1" ]; then
+  if [ -n "$TURN_START_SHA" ] \
+      && STOP_GUARD_DIR=$(mktemp -d /tmp/usernode-stop-guard.XXXXXX 2>/dev/null) \
+      && node "$(dirname "$0")/build-stop-hook.js" --settings > "$STOP_GUARD_DIR/settings.json" 2>/dev/null \
+      && [ -s "$STOP_GUARD_DIR/settings.json" ]; then
+    USERNODE_STOP_GUARD_START="$TURN_START_SHA"
+    USERNODE_STOP_GUARD_COUNT="$STOP_GUARD_DIR/blocks"
+    USERNODE_STOP_GUARD_REPO=$(pwd)
+    export USERNODE_STOP_GUARD_START USERNODE_STOP_GUARD_COUNT USERNODE_STOP_GUARD_REPO
+    STOP_GUARD_FLAGS="--settings $STOP_GUARD_DIR/settings.json"
+  else
+    echo "__USERNODE_WARN__ the stop guard could not be set up; this build runs without it"
+  fi
+fi
+
 # stream-json emits one JSON object per line. The host parses this via
 # the docker-exec child's stdout (long-lived path) or `docker logs -f`
 # (legacy single-shot path) — same pipeline, different transport.
@@ -472,7 +511,7 @@ TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 # move the host-side E2BIG failure here.
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
-  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose $STOP_GUARD_FLAGS \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
     --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
@@ -482,16 +521,30 @@ if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
     if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
       RETRY_PROMPT_FILE="$RESUME_FALLBACK_PROMPT_FILE"
     fi
-    run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+    run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose $STOP_GUARD_FLAGS \
       --model "$MODEL" --include-partial-messages --output-format stream-json < "$RETRY_PROMPT_FILE"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
-  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose $STOP_GUARD_FLAGS \
     --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
 fi
+
+# How many times the stop guard sent the agent back, for the turn's telemetry
+# (worker.js parseLine → telemetry_metrics.stop_hook_blocks) and, when it did,
+# the progress log. Only a turn that had the guard reports the field.
+STOP_HOOK_BLOCKS_FIELD=""
+if [ -n "$STOP_GUARD_FLAGS" ]; then
+  STOP_HOOK_BLOCKS=$(cat "$USERNODE_STOP_GUARD_COUNT" 2>/dev/null || echo 0)
+  case "$STOP_HOOK_BLOCKS" in ''|*[!0-9]*) STOP_HOOK_BLOCKS=0 ;; esac
+  STOP_HOOK_BLOCKS_FIELD=" stop_hook_blocks=$STOP_HOOK_BLOCKS"
+  if [ "$STOP_HOOK_BLOCKS" -gt 0 ]; then
+    echo "__USERNODE_WARN__ The agent tried to end its turn having changed nothing; the stop guard sent it back to work (stop_hook_blocks=$STOP_HOOK_BLOCKS)"
+  fi
+fi
+if [ -n "$STOP_GUARD_DIR" ]; then rm -rf "$STOP_GUARD_DIR" 2>/dev/null || true; fi
 
 if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   # Read-only run: no commit, no push. The host pulls scout output out
@@ -525,7 +578,7 @@ if [ "${DISCARD_FAILED_TURN:-}" = "1" ]; then
   if [ -n "$TURN_FAILED" ]; then
     echo "__USERNODE_WARN__ $TURN_FAILED; skipping commit/push"
     echo "__USERNODE_PHASE__ done"
-    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build"
+    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build$STOP_HOOK_BLOCKS_FIELD"
     if [ "$CC_EXIT" -ne 0 ]; then exit "$CC_EXIT"; fi
     exit 1
   fi
@@ -575,5 +628,5 @@ if [ "$PUSH_OK" = "1" ]; then
 else
   echo "__USERNODE_PHASE__ push_failed"
 fi
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD"
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD$STOP_HOOK_BLOCKS_FIELD"
 exit "$CC_EXIT"

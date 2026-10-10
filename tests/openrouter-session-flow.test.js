@@ -159,8 +159,9 @@ test('Generate proposal follows the saved OpenRouter provider without Claude cre
     '// "Start session from proposal"',
   );
   assert.match(modal, /openrouterCredentialSource === 'usernode_managed'/);
-  assert.match(modal, /Uses your included OpenRouter credits/);
-  assert.match(modal, /Uses your OpenRouter account/);
+  assert.match(modal, /openrouterCredentialSource === 'usernode_managed'\s*\? PlatformI18n\.t\('changes:issue\.autoRun\.billing\.included'\)\s*: PlatformI18n\.t\('changes:issue\.autoRun\.billing\.openRouter'\)\)/);
+  assert.match(require('./lib/platform-i18n').message('changes:issue.autoRun.billing.included'), /Uses your included OpenRouter credits/);
+  assert.match(require('./lib/platform-i18n').message('changes:issue.autoRun.billing.openRouter'), /Uses your OpenRouter account/);
   assert.doesNotMatch(modal, /onFavorite|onRefresh|Experimental/);
 });
 
@@ -197,9 +198,16 @@ test('settings and restart recovery use OpenRouter as the user-facing provider n
     '_formatOpenRouterPrice(value)',
   );
   assert.match(settingsCopy, /heading\.textContent = 'OpenRouter'/);
-  assert.match(settingsCopy, /all chat and coding in an OpenRouter session/);
-  assert.match(settingsCopy, /do not use your platform Claude allowance/);
+  // The description and the model label are catalog messages now; the copy
+  // people read is their English.
+  assert.match(settingsCopy, /intro\.textContent = tr\('settings:openrouter\.intro'\);/);
+  assert.match(settingsCopy, /modelLabel\.textContent = tr\('settings:openrouter\.model\.label'\);/);
+  const { message } = require('./lib/platform-i18n');
+  const intro = message('settings:openrouter.intro');
+  assert.match(intro, /all chat and coding in an OpenRouter session/);
+  assert.match(intro, /do not use your platform Claude allowance/);
   assert.doesNotMatch(settingsCopy, /Codex/);
+  assert.doesNotMatch(`${intro} ${message('settings:openrouter.model.label')}`, /Codex/);
 
   const recoveryIdentity = between(
     server,

@@ -20,6 +20,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type Ref
 import { createPortal } from 'react-dom';
 
 import { clampPopoverHeight, placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
+import { useMessages } from '../../lib/i18n/react';
+import { t } from '../../lib/i18n/runtime';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { proposeChange } from './store';
 
@@ -32,13 +34,20 @@ const POP_HEIGHT = 170;
 /** The title route's own cap (MANUAL_SESSION_TITLE_MAX in src/routes/sessions.js). */
 export const PROPOSE_TITLE_MAX = 256;
 
-export const PROPOSE_QUESTION = 'Put this up for the group’s vote?';
+/** The panel's question, as its message id. */
+export const PROPOSE_QUESTION = 'agent:session.propose.question';
 
 /** The line under the question: which change, and what happens on the way. */
 export function proposeLine(title: string | null | undefined, prNumber: number | null | undefined): string {
-  const name = (title || '').trim() || 'This change';
-  const pr = prNumber ? ` (PR #${prNumber})` : '';
-  return `“${name}”${pr} goes to the vote. Its preview and checks run again on the way.`;
+  const name = (title || '').trim();
+  if (name) {
+    return prNumber
+      ? t('agent:session.propose.line.titledPr', { title: name, number: prNumber })
+      : t('agent:session.propose.line.titled', { title: name });
+  }
+  return prNumber
+    ? t('agent:session.propose.line.untitledPr', { number: prNumber })
+    : t('agent:session.propose.line.untitled');
 }
 
 /** The title as the server stores it: one line, runs of space made one. */
@@ -62,17 +71,18 @@ export function ProposeConfirmPanel({ draft, prNumber, headId, goRef, onDraft, o
   onCancel: () => void;
   onPropose: () => void;
 }) {
+  const t = useMessages('agent');
   return (
     <>
-      <div className="dev-vote-switch-label" id={headId}>{PROPOSE_QUESTION}</div>
+      <div className="dev-vote-switch-label" id={headId}>{t(PROPOSE_QUESTION)}</div>
       <label className="dev-vote-reason">
-        <span className="dev-vote-reason-label">Proposal title</span>
+        <span className="dev-vote-reason-label">{t('agent:session.propose.titleLabel')}</span>
         <input
           type="text"
           className="dev-vote-reason-box"
           value={draft}
           maxLength={PROPOSE_TITLE_MAX}
-          placeholder="This change"
+          placeholder={t('agent:session.propose.titlePlaceholder')}
           data-agent-session-propose-title
           onChange={(event) => onDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -84,15 +94,18 @@ export function ProposeConfirmPanel({ draft, prNumber, headId, goRef, onDraft, o
         {proposeLine(draft, prNumber)}
       </p>
       <div className="dev-vote-reason-actions">
-        <button type="button" className="dev-vote-reason-cancel" onClick={onCancel}>Cancel</button>
+        <button type="button" className="dev-vote-reason-cancel" onClick={onCancel}>{t('core:common.cancel')}</button>
         <button
           ref={goRef}
           type="button"
           className="dev-vote-reason-send dev-vote-reason-send-yes"
           data-agent-session-propose-confirm
+          // The title keeps focus through the press, so the panel does not
+          // move under the tap as the keyboard goes (lib/keyboard-open.ts).
+          onMouseDown={(event) => event.preventDefault()}
           onClick={onPropose}
         >
-          Propose
+          {t('agent:session.propose.confirm')}
         </button>
       </div>
     </>
@@ -110,6 +123,7 @@ export function ProposeButton({ changeId, title, prNumber, className, busy, prop
   busy: boolean;
   proposing: boolean;
 }) {
+  const t = useMessages('agent');
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<AnchorRect | null>(null);
   const [sheetEl, setSheetEl] = useState<HTMLElement | null>(null);
@@ -220,7 +234,7 @@ export function ProposeButton({ changeId, title, prNumber, className, busy, prop
         onClick={toggle}
         data-agent-session-preview-propose
       >
-        {proposing ? 'Proposing…' : 'Propose to group'}
+        {proposing ? t('agent:session.propose.proposing') : t('agent:session.propose.button')}
       </button>
       {pos ? createPortal(
         <div

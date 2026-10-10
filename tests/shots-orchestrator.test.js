@@ -215,9 +215,13 @@ function setup({ dispatch, storeArtifacts } = {}) {
         calls.resets += 1;
         return { origins: { ...ORIGINS }, ...provenance };
       },
-      cleanupPair: async () => { calls.cleaned += 1; order.push('cleanup'); },
+      cleanupPair: async () => { calls.cleaned += 1; order.push('cleanup'); return { cleaned: true, errors: [] }; },
     },
-    identities: { mintShotsAuthTokens: async () => { calls.minted += 1; return { ...TOKENS }; } },
+    identities: {
+      mintShotsAuthTokens: async () => { calls.minted += 1; return { ...TOKENS }; },
+      // A private child app: the guest browser carries no identity.
+      shotsGuestIdentity: async () => ({ kind: 'private', token: null }),
+    },
     shotsAgent: {
       dispatch: async (_config, options) => {
         calls.dispatches += 1;
@@ -341,6 +345,8 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.deepEqual(dispatchOptions.origins, ORIGINS);
   assert.equal(dispatchOptions.recordClips, false, 'no declared change is motion');
   assert.equal(dispatchOptions.clipSize, null);
+  assert.equal(dispatchOptions.phoneClipSize, null);
+  assert.deepEqual(dispatchOptions.phonePersonas, [], 'no screen is a phone\'s');
   assert.equal(dispatchOptions.resumeThreadId, null);
   assert.equal('forceBackend' in dispatchOptions, false, 'there is one shots agent');
   assert.equal(dispatchOptions.platformAssets, true, 'a child app loads the platform\'s assets through the proxy');
@@ -391,6 +397,8 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.equal(verified.traceSummary.runs, 1);
   assert.equal(verified.traceSummary.planSource, 'shots_agent');
   assert.equal(verified.traceSummary.terminalFailureClass, null);
+  assert.equal(verified.traceSummary.cleanupComplete, true);
+  assert.equal(verified.traceSummary.cleanupVersion, require('../src/services/shots-environment').RESOURCE_CLEANUP_VERSION);
   assert.equal(verified.traceSummary.artifactBytes,
     stored.artifacts.reduce((sum, file) => sum + file.bytes, 0));
 
@@ -401,6 +409,41 @@ test('every declared change saved publishes the ready files, tears the builds do
     'persist_exploration', 'exploring', 'register_control', 'agent_exploration',
     'persist_shots', 'store_artifacts', 'cleanup', 'verify',
   ]);
+});
+
+test('a change whose screens differ only by noise is published with a note saying they look the same', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      // Two images whose bytes differ but whose colours are within the
+      // comparison's tolerance: antialiasing, not a change.
+      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen' },
+        fixtures.png({ shade: 10 }));
+      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' },
+        fixtures.png({ shade: 12 }));
+      saveStills(control, 'invite-empty');
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.run.intent = twoChangeIntent();
+  const result = await execute(fixture);
+
+  assert.equal(result.state, 'verified', 'people still judge the shots');
+  const verified = fixture.transitions.find((entry) => entry.next === 'verified').patch;
+  assert.deepEqual(verified.hardVerdict.stories, [
+    { id: 'invite-suggestions', status: 'ready', files: 2, unchanged: true, note: shots.UNCHANGED_NOTE },
+    { id: 'invite-empty', status: 'ready', files: 2 },
+  ]);
+});
+
+test('useful shots publish with cleanup pending when teardown leaves a runtime', async () => {
+  const fixture = setup();
+  fixture.dependencies.environment.cleanupPair = async () => ({ cleaned: false, errors: ['API unavailable'] });
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.equal(trace.cleanupComplete, false);
+  assert.equal(trace.cleanupVersion, null);
 });
 
 test('one change saved and another skipped still publishes, with the skip and its reason', async () => {
@@ -453,6 +496,50 @@ test('nothing saved and a change skipped fails as incomplete with the skip reaso
   assert.deepEqual(failed.traceSummary.control, { savedFiles: 0, skippedChanges: 1, notedChanges: 0, skippedAll: false });
   assert.equal(fixture.calls.stored, 0);
   assert.equal(fixture.calls.cleaned, 1, 'the builds are torn down after a failed run too');
+});
+
+test('a change the agent tried and found broken fails the run as not working, keeping which change failed', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      controlFor(options).skipChange({
+        change: 'invite-suggestions', outcome: 'failed',
+        reason: 'Typing "ma" on the after build answered a 500 from GET /api/users?q=ma, twice.',
+      });
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'shots_change_failed' });
+  assert.deepEqual(fixture.transitions.map((entry) => entry.next), ['provisioning', 'exploring', 'failed']);
+  const failed = fixture.transitions.at(-1).patch;
+  assert.equal(failed.failureCode, 'shots_change_failed', 'not shots_capture_incomplete: the change does not work');
+  assert.match(failed.failureReason, /^Tried "Typing a username shows suggestions beside the invite action\." on the after build, and it did not work\. Typing "ma"/);
+  assert.deepEqual(failed.hardVerdict.stories, [{
+    id: 'invite-suggestions', status: 'failed',
+    reason: 'Typing "ma" on the after build answered a 500 from GET /api/users?q=ma, twice.',
+  }], 'kept, so the change page and the Homeroom bot can say which change failed');
+  assert.equal(failed.hardVerdict.passed, false);
+  assert.deepEqual(failed.traceSummary.control, { savedFiles: 0, skippedChanges: 1, failedChanges: 1, notedChanges: 0, skippedAll: false });
+  assert.equal(fixture.calls.stored, 0);
+});
+
+test('one change ready and another failed still publishes, with the failure in the verdict', async () => {
+  const fixture = setup({
+    storeArtifacts: async () => {},
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      saveStills(control, 'invite-suggestions');
+      control.skipChange({ change: 'invite-empty', outcome: 'failed', reason: 'Searching answered a 500.' });
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.run.intent = twoChangeIntent();
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  const verdict = fixture.transitions.find((entry) => entry.next === 'reviewing').patch.hardVerdict;
+  assert.deepEqual(verdict.stories, [
+    { id: 'invite-suggestions', status: 'ready', files: 2 },
+    { id: 'invite-empty', status: 'failed', reason: 'Searching answered a 500.' },
+  ]);
 });
 
 test('skipping every change at once fails with the one shared reason', async () => {
@@ -679,6 +766,116 @@ test('fixture sign-in tokens are minted for this app once and reach only the age
     { code: 'shots_control_not_found' }, 'the control is unregistered once the run ends');
 });
 
+test('a view-public child app\'s guest token reaches only the agent dispatch, and the brief says who the guest is', async () => {
+  const lookups = [];
+  let brief = null;
+  let dispatchTokens = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchTokens = options.authTokens;
+      brief = controlFor(options).getContext();
+      return {
+        backend: 'claude_code',
+        result: { lastResultText: 'The guest saw guest.jwt and stopped.', exitCode: 0 },
+      };
+    },
+  });
+  fixture.dependencies.identities.shotsGuestIdentity = async (pool, app, options) => {
+    lookups.push({ pool, app, options });
+    return { kind: 'guest', token: 'guest.jwt' };
+  };
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
+  assert.equal(lookups.length, 1);
+  assert.equal(lookups[0].pool, fixture.pool);
+  assert.equal(lookups[0].app, fixture.app, 'looked up for the proposal\'s own app');
+  assert.deepEqual(lookups[0].options, { selfApp: false });
+  assert.deepEqual(dispatchTokens, { ...TOKENS, guest: 'guest.jwt' });
+  assert.deepEqual(brief.browsers.guest, {
+    tool: 'browser_guest',
+    who: 'a visitor who is not signed in, whom this public app shows as a guest, as it does at its own address',
+  });
+  assert.equal(brief.appRoles.heldByAnyBrowser, false,
+    'a child app\'s brief says no browser holds a role in it');
+  assert.match(brief.browsers.full_admin.who, /^a Homeroom administrator .*this app is not told that/);
+  assert.doesNotMatch(JSON.stringify(brief), /guest\.jwt/, 'the brief carries no token');
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.doesNotMatch(JSON.stringify(fixture.transitions), /guest\.jwt/, 'no durable trace carries it');
+  assert.equal(trace.agentFinalResponse.excerpt, 'The guest saw **** and stopped.',
+    'the agent\'s final words are masked of it like the other tokens');
+});
+
+test('Homeroom\'s own shots tell the guest lookup so, and the guest carries nothing', async () => {
+  let lookup = null;
+  let dispatchTokens = null;
+  let brief = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchTokens = options.authTokens;
+      const control = controlFor(options);
+      brief = control.getContext();
+      for (const story of control.intent.stories) saveStills(control, story.id);
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  fixture.dependencies.identities.shotsGuestIdentity = async (_pool, _app, options) => {
+    lookup = options;
+    return { kind: 'homeroom', token: null };
+  };
+  const result = await execute(fixture, { selfAppSlug: 'demo' });
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(lookup, { selfApp: true });
+  assert.deepEqual(dispatchTokens, TOKENS, 'no guest token without one');
+  assert.match(brief.browsers.guest.who, /^a visitor who is not signed in: Homeroom shows it its signed-out pages/);
+  assert.equal('appRoles' in brief, false, 'on Homeroom\'s own copies the administrators are its administrators');
+  assert.equal(brief.browsers.full_admin.who, 'a full administrator that exists only in these two throwaway copies');
+});
+
+// An app built on Homeroom is told who is signed in, never their role in
+// it, so no browser is its creator or one of its admins. Three runs on one
+// app's Creator Studio tried every browser before giving up (QuestVerse's PRs 7 to 9):
+// the brief says so up front, in fixed words, so the agent skips at once.
+test('a child app\'s brief says no browser holds a role in the app, and to skip an owner-only screen at once', () => {
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-app-roles-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const briefFor = (options) => orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: { pr_title: 'Seasonal theme picker' },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/app.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+      ...options,
+    });
+    const child = briefFor({ childApp: true });
+    assert.deepEqual(Object.keys(child.browsers).sort(), ['full_admin', 'guest', 'member', 'read_only_admin']);
+    assert.equal(child.browsers.member.who, 'an ordinary signed-in person with no role in this app');
+    for (const persona of ['read_only_admin', 'full_admin']) {
+      assert.match(child.browsers[persona].who,
+        /^a Homeroom administrator .*; this app is not told that, so it sees an ordinary signed-in person with no role in it$/);
+    }
+    assert.equal(child.browsers.full_admin.tool, 'browser_full_admin');
+    assert.equal(child.appRoles.heldByAnyBrowser, false);
+    assert.match(child.appRoles.note, /^No browser here is this app's creator, owner or one of its admins/);
+    assert.match(child.appRoles.note, /never their role in it/);
+    assert.match(child.appRoles.note, /never the app's own\s+people/);
+    assert.match(child.appRoles.note, /an allowlist of usernames or ids/);
+    assert.match(child.appRoles.note, /call skip_change for that change at once/);
+    assert.match(child.appRoles.note, /do not try the other browsers/);
+    assert.match(child.appRoles.note, /when hints\.setup says how to get it, do that first/);
+
+    const homeroom = briefFor({});
+    assert.equal('appRoles' in homeroom, false);
+    assert.equal(homeroom.browsers.member.who, 'an ordinary member');
+    assert.equal(homeroom.browsers.read_only_admin.who, 'an administrator with read-only rights');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
 test('slow paired environment provisioning does not consume the agent budget', async () => {
   const fixture = setup();
   const preparePair = fixture.dependencies.environment.preparePair;
@@ -764,7 +961,8 @@ test('the brief names the declared changes, both addresses and revisions, and no
       'a testing hint must not rewrite the declared change');
     assert.deepEqual(brief.addresses, { before: 'http://base.internal', after: 'http://head.internal' });
     assert.deepEqual(brief.revisions, { before: BASE.slice(0, 12), after: HEAD.slice(0, 12) });
-    assert.deepEqual(Object.keys(brief.browsers).sort(), ['full_admin', 'member', 'read_only_admin']);
+    assert.deepEqual(Object.keys(brief.browsers).sort(), ['full_admin', 'guest', 'member', 'read_only_admin']);
+    assert.deepEqual(brief.browsers.guest, { tool: 'browser_guest', who: 'a visitor who is not signed in' });
     assert.deepEqual(brief.changedFiles, { items: ['frontend/src/Shell.tsx'], complete: true, totalKnown: 1 });
     assert.deepEqual(brief.changeContext.testingPaths, [route],
       'a credential-like testing path never reaches the agent');
@@ -779,6 +977,185 @@ test('the brief names the declared changes, both addresses and revisions, and no
     });
     assert.doesNotMatch(JSON.stringify(brief),
       /secret\.jwt|fixture-session-secret|fixture-db-password|evidence_(?:base|head)_db|sha256:(?:base|head)/);
+    assert.equal('previewAt' in brief, false, 'no declared moment, no previewAt');
+    assert.equal('phoneSignIn' in brief, false, 'no phone code for the pair, no phoneSignIn');
+    assert.deepEqual(brief.screenBrowsers, { 'invite-suggestions': { desktop: 'browser_member' } });
+    assert.ok(Object.values(brief.browsers).every((entry) => !('phoneTool' in entry)), 'no phone screen, no phone browser');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('Homeroom\'s own copies hand the agent the run\'s phone code in its brief, and nothing stored keeps it', async () => {
+  // The copies offer phone sign-in with the fictional test numbers and a
+  // code made for the run (shots-environment.js shotsPhoneSignInEnv). The
+  // agent needs the code to walk a Join sheet's phone step to its end; the
+  // proposal, the trace and the agent's worker env never get it.
+  const CODE = '482913';
+  let brief = null;
+  let dispatchTokens = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchTokens = options.authTokens;
+      const control = controlFor(options);
+      brief = control.getContext();
+      saveStills(control, 'invite-suggestions');
+      control.noteChange({
+        change: 'invite-suggestions',
+        note: 'Signed in with +1 415 555 0142 and 482 913; the username step is left out.',
+      });
+      control.skipChange({ change: 'invite-empty', reason: `The code ${CODE} worked but the empty state never showed.` });
+      return {
+        backend: 'claude_code',
+        result: { lastResultText: `Used code ${CODE} and 482-913 on both copies.`, exitCode: 0 },
+      };
+    },
+  });
+  fixture.run.intent = twoChangeIntent();
+  fixture.dependencies.environment.resetPair = async () => ({
+    origins: { ...ORIGINS }, ...provenance, phoneTestCode: CODE,
+  });
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.equal(brief.phoneSignIn.code, CODE);
+  assert.equal(brief.phoneSignIn.textSent, false);
+  assert.match(brief.phoneSignIn.numbers, /\+1, any area code, then 555 0100 to 0199/);
+  assert.match(brief.phoneSignIn.use, /No text is sent/);
+  assert.match(brief.phoneSignIn.use, /only on the before and after addresses, never anywhere else/);
+  assert.match(brief.phoneSignIn.use, /Never write the code in a note or a skip reason/);
+  assert.deepEqual(dispatchTokens, TOKENS, 'the code is no sign-in token: the worker env never carries it');
+
+  assert.doesNotMatch(JSON.stringify(fixture.transitions), /482[ -]?913/, 'no durable record keeps the code');
+  const verified = fixture.transitions.at(-1).patch;
+  const stories = Object.fromEntries(verified.hardVerdict.stories.map((story) => [story.id, story]));
+  assert.equal(stories['invite-suggestions'].note,
+    'Signed in with +1 415 555 0142 and ****; the username step is left out.',
+    'what the proposal shows is masked, the test number kept');
+  assert.equal(stories['invite-empty'].reason, 'The code **** worked but the empty state never showed.');
+  assert.equal(verified.traceSummary.agentFinalResponses[0].excerpt, 'Used code **** and **** on both copies.');
+});
+
+test('a phone screen is shot in its persona\'s phone browser, and the run starts one only where needed', async () => {
+  // Below 768 px a screen is a phone's (visible-changes.phoneScreen): a
+  // tablet's 768 stays in the desktop browser.
+  const raw = fixtures.motionIntent();
+  const phone = { name: 'phone', width: 390, height: 844 };
+  const tablet = { name: 'tablet', width: 768, height: 1024 };
+  raw.stories[0] = { ...raw.stories[0], persona: 'read_only_admin', viewports: [raw.stories[0].viewports[0], phone] };
+  raw.stories[1] = { ...raw.stories[1], viewports: [tablet, { name: 'small', width: 360, height: 740 }] };
+  let brief = null;
+  let dispatchOptions = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      dispatchOptions = options;
+      brief = controlFor(options).getContext();
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  fixture.run.intent = contract.parseIntent(raw);
+  await assert.rejects(execute(fixture), { code: 'shots_capture_incomplete' });
+
+  assert.deepEqual(brief.screenBrowsers, {
+    'invite-suggestions': { desktop: 'browser_admin', phone: 'browser_admin_phone' },
+    'saved-toast': { tablet: 'browser_member', small: 'browser_member_phone' },
+  });
+  assert.equal(brief.browsers.read_only_admin.phoneTool, 'browser_admin_phone');
+  assert.equal(brief.browsers.member.phoneTool, 'browser_member_phone');
+  assert.equal('phoneTool' in brief.browsers.full_admin, false, 'no phone screen of its own, no phone browser');
+  assert.equal('phoneTool' in brief.browsers.guest, false);
+  assert.deepEqual(brief.declaredChanges, fixture.run.intent.stories, 'the declared changes are not rewritten');
+  // The worker starts exactly those phone browsers, and each kind records
+  // clips at its own motion screens' size.
+  assert.deepEqual(dispatchOptions.phonePersonas, ['member', 'read_only_admin']);
+  assert.equal(dispatchOptions.recordClips, true);
+  assert.equal(dispatchOptions.clipSize, '768x1024');
+  assert.equal(dispatchOptions.phoneClipSize, '360x740');
+});
+
+test('Homeroom\'s own copies tell the agent how to show the install strip, when a screen is a phone\'s', async () => {
+  // Every shots page opens with the strip dismissed (worker/shots-page-init.js);
+  // a change to the strip itself (4420, 4321) opens its start path with this flag.
+  const briefs = [];
+  for (const [selfAppSlug, phone] of [['demo', true], ['other-app', true], ['demo', false]]) {
+    const raw = fixtures.intent();
+    if (phone) raw.stories[0].viewports = [{ name: 'phone', width: 390, height: 844 }];
+    let brief = null;
+    const fixture = setup({
+      dispatch: async (options) => {
+        brief = controlFor(options).getContext();
+        return { backend: 'claude_code', threadId: 'shots-thread' };
+      },
+    });
+    fixture.run.intent = contract.parseIntent(raw);
+    await assert.rejects(execute(fixture, { selfAppSlug }), { code: 'shots_capture_incomplete' });
+    briefs.push(brief);
+  }
+  assert.deepEqual(briefs[0].installStrip, orchestrator.INSTALL_STRIP);
+  assert.match(briefs[0].installStrip.note, /dismissed on every page these browsers open/);
+  assert.match(briefs[0].installStrip.note, /on both addresses, in the phone browser/);
+  assert.equal('installStrip' in briefs[1], false, 'a child app\'s copies have no strip');
+  assert.equal('installStrip' in briefs[2], false, 'no phone screen, nothing would show it');
+});
+
+test('each side\'s home tile reaches the run: described in the brief, served from its own dapp.json', async (t) => {
+  // services/shots-home-tile.js: a hosted app's copies serve only the app,
+  // so an icon change had nothing to shoot (admin export 2026-10-05).
+  const tileCheckout = (manifest) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-orchestrator-tile-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(dir, 'dapp.json'), JSON.stringify(manifest));
+    return dir;
+  };
+  let brief = null;
+  let pages = null;
+  const fixture = setup({
+    dispatch: async (options) => {
+      const control = controlFor(options);
+      brief = control.getContext();
+      pages = { base: control.homeTilePage('base'), head: control.homeTilePage('head') };
+      for (const story of control.intent.stories) saveStills(control, story.id);
+      return { backend: 'claude_code', threadId: 'thread-1' };
+    },
+  });
+  fixture.pair.sides.base.checkout = tileCheckout({ name: 'Demo', tests: [] });
+  fixture.pair.sides.head.checkout = tileCheckout({ name: 'Demo', icon: { emoji: '🔥' }, tests: [] });
+  const result = await execute(fixture);
+  assert.equal(result.state, 'verified');
+  assert.deepEqual(brief.homeTile, {
+    path: '/__shots/home-tile',
+    before: { name: 'Demo', icon: { kind: 'letter' } },
+    after: { name: 'Demo', icon: { kind: 'emoji', emoji: '🔥' } },
+    differs: true,
+  });
+  assert.match(pages.base, /Home screen tile, before the change[\s\S]*data-icon="letter">D</);
+  assert.match(pages.head, /Home screen tile, after the change[\s\S]*<span class="emoji">🔥<\/span>/);
+});
+
+test('a declared preview moment reaches the brief in a fixed shape, so both copies open at it', () => {
+  // services/preview-clock.js: a Thursday-evening reminder cannot show on a
+  // Sunday copy. The author declares the moment in its testing guidance; the
+  // brief hands the agent the parsed instant, label and query parameter, and
+  // never the author's free text in its place.
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-preview-at-'));
+  try {
+    fs.writeFileSync(path.join(checkout, 'dapp.json'), JSON.stringify({ tests: [] }));
+    const brief = orchestrator.shotsBrief({
+      run: { id: RUN_ID },
+      session: {
+        pr_title: 'Bins reminder',
+        testing_md: '<!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->\n1. Open the rota.',
+      },
+      revision: {
+        baseSha: BASE, headSha: HEAD, files: ['public/app.js'], filesComplete: true,
+        diffSummary: { text: '', fileCount: 1, truncated: false },
+      },
+      pair: { sides: { base: {}, head: { checkout } } },
+      deployment: { origins: { base: 'http://base.internal', head: 'http://head.internal' } },
+      intent: contract.parseIntent(fixtures.intent()),
+    });
+    assert.deepEqual(brief.previewAt, {
+      at: '2026-10-08T18:00:00.000Z', label: 'Thursday 8 Oct, 7 pm', zone: 'Europe/London', param: 'un-now',
+    });
   } finally {
     fs.rmSync(checkout, { recursive: true, force: true });
   }
@@ -1105,7 +1482,8 @@ test('a completed agent turn without tool calls retains the shots tool surface a
       options.onShotsDiagnostic({ kind: 'provider_dispatched', backend: 'claude_code', requestMode: 'agent_new' });
       options.onShotsDiagnostic({ kind: 'provider_init', mcpServerCount: 4, toolDefinitionCount: 26,
         briefToolAvailable: true, saveShotToolAvailable: true, skipChangeToolAvailable: true,
-        browserMemberToolCount: 7, browserAdminToolCount: 7, browserFullAdminToolCount: 7 });
+        browserMemberToolCount: 7, browserAdminToolCount: 7, browserFullAdminToolCount: 7,
+        browserGuestToolCount: 7 });
       options.onShotsDiagnostic({ kind: 'context_result', outcome: 'ok', responseCharacters: 12000,
         jsonValid: true, declaredChangesPresent: true, addressesPresent: true,
         revisionsPresent: true, storyCount: 3 });
@@ -1125,6 +1503,7 @@ test('a completed agent turn without tool calls retains the shots tool surface a
   assert.equal(trace.agentActivity.events[1].briefToolAvailable, true);
   assert.equal(trace.agentActivity.events[1].saveShotToolAvailable, true);
   assert.equal(trace.agentActivity.events[1].browserFullAdminToolCount, 7);
+  assert.equal(trace.agentActivity.events[1].browserGuestToolCount, 7);
   assert.equal(trace.agentActivity.events[2].responseCharacters, 12000);
   assert.equal(trace.agentActivity.events[2].declaredChangesPresent, true);
   assert.equal(trace.agentActivity.events[2].storyCount, 3);
@@ -1640,6 +2019,17 @@ test('a failed shots sign-in reaches the trace and the failure reason with its s
   assert.match(runner, /\|\| die "\$\(head -c 300 "\$SHOTS_BOOTSTRAP_FAILURE_FILE"/);
 });
 
+test('the trace names the guest browser as the guest, never as another persona', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'browser_call_start', persona: 'guest',
+    callOrdinal: 1, tool: 'browser_navigate', side: 'head' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'browser_server_exit', persona: 'guest', exitCode: 0 });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'browser_call_start', persona: 'visitor',
+    callOrdinal: 2, tool: 'browser_navigate', side: 'head' });
+  const events = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.deepEqual(events.map((event) => event.persona), ['guest', 'guest', undefined]);
+});
+
 test('the trace keeps whether a hosted app\'s page load carried the persona identity, as a boolean only', () => {
   const metrics = orchestrator.newRunMetrics();
   orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'head', identityAttached: true });
@@ -1699,6 +2089,46 @@ test('a shots agent that died says how: its exit code and the worker\'s reason, 
   assert.equal('exitCause' in oddDispatch, false);
 });
 
+
+test('a shots agent whose process died is dispatched once more, keeping what it saved', async () => {
+  let attempt = 0;
+  const died = (cause) => Object.assign(new Error('The shots agent stopped with an error before it finished.'), {
+    code: 'shots_agent_failed', shotsExitCode: -1, shotsExitCause: cause,
+    detail: { exit: 'exit -1', exitCode: -1, exitCause: cause },
+  });
+  const fixture = setup({
+    dispatch: async (options) => {
+      attempt += 1;
+      const control = controlFor(options);
+      if (attempt === 1) {
+        control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'before', kind: 'screen' },
+          fixtures.png({ shade: 10 }));
+        throw died('container_gone');
+      }
+      assert.equal(control.saved.size, 1, 'the second dispatch finds the first one\'s shot');
+      control.saveShot({ change: 'invite-suggestions', screen: 'desktop', side: 'after', kind: 'screen' },
+        fixtures.png({ shade: 200 }));
+      return { backend: 'claude_code', threadId: 'shots-thread' };
+    },
+  });
+  const result = await execute(fixture, { maxAgentMs: 120_000 });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.deepEqual(trace.agentDispatches.map((d) => [d.outcome, d.exitCause]),
+    [['failed', 'container_gone'], ['completed', undefined]]);
+
+  // Once only, and only for a death that says nothing about the proposal.
+  for (const [cause, dispatches] of [['oom_killed', 2], ['probe_unobservable', 1]]) {
+    const again = setup({ dispatch: async () => { throw died(cause); } });
+    await assert.rejects(execute(again, { maxAgentMs: 120_000 }), { code: 'shots_agent_failed' });
+    assert.equal(again.calls.dispatches, dispatches, cause);
+  }
+  // Nor when too little of the budget is left to do anything.
+  const short = setup({ dispatch: async () => { throw died('container_gone'); } });
+  await assert.rejects(execute(short), { code: 'shots_agent_failed' });
+  assert.equal(short.calls.dispatches, 1);
+});
 test('the trace keeps the worker\'s memory as a summary of numbers, outside the agent\'s event ring', () => {
   const metrics = orchestrator.newRunMetrics();
   orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', sequence: 1 });
@@ -1741,4 +2171,88 @@ test('the trace counts the proxy\'s refusals by reason and kind of host', () => 
   });
   assert.equal(agentActivity.events.at(-3).hostKind, undefined, 'an unknown kind of host is dropped');
   assert.doesNotMatch(JSON.stringify(agentActivity), /internal\.example|10\.0\.0\.5/);
+});
+
+// #4575: the shots run lost a race with the Homeroom bot's turn on the same
+// session. The run waited for an idle session once, before building its
+// copies, and the bot took the session while they built: the dispatch died
+// with "execInWorker: durable active turn could not be persisted".
+function sessionBusyError() {
+  return Object.assign(new Error('execInWorker: another turn already owns this session'), {
+    code: 'durable_turn_persist_failed', persistCode: 'session_busy', sessionBusy: true,
+  });
+}
+
+test('a dispatch that finds the proposal\'s agent busy waits for it and dispatches again', async () => {
+  const lines = [];
+  let idleWaits = 0;
+  const fixture = setup({
+    dispatch: async (options, attempt) => {
+      if (attempt === 1) throw sessionBusyError();
+      saveStills(controlFor(options), 'invite-suggestions');
+      return { backend: 'claude_code', threadId: 'thread-2' };
+    },
+  });
+  const realWait = orchestrator.waitForSessionIdle;
+  fixture.dependencies.waitForSessionIdle = async (...args) => {
+    idleWaits += 1;
+    return realWait(...args);
+  };
+  const result = await execute(fixture, {
+    maxAgentMs: 120_000, onProgress: (line) => lines.push(line),
+  });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+  // Once before the copies, and again right before each dispatch.
+  assert.equal(idleWaits, 3);
+  assert.ok(lines.some((line) => /agent was busy, so the shots didn’t start\. Trying again/.test(line)));
+  const trace = fixture.transitions.find((entry) => entry.next === 'reviewing').patch.traceSummary;
+  assert.equal(trace.agentBusyRetries, 1);
+  assert.deepEqual(trace.agentDispatches.map((entry) => entry.code || entry.outcome),
+    ['durable_turn_persist_failed', 'completed']);
+});
+
+test('the worker\'s in-flight refusal is waited out the same way', async () => {
+  const fixture = setup({
+    dispatch: async (options, attempt) => {
+      if (attempt === 1) {
+        throw Object.assign(new Error('execInWorker: a turn is already in flight for session 42'),
+          { code: 'TURN_IN_FLIGHT' });
+      }
+      saveStills(controlFor(options), 'invite-suggestions');
+      return { backend: 'claude_code', threadId: 'thread-2' };
+    },
+  });
+  const result = await execute(fixture, { maxAgentMs: 120_000 });
+  assert.equal(result.state, 'verified');
+  assert.equal(fixture.calls.dispatches, 2);
+});
+
+test('an agent that stays busy fails the run in plain words after two more tries', async () => {
+  const fixture = setup({ dispatch: async () => { throw sessionBusyError(); } });
+  await assert.rejects(execute(fixture, { maxAgentMs: 120_000 }), { code: 'durable_turn_persist_failed' });
+  assert.equal(fixture.calls.dispatches, 1 + orchestrator.MAX_AGENT_BUSY_RETRIES);
+  const failed = fixture.transitions.at(-1);
+  assert.equal(failed.next, 'failed');
+  assert.equal(failed.patch.failureCode, 'durable_turn_persist_failed');
+  assert.equal(failed.patch.failureReason,
+    'The proposal’s agent was busy with another turn, so the shots didn’t start. Take the shots again.');
+  assert.doesNotMatch(failed.patch.failureReason, /execInWorker|durable/);
+});
+
+test('a session the agent was busy on is not retried past the agent\'s budget', async () => {
+  const fixture = setup({ dispatch: async () => { throw sessionBusyError(); } });
+  // Less than a minute of agent budget: no time for another dispatch.
+  await assert.rejects(execute(fixture, { maxAgentMs: 30_000 }), { code: 'durable_turn_persist_failed' });
+  assert.equal(fixture.calls.dispatches, 1);
+});
+
+test('only a busy agent reads as retryable, never a failed one', () => {
+  assert.equal(orchestrator.agentBusyRetryable(sessionBusyError()), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'TURN_IN_FLIGHT' }), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'session_busy' }), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'durable_retry_persist_failed' }), true);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'shots_agent_failed' }), false);
+  assert.equal(orchestrator.agentBusyRetryable({ code: 'shots_agent_timeout' }), false);
+  assert.equal(orchestrator.agentBusyRetryable(null), false);
 });

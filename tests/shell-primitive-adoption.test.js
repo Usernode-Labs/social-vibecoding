@@ -68,9 +68,10 @@ const PRIMARY_FILL = 'bg-violet-600';
  * ── The gap that is still open, named rather than quietly left ─────────
  *
  * `<select>` is NOT scanned. It has the same three fills and the same
- * primitive (@/components/ui/select.tsx), and adding it here flags four raw
- * selects that predate this rule — #dc-runner-select, the share dialog's two,
- * and #settings-dev-flow — in three files none of which #2437 is about.
+ * primitive (@/components/ui/select.tsx), and adding it here flags three raw
+ * selects that predate this rule — #dc-runner-select and the share dialog's
+ * two (#settings-dev-flow, the fourth, left with its setting in #4311) — in
+ * files none of which #2437 is about.
  * Converting them is a slice of its own; widening the scan without converting
  * them would mean three allow-list entries, which is the one thing this file's
  * header says an allow-list is not for. The three selects on the waitlist
@@ -85,6 +86,12 @@ const FIELD_BOXES = [
 
 /** See the header. Every entry is a considered exception. */
 const ALLOWED_BUTTON_FILES = new Set([
+  // Comment mode's posted pins (#4289 follow-up): numbered markers in the
+  // pin's own shape, which open the comment they mark. The accent fill is
+  // the pin's, the same one the request's page draws it in (app.css
+  // `.pin-shot-pin`), not a primary button's; its Post button does route
+  // through <Button>.
+  'comment-pin/comment-pin.tsx',
   // `dev-board/actions-row.tsx` WAS HERE, for #dev-plus-btn's violet fill.
   // The "+" closes the Workshop's view-tab strip now and is drawn on the
   // strip's own metrics and ink (app.css `.dev-ws-plus-btn`) — a bare glyph,

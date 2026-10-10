@@ -27,6 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -157,6 +158,7 @@ function makeHarness({ appData = {} } = {}) {
     json: async () => ({ ok: true, sessionId: 5151, prNumber: 42, prUrl: 'https://github.com/o/r/pull/42' }),
   };
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console: { ...console, debug: () => {}, warn: () => {} },
     Date,
     relTime: () => 'just now',
@@ -406,7 +408,7 @@ test('a 409 repaints with the already-up-for-vote state', async () => {
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
   const l = h.live();
-  assert.match(l.status.textContent, /already up for vote/);
+  assert.match(l.status.textContent, /already waiting for approval/);
   assert.equal(l.edit.classList.contains('hidden'), true);
 });
 
@@ -421,7 +423,7 @@ test('an existing openProposal locks the editor and says so', () => {
   const l = h.live();
   assert.equal(l.edit.classList.contains('hidden'), true, 'editor hidden');
   assert.doesNotMatch(l.list.innerHTML, /data-remove-appadmin/, 'rows read-only');
-  assert.match(l.status.textContent, /already up for vote/);
+  assert.match(l.status.textContent, /already waiting for approval/);
 });
 
 test('the self-app stays read-only even for a manager (and hides when empty)', () => {

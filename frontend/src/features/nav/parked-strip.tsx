@@ -17,6 +17,9 @@
  * The ✕ is that dismiss, and it means FORGET rather than hide: a strip that
  * comes back on the next screen swap is a strip you cannot get rid of, and
  * the handle's whole promise is that it is there until you are done with it.
+ * Being done with it closes the app too: its frame, still loaded behind the
+ * strip, is let go, so the next open starts it fresh (on whatever build is
+ * live by then) instead of resuming the copy you dismissed.
  *
  * ── Resume goes BACK INTO the app, from wherever you are (#2762) ──────
  *
@@ -95,13 +98,14 @@ import { useEffect, useRef, useState } from 'react';
 
 import { XIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { navStore } from './nav-store.js';
 import { parkedStore, readParked, setParked } from './parked-store.js';
-import { enterPeek, leavePeek } from './rail-peek';
+import { enterPeekByMouse, leavePeekByMouse } from './rail-peek';
 import { noteResumeOrigin } from './resume-motion';
 
 type ParkedApp = { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
@@ -111,6 +115,18 @@ const ENTER_MS = 220;
 const LEAVE_MS = 160;
 const SLACK_MS = 80;
 
+/**
+ * The ✕: forget the strip AND close the app it offered. Its frame is kept
+ * loaded so Resume is instant, and a forgotten app has nothing to resume
+ * into, so it is let go (AppView keeps an app on screen, which this never
+ * is: the strip only shows while the bar is up). A strip on its way out
+ * (`app` null) has already been forgotten.
+ */
+export function forgetParked(app: ParkedApp | null): void {
+  setParked(null);
+  if (app) window.AppView?.evictKeptApp?.(app.slug);
+}
+
 /** Whether a leave would actually be drawn: the phone, with motion allowed. */
 function leaveAnimates(): boolean {
   if (typeof window === 'undefined' || !window.matchMedia) return false;
@@ -119,6 +135,7 @@ function leaveAnimates(): boolean {
 }
 
 export function ParkedStrip() {
+  const t = useMessages();
   const ref = useRef<HTMLDivElement | null>(null);
   const { app } = useStoreState(parkedStore);
   // The bar's own answer, read the way the bar reads it. `true` is the
@@ -209,8 +226,8 @@ export function ParkedStrip() {
       ref={ref}
       id="platform-parked"
       className="platform-parked hidden"
-      onMouseEnter={peek ? enterPeek : undefined}
-      onMouseLeave={peek ? leavePeek : undefined}
+      onPointerEnter={peek ? enterPeekByMouse : undefined}
+      onPointerLeave={peek ? leavePeekByMouse : undefined}
     >
       {shown && record ? (
         <>
@@ -240,14 +257,14 @@ export function ParkedStrip() {
               <AppIconContent app={record} />
             </span>
             <span className="platform-parked-name">{shown.name}</span>
-            <span className="platform-parked-pill">Resume</span>
+            <span className="platform-parked-pill">{t('core:parked.resume')}</span>
           </a>
           <button
             id="platform-parked-forget"
             type="button"
             className="platform-parked-x"
-            aria-label={`Forget ${shown.name}`}
-            onClick={() => setParked(null)}
+            aria-label={t('core:parked.forget', { app: shown.name })}
+            onClick={() => forgetParked(app)}
           >
             <XIcon className="w-4 h-4" />
           </button>

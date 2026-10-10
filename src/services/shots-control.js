@@ -2,13 +2,14 @@
 
 // A before/after run gets one purpose-bound JWT and this in-memory,
 // run-scoped control plane. The shots agent can read its brief, save shots
-// and clips, note what a change's shots leave out, and skip a change with a
-// reason. It cannot address another run, obtain app auth material, or invoke
+// and clips, note what a change's shots leave out, skip a change with a
+// reason, and note a few problems it saw on the after build. It cannot address another run, obtain app auth material, or invoke
 // generic platform APIs. A platform restart drops the registry; recovery
 // retries the durable run rather than trusting an orphan model process.
 
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
+const homeTile = require('./shots-home-tile');
 
 const controls = new Map();
 
@@ -25,21 +26,47 @@ function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+// The run's phone sign-in code (the brief's phoneSignIn.code, on Homeroom's
+// own copies), masked wherever the agent wrote it: six digits on their own,
+// or with a space or a dash between them ("482 913"). Below the length the
+// log redaction masks literals at, so it gets its own pattern.
+function maskPhoneTestCode(text, code) {
+  if (typeof text !== 'string' || !/^[0-9]{6}$/.test(String(code || ''))) return text;
+  const digits = new RegExp(`(?<![0-9])${[...String(code)].join('[ -]?')}(?![0-9])`, 'g');
+  return text.replace(digits, '****');
+}
+
 class RunControl {
-  constructor({ runId, sessionId, intent, context, expiresAt }) {
+  constructor({ runId, sessionId, intent, context, expiresAt, homeTiles = null }) {
     this.runId = runId;
     this.sessionId = Number(sessionId);
     this.intent = planContract.parseIntent(intent);
     this.context = cloneJson(context);
+    // The brief hands the agent this code; what the agent writes for people
+    // (a skip reason, a note) is shown on the proposal, so it never keeps it.
+    this.phoneTestCode = this.context?.phoneSignIn?.code || null;
+    // Each side's tile on Homeroom's home screen, served on that side's
+    // address (services/shots-home-tile.js). Kept out of the brief, which
+    // only describes them: an icon image is up to 256 KB.
+    this.homeTiles = homeTiles ? cloneJson(homeTiles) : null;
     this.expiresAt = Number(expiresAt || Date.now() + 8 * 60_000);
     this.saved = new Map();
     this.skipped = new Map();
+    // The skipped changes the agent said the after build broke on: it did
+    // the steps and the app errored. Shown and handled as the change not
+    // working, not as a state these copies could not reach.
+    this.failed = new Set();
     // What a change's shots leave out, shown beside them once it is ready.
     this.notes = new Map();
+    // Problems the agent noticed on the after build besides the declared
+    // changes, in the order it noted them (at most shots.MAX_NOTICES).
+    // Advisory: nothing here changes a change's status or the run's.
+    this.notices = [];
     // Set when the agent says nothing at all can be shot (for example every
     // screen shows a sign-in page); it explains every change that is not
     // ready and has no reason of its own.
     this.skippedAll = null;
+    this.skippedAllFailed = false;
     // The last refused tool call survives a normal model exit, for the
     // owner's diagnostics.
     this.lastToolFailure = null;
@@ -61,6 +88,14 @@ class RunControl {
     return cloneJson({ ...this.context, progress: this.progress() });
   }
 
+  // The page the proxy serves at the home tile path on one side's address.
+  homeTilePage(side) {
+    this.assertLive();
+    const tile = homeTile.SIDES.includes(side) ? this.homeTiles?.[side] : null;
+    if (!tile) throw new ShotsControlError('home_tile_unavailable', 'This run has no home tile for that side.', 404);
+    return homeTile.renderPage(tile, { side });
+  }
+
   // One file the agent saved: a screen or element shot, or a clip. Saving the
   // same slot again replaces it, so the agent can retake a poor shot, and
   // saving for a change it skipped takes that skip back.
@@ -69,8 +104,20 @@ class RunControl {
       this.assertOpen();
       const target = shots.shotTarget(this.intent, rawTarget);
       const info = target.media === 'webm' ? shots.inspectClip(buffer) : shots.inspectImage(buffer);
+      shots.checkElementSize(
+        this.declaredChange(target.storyId), target, info,
+        this.saved.get(shots.slotKey({ ...target, variant: 'context' })),
+      );
       this.saved.set(shots.slotKey(target), shots.stored(target, buffer, info));
       this.skipped.delete(target.storyId);
+      this.failed.delete(target.storyId);
+      // The same image on the other side says the two sides were not shot
+      // in the states the claim compares. Said while the agent can still
+      // retake them, not only on the card afterwards.
+      const otherSide = target.media === 'png'
+        ? this.saved.get(shots.slotKey({ ...target, side: target.side === 'base' ? 'head' : 'base' }))
+        : null;
+      const sameAsOtherSide = !!otherSide && otherSide.sha256 === info.sha256;
       return {
         saved: true,
         change: target.storyId,
@@ -79,6 +126,13 @@ class RunControl {
         kind: target.variant === 'animation' ? 'clip' : target.variant === 'focus' ? 'element' : 'screen',
         bytes: info.bytes,
         ...(info.width ? { width: info.width, height: info.height } : {}),
+        ...(sameAsOtherSide ? {
+          sameAsOtherSide: true,
+          warning: 'This before and after are the same image, so they cannot show the change. Check that each '
+            + 'side followed the steps to the state the claim describes, at the same scroll position, and shoot '
+            + 'again. If these copies cannot show the change, call note_change to say what the shots leave out, '
+            + 'or skip_change.',
+        } : {}),
         progress: this.progress(),
       };
     } catch (error) {
@@ -91,18 +145,24 @@ class RunControl {
   // not show it. Its reason is shown on the proposal for that change, and
   // nothing saved for it is published; the other changes still are. Without
   // a change id the reason covers every change that is not ready and has
-  // none of its own.
-  skipChange({ change = null, reason } = {}) {
+  // none of its own. `outcome: 'failed'` says the agent did the steps and
+  // the after build broke, so the change is failed rather than skipped.
+  skipChange({ change = null, reason, outcome = null } = {}) {
     try {
       this.assertOpen();
-      const text = shots.reason(reason);
+      const text = maskPhoneTestCode(shots.reason(reason), this.phoneTestCode);
+      const broke = shots.outcome(outcome) === 'failed';
+      const said = broke ? { outcome: 'failed' } : {};
       if (change == null || change === '') {
         this.skippedAll = text;
-        return { skipped: 'all', progress: this.progress() };
+        this.skippedAllFailed = broke;
+        return { skipped: 'all', ...said, progress: this.progress() };
       }
       const story = this.declaredChange(change);
       this.skipped.set(story.id, text);
-      return { skipped: story.id, progress: this.progress() };
+      if (broke) this.failed.add(story.id);
+      else this.failed.delete(story.id);
+      return { skipped: story.id, ...said, progress: this.progress() };
     } catch (error) {
       this.lastToolFailure = { operation: 'skip-change', error };
       throw error;
@@ -116,10 +176,39 @@ class RunControl {
     try {
       this.assertOpen();
       const story = this.declaredChange(change);
-      this.notes.set(story.id, shots.note(note));
+      this.notes.set(story.id, maskPhoneTestCode(shots.note(note), this.phoneTestCode));
       return { noted: story.id, progress: this.progress() };
     } catch (error) {
       this.lastToolFailure = { operation: 'note-change', error };
+      throw error;
+    }
+  }
+
+  // A clear problem the agent saw on the after build while it took the
+  // shots, such as content cut off or controls overlapping. Shown on the
+  // proposal under "Also noticed". Noting the same problem at the same place
+  // again updates it rather than adding another; past the cap it is refused,
+  // so the agent keeps only what matters most.
+  noteProblem(raw = {}) {
+    try {
+      this.assertOpen();
+      const entry = shots.notice(this.intent, raw);
+      const same = this.notices.findIndex((existing) => existing.change === entry.change
+        && existing.screen === entry.screen && existing.text.toLowerCase() === entry.text.toLowerCase());
+      if (same >= 0) this.notices[same] = entry;
+      else if (this.notices.length >= shots.MAX_NOTICES) {
+        throw new ShotsControlError('too_many_notices',
+          `This run already has ${shots.MAX_NOTICES} problems noted, the most it keeps. Note only what a person would agree is broken.`);
+      } else this.notices.push(entry);
+      return {
+        noticed: entry.change,
+        screen: entry.screen,
+        alsoBefore: entry.alsoBefore,
+        notices: this.notices.length,
+        remaining: shots.MAX_NOTICES - this.notices.length,
+      };
+    } catch (error) {
+      this.lastToolFailure = { operation: 'note-problem', error };
       throw error;
     }
   }
@@ -133,14 +222,16 @@ class RunControl {
   }
 
   summary() {
-    return shots.summarize(this.intent, this.saved, this.skipped,
-      { fallbackReason: this.skippedAll, notes: this.notes });
+    return shots.summarize(this.intent, this.saved, this.skipped, {
+      fallbackReason: this.skippedAll, notes: this.notes,
+      failed: this.failed, fallbackFailed: this.skippedAllFailed, notices: this.notices,
+    });
   }
 
   progress() {
     return this.summary().stories.map((story) => ({
       change: story.id,
-      status: story.status === 'ready' ? 'ready'
+      status: story.status === 'ready' || story.status === 'failed' ? story.status
         : this.skipped.has(story.id) || this.skippedAll ? 'skipped' : 'missing',
       ...(story.status === 'ready' ? (story.note ? { note: story.note } : {}) : { detail: story.reason }),
     }));
@@ -179,6 +270,7 @@ function clearForTests() {
 module.exports = {
   ShotsControlError,
   RunControl,
+  maskPhoneTestCode,
   registerRun,
   forRequest,
   _clearForTests: clearForTests,

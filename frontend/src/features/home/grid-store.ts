@@ -39,6 +39,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import type { BuildLineState } from '../first-session/build-line';
 
 /** Where an item sits on the canvas. `null` = flow after it (overflow items). */
 export interface GridPlacement {
@@ -70,6 +71,11 @@ export interface HomeAppView {
   demo: boolean;
   /** '' for a running app; otherwise the words shown under the name. */
   statusLabel: string;
+  /**
+   * #4053: the first version's build line while Homeroom bot makes it
+   * (../first-session/build-line.tsx); `statusLabel` holds its tile words.
+   */
+  buildLine: BuildLineState | null;
   isAwaiting: boolean;
   isError: boolean;
   /** Running and awaiting-secrets tiles open; every other status does not. */
@@ -79,6 +85,8 @@ export interface HomeAppView {
   showRetry: boolean;
   /** Resolved live name of the app this was forked from, or null. */
   forkName: string | null;
+  /** The original app is gone; `forkName` is a placeholder and the badge has its own wording. */
+  forkDeleted?: boolean;
   /**
    * Who the project is for (communities; services/communities.js): 'open'
    * (a Public community), 'invited' (a Private community) or 'solo' (Just

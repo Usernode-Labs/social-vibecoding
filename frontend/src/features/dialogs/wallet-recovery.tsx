@@ -23,6 +23,8 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useDialog } from './use-dialog';
 
 /**
@@ -66,12 +68,13 @@ async function readBody(response: Response): Promise<ApiBody> {
 
 function claimError(body: ApiBody): string {
   if (body.code === 'wallet_claim_requires_key_rotation') {
-    return 'That wallet was already installed elsewhere. Moving it safely requires key rotation, which is not available yet.';
+    return translate('dialogs:walletRecovery.error.rotation');
   }
-  return body.error || 'Could not connect that wallet. Check the email and code, then try again.';
+  return body.error || translate('dialogs:walletRecovery.error.claim');
 }
 
 export function WalletRecoveryDialog() {
+  const t = useMessages('dialogs');
   const emailRef = useRef<HTMLInputElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
   const targetUserId = useRef<string | null>(null);
@@ -142,7 +145,7 @@ export function WalletRecoveryDialog() {
     const email = emailRef.current?.value.trim().toLowerCase() || '';
     if (!userId || !stillOwns(userId, generation)) return forceClose();
     if (!email || !email.includes('@')) {
-      setError('Enter the email address used by your previous account.');
+      setError(t('dialogs:walletRecovery.error.email'));
       return;
     }
 
@@ -159,14 +162,14 @@ export function WalletRecoveryDialog() {
       const body = await readBody(response);
       if (!stillOwns(userId, generation)) return;
       if (!response.ok || body.ok !== true) {
-        setError(body.error || 'Could not send a code. Please try again.');
+        setError(body.error || t('dialogs:walletRecovery.error.send'));
         return;
       }
-      setStatus('Check that email for a six-digit code.');
+      setStatus(t('dialogs:walletRecovery.status.checkEmail'));
       codeRef.current?.focus();
     } catch {
       if (stillOwns(userId, generation)) {
-        setError('Could not send a code. Please try again.');
+        setError(t('dialogs:walletRecovery.error.send'));
       }
     } finally {
       if (recoveryGeneration.current === generation) setBusy(null);
@@ -176,7 +179,7 @@ export function WalletRecoveryDialog() {
   async function resumeNativeSession(userId: string, generation: number) {
     const chrome = nativeChrome();
     if (!chrome || typeof chrome.recoverSessionAdmission !== 'function') {
-      setError('Update the Homeroom app to finish connecting this wallet.');
+      setError(t('dialogs:walletRecovery.error.update'));
       return;
     }
 
@@ -184,7 +187,7 @@ export function WalletRecoveryDialog() {
     const result = await chrome.recoverSessionAdmission().catch(() => null);
     if (!stillOwns(userId, generation)) return;
     if (!result) {
-      setError('The wallet is connected, but app sign-in did not finish. Try again.');
+      setError(t('dialogs:walletRecovery.error.signIn'));
       return;
     }
     setBusy(null);
@@ -206,11 +209,11 @@ export function WalletRecoveryDialog() {
     const email = emailRef.current?.value.trim().toLowerCase() || '';
     const code = codeRef.current?.value.trim() || '';
     if (!email || !email.includes('@')) {
-      setError('Enter the email address used by your previous account.');
+      setError(t('dialogs:walletRecovery.error.email'));
       return;
     }
     if (!/^\d{6}$/.test(code)) {
-      setError('Enter the six-digit code from the email.');
+      setError(t('dialogs:walletRecovery.error.code'));
       return;
     }
 
@@ -237,11 +240,11 @@ export function WalletRecoveryDialog() {
       }
 
       setClaimed(true);
-      setStatus('Wallet connected. Finishing app sign-in…');
+      setStatus(t('dialogs:walletRecovery.status.connected'));
       await resumeNativeSession(userId, generation);
     } catch {
       if (stillOwns(userId, generation)) {
-        setError('Could not connect that wallet. Please try again.');
+        setError(t('dialogs:walletRecovery.error.connect'));
       }
     } finally {
       if (recoveryGeneration.current === generation) setBusy(null);
@@ -256,16 +259,15 @@ export function WalletRecoveryDialog() {
     >
       <DialogCard size="sm">
         <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
-          Connect your existing wallet
+          {t('dialogs:walletRecovery.title')}
         </h2>
         <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          No new mobile wallet is available. If you previously joined with email,
-          prove that address to connect its current-season wallet.
+          {t('dialogs:walletRecovery.intro')}
         </p>
         <form className="space-y-4" onSubmit={claimWallet}>
           <label className="block">
             <span className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              Previous account email
+              {t('dialogs:walletRecovery.emailLabel')}
             </span>
             <div className="flex gap-2">
               <Input
@@ -277,7 +279,7 @@ export function WalletRecoveryDialog() {
                 hint="muted"
                 ring="seamless"
                 disabled={claimed}
-                placeholder="you@example.com"
+                placeholder={t('dialogs:walletRecovery.emailPlaceholder')}
               />
               <Button
                 type="button"
@@ -286,13 +288,13 @@ export function WalletRecoveryDialog() {
                 disabled={busyAction !== null || claimed}
                 onClick={sendCode}
               >
-                {busyAction === 'send' ? 'Sending…' : 'Send code'}
+                {busyAction === 'send' ? t('dialogs:walletRecovery.sending') : t('dialogs:walletRecovery.sendCode')}
               </Button>
             </div>
           </label>
           <label className="block">
             <span className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-              Email code
+              {t('dialogs:walletRecovery.codeLabel')}
             </span>
             <Input
               ref={codeRef}
@@ -327,7 +329,7 @@ export function WalletRecoveryDialog() {
               disabled={busyAction !== null}
               onClick={() => dialog.close()}
             >
-              Cancel
+              {t('core:common.cancel')}
             </Button>
             <Button
               type="submit"
@@ -336,8 +338,8 @@ export function WalletRecoveryDialog() {
               disabled={busyAction !== null}
             >
               {busyAction === 'claim' || busyAction === 'resume'
-                ? 'Connecting…'
-                : claimed ? 'Try again' : 'Connect wallet'}
+                ? t('dialogs:walletRecovery.connecting')
+                : claimed ? t('dialogs:walletRecovery.retrySignIn') : t('dialogs:walletRecovery.connect')}
             </Button>
           </div>
         </form>

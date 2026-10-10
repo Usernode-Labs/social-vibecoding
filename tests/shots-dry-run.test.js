@@ -8,7 +8,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { parseArgs, contactSheet, agentEnv, watchAgentStream } = require('../scripts/shots-dry-run');
+const {
+  PERSONAS, PHONE_DEVICE, parseArgs, contactSheet, agentEnv, watchAgentStream, browserServer,
+} = require('../scripts/shots-dry-run');
 const fixtures = require('./fixtures/shots');
 
 test('the dry run needs a declaration and two origins, and takes exact commits only', () => {
@@ -35,6 +37,36 @@ test('the dry run needs a declaration and two origins, and takes exact commits o
     '--claude-bin', 'bin/claude']).claudeBin, path.resolve('bin/claude'));
   assert.equal(parseArgs(['--intent', 'i.json', '--before', 'http://a', '--after', 'http://b',
     '--fixtures', 'f.json']).fixturesFile, path.resolve('f.json'));
+});
+
+test('every declared persona has a browser, and the guest\'s always starts signed out', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  assert.deepEqual(Object.keys(PERSONAS).sort(), [...require('../src/services/visible-changes').PERSONAS].sort());
+  assert.deepEqual(PERSONAS.guest, { dir: 'guest', server: 'browser_guest' });
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-dry-run-state-'));
+  try {
+    for (const persona of Object.keys(PERSONAS)) fs.writeFileSync(path.join(stateDir, `${persona}.json`), '{}');
+    const options = parseArgs(['--intent', 'i.json', '--before', 'http://a', '--after', 'http://b',
+      '--state-dir', stateDir]);
+    const args = (persona) => browserServer(options, persona, '/tmp/shots', null).args;
+    assert.ok(args('member').includes(path.join(stateDir, 'member.json')));
+    assert.equal(args('guest').includes('--storage-state'), false, 'a guest.json is never loaded');
+    assert.equal(args('guest')[args('guest').indexOf('--output-dir') + 1], path.join('/tmp/shots', 'guest'));
+    // A phone screen's browser has the persona's sign-in and presents as the
+    // same phone a hosted turn's does, saving beside the persona's directory.
+    const phone = browserServer(options, 'read_only_admin', '/tmp/shots', '390x844', { phone: true }).args;
+    assert.equal(phone[1], 'admin_phone');
+    assert.equal(phone[phone.indexOf('--device') + 1], PHONE_DEVICE);
+    assert.ok(phone.includes(path.join(stateDir, 'read_only_admin.json')));
+    assert.equal(phone[phone.indexOf('--output-dir') + 1], path.join('/tmp/shots', 'admin_phone'));
+    assert.ok(phone.includes('--save-video=390x844'));
+    assert.equal(args('member').includes('--device'), false);
+    const worker = fs.readFileSync(path.join(__dirname, '..', 'worker', 'write-shots-mcp-config.js'), 'utf8');
+    assert.ok(worker.includes(`const PHONE_DEVICE = '${PHONE_DEVICE}';`), 'the dry run presents as the worker\'s phone');
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
 });
 
 test('the agent starts without the Claude Code session the harness was run from', () => {
@@ -96,4 +128,15 @@ test('the contact sheet shows each change with its result and escapes proposal t
   assert.match(html, /<video src="shots\/saved-toast-desktop-before-clip\.webm" controls muted playsinline>/);
   assert.match(html, /<img src="shots\/saved-toast-desktop-after-screen\.png" alt="After · screen">/);
   assert.match(html, /1 of 2 ready · agent finished in 61 s/);
+  assert.doesNotMatch(html, /Also noticed/, 'nothing noticed, no section');
+
+  // What the agent noticed broken on the after build, as text.
+  const noticed = contactSheet(intent, { ...summary, notices: [
+    { text: 'The <b>table</b> is cut off.', change: 'saved-toast', screen: 'desktop', shot: 'screen', alsoBefore: false },
+    { text: 'Overlap.', change: 'saved-toast', screen: 'desktop', shot: null, alsoBefore: 'unknown' },
+  ] }, files, { before: 'b', after: 'a', agentOutcome: 'finished', agentMs: 1000, finalText: '', toolCounts: {} });
+  assert.match(noticed, /<h2>Also noticed<\/h2>/);
+  assert.match(noticed, /The &lt;b&gt;table&lt;\/b&gt; is cut off\./);
+  assert.match(noticed, /screen shot\s+· not on the before build/);
+  assert.match(noticed, /before build not checked/);
 });

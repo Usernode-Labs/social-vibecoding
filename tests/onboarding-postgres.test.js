@@ -138,9 +138,12 @@ test('the first run: join screen and Getting started, against the full schema', 
     assert.ok(!hidden.some((c) => c.self_hosted));
   });
 
-  await t.test('the Getting started card waits for the join screen', async () => {
+  await t.test('the Getting started card does not wait for the join screen (#4601)', async () => {
+    // Every new account gets it, however it signed up: one asked "What do
+    // you want to make?" or brought in by an invite link never answers this
+    // screen at all.
     const res = await call('GET', '/api/me/getting-started');
-    assert.equal(res.data.show, false);
+    assert.equal(res.data.show, true);
   });
 
   await t.test('answering joins what was ticked, accepts the invite, and leaves an unticked Homeroom', async () => {
@@ -158,6 +161,10 @@ test('the first run: join screen and Getting started, against the full schema', 
     assert.equal(await inCommunity(club, newbie.id), true);
     const pin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [garden.id, newbie.id]);
     assert.equal(pin.rows[0]?.hidden, false, 'joining puts it on Home');
+    // The accepted invite too: the vote digest finds a member through this
+    // pin, so a join with no pin would never be told a vote waits on them.
+    const invitedPin = await pool.query('SELECT hidden FROM app_favorites WHERE app_id = $1 AND user_id = $2', [club.id, newbie.id]);
+    assert.equal(invitedPin.rows[0]?.hidden, false, 'accepting the invite here puts it on Home, as an invite link does');
     const u = (await pool.query(
       'SELECT needs_communities_choice, communities_onboarded_at FROM users WHERE id = $1', [newbie.id])).rows[0];
     assert.equal(u.needs_communities_choice, false);
@@ -450,10 +457,11 @@ test('the first run: join screen and Getting started, against the full schema', 
     pinsBefore, 'its Home tiles stay');
 
     // The join screen shows what it is already in, ticked, and can be
-    // answered again; the card comes back after it.
+    // answered again; the card is back at once (#4601: it never waited for
+    // the screen).
     const list = (await call('GET', '/api/me/join-suggestions')).data.communities;
     assert.equal(list.find((c) => c.slug === 'city-garden').checked, true);
-    assert.equal((await call('GET', '/api/me/getting-started')).data.show, false, 'no card before the screen');
+    assert.equal((await call('GET', '/api/me/getting-started')).data.show, true, 'the card is back');
     const again = await call('POST', '/api/me/communities', { join: ['city-garden'] });
     assert.equal(again.status, 200, JSON.stringify(again.data));
     assert.equal((await call('GET', '/api/me/getting-started')).data.show, true);

@@ -17,6 +17,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -28,7 +29,8 @@ const panel = read('frontend/src/features/agent-session/index.tsx');
 test('#3080: attaching is a paperclip named "Attach photos or files"', () => {
   const composer = panel.slice(panel.indexOf('function Composer('), panel.indexOf('// ── The changes drawer'));
   const attach = composer.slice(composer.lastIndexOf('<button', composer.indexOf('data-agent-session-attach')), composer.indexOf('</button>', composer.indexOf('data-agent-session-attach')));
-  assert.match(attach, /aria-label="Attach photos or files"/);
+  assert.match(attach, /aria-label=\{t\('agent:session\.composer\.attach'\)\}/);
+  assert.equal(message('agent:session.composer.attach'), 'Attach photos or files');
   assert.match(attach, /<PaperclipIcon className="h-5 w-5" aria-hidden="true" \/>/);
   assert.doesNotMatch(attach, /PlusIcon|<svg/, 'the kit\'s glyph, not a "+" and not a raw <svg>');
   assert.match(read('frontend/@/components/ui/icons.tsx'), /export const PaperclipIcon = stroked\(/);
@@ -90,7 +92,8 @@ test('#3078: Build with is a tablist of Homeroom, Claude Code and Codex', () => 
   assert.match(src, /event\.key === 'ArrowLeft' \? \(at \+ BUILD_TABS\.length - 1\) % BUILD_TABS\.length/);
   assert.match(src, /event\.key === 'Home' \? 0/);
   assert.match(src, /event\.key === 'End' \? BUILD_TABS\.length - 1/);
-  assert.match(src, /aria-label="Build with"\s+className=\{desktop/, 'the sheet is named for what it is now');
+  assert.match(src, /aria-label=\{t\('agent:session\.buildWith\.dialogLabel'\)\}\s+className=\{desktop/, 'the sheet is named for what it is now');
+  assert.equal(message('agent:session.buildWith.dialogLabel'), 'Build with');
 });
 
 test('#3078: the Homeroom tab says who builds it and lists the models once, under "Model"', () => {
@@ -102,7 +105,7 @@ test('#3078: the Homeroom tab says who builds it and lists the models once, unde
     value: 'openrouter:z-ai/glm-5', onPick() {}, credit: null,
     effort: { value: '', options: [{ value: '', label: 'High', isDefault: true }], onPick() {} },
   }));
-  assert.match(body, /^<div[^>]*><p[^>]*>The Mayor builds it here, on your Homeroom credits\.<\/p>/);
+  assert.match(body, /^<div[^>]*><p[^>]*>The agent builds it here, on your Homeroom credits\.<\/p>/);
   assert.equal((body.match(/>Model<\/p>/g) || []).length, 1, 'one list');
   assert.doesNotMatch(body, />Claude Code<|>Codex</, 'no agent headings: those are the other tabs');
   assert.ok(body.indexOf('Sonnet 5.5') < body.indexOf('GLM 5'), 'Claude first, as before');

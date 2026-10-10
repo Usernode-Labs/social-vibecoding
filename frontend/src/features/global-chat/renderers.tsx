@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { GlobalChatSettingsEditor } from '../settings/sections/global-chat';
 import { DevelopmentAISettingsEditor } from './development-settings-editor';
@@ -85,15 +87,30 @@ function first(item: JsonObject, keys: string[], max?: number) {
   return '';
 }
 
+// What each kind of result is called: message ids, read when a result renders.
+const RENDERER_LABELS: Record<string, string> = {
+  app: 'chat:global.kind.app',
+  issue: 'chat:global.kind.issue',
+  proposal: 'chat:global.kind.proposal',
+  session: 'chat:global.kind.session',
+  conversation: 'chat:global.kind.conversation',
+  notification: 'chat:global.kind.notification',
+  profile: 'chat:global.kind.profile',
+  leaderboard: 'chat:global.kind.leaderboard',
+  challenge: 'chat:global.kind.challenge',
+  wallet: 'chat:global.kind.wallet',
+  staking: 'chat:global.kind.staking',
+  setting: 'chat:global.kind.setting',
+  admin_record: 'chat:global.kind.adminRecord',
+  status: 'chat:global.kind.result',
+  error: 'chat:global.kind.error',
+  form: 'chat:global.kind.form',
+  grouped_list: 'chat:global.kind.results',
+  confirmation: 'chat:global.kind.confirmation',
+};
+
 function rendererLabel(renderer: string) {
-  const labels: Record<string, string> = {
-    app: 'App', issue: 'Issue', proposal: 'Proposal', session: 'Development',
-    conversation: 'Conversation', notification: 'Notification', profile: 'Profile',
-    leaderboard: 'Leaderboard', challenge: 'Challenge', wallet: 'Wallet',
-    staking: 'Staking', setting: 'Setting', admin_record: 'Admin', status: 'Result',
-    error: 'Error', form: 'Form', grouped_list: 'Results', confirmation: 'Confirmation',
-  };
-  return labels[renderer] || 'Result';
+  return translate(Object.hasOwn(RENDERER_LABELS, renderer) ? RENDERER_LABELS[renderer] : 'chat:global.kind.result');
 }
 
 function humanize(value: string) {
@@ -115,13 +132,13 @@ function formattedDate(value: unknown) {
 }
 
 function displayValue(key: string, value: unknown) {
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'boolean') return value ? translate('chat:global.value.yes') : translate('chat:global.value.no');
   if (/activitySecondsLast7Days/.test(key)) {
     const seconds = Number(value);
     if (Number.isFinite(seconds) && seconds >= 0) {
-      if (seconds < 60) return `${Math.round(seconds)} sec`;
-      if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-      return `${(seconds / 3600).toFixed(seconds < 36_000 ? 1 : 0)} hr`;
+      if (seconds < 60) return translate('chat:global.value.seconds', { count: Math.round(seconds) });
+      if (seconds < 3600) return translate('chat:global.value.minutes', { count: Math.round(seconds / 60) });
+      return translate('chat:global.value.hours', { hours: (seconds / 3600).toFixed(seconds < 36_000 ? 1 : 0) });
     }
   }
   if (/(?:^|\.)(?:spent|cap|remaining).*usd$/i.test(key)) {
@@ -159,7 +176,7 @@ function itemTitle(result: GlobalChatResult, item: JsonObject) {
   if (result.renderer === 'notification') {
     const kind = text(item.kind, 80);
     const place = first(item, ['appName', 'app_name', 'conversationTitle', 'conversation_title'], 100);
-    const label = notificationCopy(item)?.label || (kind ? humanize(kind) : 'Notification');
+    const label = notificationCopy(item)?.label || (kind ? humanize(kind) : translate('chat:global.kind.notification'));
     return place ? `${label} · ${place}` : label;
   }
   const rendererKeys: Record<string, string[]> = {
@@ -178,7 +195,7 @@ function itemTitle(result: GlobalChatResult, item: JsonObject) {
   const explicit = first(item, rendererKeys[result.renderer] || TITLE_KEYS, 120);
   if (explicit) return explicit;
   const id = identifier(item)?.value;
-  return id ? `${rendererLabel(result.renderer)} ${id}` : rendererLabel(result.renderer);
+  return id ? translate('chat:global.item.kindWithId', { kind: rendererLabel(result.renderer), id }) : rendererLabel(result.renderer);
 }
 
 function itemSummary(result: GlobalChatResult, item: JsonObject, title: string) {
@@ -201,26 +218,27 @@ function itemSummary(result: GlobalChatResult, item: JsonObject, title: string) 
 function resultLabel(result: GlobalChatResult) {
   if (result.renderer === 'issue') {
     return /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId)
-      ? 'GitHub issues'
-      : 'Platform issues';
+      ? translate('chat:global.result.githubIssues')
+      : translate('chat:global.result.platformIssues');
   }
-  if (result.capabilityId === 'apps.activity') return 'Recent app activity';
-  if (result.capabilityId === 'messages.for_app') return 'App discussions';
+  if (result.capabilityId === 'apps.activity') return translate('chat:global.result.appActivity');
+  if (result.capabilityId === 'messages.for_app') return translate('chat:global.result.appDiscussions');
   return rendererLabel(result.renderer);
 }
 
 function emptyResultMessage(result: GlobalChatResult) {
+  // Message ids, read when the empty result renders.
   const messages: Record<string, string> = {
-    app: 'No apps found.',
-    issue: 'No issues found.',
-    proposal: 'No current proposals.',
-    session: 'No active development found.',
-    conversation: 'No conversations found.',
-    notification: 'No notifications found.',
-    leaderboard: 'No leaderboard entries found.',
-    setting: 'No settings found.',
+    app: 'chat:global.empty.app',
+    issue: 'chat:global.empty.issue',
+    proposal: 'chat:global.empty.proposal',
+    session: 'chat:global.empty.session',
+    conversation: 'chat:global.empty.conversation',
+    notification: 'chat:global.empty.notification',
+    leaderboard: 'chat:global.empty.leaderboard',
+    setting: 'chat:global.empty.setting',
   };
-  return messages[result.renderer] || 'No results found.';
+  return translate(Object.hasOwn(messages, result.renderer) ? messages[result.renderer] : 'chat:global.empty.other');
 }
 
 function humanizeCapability(value: string) {
@@ -230,7 +248,7 @@ function humanizeCapability(value: string) {
     .filter((part) => !['get', 'post', 'put', 'patch', 'delete', 'item'].includes(part))
     .slice(1)
     .join(' ')
-    .replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'this action';
+    .replace(/\b\w/g, (letter) => letter.toUpperCase()) || translate('chat:global.confirm.thisAction');
 }
 
 function identifier(item: JsonObject) {
@@ -276,9 +294,9 @@ function directItemActions(
   const payload = object(item.payload);
   if (result.renderer === 'app' && slug) {
     return [
-      itemAction('Details', `About ${targetLabel}`, 'apps.detail', { appSlug: slug }, 'inline'),
-      itemAction('Issues', `Issues for ${targetLabel}`, 'issues.for_app', { appSlug: slug }, 'turn'),
-      itemAction('Discussions', `Discussions in ${targetLabel}`, 'messages.for_app', { appSlug: slug }, 'turn'),
+      itemAction(translate('chat:global.action.details'), translate('chat:global.request.about', { target: targetLabel }), 'apps.detail', { appSlug: slug }, 'inline'),
+      itemAction(translate('chat:global.action.issues'), translate('chat:global.request.issuesFor', { target: targetLabel }), 'issues.for_app', { appSlug: slug }, 'turn'),
+      itemAction(translate('chat:global.action.discussions'), translate('chat:global.request.discussionsIn', { target: targetLabel }), 'messages.for_app', { appSlug: slug }, 'turn'),
     ];
   }
   if (result.renderer === 'issue' && slug) {
@@ -295,13 +313,13 @@ function directItemActions(
     const githubIssueCapability = /(?:^|\.)github\.issues(?:\.|$)/.test(result.capabilityId);
     if (issueNumber && (explicitGithubIssueNumber || githubIssueCapability || !text(item.kind, 80))) {
       return [
-        itemAction('Details', `Open ${targetLabel}`, 'issue.detail', { appSlug: slug, issueNumber }, 'inline'),
-        itemAction('Comments', `Comments on ${targetLabel}`, 'issue.comments', { appSlug: slug, issueNumber }, 'inline'),
+        itemAction(translate('chat:global.action.details'), translate('chat:global.request.open', { target: targetLabel }), 'issue.detail', { appSlug: slug, issueNumber }, 'inline'),
+        itemAction(translate('chat:global.action.comments'), translate('chat:global.request.commentsOn', { target: targetLabel }), 'issue.comments', { appSlug: slug, issueNumber }, 'inline'),
       ];
     }
     if (governanceId) {
       return [itemAction(
-        'Details', `Open ${targetLabel}`, 'governance.detail',
+        translate('chat:global.action.details'), translate('chat:global.request.open', { target: targetLabel }), 'governance.detail',
         { appSlug: slug, governanceId }, 'inline',
       )];
     }
@@ -310,34 +328,34 @@ function directItemActions(
     const governanceId = text(item.governanceId || item.governance_id || item.id, 80);
     if (item.proposalType === 'governance' && governanceId) {
       return [itemAction(
-        'Details', `Open ${targetLabel}`, 'governance.detail',
+        translate('chat:global.action.details'), translate('chat:global.request.open', { target: targetLabel }), 'governance.detail',
         { appSlug: slug, governanceId }, 'inline',
       )];
     }
     const proposalId = first(item, ['proposalId', 'proposal_id', 'id', 'sessionId', 'session_id'], 80);
     if (proposalId) return [
-      itemAction('Details', `Open ${targetLabel}`, 'proposal.detail', { appSlug: slug, proposalId }, 'inline'),
-      itemAction('Before & after', `Before & after for ${targetLabel}`, 'proposal.shots', { appSlug: slug, proposalId }, 'inline'),
+      itemAction(translate('chat:global.action.details'), translate('chat:global.request.open', { target: targetLabel }), 'proposal.detail', { appSlug: slug, proposalId }, 'inline'),
+      itemAction(translate('chat:global.action.beforeAfter'), translate('chat:global.request.beforeAfterFor', { target: targetLabel }), 'proposal.shots', { appSlug: slug, proposalId }, 'inline'),
     ];
   }
   if (result.renderer === 'session') {
     const sessionId = first(item, ['sessionId', 'session_id', 'id'], 80);
     if (sessionId) return [
-      itemAction('Details', `Details for ${targetLabel}`, 'session.detail', { sessionId }, 'inline'),
-      itemAction('Checks', `Checks for ${targetLabel}`, 'session.checks', { sessionId }, 'inline'),
+      itemAction(translate('chat:global.action.details'), translate('chat:global.request.detailsFor', { target: targetLabel }), 'session.detail', { sessionId }, 'inline'),
+      itemAction(translate('chat:global.action.checks'), translate('chat:global.request.checksFor', { target: targetLabel }), 'session.checks', { sessionId }, 'inline'),
     ];
   }
   if (result.renderer === 'conversation') {
     if (result.capabilityId === 'messages.for_app') return [];
     const conversationId = first(item, ['conversationId', 'conversation_id', 'id'], 80);
     if (conversationId) return [itemAction(
-      'Details', `Open ${targetLabel}`, 'conversation.detail', { conversationId }, 'inline',
+      translate('chat:global.action.details'), translate('chat:global.request.open', { target: targetLabel }), 'conversation.detail', { conversationId }, 'inline',
     )];
   }
   if (result.renderer === 'notification') {
     const notificationId = first(item, ['notificationId', 'notification_id', 'id'], 80);
     if (notificationId) return [itemAction(
-      'Details', `Open ${targetLabel}`, 'notification.detail', { notificationId }, 'inline',
+      translate('chat:global.action.details'), translate('chat:global.request.open', { target: targetLabel }), 'notification.detail', { notificationId }, 'inline',
     )];
   }
   if (result.renderer === 'leaderboard') {
@@ -345,17 +363,17 @@ function directItemActions(
     const username = text(item.username, 80);
     return [
       ...(userId ? [itemAction(
-        'Profile', `Profile for ${targetLabel}`, 'leaderboard.profile', { userId }, 'inline',
+        translate('chat:global.action.profile'), translate('chat:global.request.profileFor', { target: targetLabel }), 'leaderboard.profile', { userId }, 'inline',
       )] : []),
       ...(username ? [itemAction(
-        'Merged work', `Merged work by ${targetLabel}`, 'leaderboard.prs', { username }, 'inline',
+        translate('chat:global.action.mergedWork'), translate('chat:global.request.mergedWorkBy', { target: targetLabel }), 'leaderboard.prs', { username }, 'inline',
       )] : []),
     ];
   }
   if (result.renderer === 'setting' && result.capabilityId === 'settings.catalog') {
     const group = text(item.id || item.group, 80);
     if (group && text(item.classicPath, 300)) return [itemAction(
-      'View', `Open ${targetLabel}`, 'settings.inspect', { group }, 'inline',
+      translate('chat:global.action.view'), translate('chat:global.request.open', { target: targetLabel }), 'settings.inspect', { group }, 'inline',
     )];
   }
   return [];
@@ -364,7 +382,7 @@ function directItemActions(
 function itemClassicPath(result: GlobalChatResult, item: JsonObject) {
   const base = result.classicPath;
   if (!base) return null;
-  const exactTopic = /\/dev\/(?:issues|proposals|sessions)\/[A-Za-z0-9%-]+$/.test(base)
+  const exactTopic = /\/dev\/(?:issues|proposals|changes|sessions)\/[A-Za-z0-9%-]+$/.test(base)
     || /\/dev\/chat$/.test(base)
     || /^#messages\/[1-9]\d*$/.test(base);
   if (exactTopic) return base;
@@ -407,6 +425,9 @@ function itemClassicPath(result: GlobalChatResult, item: JsonObject) {
       return `#app/${segment(slug)}/dev/governance/${segment(governanceId)}`;
     }
     const proposalId = first(item, ['proposalId', 'proposal_id', 'id', 'sessionId', 'session_id'], 80);
+    // #4367: a change with a pull request is addressed by its number.
+    const prNumber = first(item, ['prNumber', 'pr_number'], 80);
+    if (proposalId && /^[1-9]\d*$/.test(prNumber)) return `#app/${segment(slug)}/dev/changes/${prNumber}`;
     if (proposalId) return `#app/${segment(slug)}/dev/proposals/${segment(proposalId)}`;
   }
   if (result.renderer === 'session' && slug) {
@@ -443,7 +464,7 @@ function compactMetadata(result: GlobalChatResult, item: JsonObject, title: stri
     if (parts.length === 3) break;
   }
   if (result.renderer === 'notification') {
-    parts.push(item.readAt || item.read_at ? 'Read' : 'Unread');
+    parts.push(item.readAt || item.read_at ? translate('chat:global.meta.read') : translate('chat:global.meta.unread'));
   }
   const date = first(item, ['lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at'], 100);
   const renderedDate = formattedDate(date);
@@ -473,49 +494,49 @@ function displayFields(result: GlobalChatResult, item: JsonObject): DisplayField
 
   if (result.renderer === 'app') {
     if (result.capabilityId === 'apps.activity') {
-      add('Messages (7d)', ['messagesLast7Days']);
-      add('Active time (7d)', ['activitySecondsLast7Days']);
-      add('Active users', ['activeUsers', 'active_users']);
-      add('Development', ['activeDevelopment', 'active_development', 'active_sessions']);
+      add(translate('chat:global.field.messages7d'), ['messagesLast7Days']);
+      add(translate('chat:global.field.activeTime7d'), ['activitySecondsLast7Days']);
+      add(translate('chat:global.field.activeUsers'), ['activeUsers', 'active_users']);
+      add(translate('chat:global.field.development'), ['activeDevelopment', 'active_development', 'active_sessions']);
     } else {
-      add('Open issues', ['openIssues', 'open_issues']);
-      add('Open proposals', ['openProposals', 'open_proposals', 'open_prs']);
-      add('Active development', ['activeDevelopment', 'active_development', 'active_sessions']);
+      add(translate('chat:global.field.openIssues'), ['openIssues', 'open_issues']);
+      add(translate('chat:global.field.openProposals'), ['openProposals', 'open_proposals', 'open_prs']);
+      add(translate('chat:global.field.activeDevelopment'), ['activeDevelopment', 'active_development', 'active_sessions']);
     }
   } else if (result.renderer === 'proposal') {
-    add('App', ['appName', 'app_name']);
-    add('Yes', ['yesCount', 'yes_count', 'upCount', 'up_count']);
-    add('No', ['noCount', 'no_count', 'downCount', 'down_count']);
-    add('Checks', ['checkState', 'check_state']);
+    add(translate('chat:global.field.app'), ['appName', 'app_name']);
+    add(translate('chat:global.field.yesVotes'), ['yesCount', 'yes_count', 'upCount', 'up_count']);
+    add(translate('chat:global.field.noVotes'), ['noCount', 'no_count', 'downCount', 'down_count']);
+    add(translate('chat:global.field.checks'), ['checkState', 'check_state']);
   } else if (result.renderer === 'session') {
-    add('App', ['appName', 'app_name']);
-    add('Checks', ['checkState', 'check_state']);
-    add('Phase', ['checkPhase', 'check_phase']);
+    add(translate('chat:global.field.app'), ['appName', 'app_name']);
+    add(translate('chat:global.field.checks'), ['checkState', 'check_state']);
+    add(translate('chat:global.field.phase'), ['checkPhase', 'check_phase']);
   } else if (result.renderer === 'conversation') {
-    add('Unread', ['unreadCount', 'unread_count']);
-    add('Members', ['memberCount', 'member_count']);
+    add(translate('chat:global.field.unread'), ['unreadCount', 'unread_count']);
+    add(translate('chat:global.field.members'), ['memberCount', 'member_count']);
   } else if (result.renderer === 'notification') {
-    add('From', ['sourceUsername', 'source_username']);
-    add('PR', ['prNumber', 'pr_number']);
+    add(translate('chat:global.field.from'), ['sourceUsername', 'source_username']);
+    add(translate('chat:global.field.pr'), ['prNumber', 'pr_number']);
   } else if (result.renderer === 'leaderboard') {
-    add('Kudos', ['kudosReceived', 'kudos_received']);
-    add('PRs recognized', ['prsKudosed', 'prs_kudosed']);
-    add('Merged', ['kudosReceivedPrsMerged', 'kudos_received_prs_merged']);
+    add(translate('chat:global.field.kudos'), ['kudosReceived', 'kudos_received']);
+    add(translate('chat:global.field.prsRecognized'), ['prsKudosed', 'prs_kudosed']);
+    add(translate('chat:global.field.merged'), ['kudosReceivedPrsMerged', 'kudos_received_prs_merged']);
   } else if (result.renderer === 'setting') {
     const spending = text(item.name, 100) === 'Global Chat usage';
     if (spending) {
-      add('Spent this month', ['spentUsd']);
-      add('Monthly cap', ['capUsd']);
-      add('Cap remaining', ['remainingUsd']);
-      add('OpenRouter remaining', ['overallRemainingUsd']);
+      add(translate('chat:global.field.spentThisMonth'), ['spentUsd']);
+      add(translate('chat:global.field.monthlyCap'), ['capUsd']);
+      add(translate('chat:global.field.capRemaining'), ['remainingUsd']);
+      add(translate('chat:global.field.openRouterRemaining'), ['overallRemainingUsd']);
     } else {
-      add('Model', ['profile.model', 'backends.codex_openrouter.model', 'model']);
-      add('Reasoning', ['profile.reasoningEffort', 'reasoningEffort', 'reasoning_effort']);
-      add('Enabled', ['profile.enabled', 'enabled']);
-      add('Spent this month', ['usage.spentUsd', 'spentUsd']);
-      add('Monthly cap', ['usage.capUsd', 'profile.spendCapUsd', 'capUsd']);
-      add('OpenRouter remaining', ['overallRemaining', 'overallRemainingUsd']);
-      add('Backend', ['backend', 'profile.backend']);
+      add(translate('chat:global.field.model'), ['profile.model', 'backends.codex_openrouter.model', 'model']);
+      add(translate('chat:global.field.reasoning'), ['profile.reasoningEffort', 'reasoningEffort', 'reasoning_effort']);
+      add(translate('chat:global.field.enabled'), ['profile.enabled', 'enabled']);
+      add(translate('chat:global.field.spentThisMonth'), ['usage.spentUsd', 'spentUsd']);
+      add(translate('chat:global.field.monthlyCap'), ['usage.capUsd', 'profile.spendCapUsd', 'capUsd']);
+      add(translate('chat:global.field.openRouterRemaining'), ['overallRemaining', 'overallRemainingUsd']);
+      add(translate('chat:global.field.backend'), ['backend', 'profile.backend']);
     }
     if (fields.length < 4) {
       for (const [key, raw] of Object.entries(item)) {
@@ -538,12 +559,13 @@ function actionTargetLabel(result: GlobalChatResult, item: JsonObject, title: st
   const id = identifier(item)?.value;
   if (!id || title.includes(id)) return title;
   if (result.renderer === 'issue') return `${title} (#${id})`;
-  if (result.renderer === 'proposal') return `${title} (proposal #${id})`;
-  if (result.renderer === 'session') return `${title} (development #${id})`;
+  if (result.renderer === 'proposal') return translate('chat:global.target.proposal', { title, id });
+  if (result.renderer === 'session') return translate('chat:global.target.session', { title, id });
   return title;
 }
 
 function SettingInstruction({ item, title }: { item: JsonObject; title: string }) {
+  const t = useMessages('chat');
   const [editing, setEditing] = useState(false);
   const [instruction, setInstruction] = useState('');
   const group = text(item.group || item.id, 80);
@@ -570,16 +592,16 @@ function SettingInstruction({ item, title }: { item: JsonObject; title: string }
         value={instruction}
         maxLength={500}
         autoFocus
-        aria-label={`Change ${title}`}
-        placeholder={`What should change in ${title}?`}
+        aria-label={t('chat:global.setting.changeLabel', { setting: title })}
+        placeholder={t('chat:global.setting.changePlaceholder', { setting: title })}
         onChange={(event) => setInstruction(event.target.value)}
       />
-      <button type="submit" disabled={!instruction.trim()}>Continue</button>
-      <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+      <button type="submit" disabled={!instruction.trim()}>{t('chat:global.setting.continue')}</button>
+      <button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button>
     </form>
   ) : (
     <button type="button" className="global-chat-setting-edit" onClick={() => setEditing(true)}>
-      Change these settings
+      {t('chat:global.setting.changeThese')}
     </button>
   );
 }
@@ -587,34 +609,36 @@ function SettingInstruction({ item, title }: { item: JsonObject; title: string }
 const LOCAL_SETTING_EDITORS: Record<string, {
   setting: string;
   valueKey: string;
+  /** `label` is a message id, read when the buttons render. */
   options: Array<{ label: string; value: string }>;
 }> = {
   theme: {
     setting: 'theme', valueKey: 'theme',
     options: [
-      { label: 'System', value: 'system' },
-      { label: 'Light', value: 'light' },
-      { label: 'Dark', value: 'dark' },
+      { label: 'chat:global.setting.theme.system', value: 'system' },
+      { label: 'chat:global.setting.theme.light', value: 'light' },
+      { label: 'chat:global.setting.theme.dark', value: 'dark' },
     ],
   },
   alerts: {
     setting: 'devAlerts', valueKey: 'devAlerts',
-    options: [{ label: 'On', value: 'true' }, { label: 'Off', value: 'false' }],
+    options: [{ label: 'chat:global.setting.alerts.on', value: 'true' }, { label: 'chat:global.setting.alerts.off', value: 'false' }],
   },
   'dev-console': {
     setting: 'devConsoleMode', valueKey: 'devConsoleMode',
     options: [
-      { label: 'Always', value: 'always' },
-      { label: 'Errors only', value: 'errors-only' },
+      { label: 'chat:global.setting.devConsole.always', value: 'always' },
+      { label: 'chat:global.setting.devConsole.errorsOnly', value: 'errors-only' },
     ],
   },
   'admin-preview': {
     setting: 'adminPreview', valueKey: 'adminPreview',
-    options: [{ label: 'On', value: 'true' }, { label: 'Off', value: 'false' }],
+    options: [{ label: 'chat:global.setting.adminPreview.on', value: 'true' }, { label: 'chat:global.setting.adminPreview.off', value: 'false' }],
   },
 };
 
 function LocalSettingEditor({ item, title }: { item: JsonObject; title: string }) {
+  const t = useMessages('chat');
   const group = text(item.group || item.id, 80);
   const editor = LOCAL_SETTING_EDITORS[group];
   const initial = editor ? text(item[editor.valueKey], 40) : '';
@@ -635,19 +659,19 @@ function LocalSettingEditor({ item, title }: { item: JsonObject; title: string }
         title,
       );
       const pending = results.find((result) => clientAction(result));
-      if (!pending) throw new Error('The setting update was not returned.');
+      if (!pending) throw new Error(t('chat:global.setting.notReturned'));
       const applied = await runGlobalChatClientAction(pending);
-      if (!applied) throw new Error('Could not apply this setting.');
+      if (!applied) throw new Error(t('chat:global.setting.applyFailed'));
       setSaved(selected);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not save this setting.');
+      setError(reason instanceof Error ? reason.message : t('chat:global.setting.saveFailed'));
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <div className="global-chat-setting-controls" aria-label={`Change ${title}`}>
+    <div className="global-chat-setting-controls" aria-label={t('chat:global.setting.controlsLabel', { setting: title })}>
       <div className="global-chat-inline-actions">
         {editor.options.map((option) => (
           <button
@@ -657,7 +681,7 @@ function LocalSettingEditor({ item, title }: { item: JsonObject; title: string }
             aria-pressed={selected === option.value}
             onClick={() => setSelected(option.value)}
           >
-            {option.label}
+            {t(option.label)}
           </button>
         ))}
         <button
@@ -665,7 +689,7 @@ function LocalSettingEditor({ item, title }: { item: JsonObject; title: string }
           disabled={!selected || selected === saved || saving}
           onClick={() => void save()}
         >
-          {saving ? 'Saving…' : selected === saved ? 'Saved' : 'Save'}
+          {saving ? t('chat:global.setting.saving') : selected === saved ? t('chat:global.setting.saved') : t('chat:global.setting.save')}
         </button>
       </div>
       {error ? <div className="global-chat-inline-error" role="alert">{error}</div> : null}
@@ -684,6 +708,8 @@ function ItemRow({
   nested?: boolean;
   itemSelection?: GlobalChatItemSelection;
 }) {
+  // Subscribed: the row's labels are read in the language on screen.
+  const t = useMessages('chat');
   const [expanded, setExpanded] = useState(nested);
   const [inlineResults, setInlineResults] = useState<Record<string, GlobalChatResult[]>>({});
   const [inlineLoading, setInlineLoading] = useState<string | null>(null);
@@ -702,7 +728,7 @@ function ItemRow({
   const selectionAction = itemSelection?.renderer === result.renderer && selectedValue
     ? itemAction(
       itemSelection.label,
-      `${itemSelection.label} ${targetLabel}`,
+      t('chat:global.item.selectRequest', { action: itemSelection.label, target: targetLabel }),
       itemSelection.actionId,
       { [itemSelection.parameter]: selectedValue },
       'turn',
@@ -723,7 +749,7 @@ function ItemRow({
       );
       setInlineResults((current) => ({ ...current, [action.actionId]: loaded }));
     } catch (reason) {
-      setInlineError(reason instanceof Error ? reason.message : 'Could not load those details.');
+      setInlineError(reason instanceof Error ? reason.message : t('chat:global.item.detailsFailed'));
     } finally {
       setInlineLoading(null);
     }
@@ -799,18 +825,18 @@ function ItemRow({
                         targetLabel,
                       )}
                   >
-                    {inlineLoading === action.actionId ? 'Loading…' : action.label}
+                    {inlineLoading === action.actionId ? t('chat:global.item.actionLoading') : action.label}
                   </button>
                 ))}
-                {classicPath ? <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button> : null}
+                {classicPath ? <button type="button" onClick={() => closeGlobalChat(classicPath)}>{t('chat:global.openInClassic')}</button> : null}
               </div>
             ) : classicPath ? (
               <div className="global-chat-inline-actions">
-                <button type="button" onClick={() => closeGlobalChat(classicPath)}>Open in Classic</button>
+                <button type="button" onClick={() => closeGlobalChat(classicPath)}>{t('chat:global.openInClassic')}</button>
               </div>
             ) : null}
             {inlineLoading === 'settings.inspect' ? (
-              <div className="global-chat-inline-loading">Loading current settings…</div>
+              <div className="global-chat-inline-loading">{t('chat:global.item.loadingSettings')}</div>
             ) : null}
             {inlineError ? <div className="global-chat-inline-error" role="alert">{inlineError}</div> : null}
             {Object.values(inlineResults).flat().map((loaded) => (
@@ -829,6 +855,7 @@ function ItemRow({
 }
 
 function ConfirmationResult({ result, payload }: { result: GlobalChatResult; payload: JsonObject }) {
+  const t = useMessages('chat');
   const snapshot = useGlobalChatState();
   const token = text(payload.confirmationToken, 500);
   const consumed = !!snapshot.consumedConfirmations[result.id];
@@ -839,10 +866,10 @@ function ConfirmationResult({ result, payload }: { result: GlobalChatResult; pay
     ['string', 'number', 'boolean'].includes(typeof value) && text(value, 500)
   )).slice(0, 6) : [];
   if (dismissed) {
-    return <div className="global-chat-confirmation global-chat-confirmation-muted">Cancelled.</div>;
+    return <div className="global-chat-confirmation global-chat-confirmation-muted">{t('chat:global.confirm.cancelled')}</div>;
   }
   return (
-    <section className="global-chat-confirmation" aria-label="Confirm action">
+    <section className="global-chat-confirmation" aria-label={t('chat:global.confirm.label')}>
       <div className="min-w-0">
         <strong>{text(payload.title, 100) || humanizeCapability(result.capabilityId)}</strong>
         {previewRows.length ? (
@@ -855,7 +882,7 @@ function ConfirmationResult({ result, payload }: { result: GlobalChatResult; pay
             ))}
           </dl>
         ) : null}
-        {expiresAt ? <p>Confirm before {new Date(expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.</p> : null}
+        {expiresAt ? <p>{t('chat:global.confirm.before', { time: new Date(expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })}</p> : null}
       </div>
       <div className="global-chat-inline-actions">
         <button
@@ -864,16 +891,17 @@ function ConfirmationResult({ result, payload }: { result: GlobalChatResult; pay
           disabled={!token || consumed}
           onClick={() => void confirmGlobalChatAction(result, token)}
         >
-          {consumed ? 'Confirmed' : 'Confirm'}
+          {consumed ? t('chat:global.confirm.confirmed') : t('chat:global.confirm.confirm')}
         </button>
-        {!consumed ? <button type="button" onClick={() => dismissConfirmation(result.id)}>Cancel</button> : null}
-        {result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button> : null}
+        {!consumed ? <button type="button" onClick={() => dismissConfirmation(result.id)}>{t('core:common.cancel')}</button> : null}
+        {result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>{t('chat:global.openInClassic')}</button> : null}
       </div>
     </section>
   );
 }
 
 function ClientActionResult({ result }: { result: GlobalChatResult }) {
+  const t = useMessages('chat');
   const snapshot = useGlobalChatState();
   const action = clientAction(result);
   if (!action) return null;
@@ -891,9 +919,14 @@ function ClientActionResult({ result }: { result: GlobalChatResult }) {
         disabled={actionState === 'running' || actionState === 'done'}
         onClick={() => void runGlobalChatClientAction(result)}
       >
-        {actionState === 'running' ? 'Applying…' : actionState === 'done' ? 'Done' : navigation ? 'Open in Classic' : localSetting ? 'Apply' : agentHandoff ? 'Open agent session' : 'Open'}
+        {actionState === 'running' ? t('chat:global.clientAction.applying')
+          : actionState === 'done' ? t('chat:global.clientAction.done')
+            : navigation ? t('chat:global.clientAction.openInClassic')
+              : localSetting ? t('chat:global.clientAction.apply')
+                : agentHandoff ? t('chat:global.clientAction.openAgentSession')
+                  : t('chat:global.clientAction.open')}
       </button>
-      {!navigation && !agentHandoff && result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button> : null}
+      {!navigation && !agentHandoff && result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>{t('chat:global.openInClassic')}</button> : null}
     </div>
   );
 }
@@ -907,6 +940,7 @@ export function GlobalChatResultBlock({
   nested?: boolean;
   itemSelection?: GlobalChatItemSelection;
 }) {
+  const t = useMessages('chat');
   const payload = unwrapped(result);
   const confirmation = object(payload)?.status === 'confirmation_required';
   const action = clientAction(result);
@@ -921,7 +955,7 @@ export function GlobalChatResultBlock({
         data-renderer={result.renderer}
       >
         <header className="global-chat-result-head">
-          <span>{action.transport === 'navigation' ? 'Open in Classic' : 'Ready to apply'}</span>
+          <span>{action.transport === 'navigation' ? t('chat:global.result.openInClassic') : t('chat:global.result.readyToApply')}</span>
         </header>
         <ClientActionResult result={result} />
       </section>
@@ -935,11 +969,11 @@ export function GlobalChatResultBlock({
         className={`global-chat-result global-chat-result-settings${nested ? ' global-chat-result-nested' : ''}`}
         data-renderer="setting"
       >
-        <header className="global-chat-result-head"><span>Global Chat settings</span></header>
+        <header className="global-chat-result-head"><span>{t('chat:global.result.globalChatSettings')}</span></header>
         <GlobalChatSettingsEditor embedded />
         {result.classicPath ? (
           <div className="global-chat-inline-actions global-chat-client-action">
-            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button>
+            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>{t('chat:global.openInClassic')}</button>
           </div>
         ) : null}
       </section>
@@ -953,11 +987,11 @@ export function GlobalChatResultBlock({
         className={`global-chat-result global-chat-result-settings${nested ? ' global-chat-result-nested' : ''}`}
         data-renderer="setting"
       >
-        <header className="global-chat-result-head"><span>Development AI settings</span></header>
+        <header className="global-chat-result-head"><span>{t('chat:global.result.developmentSettings')}</span></header>
         <DevelopmentAISettingsEditor />
         {result.classicPath ? (
           <div className="global-chat-inline-actions global-chat-client-action">
-            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button>
+            <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>{t('chat:global.openInClassic')}</button>
           </div>
         ) : null}
       </section>
@@ -992,7 +1026,7 @@ export function GlobalChatResultBlock({
           className="global-chat-expand"
           onClick={() => setVisibleCount((count) => Math.min(count + pageSize, items.length))}
         >
-          Show more <ChevronDownIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          {`${t('chat:global.result.showMore')} `}<ChevronDownIcon className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       ) : null}
       {!items.length ? (

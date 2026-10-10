@@ -14,6 +14,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -37,7 +38,7 @@ const SUMMARY = {
 test('the three stat cards: merged, kudos, challenges — and a dash, not a zero, without data', () => {
   const { statsView } = loadTsx(STORE);
   assert.deepEqual(statsView(SUMMARY).map((s) => [s.key, s.value, s.label]),
-    [['merged', '9', 'merged'], ['kudos', '3', 'kudos'], ['challenges', '2', 'challenges']]);
+    [['merged', '9', 'live'], ['kudos', '3', 'kudos'], ['challenges', '2', 'challenges']]);
   assert.deepEqual(statsView(null).map((s) => s.value), ['–', '–', '–'],
     'a read that failed is not a claim of zero');
 });
@@ -55,7 +56,7 @@ test('the rows say what is behind them, from the data only', () => {
   assert.deepEqual(rows, {
     challenges: 'Season 3 · rank #3 · 2 of 7 done',
     kudos: '3 received',
-    changes: '9 merged · 2 in progress',
+    changes: '9 live · 2 in progress',
     requests: '2 open · 1 done',
     votes: 'Latest: Weekly distance leaderboard',
     friends: '1 request waiting',
@@ -162,14 +163,17 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
 test('every part of the older Profile has a home', () => {
   // points, rank, breakdown, token → the Challenges tab's standing card
   const standing = read('frontend/src/features/leaderboard/your-standing.tsx');
-  assert.match(standing, /Points by event/);
-  assert.match(standing, /Token allocation/);
+  assert.match(standing, /\{t\('leaderboard:standing\.byEvent'\)\}/);
+  assert.equal(message('leaderboard:standing.byEvent'), 'Points by event');
+  assert.match(standing, /\{t\('leaderboard:standing\.token\.label'\)\}/);
+  assert.equal(message('leaderboard:standing.token.label'), 'Token allocation');
   assert.match(read('frontend/src/features/leaderboard/challenges-pane.tsx'), /<YourStanding \/>/);
   // public-profile publishing → the Edit profile sheet
   const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
   assert.match(sheet, /id="public-profile-controls"/);
   assert.match(sheet, /Profile\._setPublished\(!published\)/);
-  assert.match(sheet, /Copy public link/);
+  assert.match(sheet, /\{t\('profile:edit\.public\.copy'\)\}/);
+  assert.equal(message('profile:edit.public.copy'), 'Copy public link');
   // Admin & moderation, node / wallet / staking → Settings; Log out already there
   const rows = read('frontend/src/features/settings/account-rows.tsx');
   for (const needle of ['id="settings-row-admin"', '<NodePillRow />', '<WalletRow />', '<StakingRow />']) {

@@ -32,18 +32,82 @@
  * its store subscription alive.
  */
 
+import { useMemo, useRef, useState, type RefObject } from 'react';
+
+import { NewMessagesBanner, TranscriptOverlay } from '@/components/ui/chat';
+import { useMessages } from '../../lib/i18n/react';
+import { useStoreState } from '../../lib/use-store-state';
+import { JumpToLatest } from '../messages/jump-to-latest';
+import {
+  firstUnreadId, newMessagesLabel, transcriptRow, useUnreadAffordances, type UnreadRow,
+} from '../messages/unread-anchor';
 import { ComposerForm, ComposerSlots, StatusLine } from './composer';
+import { ReplyStarters } from './reply-starters';
+import { transcriptStore, unreadOpenings } from './transcript-store';
+
+/**
+ * How near the bottom the channel counts as followed: public/js/group-chat.js
+ * keeps `_lockedToBottom` within 50px, so Jump to latest is up exactly when
+ * a new message would not be followed.
+ */
+export const GENERAL_FOLLOW_PX = 50;
+
+const NO_ROWS: readonly UnreadRow[] = [];
+
+/** The general stream's rows, as the unread pieces read them. */
+function useChannelRows(): { rows: readonly UnreadRow[]; unread: { lastReadId: number; count: number } | null } {
+  const main = useStoreState(transcriptStore).byKey.main;
+  const messages = main ? main.messages : null;
+  const rows = useMemo(() => (messages ? messages.map(transcriptRow) : NO_ROWS), [messages]);
+  return { rows, unread: main?.lead.unread || null };
+}
+
+/**
+ * "3 new messages" over the top of the stream, while the channel is open at
+ * its "New" line (./transcript.tsx draws the line; group-chat.js and
+ * ./mount.ts open the stream at it). Its own component, beside the stream,
+ * so the pane around it holds no state.
+ *
+ * It starts counting from the OPENING (`unreadOpenings`): the stream is
+ * moved to the line after the rows land, and where the line sat before that
+ * is not the reader scrolling onto it. A stream that did not open at the
+ * line (a message the bell sent them to) offers no banner.
+ */
+function ChannelUnreadBanner({ scroller }: { scroller: RefObject<HTMLElement | null> }) {
+  const { rows, unread } = useChannelRows();
+  const opened = useStoreState(unreadOpenings).count;
+  const [atMount] = useState(opened);
+  const line = useMemo(() => ({
+    get current(): HTMLElement | null {
+      return scroller.current?.querySelector<HTMLElement>('[data-unread-line]') || null;
+    },
+  }), [scroller]);
+  const lineAt = unread ? firstUnreadId(rows, unread.lastReadId) : null;
+  const { view, toLine } = useUnreadAffordances(scroller, line, {
+    conversation: null,
+    markKey: unread ? `${unread.lastReadId}:${opened}` : '',
+    lineAt,
+    rows,
+    offerBanner: opened !== atMount,
+    slack: GENERAL_FOLLOW_PX,
+  });
+  if (!unread) return null;
+  return (
+    <TranscriptOverlay edge="top">
+      <NewMessagesBanner shown={view.banner} onClick={toLine}>{newMessagesLabel(unread.count)}</NewMessagesBanner>
+    </TranscriptOverlay>
+  );
+}
+
+/** Jump to latest over the stream's foot, with a dot for what arrived while the reader was up it. */
+function ChannelJumpToLatest({ scroller }: { scroller: RefObject<HTMLElement | null> }) {
+  const { rows } = useChannelRows();
+  return <JumpToLatest scroller={scroller} slack={GENERAL_FOLLOW_PX} rows={rows} />;
+}
 
 const SAFE_BAR = 'platform-safe-bar';
 
 export interface GeneralChatProps {
-  /**
-   * The app's name for the first-arrival banner, or null once it has been
-   * seen. The localStorage read AND the write stay in app-view.js: whether
-   * this has been shown is a browser fact, not a render-time one, and a
-   * component that wrote it would fire again on every re-render.
-   */
-  introAppName: string | null;
   readOnly: boolean;
   /**
    * What the read-only bar says, when it is not the usual "only
@@ -53,9 +117,16 @@ export interface GeneralChatProps {
   notice?: string | null;
   /** GC_MAX_MESSAGE_LEN, passed through so the module owns the number. */
   maxLength: number;
+  /**
+   * #4417 follow-up: what the empty box says, when it is not the app's own
+   * stream: a topic's channel says "Message #handle".
+   */
+  placeholder?: string;
 }
 
-export function GeneralChat({ introAppName, readOnly, notice, maxLength }: GeneralChatProps) {
+export function GeneralChat({ readOnly, notice, maxLength, placeholder }: GeneralChatProps) {
+  const t = useMessages('chat');
+  const messages = useRef<HTMLDivElement>(null);
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-session">
       <div className="gc-tab-body flex-1 flex min-h-0">
@@ -63,19 +134,11 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
             #gc-messages scrolls and the composer bar is a shrink-0 sibling
             below it — so the keyboard inset is reserved here, on the column. */}
         <div className="gc-chat-pane platform-kb-column flex-1 flex flex-col min-h-0">
-          {/*
-              #3: name what group chat is for, once per browser. It is rarely
-              empty — system messages land here — so a permanent banner would
-              be clutter.
-          */}
-          {introAppName ? (
-            <div className="mx-3 mt-3 px-4 py-3 rounded-2xl bg-violet-500/10 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
-              {'This is where everyone using '}
-              <span className="font-medium">{introAppName}</span>
-              {' talks and votes on proposed changes to it.'}
-            </div>
-          ) : null}
-          <div id="gc-messages" className="flex-1 overflow-y-auto py-2 space-y-0.5" />
+          {/* Over the stream's top and its foot: siblings of #gc-messages,
+              which stays the transcript's alone. */}
+          <ChannelUnreadBanner scroller={messages} />
+          <div ref={messages} id="gc-messages" className="flex-1 overflow-y-auto py-2 space-y-0.5" />
+          <ChannelJumpToLatest scroller={messages} />
           <StatusLine
             scope="general"
             className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0"
@@ -90,15 +153,19 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
           <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
             {readOnly ? (
               <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center" data-gc-readonly-notice="">
-                {notice || 'You\u2019re viewing this app\u2019s dev space read-only. Only collaborators can post.'}
+                {notice || t('chat:group.readOnly.devSpace')}
               </div>
             ) : (
               <>
+                {/* Reply chips for somebody who has not said anything here
+                    yet, once someone else has (./reply-starters.tsx). A tap
+                    fills the box below; it does not send. */}
+                <ReplyStarters />
                 <ComposerSlots scope="general" />
                 <ComposerForm
                   scope="general"
                   fill
-                  placeholder="Type a message..."
+                  placeholder={placeholder || t('chat:group.composer.placeholder')}
                   maxLength={maxLength}
                 />
               </>
@@ -110,7 +177,7 @@ export function GeneralChat({ introAppName, readOnly, notice, maxLength }: Gener
           className="gc-spec-resizer"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize spec panel"
+          aria-label={t('chat:group.specPanel.resize')}
         />
         <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
       </div>

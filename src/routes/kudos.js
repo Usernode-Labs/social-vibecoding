@@ -577,7 +577,8 @@ function kudosRoutes(config) {
       if (typeArg === 'all' || typeArg === 'votes') {
         arms.push(`
           SELECT 'pr_vote' AS type, pv.created_at, pv.vote,
-                 cs.status AS status,
+                 -- Merged but not live yet (chat_sessions.live_at): going live.
+                 CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'going_live' ELSE cs.status END AS status,
                  cs.id AS session_id, cs.pr_number, cs.pr_title,
                  au.username AS author_username,
                  a.slug AS app_slug, a.name AS app_name,
@@ -687,7 +688,9 @@ function kudosRoutes(config) {
             WHERE ib.status = 'awarded' AND ib.awarded_session_id IS NOT NULL
          )
          SELECT cs.id AS session_id,
-                cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                cs.pr_number, cs.pr_url, cs.pr_title,
+                -- Merged but not live yet (chat_sessions.live_at): the badge says going live.
+                CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status,
                 cs.created_at AS session_created_at,
                 u.id AS author_id, u.username AS author_username,
                 a.slug AS app_slug, a.name AS app_name,
@@ -703,6 +706,7 @@ function kudosRoutes(config) {
            LIMIT ${limitParamIdx}`,
         params
       );
+      await withReleases(pool, rows);
       res.json({
         window: windowArg,
         weekStart: windowArg === 'week' ? weekStart : null,
@@ -896,7 +900,9 @@ function kudosRoutes(config) {
       params.push(limit);
       const { rows } = await pool.query(
         `SELECT cs.id AS session_id,
-                cs.pr_number, cs.pr_url, cs.pr_title, cs.status,
+                cs.pr_number, cs.pr_url, cs.pr_title,
+                -- Merged but not live yet (chat_sessions.live_at): the badge says going live.
+                CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status,
                 cs.created_at, cs.promoted_at, cs.merged_at,
                 a.slug AS app_slug, a.name AS app_name,
                 (${creditCount})::int AS kudos_count
@@ -912,6 +918,7 @@ function kudosRoutes(config) {
       const nextBefore = rows.length === limit
         ? rows[rows.length - 1].created_at
         : null;
+      await withReleases(pool, rows);
       res.json({
         user: { user_id: user.id, username: user.username },
         stats: statRows[0],
@@ -926,6 +933,21 @@ function kudosRoutes(config) {
   });
 
   return router;
+}
+
+// A change merged into the platform's own app and not live yet reads
+// 'merging' in these lists, whose badge says "going live". It waits for the
+// platform's next release (services/release-watch.js), and the badge's title
+// says when. Any other row is left as it is. One read, only when a row is
+// going live; never throws.
+async function withReleases(pool, rows) {
+  const going = rows.filter((row) => row.status === 'merging' && row.session_id != null);
+  if (!going.length) return;
+  const releases = await require('../services/release-watch').releasesFor(pool, going.map((row) => row.session_id));
+  for (const row of going) {
+    const release = releases.get(Number(row.session_id));
+    if (release) row.release = release;
+  }
 }
 
 function clampLimit(raw) {

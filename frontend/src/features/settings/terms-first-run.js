@@ -1,5 +1,14 @@
 // First-run terms-consent gate (issues #1297, #1328).
 //
+// NOW PASSIVE, like most apps: the sign-in screens carry "By continuing, you
+// agree to Homeroom's terms", and this gate records a never-answered current
+// version as accepted by continuing (`method: 'continued'` on
+// POST /challenges-api/terms/consent) instead of presenting the sheet. Only
+// somebody who accepted an earlier version is told, in a toast, that the
+// terms changed. The sheet itself stays in Settings → About, for reading
+// them in full. The history below describes the sheet this gate used to
+// present.
+//
 // New accounts used to reach the full shell without ever seeing the
 // published Terms and conditions: the only entry points were the profile
 // screen's token-gated notice and a Settings row that renders inside the
@@ -163,7 +172,10 @@
       // terms ask to the NEXT launch whenever the "Set up your device"
       // sheet won this one — which on mobile meant "after an app restart",
       // days later or never. Wait the sheet run out, then its dismissal,
-      // then a ghost-click window, and ask in the SAME session.
+      // then a ghost-click window, and ask in the SAME session. That sheet
+      // is Android's alone now: on iOS the run presents nothing (#12, D10;
+      // the notification ask moved to the create dialog), so the terms ask
+      // follows at once.
       if (native && window.NativeChrome) {
         try {
           if (typeof NativeChrome.maybeShowFirstRunPermissions === 'function') {
@@ -215,30 +227,37 @@
         return;
       }
 
-      if (!window.Settings ||
-          typeof window.Settings.showTermsSheet !== 'function') {
-        TermsFirstRun._resolve();
-        return;
-      }
-      // Pass the payload through so the sheet doesn't fetch a second time.
-      // Native gets the blocking modal; web keeps the dismissible sheet.
-      TermsFirstRun._presented = true;
-      // A step of the person's path (#3369).
-      window.UITelemetry?.navigate?.('terms_sheet');
-      window.Settings.showTermsSheet(null, {
-        firstRun: true,
-        blocking: native,
-        payload,
-        onAnswered: () => {
+      // Accepted by continuing: the sign-in screens say "By continuing, you
+      // agree to Homeroom's terms" (../auth/sign-in-sheet.tsx, login.tsx),
+      // so a version never answered is recorded as accepted here, with no
+      // sheet in the way. Somebody who accepted an earlier version is told
+      // once that the terms changed. Reading them in full stays in
+      // Settings → About, where the sheet still lives.
+      await TermsFirstRun._acceptByContinuing(payload);
+    },
+
+    async _acceptByContinuing(payload) {
+      try {
+        const res = await fetch('/challenges-api/terms/consent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ terms_version_id: payload.id, status: 'accepted', method: 'continued' }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (res.ok && body.success) {
           TermsFirstRun._answered = true;
-          TermsFirstRun._resolve();
-        },
-        onClosed: () => {
-          TermsFirstRun._presented = false;
-          TermsFirstRun._resolve();
-          window.App?._renotifyNavigation?.();
-        },
-      });
+          if (payload.consent && payload.consent.earlier_accepted === true
+              && window.PlatformUI && typeof window.PlatformUI.toast === 'function') {
+            window.PlatformUI.toast(PlatformI18n.t('onboarding:terms.updatedToast'));
+          }
+        }
+      } catch (err) {
+        // Not an answer: the next check (the next load, or a native
+        // foreground) records it then.
+        console.warn('[terms-first-run] terms acceptance not recorded:', err);
+      }
+      TermsFirstRun._resolve();
     },
 
     // Warm-entry re-evaluation (#1328), native only: the WebView document

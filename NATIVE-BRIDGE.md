@@ -100,6 +100,12 @@ One additive **presentation** capability extends v4 the same way:
   effect" and republishes on every theme change. Unprivileged, unlike the
   notification and settings actions: see "Appearance" below for why, and
   for the producer contract it unlocks.
+- `setStatusBarTone`: the shell draws the status bar's glyphs for the tone
+  of the page ground SV says is under them, instead of from its theme,
+  until SV clears it. Advertise it only once the override reaches the
+  status bar style: SV reads the capability as "the app takes the tone",
+  and stops painting its web-side stopgap band under the status bar.
+  Unprivileged and not persisted: see "Status-bar tone" below.
 
 ## Methods
 
@@ -255,6 +261,48 @@ iOS applies `aps.badge` and Android launchers read
 exists for the live half — updating and clearing the badge while the
 user is inside the app.
 
+### Native sign-in (additive; `signInWithProvider`)
+
+#### `signInWithProvider({ provider, nonce })` → `{ idToken }`
+
+Privileged top-frame action. Inside the app the sign-in sheet's Continue
+with Apple and Continue with Google cannot use the providers' web pages
+(Google refuses an embedded web view outright), so the page asks the app
+for its own sheet and sends the ID token it returns to the server:
+
+1. The page calls `POST /api/auth/oauth/:provider/native/start` and gets
+   `{ state, nonce }` (a single-use state bound to this web view by an
+   HttpOnly cookie).
+2. The page calls `signInWithProvider({ provider, nonce })`. The app shows
+   the provider's native sheet with that nonce: **Apple gets the nonce's
+   SHA-256 (lowercase hex)**, as Apple's documentation asks; Google gets it
+   as given where the SDK takes one.
+3. The page sends `{ state, idToken }` to
+   `POST /api/auth/oauth/:provider/native`, which verifies the token
+   (signature, issuer, an audience among the app's client IDs saved in
+   Admin → Sign-in providers, the nonce, used once) and signs in, or asks
+   for a username, exactly as the web sign-in does.
+
+Producer requirements for a build that advertises the capability:
+
+- **Advertise `signInWithApple` and/or `signInWithGoogle`** for the
+  providers this build can actually sign in with (Apple: iOS with the
+  Sign in with Apple entitlement; Google: a build configured with its
+  client IDs). The page offers a provider only when both the server lists it
+  (`native_sign_in_providers` in `/api/public/waitlist/options`) and the
+  build advertises it.
+- **Resolve `{ idToken }`** (the provider's JWT, untouched). Nothing else is
+  needed; the server reads the address and subject from the token.
+- **Reject with `errorInfo.code: "cancelled"`** when the person closes the
+  sheet, so the page says nothing; any other failure is a plain English
+  sentence (code `failed` or omitted).
+- **Do not hold the lifecycle queue**: this waits on the person, so it is
+  not a lifecycle method, and it neither establishes nor ends a native
+  session. The page's ordinary session mint follows the server's answer.
+
+Builds without the capability lose nothing: the sheet offers the email code
+inside the app, as before.
+
 ### Native history gestures (additive; `setBackNavigationEnabled`)
 
 `setBackNavigationEnabled({ enabled: boolean })` enables WebKit's native
@@ -331,6 +379,64 @@ Producer requirements for a build that advertises the capability:
 Builds without the capability lose only the improvement: SV feature-detects
 it via `getBridgeInfo().capabilities`, an unknown method is dropped
 silently, and the wrapper races a 4s timeout so nothing waits on the answer.
+
+### Status-bar tone (additive; `setStatusBarTone`)
+
+#### `setStatusBarTone({ tone })` → resolves when applied
+
+`tone` is the tone of the page GROUND under the status bar, the same
+vocabulary as `data-app-tone` (`frontend/src/features/app-frame/app-tone.js`):
+
+- `"dark"`: the ground is dark, so draw LIGHT status-bar glyphs.
+- `"light"`: the ground is light, so draw DARK glyphs.
+- `null`: clear the override; the glyphs follow the app's theme again.
+
+The wrapper sends anything else as `null`.
+
+**The problem it solves (#26).** The app picks the status-bar style from its
+own theme, which is the appearance SV publishes (`setAppearance`). That is
+right over the shell's own screens and wrong over a surface with a tone of
+its own. The fullscreen staging preview's bar is always near-black, so on
+the light shell its clock and battery were dark on dark. A running app
+paints its own page colour up behind the bar, so a dark app under the light
+shell (or a light one under the dark shell) has the same problem.
+
+SV calls it from `public/js/native-chrome.js` (`publishStatusBarTone`) on
+boot and whenever the answer changes, and only with a changed value:
+
+- `"dark"` while the fullscreen staging preview (`#staging-overlay`, not
+  docked and not under a session's chrome) or the before/after compare
+  overlay (`#visual-compare-overlay`) is open;
+- otherwise the running app's tone (`data-app-tone` on `<html>`), when an
+  app is on screen;
+- otherwise `null`. The boot publish is `null` too, which also clears an
+  override a previous document left behind.
+
+**Unprivileged and not persisted.** It carries no account state, and it is
+true only for as long as the current document says so. Only the top
+document publishes; a framed copy of the shell (a platform change's staging
+preview) does not.
+
+Producer requirements for a build that advertises the capability:
+
+- **The override wins over the theme** for the status-bar style while it is
+  set, and `null` returns to the theme-derived style.
+- **Do not persist it.** Reset it on document load and when the WebView is
+  disposed, like `setBackNavigationEnabled`, so a value never outlives the
+  page that set it.
+- **Idempotent, last write wins.** Re-applying the current value changes
+  nothing.
+- **Nothing else changes on receipt.** It is presentation state.
+
+Builds without the capability lose only the improvement. SV feature-detects
+it via `getBridgeInfo().capabilities` and never calls it otherwise. A build
+that did receive it would drop the unknown method; the wrapper then rejects
+after its 4s timeout and SV logs a `console.warn`, never a `console.error`.
+Until a build takes the tone, `public/css/app.css` paints the fullscreen
+preview bar's safe-area band in the shell's ground colour (scoped to
+`html.in-native-webview`), so the theme's glyphs sit on the ground they were
+picked for. The first tone the app accepts puts `.native-status-bar-tone` on
+`<html>`, which retires that band for the rest of the document.
 
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 
@@ -634,6 +740,28 @@ This is a privileged trusted-top-frame action. Child dapps cannot request a
 capture of surrounding app chrome. Callers must feature-detect the capability;
 older app builds continue to use the feedback dialog's Photos/file fallback.
 
+#### `saveImage({ base64, contentType, filename })` → `true`
+
+Additive capability: `saveImage`. Saves a picture SV already holds to the
+phone: the photo library on iOS (add-only Photos permission), Pictures (or
+Downloads) on Android. SV calls it from the chat image viewer's Download and
+the message sheet's "Download image" (`features/image-viewer/save-image.ts`).
+The picture is a chat attachment served only with the session cookie, so the
+system browser (`openExternal`) cannot fetch it; SV fetches it in the page
+and hands over the bytes.
+
+- `contentType` must start with `image/`; `filename` is the attachment's
+  name with an extension, for platforms that keep one.
+- SV sends at most about 15 MB of image data; above that it uses the Web
+  Share sheet instead.
+- Privileged trusted-top-frame action, like `captureScreenshot`: an embedded
+  dapp cannot write into somebody's photos.
+- Resolve `true` once saved. Reject when the person refuses the permission
+  or the save fails; SV says "Couldn’t download this image."
+- Until a build advertises the capability, SV uses `navigator.share` with
+  files where the webview provides it, and otherwise hides its download
+  controls rather than showing one that does nothing.
+
 ### Settings (v3 — app-settings-to-web migration)
 
 All v3 methods are trusted-SV-origin gated like `openNativeScreen`. They
@@ -657,10 +785,22 @@ owned entirely by the authenticated Social session.
     "platform": "android",        // android | ios
     "exactAlarmGranted": true,
     "batteryOptDisabled": false,  // Android only, else null
-    "deviceManufacturer": "samsung" // Android only, else null
+    "deviceManufacturer": "samsung", // Android only, else null
+    "notificationPermission": "notDetermined" // notDetermined | denied | authorized; optional
   }
 }
 ```
+
+`permissions.notificationPermission` is the OS notification permission as
+the OS reports it, read independently of push configuration (additive;
+older builds omit it). It is what `NativeChrome.askForPing` trusts first
+when deciding whether "Get a ping when your app is ready?" may be offered:
+only `notDetermined` is askable, because iOS presents its own prompt once
+and a determined permission makes `requestPermissions()` a tap that shows
+nothing. Without the field SV falls back to `getSocialPushState()`'s
+`permissionStatus`, which a build without push configured reports as
+`notDetermined` forever, so that fallback is trusted only until this device
+has been asked once.
 
 v4 removed `termsAccepted` (terms moved to the session-authed
 `/challenges-api/terms/*` web routes) and `iosKeepAliveActive` (the iOS
@@ -795,6 +935,14 @@ web revocation must still succeed before invoking native logout.
 Remote revocation is best effort on the offline path; this does not revoke a
 server-side session while the server is unreachable or queue a later retry.
 
+Social does not wait on native indefinitely (#3915). Once web revocation has
+succeeded it leaves for its public landing page 8 seconds after invoking
+`logout()` even if native has not answered, and 5 seconds after an answer that
+did not replace the document. Native must therefore keep cleanup independent of
+the old document once admitted, and still replace whatever document is showing
+when it finishes. On the offline path, where web revocation failed, Social waits
+for native's answer instead, because only native can delete the live cookie.
+
 ## Trust model
 
 - The native transaction confirm sheet remains the sole native chrome over
@@ -815,9 +963,31 @@ server-side session while the server is unreachable or queue a later retry.
   state.
   `onPageStarted`/`onPageFinished` are intentionally not authority or listener
   readiness signals because their ordering differs across WebView platforms.
+- The parent bridge relays only for the production app frames the SV shell
+  owns. The shell publishes `window.__usernodeAppFrameFor(source)`
+  (`frontend/src/features/app-frame/mount.ts`), which names such a frame as
+  `{ slug, name, origin, mounted }` and answers null for anything else; the
+  relay also requires the message's origin to equal that `origin`. A staging
+  preview, the landing viewer, a page nested inside an app, an app frame
+  navigated to another site, and any top frame that is not the shell get no
+  `discover-ack` and no reply, so they behave as in a desktop browser. An ack
+  binds the frame to its app. A request from an owned frame that never
+  connected, or from an app kept alive while hidden, gets an error reply and
+  is not forwarded.
+- Every relayed request carries `relayApp: { slug, name }` at the top level of
+  the native payload, beside `args` and never inside it (`args` is checked
+  field by field). Native may read it to name the app on the confirm sheet
+  ("<App> wants to send"). Relayed ids still start with `relay-`.
+- Relayed `signMessage` is refused by the web bridge with "Signing from inside
+  apps isn't available yet": the signing sheet names Homeroom, not the app
+  asking. Signing from the trusted top frame is unchanged.
 - The parent bridge refuses both capability bootstraps and privileged relays
   from child frames. Non-privileged dapp reads and transaction methods keep
   their existing relay behavior only while the current realm claim is live.
+- These checks are the web half. Android's WebView injects the `Usernode`
+  channel into child frames too, so a child can post to native directly;
+  session-bound methods still fail there because the realm claim and the
+  privileged capability live only in the top frame's closure.
 - Loopback origins are not privileged by default. Flutter development builds
   can opt in with `--dart-define=ENABLE_LOCAL_PRIVILEGED_BRIDGE=true`; the
   switch is additionally gated by Flutter debug mode and cannot enable

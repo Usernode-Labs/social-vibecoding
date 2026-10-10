@@ -32,8 +32,10 @@
 
 import { useRef, useSyncExternalStore } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import * as api from './api';
+import { refusalSummary } from '../attachments/refusal-summary';
 import { acceptFiles, pickedKind, type PendingFile } from './attachments';
 import type {
   AgentAction,
@@ -102,6 +104,8 @@ export interface SpecSheetState {
   version: number | null;
   versions: number[];
   text: string;
+  /** The version's HTML document when it was written as one (#3699); `text` is then its markdown copy. */
+  html: string | null;
   phase: 'loading' | 'ready' | 'error';
   error: string;
   /**
@@ -160,6 +164,13 @@ export interface AgentSessionState {
   deciding: string | null;
   sessions: AgentSession[];
   sessionsLoaded: boolean;
+  /**
+   * The viewer has had an agent session, archived ones included: they have
+   * built something themselves. The Homeroom menu's Agent chats section is
+   * shown only then (useAgentChatsShown). Set by the list's read and by the
+   * first message of a new one, and never cleared in this document.
+   */
+  sessionsStarted: boolean;
   /** The picker's options, read once per page. */
   catalog: ModelCatalog | null;
   /** A pick on its way to the server. */
@@ -230,6 +241,7 @@ export const INITIAL_STATE: AgentSessionState = {
   deciding: null,
   sessions: [],
   sessionsLoaded: false,
+  sessionsStarted: false,
   catalog: null,
   choosing: false,
   returnedText: null,
@@ -255,6 +267,9 @@ const seen = new Set<string>();
 // The hint the next `new` open starts from: undefined when nothing has been
 // prepared (a reload of `#agent/new`, or the same draft routed again).
 let pendingHint: AgentHint | null | undefined;
+// The hand-off a shared `?flow=claude-code|codex` link asked for (#4312): the
+// next conversation opened, sent or not, opens "Build with" on that tab.
+let pendingHandoff: HandoffAgent | null = null;
 let catalogRequest: Promise<void> | null = null;
 
 function publish(patch: Partial<AgentSessionState> | ((current: AgentSessionState) => Partial<AgentSessionState>)) {
@@ -382,6 +397,22 @@ export function useAgentSessions(): AgentSession[] {
   return useAgentSessionSelector((current) => current.sessions);
 }
 
+/**
+ * Whether the Homeroom menu shows its Agent chats section (Build it now
+ * and your sessions): once the viewer has had an agent session, from any
+ * door (the hub's ⋯, a request's Build it now, Messages' new chat, the
+ * filed request's link). A first-time user's menu stays short (first-session
+ * run-through, 5 Oct 2026). A listed session counts at once, so the section
+ * is there from the moment the first one is created.
+ */
+export function agentChatsShown(current: Pick<AgentSessionState, 'sessionsStarted' | 'sessions'>): boolean {
+  return current.sessionsStarted || current.sessions.length > 0;
+}
+
+export function useAgentChatsShown(): boolean {
+  return useAgentSessionSelector(agentChatsShown);
+}
+
 export function getAgentSessionState() {
   return state;
 }
@@ -396,7 +427,7 @@ export function composerId(host: AgentSessionHost) {
 
 function syncTitle() {
   if (!state.open || state.host !== 'screen') return;
-  const title = state.session?.title || 'New session';
+  const title = state.session?.title || t('agent:session.newSessionTitle');
   try { window.App?.setHeaderTitle?.(title); } catch { /* the bar keeps its last title */ }
 }
 
@@ -442,9 +473,10 @@ function inFlight(): Set<string> {
   return new Set([...awaiting.keys(), ...accepted]);
 }
 
-const NOT_SENT_TEXT = 'Could not reach Homeroom, so this was not sent.';
-const BUSY_REFUSED_TEXT = 'The Mayor was still answering, so this was not sent.';
-const STRANDED_TEXT = 'This was not sent.';
+// Message ids: why a message of the person's was not sent, read when it is marked.
+const NOT_SENT_TEXT = 'agent:session.outbox.notSentUnreachable';
+const BUSY_REFUSED_TEXT = 'agent:session.outbox.notSentBusy';
+const STRANDED_TEXT = 'agent:session.outbox.notSent';
 
 /**
  * Bring the open conversation up to date with the server. Resolves once the
@@ -477,7 +509,7 @@ function syncFailed(id: number, error: unknown) {
   // The first read of a conversation is the screen: say what went wrong.
   // Any later one only missed a beat; the next trigger or poll reads again.
   if (state.phase === 'loading') {
-    publish({ phase: 'error', error: errorText(error, 'Could not load this agent session.') });
+    publish({ phase: 'error', error: errorText(error, t('agent:session.error.loadFailed')) });
   }
 }
 
@@ -537,7 +569,7 @@ async function syncOnce(id: number, whole: boolean) {
   const stale = !answer.busy && startedAt < acceptedAt;
   if (stale) syncAgain = true;
   publish((current) => {
-    const outbox = markStranded(withoutLanded(current.outbox, messages), inFlight(), STRANDED_TEXT);
+    const outbox = markStranded(withoutLanded(current.outbox, messages), inFlight(), t(STRANDED_TEXT));
     for (const clientId of accepted) {
       if (!outbox.some((item) => item.clientId === clientId)) accepted.delete(clientId);
     }
@@ -726,7 +758,7 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
         running: true,
         phase,
         streamText: phase === 'mayor2' ? '' : state.turn.streamText,
-        activity: phase === 'cc' ? 'The coding agent is working' : '',
+        activity: phase === 'cc' ? t('agent:session.activity.codingAgentWorking') : '',
         startedAt: phase === 'cc'
           ? (typeof event.startedAt === 'number' ? event.startedAt : Date.now())
           : (state.turn.startedAt || Date.now()),
@@ -795,7 +827,7 @@ export function handleEvent(id: number, event: AgentTurnEvent) {
       break;
     case 'error':
       if (!fromChange) {
-        publish({ error: typeof event.error === 'string' ? event.error : 'The Mayor could not finish this turn.' });
+        publish({ error: typeof event.error === 'string' ? event.error : t('agent:session.error.turnFailed') });
         void requestSync(id);
       }
       break;
@@ -823,7 +855,7 @@ export function progressLine(text: string): string {
     && typeof (window as unknown as { ccPhaseLabel?: (phase: string) => string }).ccPhaseLabel === 'function'
     ? (window as unknown as { ccPhaseLabel: (phase: string) => string }).ccPhaseLabel(marker[1])
     : '';
-  return label && label !== marker[1].trim() ? label : 'The coding agent is working';
+  return label && label !== marker[1].trim() ? label : t('agent:session.run.progress.working');
 }
 
 /** Keep the open conversation's outbox where a reload finds it. */
@@ -854,7 +886,8 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
   // It is also the moment a screen is most likely behind (the user tapped
   // the conversation again, or came back to it): read it.
   if (state.id === id && state.open) {
-    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen });
+    const handoff = takeHandoff();
+    publish({ open: true, host, drawerOpen: drawer || state.drawerOpen, ...(handoff ? { handoff } : {}) });
     syncTitle();
     applyCarriedPane();
     // Still loading: that read is this one's too.
@@ -872,7 +905,7 @@ export async function openAgentSession({ id, host = 'screen', drawer = false }: 
     error: '',
     drawerOpen: drawer,
     session: null, draft: null, messages: [], actions: [], turn: IDLE_TURN, specSheet: null, preview: null, changeAction: null, drafts: [],
-    credits: null, handoff: null, attachments: dropAllAttachments(), outbox: readOutbox(id), version: null,
+    credits: null, handoff: takeHandoff(), attachments: dropAllAttachments(), outbox: readOutbox(id), version: null,
   });
   syncTitle();
   seen.clear();
@@ -894,6 +927,27 @@ export function prepareAgentDraft(hint: AgentHint | null | undefined) {
   pendingHint = hint || null;
 }
 
+/** A `?flow=` value as a hand-off agent, or null for anything else. */
+export function handoffFromFlow(value: unknown): HandoffAgent | null {
+  return value === 'claude-code' || value === 'codex' ? value : null;
+}
+
+/**
+ * A shared link's `?flow=claude-code|codex` (#4312, app.js's router): the
+ * next conversation opened, whichever address and host it is drawn at, opens
+ * its "Build with" sheet on that agent's tab, as the in-app doors do.
+ * Unknown values are ignored.
+ */
+export function prepareHandoff(flow: unknown) {
+  pendingHandoff = handoffFromFlow(flow);
+}
+
+function takeHandoff(): HandoffAgent | null {
+  const agent = pendingHandoff;
+  pendingHandoff = null;
+  return agent;
+}
+
 /**
  * Show an unsent conversation. A freshly prepared hint starts a new draft;
  * routing the one already on screen again (a resize, a same-address
@@ -907,13 +961,15 @@ function openDraft(host: AgentSessionHost) {
   // call's preview then still lands, and the bar names the app instead of
   // staying on "Any app".
   if (!fresh && state.open && state.id === null && state.draft) {
-    publish({ host });
+    const handoff = takeHandoff();
+    publish({ host, ...(handoff ? { handoff } : {}) });
     syncTitle();
     return;
   }
   const version = ++navigation;
   const hint = fresh ? (pendingHint || null) : null;
   pendingHint = undefined;
+  const linked = takeHandoff();
   // Started from a request (Start work), or handed a message (Global Chat,
   // Explore): the box offers that first message (the composer reads it off
   // the hint, ./request-seed.ts), not the text an earlier unsent
@@ -946,8 +1002,9 @@ function openDraft(host: AgentSessionHost) {
     attachments: dropAllAttachments(),
     credits: null,
     // The out-of-credits card's "Use Claude Code" / "Use Codex" opens the
-    // conversation on its "Build with" tab (AppView.createProposal).
-    handoff: hint?.handoff === 'claude-code' || hint?.handoff === 'codex' ? hint.handoff : null,
+    // conversation on its "Build with" tab (AppView.createProposal), and so
+    // does a shared `?flow=` link (prepareHandoff).
+    handoff: linked || handoffFromFlow(hint?.handoff),
     outbox: [],
     version: null,
   });
@@ -1074,7 +1131,11 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
   try {
     const session = await api.createSession(draft.hint, draft.agent);
     telemetry?.outcome?.(attemptId, 'success');
-    publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
+    // `sessionsStarted`: the Homeroom menu's Agent chats is theirs from now.
+    publish((current) => ({
+      sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)],
+      sessionsStarted: true,
+    }));
     // Still on screen: this is the conversation now. Left meanwhile: it
     // still gets its message, it just is not what the screen shows.
     if (state.open && state.draft === draft) {
@@ -1089,7 +1150,7 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
       errorCode: status ? telemetry?.errorCodeFor?.(status)
         : (navigator.onLine === false ? 'offline' : 'network'),
     });
-    if (state.draft === draft) publish({ error: errorText(error, 'Could not start an agent session.') });
+    if (state.draft === draft) publish({ error: errorText(error, t('agent:session.error.startFailed')) });
     return null;
   }
 }
@@ -1141,7 +1202,7 @@ async function uploadPending(id: number, key: string): Promise<boolean> {
   } catch (error) {
     if (state.id === id) {
       dropAttachments([key]);
-      toast(errorText(error, `Could not attach ${item.name}.`));
+      toast(errorText(error, t('agent:session.error.attachFailed', { file: item.name })));
     }
     return false;
   }
@@ -1150,8 +1211,8 @@ async function uploadPending(id: number, key: string): Promise<boolean> {
 /** Put picked, pasted or dropped files in the tray; the first refusal is said once. */
 export function addAttachments(files: Array<{ name: string; size: number; type?: string } & Blob>) {
   if (state.session?.status === 'archived') return;
-  const { accepted, error } = acceptFiles(state.attachments.length, files);
-  if (error) toast(error);
+  const { accepted, error, refusedCount } = acceptFiles(state.attachments.length, files);
+  if (error) toast(refusalSummary(error, refusedCount - 1));
   if (!accepted.length) return;
   const id = state.id;
   const added: PendingFile[] = accepted.map((file) => {
@@ -1247,7 +1308,7 @@ export async function sendAgentMessage(text: string, { retryOf = null }: { retry
     : {
       clientId: newClientId(),
       message,
-      shown: message || (files.length === 1 ? `Attached ${files[0].name}` : `Attached ${files.length} files`),
+      shown: message || (files.length === 1 ? t('agent:session.outbox.attachedFile', { file: files[0].name }) : t('agent:session.outbox.attachedFiles', { count: files.length })),
       status: 'sending',
       error: '',
       createdAt: Date.now(),
@@ -1280,7 +1341,7 @@ export async function sendAgentMessage(text: string, { retryOf = null }: { retry
   for (const file of state.attachments.filter((entry) => entry.status === 'local' && item.attachmentKeys.includes(entry.key))) {
     // eslint-disable-next-line no-await-in-loop
     if (!await uploadPending(id, file.key)) {
-      fail(`Could not attach ${file.name}, so this was not sent.`);
+      fail(t('agent:session.outbox.attachFailedNotSent', { file: file.name }));
       if (state.id === id) publish({ turn: IDLE_TURN });
       return;
     }
@@ -1326,11 +1387,11 @@ export async function sendAgentMessage(text: string, { retryOf = null }: { retry
             // building, and the message kept to send once there is a way.
             publish({ credits: refused });
             refreshCredits(true);
-            fail('Not sent: you are out of credits for now.');
+            fail(t('agent:session.outbox.notSentNoCredits'));
           } else if ((error as { body?: { busy?: boolean } }).body?.busy) {
-            fail(BUSY_REFUSED_TEXT);
+            fail(t(BUSY_REFUSED_TEXT));
           } else {
-            fail(errorText(error, 'The Mayor could not take this, so it was not sent.'));
+            fail(errorText(error, t('agent:session.error.turnRefusedNotSent')));
           }
         }
       } else if (!taken) {
@@ -1351,7 +1412,7 @@ export async function sendAgentMessage(text: string, { retryOf = null }: { retry
   // No answer after every try: Not sent, with Retry. Where the message
   // stands is still the server's answer: the read below removes the row
   // if the message got there after all.
-  if (!taken && awaiting.has(item.clientId)) fail(NOT_SENT_TEXT);
+  if (!taken && awaiting.has(item.clientId)) fail(t(NOT_SENT_TEXT));
   await requestSync(id);
 }
 
@@ -1407,7 +1468,7 @@ export async function retryTurn() {
         publish({ credits: refused });
         refreshCredits(true);
       } else {
-        publish({ error: errorText(error, 'Could not try that again.') });
+        publish({ error: errorText(error, t('agent:session.error.retryFailed')) });
       }
     }
   } finally {
@@ -1510,7 +1571,7 @@ export async function stopAgentTurn() {
     if (answer.stopped) await requestSync(id);
   } catch (error) {
     if (!sameTurn()) { if (state.id === id) await requestSync(id); return; }
-    patchTurn({ stopPending: false, stopError: errorText(error, 'Could not stop the agent. Try again.') });
+    patchTurn({ stopPending: false, stopError: errorText(error, t('agent:session.error.stopFailed')) });
     await requestSync(id);
   }
 }
@@ -1523,7 +1584,7 @@ export async function stopPreviewCapture() {
   try {
     await api.stopPreviewCapture(change.appSlug, change.id);
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not stop capturing previews.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.stopCaptureFailed')) });
   }
   if (state.id === id) await requestSync(id);
 }
@@ -1544,7 +1605,7 @@ export async function decideCard(actionId: string, decision: 'confirm' | 'dismis
       await api.dismissAction(id, actionId);
     }
   } catch (error) {
-    publish({ error: errorText(error, 'That did not go through.') });
+    publish({ error: errorText(error, t('agent:session.error.actionFailed')) });
   } finally {
     publish({ deciding: null });
     void requestSync(id);
@@ -1559,7 +1620,7 @@ export async function switchActiveChange(changeId: number) {
     publish({ session, drawerOpen: false });
     void requestSync(id);
   } catch (error) {
-    publish({ error: errorText(error, 'Could not switch to that change.') });
+    publish({ error: errorText(error, t('agent:session.error.switchFailed')) });
   }
 }
 
@@ -1575,10 +1636,10 @@ export async function renameCurrentSession() {
   const session = state.session;
   if (!id || !session) return;
   const title = await window.PlatformUI?.prompt?.({
-    title: 'Rename this session',
+    title: t('agent:session.rename.title'),
     value: session.title || '',
-    placeholder: 'What this conversation is about',
-    confirmLabel: 'Rename',
+    placeholder: t('agent:session.rename.placeholder'),
+    confirmLabel: t('agent:session.rename.confirm'),
   });
   if (title == null || !title.trim() || title.trim() === session.title || state.id !== id) return;
   try {
@@ -1587,7 +1648,7 @@ export async function renameCurrentSession() {
     publish((current) => ({ session: renamed, sessions: withListed(current, renamed) }));
     syncTitle();
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not rename this session.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.renameFailed')) });
   }
 }
 
@@ -1599,9 +1660,9 @@ export async function renameCurrentSession() {
  */
 async function confirmArchive(): Promise<boolean> {
   return !!(await window.PlatformUI?.confirm?.({
-    title: 'Archive this session?',
-    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
-    confirmLabel: 'Archive',
+    title: t('agent:session.archive.title'),
+    message: t('agent:session.archive.message'),
+    confirmLabel: t('agent:session.archive.confirm'),
   }));
 }
 
@@ -1621,7 +1682,7 @@ export async function archiveCurrentSession() {
     publish((current) => ({ session, sessions: current.sessions.filter((s) => s.id !== id) }));
     void loadAgentSessions();
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not archive this session.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.archiveFailed')) });
   }
 }
 
@@ -1652,7 +1713,7 @@ export async function archiveListedSession(id: number): Promise<boolean> {
     void loadAgentSessions();
     return true;
   } catch (error) {
-    window.PlatformUI?.toast?.(errorText(error, 'Could not archive this session.'));
+    window.PlatformUI?.toast?.(errorText(error, t('agent:session.error.archiveFailed')));
     void loadAgentSessions();
     return false;
   }
@@ -1667,7 +1728,7 @@ export async function unarchiveCurrentSession() {
     publish({ session });
     void loadAgentSessions();
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not unarchive this session.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.unarchiveFailed')) });
   }
 }
 
@@ -1741,7 +1802,7 @@ async function parkDraft(id: number, text: string): Promise<boolean> {
   } catch (error) {
     if (state.id === id) {
       publish((current) => ({ drafts: current.drafts.filter((d) => d.id !== draft.id) }));
-      toast(errorText(error, 'Could not save that draft.'));
+      toast(errorText(error, t('agent:session.error.draftSaveFailed')));
     }
     return false;
   }
@@ -1758,13 +1819,13 @@ export function saveComposerDraft(text: string): boolean {
   const body = text.trim();
   if (!id || !body || !state.turn.running) return false;
   if (state.drafts.length >= MAX_SAVED_DRAFTS) {
-    toast(`That's ${MAX_SAVED_DRAFTS} saved drafts. Send or delete one first`);
+    toast(t('agent:session.drafts.full', { count: MAX_SAVED_DRAFTS }));
     return false;
   }
   void parkDraft(id, body).then((saved) => {
     if (!saved && state.id === id) publish({ returnedText: body });
   });
-  toast("Draft saved. Send it whenever you're ready");
+  toast(t('agent:session.drafts.saved'));
   return true;
 }
 
@@ -1775,7 +1836,7 @@ async function dropDraft(id: number, draftId: string) {
     if (state.id === id) publish({ drafts });
   } catch (error) {
     if (state.id === id) {
-      toast(errorText(error, 'Could not delete that draft.'));
+      toast(errorText(error, t('agent:session.error.draftDeleteFailed')));
       void loadDrafts(id);
     }
   }
@@ -1795,7 +1856,7 @@ export async function sendSavedDraft(draftId: string, typed = '') {
   void dropDraft(id, draftId);
   if (parked && parked !== draft.text && state.drafts.length < MAX_SAVED_DRAFTS) {
     void parkDraft(id, parked);
-    toast('Kept what you had typed as another draft');
+    toast(t('agent:session.drafts.keptTyped'));
   }
   await sendAgentMessage(draft.text);
 }
@@ -1836,22 +1897,24 @@ export async function openSpec(changeId: number, version: number | null = null) 
   publish({
     drawerOpen: false,
     paneTab: 'spec',
-    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', phase: 'loading', error: '', tab },
+    specSheet: { changeId, version, versions: same ? same.versions : [], text: '', html: null, phase: 'loading', error: '', tab },
   });
   try {
-    const { spec, versions } = await api.getSpec(changeId);
+    const { spec, html: latestHtml, versions } = await api.getSpec(changeId);
     const numbers = versions.map((v) => Number(v.version)).filter((v) => Number.isInteger(v) && v > 0);
     const newest = numbers.length ? Math.max(...numbers) : null;
-    const text = version != null && version !== newest ? await api.getSpecVersion(changeId, version) : spec;
+    const { text, html } = version != null && version !== newest
+      ? await api.getSpecVersionDoc(changeId, version)
+      : { text: spec, html: latestHtml };
     if (ticket !== specRequest) return;
     publish((current) => ({
-      specSheet: { changeId, version: version ?? newest, versions: numbers, text, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
+      specSheet: { changeId, version: version ?? newest, versions: numbers, text, html, phase: 'ready', error: '', tab: current.specSheet?.tab ?? tab },
     }));
   } catch (error) {
     if (ticket !== specRequest) return;
     publish((current) => ({
       specSheet: current.specSheet
-        ? { ...current.specSheet, phase: 'error', error: errorText(error, 'Could not load the spec.') }
+        ? { ...current.specSheet, phase: 'error', error: errorText(error, t('agent:session.error.specFailed')) }
         : null,
     }));
   }
@@ -2031,7 +2094,7 @@ export async function proposeChange(changeId: number, title?: string | null) {
     await api.promoteChange(changeId);
     if (state.id != null) await requestSync(state.id);
   } catch (error) {
-    toast(errorText(error, 'Could not put this change up for the vote.'));
+    toast(errorText(error, t('agent:session.error.proposeFailed')));
   } finally {
     if (actionOn(changeId)) publish({ changeAction: null });
   }
@@ -2056,16 +2119,16 @@ export async function retryStaging(changeId: number) {
         const action: AgentSessionState['changeAction'] = state.changeAction;
         if (action && action.changeId === changeId && action.kind === 'retry') {
           publish({ changeAction: null });
-          toast('The rebuild is still running. Its result will appear in this conversation.');
+          toast(t('agent:session.rebuild.stillRunning'));
         }
       }, RETRY_GIVE_UP_MS) as unknown as { unref?: () => void };
       timer.unref?.();
       return;
     }
-    if (result.status === 'unavailable') toast('This preview can\'t be rebuilt right now. Ask the agent to look at the build.');
+    if (result.status === 'unavailable') toast(t('agent:session.rebuild.unavailable'));
     if (state.id != null) await requestSync(state.id);
   } catch (error) {
-    toast(errorText(error, 'Could not rebuild the preview.'));
+    toast(errorText(error, t('agent:session.error.rebuildFailed')));
   }
   if (actionOn(changeId)) publish({ changeAction: null });
 }
@@ -2135,7 +2198,7 @@ export async function chooseAgent(choice: AgentChoice) {
     const session = await api.setAgentChoice(id, choice);
     if (state.id === id) publish({ session });
   } catch (error) {
-    if (state.id === id) publish({ error: errorText(error, 'Could not change the model.') });
+    if (state.id === id) publish({ error: errorText(error, t('agent:session.error.modelFailed')) });
   } finally {
     publish({ choosing: false });
   }
@@ -2188,9 +2251,9 @@ export async function loadAgentSessions() {
   }
   const read = ++listRead;
   try {
-    const sessions = await api.listSessions();
+    const { sessions, started } = await api.listSessions();
     if (read !== listRead) return;
-    publish({ sessions, sessionsLoaded: true });
+    publish((current) => ({ sessions, sessionsLoaded: true, sessionsStarted: current.sessionsStarted || started }));
   } catch {
     if (read !== listRead) return;
     publish({ sessionsLoaded: true });
@@ -2202,6 +2265,7 @@ export const agentSessionController = {
   route: (id: AgentSessionTarget, options: { drawer?: boolean } = {}) => openAgentSession({ id, host: 'screen', drawer: !!options.drawer }),
   start: (hint: AgentHint | null = null) => startAgentSession(hint),
   prepareDraft: prepareAgentDraft,
+  prepareHandoff,
   deactivate: deactivateAgentSession,
   isOpen: () => state.open,
   /** The conversation on screen: its id, `new` while it is unsent, or null. */

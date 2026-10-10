@@ -2,13 +2,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { useStoreState } from '../../lib/use-store-state';
+import { offeringGoToHomeroom } from '../app-context/about-data';
+import { navStore } from '../nav/nav-store.js';
+import { hasPlatformViewer, whenPlatformViewer } from '../../lib/platform-viewer';
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import {
-  A2HS_STEPS, detectMobileOs, installOffer, storeLabel,
+  detectMobileOs, installOffer, storeLabel,
   type InstallOffer, type StoreUrls,
 } from './detect';
 import { isNativeApp, isStandalone } from './environment';
+import { InstallStepsSheet } from './install-steps-sheet';
 
 /**
  * `#mobile-install-banner` — the phone-browser strip offering the native app
@@ -46,6 +52,8 @@ import { isNativeApp, isStandalone } from './environment';
  * the day an admin pastes a URL into App version.
  */
 
+// The shots worker writes this same key before every page it shoots
+// (worker/shots-page-init.js, #4087); tests/shots-page-init.test.js pins the pair.
 const DISMISS_KEY = 'mobileInstallBannerDismissed';
 const BODY_CLASS = 'has-install-strip';
 
@@ -79,13 +87,26 @@ function writeDismissed(): void {
 }
 
 export function MobileInstallBanner() {
+  const t = useMessages('agent');
   const ref = useRef<HTMLDivElement>(null);
   const [urls, setUrls] = useState<StoreUrls | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  // #4204: only somebody who is in. Starts false (the first render must be
+  // the hidden strip either way) and turns on when the authed shell boots.
+  const [member, setMember] = useState(false);
+  // #4399: not over the app a private member was invited into, while the
+  // mark menu still offers them "Go to Homeroom" (../app-context/about-data
+  // offeringGoToHomeroom). That menu's Go to Homeroom card carries the
+  // home-screen offer instead; once they have been Home, the strip behaves as
+  // it does for everyone. `tab` is read so the offer is recomputed when they
+  // get there, which is when the remembered visit changes.
+  const { privateMember, tab } = useStoreState(navStore);
   const [offer, setOffer] = useState<InstallOffer | null>(null);
   // #1513: the home-screen instructions are one tap away rather than always
-  // on, so the strip stays one line until somebody asks how.
-  const [showSteps, setShowSteps] = useState(false);
+  // on. #4400: that tap opens a sheet (./install-steps-sheet.tsx) rather than
+  // swapping the strip's one line for a sentence it had to truncate, so the
+  // strip itself never changes. Closing the sheet leaves the strip up.
+  const [stepsOpen, setStepsOpen] = useState(false);
 
   // The fetch is skipped entirely for anyone who cannot be offered anything —
   // a desktop visitor, the native app, an installed PWA, someone who already
@@ -99,32 +120,41 @@ export function MobileInstallBanner() {
     if (!onAPhone || isNativeApp() || isStandalone() || readDismissed()
         || isEmbeddedPanel()) return undefined;
 
+    // #4204: nor before the visitor is in. The signed-out landing (an invite
+    // link's page included) and the waiting room never ask; the fetch waits
+    // for the authed shell, which also covers a sign-in without a reload.
     let live = true;
-    fetch('/api/public/mobile-app')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (live && body) setUrls({ ios: body.ios ?? null, android: body.android ?? null });
-      })
-      .catch(() => {
-        /* Offline, or the endpoint is unreachable: no banner, no console noise. */
-      });
-    return () => { live = false; };
+    const stopWaiting = whenPlatformViewer(() => {
+      if (!live) return;
+      setMember(true);
+      fetch('/api/public/mobile-app')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          if (live && body) setUrls({ ios: body.ios ?? null, android: body.android ?? null });
+        })
+        .catch(() => {
+          /* Offline, or the endpoint is unreachable: no banner, no console noise. */
+        });
+    });
+    return () => { live = false; stopWaiting(); };
   }, []);
 
   // Recomputed from the real environment whenever the inputs change, rather
   // than trusted from the effect above — the eligibility probe there is a
   // cheap "is this a phone", not the decision.
   useEffect(() => {
+    if (offeringGoToHomeroom(!!privateMember)) { setOffer(null); return; }
     const nav = window.navigator;
     setOffer(installOffer({
       ua: nav.userAgent || '',
       maxTouchPoints: nav.maxTouchPoints || 0,
       native: isNativeApp(),
       standalone: isStandalone(),
+      member: member && hasPlatformViewer(),
       dismissed: dismissed || readDismissed(),
       urls,
     }));
-  }, [urls, dismissed]);
+  }, [urls, dismissed, member, privateMember, tab]);
 
   useHiddenClass(ref, !offer);
 
@@ -151,25 +181,26 @@ export function MobileInstallBanner() {
       <div className="min-w-0 flex-1 text-left leading-tight">
         <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate">Homeroom</div>
         <div className="text-zinc-500 dark:text-zinc-400 truncate">
-          {/* Three states, and the middle one is the whole of #1513: with no
+          {/* Three states, and the last one is the whole of #1513: with no
               store listing published this used to read "Get the app" over a
               link to nowhere. */}
           {offer === null
-            ? 'Get the app'
+            ? t('agent:install.banner.getApp')
             : offer.kind === 'store'
-              ? `Get the app on ${storeLabel(offer.os, offer.url)}`
-              : (showSteps ? A2HS_STEPS[offer.os] : 'Add it to your home screen')}
+              ? t(storeLabel(offer.os, offer.url))
+              : t('agent:install.banner.addToHomeScreen')}
         </div>
       </div>
       {offer && offer.kind === 'a2hs' ? (
         // A BUTTON, not a link: there is nowhere to send anybody. iOS Safari
         // has no install API and Android's prompt event is not guaranteed to
-        // fire, so the honest control reveals where the menu item is.
+        // fire, so the honest control shows where the menu item is.
         <Button
           id="mobile-install-open"
           type="button"
-          aria-expanded={showSteps}
-          onClick={() => setShowSteps((v) => !v)}
+          aria-haspopup="dialog"
+          aria-expanded={stepsOpen}
+          onClick={() => setStepsOpen(true)}
           // Composed, not hand-written: the fill is `variant`'s and the ink is
           // `ink`'s, so a restyle of the shell's primary button reaches this
           // one too. Only the height and the tap target ride in className,
@@ -181,7 +212,7 @@ export function MobileInstallBanner() {
           ink="solid"
           className="inline-flex items-center h-7 un-touch-target"
         >
-          {showSteps ? 'Got it' : 'How'}
+          {t('agent:install.banner.how')}
         </Button>
       ) : (
         <a
@@ -191,18 +222,21 @@ export function MobileInstallBanner() {
           rel="noopener noreferrer"
           className="shrink-0 inline-flex items-center h-7 px-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors un-touch-target"
         >
-          Get
+          {t('agent:install.banner.get')}
         </a>
       )}
       <button
         id="mobile-install-dismiss"
         type="button"
         onClick={dismiss}
-        aria-label="Dismiss install banner"
+        aria-label={t('agent:install.banner.dismiss')}
         className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors un-touch-target"
       >
         <XIcon className="w-4 h-4" aria-hidden="true" />
       </button>
+      {stepsOpen && offer && offer.kind === 'a2hs' ? (
+        <InstallStepsSheet os={offer.os} onClose={() => setStepsOpen(false)} />
+      ) : null}
     </div>
   );
 }

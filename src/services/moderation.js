@@ -89,6 +89,9 @@ async function resolveTarget(db, user, type, key, lock = false) {
   const { rows } = await db.query(`SELECT * FROM ${table} WHERE id = $1 ${lock ? 'FOR SHARE' : ''}`, [messageId]);
   const row = rows[0];
   if (!row || (conversation ? row.sender_id : row.user_id) === user.id) fail(404, 'Target unavailable');
+  // #2387: a deleted Workshop post has nothing left to report, and only an
+  // ordinary post has an author to report; system lines and cards do not.
+  if (!conversation && (row.deleted_at || row.msg_type !== 'message' || !row.user_id)) fail(404, 'Target unavailable');
   let location;
   if (conversation) {
     const membership = await require('./conversations').loadMembership(db, row.conversation_id, user.id);

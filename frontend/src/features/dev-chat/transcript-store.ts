@@ -209,7 +209,7 @@ export type TranscriptRow =
     prNumber: number | null;
     title: string;
     /** #3605: the requests this change closes, each opening in Homeroom. */
-    closes: { n: number; verb: 'Closes' | 'Closed' }[];
+    closes: { n: number; closed: boolean }[];
     /** #3605: the session id whose vote page the status opens, once proposed. */
     proposalId: number | null;
     stamp: string;
@@ -222,7 +222,7 @@ export type TranscriptRow =
      * explicit is what lets an already-proposed card stay visibly disabled
      * across success re-renders, status polls and a fresh session load.
      */
-    propose: { kind: 'ready'; note?: string } | { kind: 'pending' } | { kind: 'completed' } | null;
+    propose: { kind: 'ready'; note?: string } | { kind: 'empty'; note?: string } | { kind: 'pending' } | { kind: 'completed' } | null;
     /** MergeStatus's badge for the card, or the merged sentence. */
     status2: { kind: 'none' } | { kind: 'merged' } | { kind: 'badge'; html: string };
   }
@@ -241,7 +241,7 @@ export type TranscriptRow =
     live?: boolean;
     /** A user row's attachment strip. */
     attachments?: {
-      kind: 'image' | 'file'; href: string; name: string;
+      kind: 'image' | 'file'; href: string; name: string; unnamed?: boolean;
       download?: boolean; badgeHtml?: string; size?: string;
     }[];
     /** The `[CHAT_ONLY]` raw-output disclosure. */

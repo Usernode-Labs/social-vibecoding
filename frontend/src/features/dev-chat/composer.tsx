@@ -15,7 +15,7 @@
  * of `renderChatView`, re-bound on every render because the element was new.
  */
 
-import { type ChangeEvent, type ReactNode } from 'react';
+import { type ChangeEvent, type MouseEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -29,7 +29,9 @@ import {
 } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
+import { DropOverlay } from '../attachments/file-drag';
 import { PendingStrip } from '../attachments/pending-strip';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { attachStripStore } from './attach-strip-store';
 import { QuickRepliesBar, RunnerControlsBar } from './composer-chrome';
@@ -40,16 +42,10 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).DevChat : null) || null;
 }
 
-const ATTACH_TITLE
-  = 'Attach files: images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB),'
-  + ' or any other file (≤10 MB); up to 4 per message';
-
 // #920's hint line is gone; its two spellings are these titles. The button
 // and Ctrl/Cmd+Enter perform the same action in every state, so naming it on
 // the control names it for both.
-const SEND_TITLE = 'Send (Ctrl+Enter)';
-const SAVE_TITLE
-  = 'Save this text as a draft (Ctrl+Enter). It stays here until you send it';
+// They are devchat:composer.sendTitle and devchat:composer.saveDraftTitle.
 
 // The control row's two bare glyph buttons. No box, no border: the CARD is
 // the box now, and a bordered control inside it would draw a second one.
@@ -91,6 +87,11 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
   // `rounded-lg` from the cva table beats an app.css `border-radius` at equal
   // specificity. That is exactly what shipped a rounded SQUARE the first time
   // this was built.
+  //
+  // Whatever it is wearing, a press on it never takes focus from the field:
+  // the blur would drop the keyboard, the tab bar and the Resume strip would
+  // come back (lib/keyboard-open.ts), the composer would fall by the
+  // keyboard's height and the click would land on nothing.
   const common = {
     type: 'submit' as const,
     id: 'dc-send-btn',
@@ -98,15 +99,17 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
     variant: 'roundedFull' as const,
     size: 'icon' as const,
     ink: 'none' as const,
+    onMouseDown: (event: MouseEvent<HTMLButtonElement>) => event.preventDefault(),
   };
+  const t = useMessages('devchat');
   if (send.kind === 'stopping') {
     return (
       <Button
         {...common} className={SEND_CLASS.stopping}
-        disabled aria-label="Stopping" title="Stopping…"
+        disabled aria-label={t('devchat:composer.stoppingLabel')} title={t('devchat:composer.stopping')}
       >
         <span className="dc-send-spinner"></span>
-        <span className="dc-btn-stopping-label">Stopping…</span>
+        <span className="dc-btn-stopping-label">{t('devchat:composer.stopping')}</span>
       </Button>
     );
   }
@@ -122,7 +125,7 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
   }
   if (send.kind === 'stop') {
     return (
-      <Button {...common} className={SEND_CLASS.stop} aria-label="Stop" title="Stop">
+      <Button {...common} className={SEND_CLASS.stop} aria-label={t('devchat:composer.stop')} title={t('devchat:composer.stop')}>
         <span className="dc-stop-icon" aria-hidden="true"></span>
       </Button>
     );
@@ -134,14 +137,14 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
     return (
       <Button
         {...common} className={SEND_CLASS.save}
-        aria-label="Save as draft" title={SAVE_TITLE}
+        aria-label={t('devchat:composer.saveDraft')} title={t('devchat:composer.saveDraftTitle')}
       >
         <SaveDraftIcon width={20} height={20} aria-hidden="true" />
       </Button>
     );
   }
   return (
-    <Button {...common} className={SEND_CLASS.send} aria-label="Send" title={SEND_TITLE}>
+    <Button {...common} className={SEND_CLASS.send} aria-label={t('devchat:composer.send')} title={t('devchat:composer.sendTitle')}>
       <ArrowUpIcon width={20} height={20} aria-hidden="true" />
     </Button>
   );
@@ -155,19 +158,22 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
  * the quick-reply bar. The element outlives every repaint of its rows.
  */
 function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }): ReactNode {
+  const t = useMessages('devchat');
   const sendTitle = busy
-    ? 'Claude is still working. You can send this when the turn finishes'
-    : 'Send this draft now';
+    ? t('devchat:drafts.sendTitleBusy')
+    : t('devchat:drafts.sendTitle');
   return (
     <div id="dc-drafts" className={rows.length ? 'dc-drafts dc-drafts-active' : 'dc-drafts'}>
       {rows.length ? (
         <>
           <div className="dc-drafts-head">
             <span>
-              {`Saved drafts (${rows.length}) `}
-              <span className="dc-drafts-hint">· on all your devices</span>
+              <RichMessage
+                id="devchat:drafts.heading" values={{ count: rows.length }}
+                components={[<span className="dc-drafts-hint" />]}
+              />
             </span>
-            {busy ? <span className="dc-drafts-hint">sending unlocks when Claude finishes</span> : null}
+            {busy ? <span className="dc-drafts-hint">{t('devchat:drafts.sendingLocked')}</span> : null}
           </div>
           {rows.map((d) => (
             <div className="dc-draft-row" data-draft-id={d.id} key={d.id}>
@@ -175,22 +181,23 @@ function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }):
               <span className="dc-draft-actions">
                 <button
                   type="button" className="dc-draft-btn dc-draft-send"
-                  data-draft-action="send" aria-label="Send this draft"
+                  data-draft-action="send" aria-label={t('devchat:drafts.send')}
                   disabled={busy} title={sendTitle}
+                  onMouseDown={(event) => event.preventDefault()}
                 >
                   <DraftSendIcon width={14} height={14} aria-hidden="true" />
                 </button>
                 <button
                   type="button" className="dc-draft-btn dc-draft-edit"
-                  data-draft-action="edit" aria-label="Edit this draft"
-                  title="Put this draft back in the box to edit"
+                  data-draft-action="edit" aria-label={t('devchat:drafts.edit')}
+                  title={t('devchat:drafts.editTitle')}
                 >
                   <DraftEditIcon width={14} height={14} aria-hidden="true" />
                 </button>
                 <button
                   type="button" className="dc-draft-btn dc-draft-trash"
-                  data-draft-action="trash" aria-label="Delete this draft"
-                  title="Delete this draft"
+                  data-draft-action="trash" aria-label={t('devchat:drafts.delete')}
+                  title={t('devchat:drafts.delete')}
                 >
                   <DraftTrashIcon width={14} height={14} aria-hidden="true" />
                 </button>
@@ -205,6 +212,7 @@ function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }):
 
 export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
   const { items } = useStoreState(attachStripStore);
+  const t = useMessages('devchat');
   return (
     <>
       {/* What is left of the venue statement (#1086) once the control itself
@@ -265,8 +273,8 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
           <div className="dc-card-row">
             <input type="file" id="dc-file-input" className="hidden" multiple />
             <button
-              type="button" id="dc-attach-btn" title={ATTACH_TITLE}
-              aria-label="Attach files" className={ROW_BTN}
+              type="button" id="dc-attach-btn" title={t('devchat:composer.attachTitle')}
+              aria-label={t('devchat:composer.attach')} className={ROW_BTN}
             >
               <PlusIcon width={20} height={20} />
             </button>
@@ -283,7 +291,7 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
                     prefixes — that is what the backend resolves. */}
                 <select
                   id="dc-model-select" className={MODEL_SELECT}
-                  aria-label="Chat model and API key"
+                  aria-label={t('devchat:composer.modelLabel')}
                   value={s.models.selected}
                   disabled={s.models.changeDisabled}
                   onChange={(e: ChangeEvent<HTMLSelectElement>) => {
@@ -316,11 +324,13 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
               <span
                 id="dc-model-pending"
                 className="flex-none whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-400"
-              >applies next turn</span>
+              >{t('devchat:composer.appliesNextTurn')}</span>
             ) : null}
             <span className="flex-1"></span>
             <SendButton send={s.send} />
           </div>
+          {/* #4065: the drop zone, while a file is held over the chat. */}
+          {s.dragging ? <DropOverlay /> : null}
         </form>
       </div>
     </>

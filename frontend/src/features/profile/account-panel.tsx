@@ -22,7 +22,8 @@
  * allowance shows outside the create dialog, so a "your app quota changed"
  * notice has somewhere to point: "1 of 2 app slots used", from the session's
  * allowance store. A plain click opens the create dialog in place, whose
- * allowance card offers "Request more"; a modified click keeps `#create`. Friends was a section of its own under these rows
+ * allowance card offers "Request more" once one slot or none is left (#23);
+ * a modified click keeps `#create`. Friends was a section of its own under these rows
  * (#2386); it is a row now, with the one number it is allowed ("1 request
  * waiting": friends themselves are never counted), and it opens the same
  * section as a card over this screen (./friends-sheet.tsx), at its own
@@ -63,6 +64,7 @@ import { type ReactNode } from 'react';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { AppWindowIcon, BallotIcon, ChatIcon, CogIcon, HandRaisedIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { walletSheetStore } from '../header/wallet-sheet-store';
@@ -89,18 +91,19 @@ function plainClick(event: { defaultPrevented: boolean; button: number; metaKey:
 }
 
 export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
+  const t = useMessages('profile');
   return (
     <section id="profile-work" className="mt-2">
-      <SectionHeader>Your work</SectionHeader>
+      <SectionHeader>{t('profile:work.heading')}</SectionHeader>
       <GroupedList className="mx-0" tone="plane">
         <ListRow
           as="a"
           id="profile-row-proposals"
           href="#profile/your-changes"
           leading={<IconTile size="sm"><BallotIcon /></IconTile>}
-          title="Your changes"
+          title={t('profile:work.changes.title')}
           titleClassName={TITLE}
-          subtitle={rows.changes || 'Everything you have started'}
+          subtitle={rows.changes || t('profile:work.changes.hint')}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
@@ -108,9 +111,9 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
           id="profile-row-feedback"
           href="#profile/your-requests"
           leading={<IconTile size="sm"><ChatIcon /></IconTile>}
-          title="Your requests"
+          title={t('profile:work.requests.title')}
           titleClassName={TITLE}
-          subtitle={rows.requests || 'What you asked for, and where it stands'}
+          subtitle={rows.requests || t('profile:work.requests.hint')}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
@@ -118,9 +121,9 @@ export function WorkPanel({ rows }: { rows: ProfileRows }): ReactNode {
           id="profile-row-votes"
           href="#profile/your-votes"
           leading={<IconTile size="sm"><HandRaisedIcon /></IconTile>}
-          title="Your votes"
+          title={t('profile:work.votes.title')}
           titleClassName={TITLE}
-          subtitle={rows.votes || 'The changes and decisions you voted on'}
+          subtitle={rows.votes || t('profile:work.votes.hint')}
           subtitleClassName={SUBTITLE}
         />
       </GroupedList>
@@ -141,13 +144,15 @@ export function MorePanel({ rows }: {
   const wallet = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
   const allowance = useAppAllowance();
   const slotsLine = appSlotsLine(allowance.quota, allowance.requestedAt as string | null);
-  const settingsLine = ['Account', 'alerts', 'keys']
-    .concat(wallet ? ['wallet'] : [], isAdmin ? ['admin'] : [])
-    .join(', ');
+  const t = useMessages('profile');
+  // One whole message per combination of what this viewer's Settings holds.
+  const settingsLine = wallet
+    ? (isAdmin ? t('profile:more.settings.hintWalletAdmin') : t('profile:more.settings.hintWallet'))
+    : (isAdmin ? t('profile:more.settings.hintAdmin') : t('profile:more.settings.hint'));
   return (
     <section id="profile-more" className="mt-2">
       {/* SectionHeader's own `px-4`, on the rows' content edge (#2832). */}
-      <SectionHeader>More</SectionHeader>
+      <SectionHeader>{t('profile:more.heading')}</SectionHeader>
       <GroupedList className="mx-0" tone="plane">
         <ListRow
           as="a"
@@ -159,9 +164,9 @@ export function MorePanel({ rows }: {
             (window as unknown as { App?: { showCreateModal?: () => void } }).App?.showCreateModal?.();
           }}
           leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
-          title="App slots"
+          title={t('profile:more.appSlots.title')}
           titleClassName={TITLE}
-          subtitle={slotsLine || 'How many apps you can create'}
+          subtitle={slotsLine || t('profile:more.appSlots.hint')}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
@@ -169,9 +174,9 @@ export function MorePanel({ rows }: {
           id="profile-row-challenges"
           href="#leaderboard/challenges"
           leading={<IconTile size="sm"><TrophyIcon /></IconTile>}
-          title="Challenges & standings"
+          title={t('profile:more.challenges.title')}
           titleClassName={TITLE}
-          subtitle={rows.challenges || 'This season’s challenges and standings'}
+          subtitle={rows.challenges || t('profile:more.challenges.hint')}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
@@ -179,11 +184,11 @@ export function MorePanel({ rows }: {
           id="profile-row-kudos"
           href="#leaderboard/kudos"
           leading={<IconTile size="sm"><ThumbsUpIcon /></IconTile>}
-          title="Kudos"
+          title={t('profile:more.kudos.title')}
           titleClassName={TITLE}
           // The number is the stat card's at the top of the screen; the row
           // says what is behind it.
-          subtitle="Kudos on your changes"
+          subtitle={t('profile:more.kudos.hint')}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
@@ -196,9 +201,9 @@ export function MorePanel({ rows }: {
             Profile.showFriends();
           }}
           leading={<IconTile size="sm"><UserGroupIcon /></IconTile>}
-          title="Friends"
+          title={t('profile:more.friends.title')}
           titleClassName={TITLE}
-          subtitle={rows.friends || 'Only you can see your friends'}
+          subtitle={rows.friends || t('profile:more.friends.hint')}
           subtitleClassName={SUBTITLE}
         />
         <ListRow
@@ -206,7 +211,7 @@ export function MorePanel({ rows }: {
           id="profile-row-settings"
           href="#settings"
           leading={<IconTile size="sm"><CogIcon /></IconTile>}
-          title="Settings"
+          title={t('profile:more.settings.title')}
           titleClassName={TITLE}
           subtitle={settingsLine}
           subtitleClassName={SUBTITLE}
