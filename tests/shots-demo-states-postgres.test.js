@@ -435,7 +435,8 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // answered with Build it, and the bot's thanks under it: the card Build
   // it moved under the plan, read through the chat's own layout and the
   // cards' reader. Its build waits its turn, so its line is Building it,
-  // and the plan carries its state. Newest but for the close offer below.
+  // and the plan carries its state. Under it: the close offer's pair and,
+  // newest of all, the drafted request's pair (#4605).
   const { messages } = await conversations.listMessages(pool, viewer, demoStates.IDS.botConversation);
   const { planLayout, isPlanMessage, planState } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
   const { isThanksMessage, thanksLine } = loadTsx('frontend/src/features/messages/bot-thanks-card.tsx');
@@ -444,7 +445,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(planState(plan.metadata.homeroomBot), 'built');
   assert.equal(plan.metadata.homeroomBot.firstVersion, true);
   assert.equal(thanks.content, botActivity.thanksText('[shots fixture] Book club'));
-  assert.equal(thanks.id, messages.at(-3).id, 'under it only the close offer and the message it answers');
+  assert.equal(thanks.id, messages.at(-5).id, 'under it the close offer\'s pair and the drafted request\'s pair');
   assert.ok(newer.messageId < plan.id && plan.id < thanks.id, 'after the bot run card\'s cards');
   const layout = planLayout(messages);
   assert.equal(layout.cardOf.get(plan.id), thanks.id);
@@ -461,14 +462,13 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
        FROM apps a WHERE a.id = $1`, [demoStates.IDS.firstVersionApp]);
   assert.deepEqual(project, { created_by: member, view_visibility: 'private', first_versions: 0 });
 
-  // Last in the same chat, the bot's offer to open a vote on closing
-  // request #900001, quoting the member's message that says it is done,
-  // with the words, buttons and open action a live offer has
-  // (homeroom-bot-mayor.js offer). The chat's newest message, and read.
-  const [ask, offered] = messages.slice(-2);
+  // Second to last in the same chat, the bot's offer to open a vote on
+  // closing request #900001, quoting the member's message that says it is
+  // done, with the words, buttons and open action a live offer has
+  // (homeroom-bot-mayor.js offer). The drafted request's pair follows it.
+  const [ask, offered] = messages.slice(-4, -2);
   assert.equal(ask.sender.id, member);
   assert.equal(offered.reply.id, ask.id);
-  assert.equal(chat.latestMessage.id, offered.id);
   const { rows: [action] } = await pool.query(
     'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [offered.id]);
   assert.deepEqual([action.kind, action.status, action.source_issue_number, action.user_id],
@@ -489,6 +489,32 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   const { messages: after } = await conversations.listMessages(pool, viewer, demoStates.IDS.botConversation);
   assert.equal(after.at(-1).content, 'I couldn\'t propose closing it just now. Try again in a minute.');
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
+
+  // Last in the same chat, the bot's drafted request (#4605): quoting the
+  // member's message that asked for one, with the words, buttons and open
+  // action a live offer has (homeroom-bot-mayor.js offer). The chat's
+  // newest message, and read.
+  const [fileAsk, fileOffer] = messages.slice(-2);
+  assert.equal(fileAsk.sender.id, member);
+  assert.equal(fileOffer.reply.id, fileAsk.id);
+  assert.equal(chat.latestMessage.id, fileOffer.id);
+  const { rows: [fileAction] } = await pool.query(
+    'SELECT * FROM homeroom_bot_dm_actions WHERE message_id = $1', [fileOffer.id]);
+  assert.deepEqual([fileAction.kind, fileAction.status, fileAction.user_id],
+    ['file_request', 'open', member]);
+  assert.equal(fileAction.details, 'Show insights week by week, not only as a total.');
+  assert.equal(fileOffer.content, [
+    'Here is the request I\'d file on Homeroom.',
+    '',
+    '**Homeroom** · new request: Week by week tracking in insights',
+    '',
+    'Show insights week by week, not only as a total.',
+  ].join('\n'));
+  assert.deepEqual(fileOffer.metadata.homeroomBot,
+    mayor.confirmMeta('file_request', {
+      app: { slug: SLUG }, name: 'Homeroom', actionId: fileAction.id, question: 'File this as a request on Homeroom?',
+    }));
+  assert.deepEqual(fileOffer.metadata.homeroomBot.actions.map((a) => a.label), ['File it', 'Not now']);
 
   // A request whose change waits for approval, as the Requests board reads
   // it (routes/issues.js GET /github-issues): the change in progress on it,

@@ -1272,6 +1272,86 @@ const STATES = [
       };
     },
   },
+  {
+    // The member's chat with the Homeroom bot ending in a drafted request
+    // waiting for their answer (#4605): they asked for one, the bot drafted
+    // it (offer_request), and its reply carries it with File it and Not now.
+    // An offer is a reply, and a reply needs the bot's model, which no copy
+    // has, so this seed is how the shots show what the fixed turn sends. The
+    // records are the real flow's (homeroom-bot-mayor.js offer): their
+    // message, the open file_request action the buttons name, and the reply
+    // quoting their message. A tap on File it cannot file on these copies
+    // (a filing is a staging mock GitHub does not have): the bot answers
+    // that it couldn't file it just now. It shares the chat the bot run
+    // card's state opens, after every other state's messages.
+    id: 'shots-demo-member-bot-file-offer-v1',
+    persona: 'member',
+    needs: {
+      users: ['id', 'username', 'password', 'is_synthetic', 'display_name'],
+      conversations: ['id', 'kind', 'created_by', 'status', 'created_at', 'updated_at'],
+      conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
+      conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
+        'joined_at', 'last_read_message_id'],
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
+        'metadata', 'created_at'],
+      homeroom_bot_dm_actions: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
+        'details', 'status', 'created_at'],
+    },
+    free: botChatFree,
+    async install(client, ctx) {
+      const mayor = require('./homeroom-bot-mayor');
+      const chat = await memberBotChat(client, ctx);
+      const app = (await client.query('SELECT slug, name FROM apps WHERE id = $1', [ctx.appId])).rows[0];
+      if (!app) throw new Error('The Homeroom bot\'s draft lost the platform app.');
+      const name = app.name || app.slug;
+      const title = 'Week by week tracking in insights';
+      const details = 'Show insights week by week, not only as a total.';
+      const { rows: [ask] } = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-file-ask', '{}'::jsonb, NOW() - INTERVAL '3 minutes')
+         RETURNING id`,
+        [chat.conversationId, ctx.member.id, `Can you file a request for ${title.toLowerCase()}?`]
+      );
+      // As offer() writes it: the action, then the message whose buttons name it.
+      const { rows: [action] } = await client.query(
+        `INSERT INTO homeroom_bot_dm_actions
+           (user_id, conversation_id, app_id, kind, title, details, created_at)
+         VALUES ($1, $2, $3, 'file_request', $4, $5, NOW() - INTERVAL '2 minutes')
+         RETURNING id`,
+        [ctx.member.id, chat.conversationId, ctx.appId, title, details]
+      );
+      const metadata = mayor.confirmMeta('file_request', {
+        app, name, actionId: Number(action.id), question: `File this as a request on ${name}?`,
+      });
+      const content = [
+        `Here is the request I'd file on ${name}.`,
+        '',
+        `**${name}** · new request: ${title}`,
+        '',
+        details,
+      ].join('\n');
+      const { rows: [offer] } = await client.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, reply_to_id, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, $4, 'shots-fixture-hrbot-file-offer', $5::jsonb, NOW() - INTERVAL '2 minutes')
+         RETURNING id`,
+        [chat.conversationId, chat.botId, content, ask.id, JSON.stringify({ homeroomBot: metadata })]
+      );
+      await client.query('UPDATE homeroom_bot_dm_actions SET message_id = $2 WHERE id = $1', [action.id, offer.id]);
+      await client.query('UPDATE conversations SET updated_at = NOW() - INTERVAL \'2 minutes\' WHERE id = $1',
+        [chat.conversationId]);
+      await client.query(
+        'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
+        [chat.conversationId, ctx.member.id, offer.id]
+      );
+      return {
+        shows: [{
+          state: `Your chat with Homeroom bot, at the bottom: your message asking for a request, and the bot's reply quoting it with the drafted request under it, ${name}, new request: ${title}, and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
+          path: `/#messages/${IDS.botConversation}`,
+        }],
+      };
+    },
+  },
 ];
 
 // ── Context ─────────────────────────────────────────────────────────────
