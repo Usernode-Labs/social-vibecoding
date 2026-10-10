@@ -158,7 +158,9 @@ function RequestShell(props: ThreadShellProps) {
           <div id="gc-thread-head" />
           <div id="gc-thread-messages" />
         </div>
-        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
+        {/* #4553: the button docks in a strip, so it never covers the change
+            or request cards (their Vote, Re-run checks, Preview) under it. */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} docked />
         <StatusLine scope="thread" className="px-4 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
         <Composer {...props} />
       </section>
@@ -188,8 +190,10 @@ export function ThreadShell(props: ThreadShellProps) {
           <div id="gc-thread-messages" className="py-2 space-y-0.5" />
         </div>
         {/* A topic opens at its card (#363), so the way down is up from the
-            start whenever the discussion runs past the screen. */}
-        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} />
+            start whenever the discussion runs past the screen. #4553: the
+            button docks in a strip below the scroller, so it never covers
+            the card. */}
+        <JumpToLatest scroller={scroll} slack={THREAD_FOLLOW_PX} docked />
         <StatusLine scope="thread" className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0" />
         <Composer {...props} />
       </div>

@@ -16459,6 +16459,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-chips .dev-change-thanks > .gc-vote-btn {
   height: 26px;
   padding: 0 10px;
+  gap: 4px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
@@ -16467,6 +16468,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-change-chips .dev-change-thanks > .gc-vote-btn:hover { color: var(--accent); background: var(--accent-tint); }
 .dev-change-chips .dev-thanks-tail { display: none; }
+/* The zero chip stays out of the row: kudos.js sets [hidden] on the wrap
+   while the count is 0, but its Tailwind inline-block would beat the
+   preflight rule, so restate it at this specificity. */
+.dev-change-chips .dev-change-thanks[hidden] { display: none; }
 
 /* Before and after: the viewer specs use, its switch beside the title. */
 .dev-change-card-name { flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 600; color: var(--text-primary); }
