@@ -2818,5 +2818,13 @@
   "topics.error.network": {
     "text": "Network error while opening the proposal.",
     "description": "Error in the Topics dialog when the request to open the topic change's proposal did not reach the server."
+  },
+  "appSettings.access.notChangedVerify": {
+    "text": "Access not changed. Verify your account to make this app public, then propose again.",
+    "description": "Status line under the Access section of an app's settings when the person chose Not now on the verify sheet that making an app public needs: the access stays as it was."
+  },
+  "appSettings.access.hint": {
+    "text": "Pick a different access level above, then propose the change.",
+    "description": "Small line under the Access section's Propose button while it is switched off because the chosen access is the app's current one: what to do to make the button work."
   }
 }

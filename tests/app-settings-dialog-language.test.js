@@ -97,13 +97,13 @@ test('the Propose access change button wears the disabled dim, not the full-stre
 // #4659: beside the dimmed button, a muted line says what to do instead of
 // the silence the report describes.
 test('the access hint says what to do while the button is switched off', () => {
-  const said = 'Pick a different access level above, then propose the change.';
+  const said = require('./lib/platform-i18n').message('dialogs:appSettings.access.hint');
+  assert.equal(said, 'Pick a different access level above, then propose the change.');
   const hint = element('id="app-access-hint"');
   assert.match(hint, /^<p id="app-access-hint"/, `the hint is its own element:\n${hint}`);
   assert.match(hint, /text-xs text-zinc-500 dark:text-zinc-400/,
     `the hint is the small muted ink the proposal line above uses:\n${hint}`);
-  assert.ok(src.includes(said), 'the hint names the step that makes the button work');
-  const at = src.indexOf(said);
-  assert.ok(at > src.indexOf('id="app-access-hint"'), 'the line is the hint element\'s text');
+  const at = src.indexOf("{t('dialogs:appSettings.access.hint')}");
+  assert.ok(at > src.indexOf('id="app-access-hint"'), 'the line is the hint element\'s text, from the catalog');
   assert.ok(!/—|–/.test(said), 'no dashes in user-facing copy');
 });

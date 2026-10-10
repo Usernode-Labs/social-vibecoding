@@ -187,7 +187,7 @@ export function AppSettingsDialog() {
       // silent (#4659).
       if (data && data.code === 'identity_required') {
         if (!(await askToVerifyForPublic())) {
-          setAccessMessage('Access not changed. Verify your account to make this app public, then propose again.');
+          setAccessMessage(t('dialogs:appSettings.access.notChangedVerify'));
           return;
         }
         response = await send();
@@ -332,7 +332,7 @@ export function AppSettingsDialog() {
         >
           {accessBusy ? t('dialogs:appSettings.access.proposing') : (accessProposalOpen ? t('dialogs:appSettings.access.proposalOpen') : t('dialogs:appSettings.access.propose'))}
         </Button>
-        {accessHint ? <p id="app-access-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Pick a different access level above, then propose the change.</p> : null}
+        {accessHint ? <p id="app-access-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">{t('dialogs:appSettings.access.hint')}</p> : null}
       </section>
       {app && !app.can_delete ? <p id="app-delete-blocked" role="status" className="text-sm mb-4">{blockedCopy(app)}</p> : null}
       <section ref={dangerRef} className="hidden border border-red-300 dark:border-red-800 rounded-lg p-4 mb-4">
