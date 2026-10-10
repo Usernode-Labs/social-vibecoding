@@ -813,6 +813,37 @@ test('#4530: while Homeroom bot waits on an answer, the card answers it instead 
   assert.ok(hasAction(makeAppView(ME)._issueCardModel(waiting), 'chooseIssueWork', 5));
 });
 
+// #4663: the bot built this request, and its change now waits for approval —
+// but the card still offered "Ask Homeroom bot to build this", which would
+// build it a second time. The awaiting-approval rule the ≡ and the non-door
+// path already follow now covers the door too.
+test('#4663: once a change waits for approval, the bot door offers nothing to ask', () => {
+  const AppView = makeAppView(ME);
+  AppView._ghIssuesMeta = { homeroomBot: { typicalMinutes: 7 } };
+  const built = baseIssue({ addressed_by: { sessionId: 7, prNumber: 12, state: 'review' } });
+  const model = AppView._issueCardModel(built);
+  const html = cardHtml(model);
+  assert.ok(!hasAction(model, 'askBotToBuild', 5), 'no ask button while its change waits');
+  assert.doesNotMatch(html, /Ask Homeroom bot to build this/);
+  assert.ok(!menuHas(AppView, html, /^Build it now$/), 'the ≡ keeps its own awaiting-approval rule');
+  // On the request's own page, the hint that promised a build goes too.
+  const head = AppView._issueCardModel(built, { noNav: true });
+  assert.ok(!head.extra.some((e) => e.key === 'bot-door'), 'no "Usually ready…" hint for a build already made');
+  // The bot still waiting on an answer keeps its reply button and its note:
+  // answering does not start a second build.
+  const awaiting = baseIssue({
+    addressed_by: { sessionId: 7, prNumber: 12, state: 'review' },
+    botAwaits: { kind: 'question', messageId: 41 },
+  });
+  const waitingModel = AppView._issueCardModel(awaiting);
+  const waitingHtml = cardHtml(waitingModel);
+  assert.ok(hasAction(waitingModel, 'answerBotOnRequest', 5, 41, 0));
+  assert.match(waitingHtml, />Answer Homeroom bot(?:'|&#x27;)s question</);
+  const waitingHead = AppView._issueCardModel(awaiting, { noNav: true });
+  assert.ok(waitingHead.extra.some((e) => e.key === 'bot-door'
+    && e.text === 'Homeroom bot asked a question here. Answer it, and it reads the request again.'));
+});
+
 test('#4530: answering the bot stages a Reply to its note, or starts the box with its handle', async () => {
   const AppView = makeAppView(ME);
   const sandbox = AppView.__sandbox;

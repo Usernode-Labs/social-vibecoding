@@ -490,6 +490,11 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const inset = viewShot && viewShot.state !== 'failed'
     ? insetFrame({ width: window.innerWidth, height: window.innerHeight }, phone ? INSET_MARGIN_PHONE : INSET_MARGIN, HEADER_BAND)
     : null;
+  // The first picture, nothing drawn yet: the live page stays on show (the
+  // mode's layer above it already keeps every press off it) instead of a
+  // bare grey ground, and the picture shrinks into its frame once it lands
+  // (#4665). `intro` below is the note about the mode; this is the shot's.
+  const shotIntro = viewShot?.state === 'drawing' && !viewShot.url;
 
   // Images the person added are object URLs until the mode closes.
   const urls = useRef(new Set<string>());
@@ -1108,33 +1113,42 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           ground, the picture drawn at the inset frame with the cards'
           rounded corners, one hairline and a lift, and the chip that names
           it. Clearly a picture, not the live page, so the blue edge goes.
-          When the picture could not be taken, the mode renders as it always
-          did, over the live page with the blue edge (#4554). */}
+          While the first picture draws there is none of that: the live page
+          shows through and the layer above it keeps every press off, and the
+          picture, ground and chip mount together once it lands, shrinking
+          from the full page into the frame (#4665). When the picture could
+          not be taken, the mode renders as it always did, over the live
+          page with the blue edge (#4554). */}
       {inset && viewShot ? (
-        <>
-          <div className="pointer-events-none absolute inset-0 bg-zinc-300 dark:bg-zinc-800" aria-hidden="true" />
-          {viewShot.url ? (
-            <img
-              src={viewShot.url}
-              alt=""
+        shotIntro ? null : (
+          <>
+            <div className="comment-shot-ground-in pointer-events-none absolute inset-0 bg-zinc-300 dark:bg-zinc-800" aria-hidden="true" />
+            {viewShot.url ? (
+              <img
+                src={viewShot.url}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className={`pointer-events-none absolute rounded-2xl bg-white ring-1 ring-black/10 shadow-[0_8px_30px_rgba(0,0,0,0.18)] dark:bg-zinc-900 dark:ring-white/10 ${viewShot.state === 'drawing' ? 'opacity-60' : ''} ${inset.scale > 0 ? 'comment-shot-in' : ''}`}
+                style={{
+                  left: inset.x, top: inset.y, width: window.innerWidth * inset.scale, height: window.innerHeight * inset.scale,
+                  ...(inset.scale > 0 ? { ['--comment-shot-from' as string]: `translate(${-inset.x}px, ${-inset.y}px) scale(${1 / inset.scale})` } : {}),
+                }}
+              />
+            ) : null}
+            <span
               aria-hidden="true"
-              draggable={false}
-              className={`pointer-events-none absolute rounded-2xl bg-white ring-1 ring-black/10 shadow-[0_8px_30px_rgba(0,0,0,0.18)] dark:bg-zinc-900 dark:ring-white/10 ${viewShot.state === 'drawing' ? 'opacity-60' : ''}`}
-              style={{ left: inset.x, top: inset.y, width: window.innerWidth * inset.scale, height: window.innerHeight * inset.scale }}
-            />
-          ) : null}
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute rounded-full bg-zinc-900/80 px-2.5 py-[3px] text-xs font-semibold text-white"
-            style={{ left: inset.x + 10, top: inset.y + 10 }}
-          >
-            {t('devchat:commentPin.view.chip')}
-          </span>
-        </>
+              className="comment-shot-chip-in pointer-events-none absolute rounded-full bg-zinc-900/80 px-2.5 py-[3px] text-xs font-semibold text-white"
+              style={{ left: inset.x + 10, top: inset.y + 10 }}
+            >
+              {t('devchat:commentPin.view.chip')}
+            </span>
+          </>
+        )
       ) : (
         <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_0_3px_#0a6ee0]" aria-hidden="true" />
       )}
-      {hover ? (
+      {hover && !shotIntro ? (
         <div
           aria-hidden="true"
           className="pointer-events-none absolute rounded-lg border-[1.5px] border-dashed border-violet-600 bg-violet-600/5"
@@ -1145,7 +1159,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         />
       ) : null}
 
-      {postedPins.map((p) => {
+      {/* Posted pins sit on the inset picture (toScreen against it); until
+          the first picture has landed they would sit in the wrong spot over
+          the full-size live page, so they wait with the hover outline. */}
+      {!shotIntro && postedPins.map((p) => {
         const at = anchorPoint(p.anchor);
         const request = posted.find((r) => r.key === p.request);
         if (!at || !request) return null;

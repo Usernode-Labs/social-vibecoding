@@ -148,6 +148,35 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
     'the point under the fingers stays under them as the zoom changes');
 });
 
+test('the first picture animates out of the live page instead of a bare grey ground (#4665)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // The first picture, nothing drawn yet: the live page shows through (the
+  // mode's layer above it already keeps every press off) and neither the
+  // grey ground nor the chip is drawn over it.
+  assert.match(src, /viewShot\?\.state === 'drawing' && !viewShot\.url/,
+    'the first picture: still drawing, with nothing to show');
+  assert.match(src, /shotIntro \? null : \(/);
+  // Once the picture lands it mounts with its ground and chip for the first
+  // time and shrinks from the full page into its frame; a degenerate scale
+  // skips the move.
+  assert.match(src, /inset\.scale > 0 \? 'comment-shot-in' : ''/);
+  assert.match(src, /comment-shot-ground-in/);
+  assert.match(src, /comment-shot-chip-in/);
+  assert.match(src, /--comment-shot-from/, 'the start of the move: the inverse of the inset frame');
+  // The hover outline and the posted pins wait with it: both are placed
+  // against the inset frame and would sit wrong over the full-size page.
+  assert.match(src, /hover && !shotIntro \? \(/);
+  assert.match(src, /!shotIntro && postedPins\.map/);
+  // app.css carries the three mount animations and settles at once under
+  // reduced motion.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.comment-shot-in \{ animation: comment-shot-in 320ms ease-out; transform-origin: 0 0; \}/);
+  assert.match(css, /\.comment-shot-ground-in \{ animation: comment-shot-ground-in 320ms ease-out; \}/);
+  assert.match(css, /\.comment-shot-chip-in \{ animation: comment-shot-chip-in 160ms ease-out 200ms both; \}/);
+  assert.match(css, /@keyframes comment-shot-in \{\s*from \{ transform: var\(--comment-shot-from, none\); border-radius: 0; \}\s*\}/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.comment-shot-in,\s*\.comment-shot-ground-in,\s*\.comment-shot-chip-in \{ animation: none; \}\s*\}/);
+});
+
 test('the picture leaves the suggest flow\'s own overlays out, so the form never shows in it', () => {
   const src = read('frontend/src/features/comment-pin/picture.ts');
   // The form's Comment switch closes the form and opens the mode in the same
