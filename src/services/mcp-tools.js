@@ -8017,7 +8017,7 @@ function registerTools(server, ctx) {
           : [
             `Open the email "You're in. Welcome to Homeroom" sent to ${to}.`,
             'If the browser it opens in is signed in to Homeroom, sign out first, or open the link in a private window.',
-            'Tap Create my account. The link signs in once by itself; if it was already used or has expired, Homeroom emails a 6-digit code to the same address instead.',
+            'Tap Create my account, then Get started on the welcome page. The link signs in by itself (again, until the account is set up); if it has expired or the account is already set up, Homeroom emails a 6-digit code to the same address instead.',
             'Choose a username. A password is optional (Skip for now).',
           ],
         nextStep: outcome[status] || `Could not confirm the email went out (${status}). The delivery log in the admin console shows what happened.`,

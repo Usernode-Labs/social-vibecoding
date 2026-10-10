@@ -6,7 +6,8 @@
  * One centred group under the landing's logo bar: the picture, the small
  * caps "Welcome to Homeroom", one headline, the small caps "For example"
  * over the make screen's three examples (to show, not to press). The "Get
- * started" button and "Already have an account? Sign in" stay at the foot. Nothing under the button says what a new
+ * started" button and "Already have an account? Sign in" stay at the foot,
+ * pinned there while the story scrolls under them. Nothing under the button says what a new
  * account waits for: the waiting screen does (C1-story on the onboarding
  * canvas, the owner's review of 8 October).
  *
@@ -17,6 +18,8 @@
 
 // The three examples are the make screen's own starting points (Evan, 8 Oct
 // 2026, #4354): the same three here and there, the tier list drawn as one.
+import { useEffect, useRef, useState } from 'react';
+
 import { Message } from '../../lib/i18n/react';
 import { TEMPLATES } from '../first-session/examples';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -30,12 +33,30 @@ export function Story({ primaryClass, onStart, onSignIn }: {
   onSignIn: () => void;
 }) {
   const t = useMessages('auth');
+  // Is the story passing under the pinned foot? Its ground is drawn only
+  // then (`data-landing-story-foot="over"`), so a page that fits, or one
+  // scrolled to its end, looks as it did before the foot was pinned. Read in
+  // an effect: the first render is the prerender's, with no ground.
+  const endRef = useRef<HTMLDivElement>(null);
+  const footRef = useRef<HTMLDivElement>(null);
+  const [over, setOver] = useState(false);
+  useEffect(() => {
+    const end = endRef.current;
+    const foot = footRef.current;
+    if (!end || !foot || typeof IntersectionObserver !== 'function') return undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => setOver(!entry.isIntersecting),
+      { rootMargin: `0px 0px -${foot.offsetHeight}px 0px` },
+    );
+    observer.observe(end);
+    return () => observer.disconnect();
+  }, []);
   return (
     <div data-landing-story="" className="px-4 flex grow flex-col text-center">
       {/* One group, centred in the room above the button: the picture, the
           label 16px under it, the headline 8px under that, and the examples
           28px lower. On a short phone the auto margins fall to zero and the
-          landing's scroller scrolls, so nothing slides under the button. */}
+          page scrolls, with the foot pinned over it. */}
       <div className="my-auto flex flex-col items-center py-6">
         <img
           src="/brand/people.png"
@@ -64,15 +85,25 @@ export function Story({ primaryClass, onStart, onSignIn }: {
           </ul>
         </div>
       </div>
-      <div className="w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-3">
-        <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
-          {t('auth:story.start')}
-        </a>
-        <p className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
-          <RichMessage id="auth:story.haveAccount" components={[
-          <a href="#login" data-landing-story-signin="" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={(e) => { e.preventDefault(); onSignIn(); }} />,
-          ]} />
-        </p>
+      {/* The foot stays on screen while the story above it scrolls (Evan,
+          10 Oct 2026: on iPhone Safari Get started sat under the toolbar,
+          below the fold). Sticky to the foot of whatever scrolls the page,
+          the landing's scroller or, in a phone browser, the document; its
+          ground (css/app.css, [data-landing-story-foot="over"]), drawn only
+          while the story's end is below it, keeps the story legible as it
+          passes under. */}
+      <div ref={endRef} aria-hidden="true" className="h-px" />
+      <div ref={footRef} data-landing-story-foot={over ? 'over' : ''} className="sticky bottom-0 z-10 -mx-4 px-4 pt-6 pb-3">
+        <div className="w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-3">
+          <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
+            {t('auth:story.start')}
+          </a>
+          <p className="mt-1 text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
+            <RichMessage id="auth:story.haveAccount" components={[
+            <a href="#login" data-landing-story-signin="" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={(e) => { e.preventDefault(); onSignIn(); }} />,
+            ]} />
+          </p>
+        </div>
       </div>
     </div>
   );
