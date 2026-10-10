@@ -11,28 +11,32 @@
       "handle": "onboarding",
       "name": "Onboarding",
       "icon": "🚪",
-      "about": "Signing up and the first week"
+      "about": "Signing up and the first week",
+      "figures": ["onboarding.sign-up", "onboarding.first-project", "onboarding.first-change", "onboarding.found-project"]
     },
     {
       "id": "homeroom-bot",
       "handle": "homeroom-bot",
       "name": "Homeroom bot",
       "icon": "🤖",
-      "about": "How it plans, builds and answers"
+      "about": "How it plans, builds and answers",
+      "figures": ["bot.answered", "bot.reply-cost", "bot.reply-time", "bot.merged", "bot.merged-cost", "bot.request-to-proposal"]
     },
     {
       "id": "proposal-pipeline",
       "handle": "proposal-pipeline",
       "name": "Proposal pipeline",
       "icon": "🚦",
-      "about": "From request to merge: proposals, checks, votes and merging"
+      "about": "From request to merge: proposals, checks, votes and merging",
+      "figures": ["pipeline.checks-time", "pipeline.couldnt-tell", "pipeline.shots", "pipeline.vote-to-merged"]
     },
     {
       "id": "infra",
       "handle": "infra",
       "name": "Infra",
       "icon": "🛠️",
-      "about": "Builds, staging, deploys and the servers the apps run on"
+      "about": "Builds, staging, deploys and the servers the apps run on",
+      "figures": ["infra.merge-to-live", "infra.deploys-failed", "infra.apps-up", "infra.limits-filled"]
     },
     {
       "id": "project-workflows",
@@ -2509,9 +2513,9 @@
       "expectText": "All items"
     },
     {
-      "name": "#4417: a topic's channel has an address of its own, which opens its project's page on that place: what the topic is for and its requests above the room, which is #general's pane: each message's ⋯ offers Reply in thread",
+      "name": "#4417: a topic's channel has an address of its own, which opens its project's page on that place: what the topic is for and its requests above the room, then the figures its dapp.json entry names, each with an info button saying what it means; the room is #general's pane: each message's ⋯ offers Reply in thread",
       "path": "/?demo=1#app/usernode-2d5619/dev/c/onboarding",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"c:onboarding\"]:has(> [data-place-bar=\"c:onboarding\"]) [data-ws-topic=\"onboarding\"][data-ws-topic-state=\"live\"][data-discussion-app] > .dev-ws-topic-head + .dev-ws-discussion-host #gc-messages .gc-msg-more-action",
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"c:onboarding\"]:has(> [data-place-bar=\"c:onboarding\"]) [data-ws-topic=\"onboarding\"]:has(> .dev-ws-topic-head + [data-topic-figures] .dev-ws-fig-info) > .dev-ws-discussion-host .gc-msg-more-action",
       "expectText": "requests"
     },
     {

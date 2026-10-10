@@ -60,6 +60,7 @@ const log = require('./logger');
 const usernames = require('./usernames');
 const appPermissions = require('./app-permissions');
 const { validatePath } = require('./testing-notes');
+const topicFigures = require('./topic-figures');
 
 const MANIFEST_FILENAME = 'dapp.json';
 
@@ -1200,6 +1201,9 @@ function readIcon(parsed) {
 //               history keep their key; read-only from then on.
 //   mergedInto  the id of the LIVE topic it was merged into: never itself,
 //               never a topic that was itself merged or archived.
+//   figures     optional: up to six figure ids from services/topic-figures.js,
+//               the numbers the channel shows above its room. An unknown id
+//               is an error; the reader keeps the known ones.
 //
 // The array's order is the list's order. At most MAX_LIVE_TOPICS live.
 //
@@ -1243,6 +1247,7 @@ function normalizeTopicHandle(raw) {
 /**
  * Validate a `topics` array. Returns `{ topics, errors }`: the entries that
  * hold, normalised to `{ id, handle, name, icon, about, state, mergedInto }`
+ * (and `figures`, when the entry names any)
  * in the file's order, and one sentence per problem. STRICT callers (the
  * topics PR, services/topics-pr.js) refuse on any error; the deploy reader
  * (readTopics) keeps what holds and logs the rest, like every other block.
@@ -1323,12 +1328,28 @@ function validateTopics(raw) {
       errors.push(`${where}.archived must be true or false`);
       return;
     }
+    // Figures never cost a topic its place: an unknown id is an error for
+    // the strict callers, and the reader keeps the ids it knows.
+    let figures = [];
+    if (entry.figures != null) {
+      if (!Array.isArray(entry.figures) || entry.figures.some((f) => typeof f !== 'string')) {
+        errors.push(`${where}.figures must be a list of figure ids`);
+      } else {
+        const unknown = entry.figures.filter((f) => !topicFigures.isFigureId(f));
+        if (unknown.length) errors.push(`${where}.figures names an unknown figure: ${unknown.join(', ')}`);
+        if (entry.figures.length > topicFigures.MAX_TOPIC_FIGURES) {
+          errors.push(`${where}.figures holds at most ${topicFigures.MAX_TOPIC_FIGURES} figures`);
+        }
+        figures = topicFigures.knownFigureIds(entry.figures);
+      }
+    }
     ids.add(id);
     handles.add(handle);
     out.push({
       id, handle, name, icon, about,
       state: mergedInto ? 'merged' : (entry.archived === true ? 'archived' : 'live'),
       mergedInto,
+      ...(figures.length ? { figures } : {}),
     });
   });
   // A merge names a LIVE topic: never itself, never one that was itself
@@ -1484,7 +1505,7 @@ async function reconcileAppTopics(pool, app, manifest) {
   if (!topics || !app || !app.id) return null;
   const { rows } = await pool.query(
     `SELECT id, category_key, origin, label, description, icon, topic_handle, topic_aliases,
-            topic_state, merged_into, topic_order, retired_at
+            topic_state, merged_into, topic_order, retired_at, topic_figures
        FROM app_category_registry
       WHERE app_id = $1`,
     [app.id]
@@ -1515,16 +1536,17 @@ async function reconcileAppTopics(pool, app, manifest) {
       || row.label !== t.name || (row.description || '') !== t.about || (row.icon || '') !== t.icon
       || row.topic_handle !== t.handle || !sameList(row.topic_aliases || [], aliases)
       || prevState !== t.state || (row.merged_into || null) !== (t.mergedInto || null)
-      || row.topic_order !== order || (t.state === 'live') !== (row.retired_at == null);
+      || row.topic_order !== order || (t.state === 'live') !== (row.retired_at == null)
+      || !sameList(row.topic_figures || [], t.figures || []);
     if (!differs) continue;
 
     await pool.query(
       `INSERT INTO app_category_registry
          (app_id, category_key, label, description, icon, origin, pinned_at, retired_at,
-          topic_handle, topic_aliases, topic_state, merged_into, merged_at, topic_order)
+          topic_handle, topic_aliases, topic_state, merged_into, merged_at, topic_order, topic_figures)
        VALUES ($1, $2, $3, $4, $5, 'topic', NOW(),
                CASE WHEN $8::text = 'live' THEN NULL ELSE NOW() END,
-               $6, $7::text[], $8, $9, CASE WHEN $8::text = 'merged' THEN NOW() ELSE NULL END, $10)
+               $6, $7::text[], $8, $9, CASE WHEN $8::text = 'merged' THEN NOW() ELSE NULL END, $10, $11::text[])
        ON CONFLICT (app_id, category_key) DO UPDATE SET
          label = EXCLUDED.label,
          description = EXCLUDED.description,
@@ -1543,8 +1565,9 @@ async function reconcileAppTopics(pool, app, manifest) {
             AND app_category_registry.merged_into IS NOT DISTINCT FROM EXCLUDED.merged_into
              THEN COALESCE(app_category_registry.merged_at, NOW())
            ELSE NOW() END,
-         topic_order = EXCLUDED.topic_order`,
-      [app.id, t.id, t.name, t.about, t.icon, t.handle, aliases, t.state, t.mergedInto, order]
+         topic_order = EXCLUDED.topic_order,
+         topic_figures = EXCLUDED.topic_figures`,
+      [app.id, t.id, t.name, t.about, t.icon, t.handle, aliases, t.state, t.mergedInto, order, t.figures || []]
     );
     result.changed = true;
     if (!wasTopic) result.added.push(t.id);

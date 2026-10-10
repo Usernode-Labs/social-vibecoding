@@ -10881,6 +10881,21 @@
       "classicPath": "#app/:slug/workshop"
     },
     {
+      "source": "src/routes/topic-figures.js",
+      "method": "GET",
+      "path": "/api/apps/:slug/topics/:key/figures",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "issues.get.apps.item.topics.item.figures.40973609",
+      "domain": "issues",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "issue",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#app/:slug/workshop"
+    },
+    {
       "source": "src/routes/topochain/admin.js",
       "method": "GET",
       "path": "/api/v4/admin/__ping",
