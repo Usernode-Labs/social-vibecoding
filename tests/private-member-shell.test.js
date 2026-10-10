@@ -11,6 +11,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -117,8 +118,10 @@ test('the mark menu: "Go to Homeroom" for a private member, and no terminal or B
   const card = sheet.slice(sheet.indexOf('id="app-menu-row-homeroom"'));
   assert.match(card, /^id="app-menu-row-homeroom"\s+type="button"/);
   assert.match(card, /src="\/brand\/homeroom-mark\.png"[\s\S]*?className="platform-mark-tile w-10 h-10/);
-  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Go to Homeroom</);
-  assert.match(card, /text-\[13px\][^>]*>Your Home, your communities and Homeroom bot</);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>\{t\('agent:appContext\.goToHomeroom\.title'\)\}</);
+  assert.equal(message('agent:appContext.goToHomeroom.title'), 'Go to Homeroom');
+  assert.match(card, /text-\[13px\][^>]*>\{t\('agent:appContext\.goToHomeroom\.sub'\)\}</);
+  assert.equal(message('agent:appContext.goToHomeroom.sub'), 'Your Home, your communities and Homeroom bot');
   assert.match(card.slice(0, card.indexOf('</button>')), /<ChevronRightIcon/);
   assert.match(sheet, /firstSession\?\.goHome\?\.\(info\)/);
   assert.match(sheet, /\{showTerminal && !privateMember \? \(/);
@@ -139,7 +142,8 @@ test('the Go to Homeroom card carries the home-screen offer, and the banner wait
   assert.match(card, /\{newcomer && homeScreenOs \? \(\s+<>\s+<div aria-hidden="true" className="[^"]*h-px bg-\[color:var\(--app-sheet-line\)\]"/);
   assert.match(card, /id="app-menu-row-add-home"/);
   assert.match(card, /w-10 h-10 rounded-\[11px\] bg-zinc-100[^"]*"[^>]*>\s+<PhonePlusIcon/);
-  assert.match(card, /text-\[15px\] font-\[650\][^>]*>Add Homeroom to your home screen</);
+  assert.match(card, /text-\[15px\] font-\[650\][^>]*>\{t\('agent:appContext\.addHomeroomToHomeScreen'\)\}</);
+  assert.equal(message('agent:appContext.addHomeroomToHomeScreen'), 'Add Homeroom to your home screen');
   assert.match(card, /<InstallStepsSheet os=\{homeScreenOs\}/);
   // The offer is the banner's own decision, an a2hs one, minus its dismissal.
   const hook = read('frontend/src/features/mobile-install/home-screen-offer.ts');

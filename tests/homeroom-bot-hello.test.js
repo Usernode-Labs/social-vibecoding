@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -42,16 +43,21 @@ test('B5: the bot is named by its name, a person by their handle', () => {
 
 test('B5: every place Messages names the bot names it, with an AI badge beside it', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /\{senderName\(message\.sender\)\}<\/span>\{message\.sender\.bot \? <span className="messages-bot-badge">AI<\/span> : null\}/);
+  assert.equal(message('messages:row.aiBadge'), 'AI');
+  assert.match(row, /\{senderName\(message\.sender\)\}<\/span>\{message\.sender\.bot \? <span className="messages-bot-badge">\{t\('messages:row\.aiBadge'\)\}<\/span> : null\}/);
   assert.doesNotMatch(row, />Bot<\/span>/);
   assert.match(row, /<span>\{senderName\(message\.reply\.sender\)\}<\/span>/, 'the quote');
   assert.match(row, /preview=\{\{ who: senderName\(message\.sender\)/, 'the action sheet');
-  assert.match(row, /label: `Message from \$\{senderName\(message\.sender\)\}`/, 'the report');
+  assert.equal(message('messages:row.reportLabel', { name: 'Homeroom bot' }), 'Message from Homeroom bot');
+  assert.match(row, /: t\('messages:row\.reportLabel', \{ name: senderName\(message\.sender\) \}\), userId/, 'the report');
   assert.doesNotMatch(row, /'@' : ''\}\{message\.(reply\.)?sender\.username\}/);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /conversation\.kind === 'direct' && peer \? senderName\(peer\) : conversation\.title\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge">AI<\/span> : null\}/, 'the list row');
-  assert.match(screen, /active\.kind === 'direct' && person \? senderName\(person\)[^\n]*person\?\.bot \? <span className="messages-bot-badge">AI<\/span>/, 'the header');
-  assert.match(read('frontend/src/features/messages/composer.tsx'), /Replying to \{senderName\(reply\.sender\)\}/);
+  assert.equal(message('messages:inbox.aiBadge'), 'AI');
+  assert.match(screen, /conversation\.kind === 'direct' && peer \? senderName\(peer\) : conversation\.title\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge">\{t\('messages:inbox\.aiBadge'\)\}<\/span> : null\}/, 'the list row');
+  assert.equal(message('messages:header.aiBadge'), 'AI');
+  assert.match(screen, /active\.kind === 'direct' && person \? senderName\(person\)[^\n]*person\?\.bot \? <span className="messages-bot-badge">\{t\('messages:header\.aiBadge'\)\}<\/span>/, 'the header');
+  assert.match(read('frontend/src/features/messages/composer.tsx'), /t\('messages:composer\.replyingTo', \{ name: senderName\(reply\.sender\) \}\)/);
+  assert.equal(message('messages:composer.replyingTo', { name: 'Homeroom bot' }), 'Replying to Homeroom bot');
   assert.match(read('frontend/src/features/messages/store.ts'), /state\.active\.peer\.displayName/, 'the typing line');
 });
 

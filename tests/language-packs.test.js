@@ -16,7 +16,7 @@ const { shellAssetCacheControl, IMMUTABLE } = require('../src/services/static-ca
 const { classifyRequest } = require('../public/sw');
 const { fixture, harness } = require('./lib/shell-release-fixture');
 const { loadTsx } = require('./lib/render-tsx');
-const { ENGLISH, SPANISH, catalogFixture, from, says } = require('./lib/language-fixture');
+const { ENGLISH, SPANISH, browser, catalogFixture, from, runtimeFor, says } = require('./lib/language-fixture');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -112,6 +112,58 @@ test('a counted message is used whole or not at all', (t) => {
   assert.ok(report.ru.missing.includes('core:items_many'));
   const pack = JSON.parse(fs.readFileSync(path.join(root, 'public', manifest.ru.core.url), 'utf8'));
   assert.deepEqual(pack, { bye: 'Пока' }, 'half a plural set would mix Russian and English forms');
+});
+
+test('a translated form of a counted message may show the count where English spells the number out', async (t) => {
+  // English says "an hour ago" for one. Russian's `one` form is also the form
+  // for 21, 31 and 101, so it has to print the number it was chosen by.
+  const english = {
+    ago_one: says('{{who}} started an hour ago'),
+    ago_other: says('{{who}} started {{count}} hours ago'),
+    left_one: says('{{count}} minute left'),
+    left_other: says('{{count}} minutes left'),
+    plain: says('Hello {{name}}'),
+    named_one: says('{{who}} has one item'),
+    named_other: says('{{who}} has {{count}} items'),
+  };
+  const russian = {
+    ago_one: from(english.ago_one.text, '{{who}} начал {{count}} час назад'),
+    ago_few: from(english.ago_other.text, '{{who}} начал {{count}} часа назад'),
+    ago_many: from(english.ago_other.text, '{{who}} начал {{count}} часов назад'),
+    ago_other: from(english.ago_other.text, '{{who}} начал {{count}} часа назад'),
+    // A form may also leave the number out where its own words say it.
+    left_one: from(english.left_one.text, 'осталась минута'),
+    left_few: from(english.left_other.text, 'осталось {{count}} минуты'),
+    left_many: from(english.left_other.text, 'осталось {{count}} минут'),
+    left_other: from(english.left_other.text, 'осталось {{count}} минуты'),
+    // Outside a counted message, and for every other parameter, the lists must still match.
+    plain: from(english.plain.text, 'Привет {{name}}, {{count}}'),
+    named_one: from(english.named_one.text, 'у {{owner}} {{count}} предмет'),
+    named_few: from(english.named_other.text, 'у {{who}} {{count}} предмета'),
+    named_many: from(english.named_other.text, 'у {{who}} {{count}} предметов'),
+    named_other: from(english.named_other.text, 'у {{who}} {{count}} предмета'),
+  };
+  const fixture = catalogFixture(t, {
+    languages: { en: 'English', ru: 'Русский' }, english, translations: { ru: russian },
+  });
+  const { catalogs, report } = fixture.build();
+  assert.deepEqual(report.ru.invalid.sort(), ['core:named_one', 'core:plain'],
+    'an extra {{count}} outside a counted message, and a renamed parameter, are still refused');
+  browser(t, { root: fixture.root, deviceLanguages: ['ru-RU'] });
+  const runtime = runtimeFor(catalogs);
+  await runtime.changeLanguage('ru');
+  const said = (count) => runtime.t('core:ago', { count, who: 'Ада' });
+  assert.equal(said(1), 'Ада начал 1 час назад');
+  assert.equal(said(21), 'Ада начал 21 час назад', 'the `one` form is used for 21, and prints it');
+  assert.equal(said(3), 'Ада начал 3 часа назад');
+  assert.equal(said(5), 'Ада начал 5 часов назад');
+  assert.equal(runtime.t('core:left', { count: 1 }), 'осталась минута');
+  assert.equal(runtime.t('core:named', { count: 2, who: 'Ада' }), 'Ада has 2 items',
+    'a counted message with one refused form is English as a whole');
+  // English is untouched by any of this.
+  const englishOnly = runtimeFor(catalogFixture(t, { english, translations: {}, languages: { en: 'English' } }).build().catalogs);
+  assert.equal(englishOnly.t('core:ago', { count: 1, who: 'Ada' }), 'Ada started an hour ago');
+  assert.equal(englishOnly.t('core:ago', { count: 21, who: 'Ada' }), 'Ada started 21 hours ago');
 });
 
 test('each pack is named by the hash of its bytes, served immutable, and replaced when it changes', (t) => {

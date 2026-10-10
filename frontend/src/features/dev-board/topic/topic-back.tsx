@@ -63,8 +63,9 @@ import type { MouseEvent, ReactNode } from 'react';
 
 import { ChevronLeftIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
-import { improveStore, topicBackHref, topicBackLabel, topicWorkshopHref } from '../../improve/improve-store.js';
+import { improveStore, topicBackHref, topicWorkshopHref } from '../../improve/improve-store.js';
 
 function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as {
@@ -82,17 +83,43 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   window.location.hash = href;
 }
 
+/** Where a chip goes: the screen it names. */
+type ChipKey = 'Messages' | 'Workshop' | 'All items';
+
+/**
+ * The chip's words by destination, as message ids. The key names the
+ * destination and is never shown.
+ */
+const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
+  Messages: { label: 'project:topic.back.messages', name: 'project:topic.back.toMessages' },
+  Workshop: { label: 'project:topic.back.workshop', name: 'project:topic.back.toWorkshop' },
+  'All items': { label: 'project:topic.back.allItems', name: 'project:topic.back.toAllItems' },
+};
+
+/**
+ * The destination `href` names, as a key: the rule `topicBackLabel`
+ * (../../improve/improve-store.js) words. A card opened from a Messages
+ * conversation goes back to it (#3103); one opened from All items goes back
+ * there when the Workshop reopens on it (#4486); anything else goes back to
+ * the Workshop. Read as state, so the chip never compares its own words.
+ */
+function chipFor(href: string, workshopTab: string | null): ChipKey {
+  if (href.startsWith('#messages')) return 'Messages';
+  return workshopTab === 'all' && /\/workshop$/.test(href) ? 'All items' : 'Workshop';
+}
+
 /** One chip: the destination's name behind the chevron. */
-function TopicChip({ href, label }: { href: string; label: 'Messages' | 'Workshop' | 'All items' }): ReactNode {
+function TopicChip({ href, label }: { href: string; label: ChipKey }): ReactNode {
+  const t = useMessages('project');
   return (
     <a
       className="dev-topic-back un-touch-target"
       href={href}
-      aria-label={`Back to ${label}`}
+      aria-label={t(CHIP_TEXT[label].name)}
       onClick={onBackClick}
     >
       <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
-      <span>{label}</span>
+      <span>{t(CHIP_TEXT[label].label)}</span>
     </a>
   );
 }
@@ -107,7 +134,7 @@ export function TopicBack(): ReactNode {
   // the item was opened from.
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
   const workshopTab = av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
-  const back = <TopicChip href={href} label={topicBackLabel(href, workshopTab)} />;
+  const back = <TopicChip href={href} label={chipFor(href, workshopTab)} />;
   // #3691: and offers its project's Workshop beside that, styled the same.
   const workshop = topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin });
   if (!workshop) return back;

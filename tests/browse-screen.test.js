@@ -26,6 +26,7 @@ const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC } = require('./helpers/home-modules');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 // browse.js is a bundle module since #1083 chunk F, but it is deliberately
 // still a valid CLASSIC script: this test compiles the real source in a vm
 // context, which is why the store arrives by the `_store` plant ./mount.ts
@@ -167,6 +168,7 @@ function makeBrowse(opts = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // The shared card builders first: home.js delegates to window.AppCard and
   // browse.js calls them as bare identifiers (its import is stripped above).
@@ -584,7 +586,10 @@ const ago = (days) => new Date(NOW - days * DAY).toISOString();
 
 test("the chip row is a faithful copy of Browse.FILTERS, in the prototype's order", () => {
   const { Browse } = makeBrowse();
-  assert.deepEqual(Array.from(Browse.FILTERS, (f) => f.label), ['All', 'Featured', 'Joined', 'New']);
+  // The labels are message ids; the catalog holds the words.
+  assert.deepEqual(Array.from(Browse.FILTERS, (f) => f.label),
+    ['discover:filter.all', 'discover:filter.featured', 'discover:filter.joined', 'discover:filter.new']);
+  assert.deepEqual(Array.from(Browse.FILTERS, (f) => message(f.label)), ['All', 'Featured', 'Joined', 'New']);
   // Same reason SORT_OPTIONS is a copy: window.Browse does not exist in the
   // SSG pass, so the chips carry their own labels.
   const src = read('frontend/src/features/apps/browse-screen.tsx');
@@ -1130,7 +1135,8 @@ test('the page describes a Share row only when there is a link to share', () => 
   // …and the component leads the action card with it, as its own button.
   const detailSrc = read('frontend/src/features/apps/browse-detail.tsx');
   assert.match(detailSrc, /\{view\.actions\.length \|\| view\.canShare \? \(/);
-  assert.match(detailSrc, /id="browse-detail-share"[\s\S]{0,600}title="Share"[\s\S]{0,120}onClick=\{\(\) => controller\(\)\?\.shareDetailApp\(view\.app\)\}/);
+  assert.match(detailSrc, /id="browse-detail-share"[\s\S]{0,600}title=\{t\('discover:detail\.share\.label'\)\}[\s\S]{0,120}onClick=\{\(\) => controller\(\)\?\.shareDetailApp\(view\.app\)\}/);
+  assert.equal(message('discover:detail.share.label'), 'Share');
   assert.ok(detailSrc.indexOf('id="browse-detail-share"') < detailSrc.indexOf('view.actions.map('),
     'Share comes first, as in the prototype\'s More list');
 });
@@ -1328,9 +1334,11 @@ test('a deep link to a missing app renders the not-available state', async () =>
   assert.equal(state.detail.state, 'missing');
   // The copy and its escape-hatch anchor are browse-detail.tsx's.
   const tsx = read('frontend/src/features/apps/browse-detail.tsx');
-  assert.match(tsx, /isn&rsquo;t available/);
+  assert.match(tsx, /\{t\('discover:detail\.unavailable'\)\}/);
+  assert.equal(message('discover:detail.unavailable'), 'That app isn’t available.');
   assert.match(tsx, /id="browse-detail-back"/);
-  assert.match(tsx, /Back to all apps/);
+  assert.match(tsx, /\{t\('discover:detail\.backToAll'\)\}/);
+  assert.match(message('discover:detail.backToAll'), /Back to all apps/);
 });
 
 test('syncFrom drops to the list when the open app is deleted away', () => {
@@ -1414,7 +1422,7 @@ test('_load failure renders an inline error, never throws', async () => {
   assert.equal(state.error, true);
   assert.equal(state.rows.length, 0, 'and the stale list is cleared');
   // #1899: drawn as the shared error card with a Retry, not a red line.
-  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /<AppsLoadError[\s\S]*?title="Couldn't load the app directory"[\s\S]*?onRetry=\{\(\) => browse\(\)\?\._load\?\.\(\)\}/);
+  assert.match(read('frontend/src/features/apps/browse-screen.tsx'), /<AppsLoadError[\s\S]*?title=\{t\('discover:loadError\.directoryTitle'\)\}[\s\S]*?onRetry=\{\(\) => browse\(\)\?\._load\?\.\(\)\}/);
 });
 
 test('open seeds first paint from Home._apps, then refetches', async () => {
@@ -1702,12 +1710,14 @@ test('#1553: the row button names what it acts on, like every other surface', ()
   // QA 2026-09-24 Q10: a long pill squeezed the app's name to ten characters
   // on desktop and to nothing at 1024, so the visible label stays one short
   // word and the rest rides the accessible name and the title.
-  assert.match(listSrc, /'Joined' : 'Join'/);
-  assert.match(listSrc, /aria-label=\{view\.added \? undefined : `Join \$\{view\.name\}`\}/);
+  assert.match(listSrc, /view\.added \? t\('discover:list\.join\.joined'\) : t\('discover:list\.join\.action'\)/);
+  assert.equal(message('discover:list.join.action'), 'Join');
+  assert.match(listSrc, /aria-label=\{view\.added \? undefined : t\('discover:list\.join\.named', \{ app: view\.name \}\)\}/);
+  assert.equal(message('discover:list.join.named', { app: 'Recipe Box' }), 'Join Recipe Box');
   assert.match(listSrc, /title=\{view\.addTitle\}/);
   assert.match(listSrc, /<PlusIcon /);
   // The state label stays short: the row it sits on already says which app.
-  assert.match(listSrc, /view\.added \? 'Joined'/);
+  assert.equal(message('discover:list.join.joined'), 'Joined');
 });
 
 // ── app.js routing ───────────────────────────────────────────────
@@ -1728,7 +1738,8 @@ test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
     APP_SRC.indexOf('navigateToBrowse(slug) {'),
     APP_SRC.indexOf('_exitBrowse() {')
   );
-  assert.match(nav, /setHeaderTitle\('All apps'\)/);
+  assert.match(nav, /setHeaderTitle\(PlatformI18n\.t\('shell:title\.allApps'\)\)/);
+  assert.equal(message('shell:title.allApps'), 'All apps');
   assert.match(nav, /App\._inBrowse = true/);
   assert.match(nav, /Browse\.open\(slug \|\| null, \{ chrome: false \}\)/);
   assert.match(nav, /App\._showOnlyScreen\('browse-screen'\)/);

@@ -28,6 +28,7 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const clock = require('../src/services/preview-clock');
 const testingNotes = require('../src/services/testing-notes');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const DECLARED = '<!-- usernode:preview-at 2026-10-08T19:00 Europe/London -->';
 
@@ -279,6 +280,7 @@ async function makeShell({ react = true, fetch = async () => ({ ok: true, json: 
   storeMod.stagingRefs.iframe = iframe;
   const byId = { 'staging-iframe': iframe };
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console: { log() {}, warn() {}, error() {}, debug() {} },
     App: { user: { id: 1 }, currentTab: 'dev' },
     document: {

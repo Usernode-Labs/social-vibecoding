@@ -260,6 +260,8 @@ export interface Attachment {
   kind: string;
   /** The filename, as a text child — never interpolated into an attribute. */
   name: string;
+  /** The file has no name; `name` is a stand-in label and the tooltips use their unnamed wording. */
+  unnamed?: boolean;
   url: string;
   /** Pre-formatted by the module: "2 KB", "3.0 MB". */
   size: string;
@@ -272,7 +274,8 @@ export interface ThreadSummaryView {
   lastReplyAt: string | null;
   participants: string[];
   /** The newest reply, which the card under the message shows (#2387 follow-up). */
-  lastReply?: { name: string; text: string } | null;
+  /** `unnamed`: nobody to name; `name` is the stand-in shown where a name would be. */
+  lastReply?: { name: string; unnamed?: boolean; text: string } | null;
 }
 
 /**
@@ -291,6 +294,8 @@ export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
   username: string;
+  /** No author came with the row; `username` is a stand-in and sentences use their own wording. */
+  usernameMissing?: boolean;
   senderId?: number | null;
   /**
    * Rendered stamp — formatted by the module, whose locale rules these are.
@@ -433,6 +438,8 @@ export interface SpecShareView {
   /** The header the panel shows while the fetch is in flight. */
   previewTitle: string;
   sharedBy: string;
+  /** `sharedBy` is a stand-in word, not an account's name: sentences use their unnamed wording. */
+  sharedByUnknown?: boolean;
   version: number;
   /** Formatted build time, or null when the share carried none. */
   built: string | null;

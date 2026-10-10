@@ -63,6 +63,8 @@ import {
 } from '@/components/ui/icons';
 
 import { confirmAction } from '../../lib/confirm';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { PostedViaChip } from './posted-via-chip';
@@ -181,6 +183,7 @@ function AttachmentBadge({ badge }: { badge: string | null }) {
 }
 
 function AttachmentImage({ att }: { att: Attachment }) {
+  const t = useMessages('chat');
   // A staging clone copies chat_messages but not attachment bytes
   // (staging:private), so a thumbnail whose blob is gone degrades to a plain
   // chip rather than a broken-image icon. The module used to rewrite the
@@ -202,7 +205,7 @@ function AttachmentImage({ att }: { att: Attachment }) {
         href={att.url}
         target="_blank"
         rel="noopener"
-        title={`${att.name}: open full size`}
+        title={att.unnamed ? t('chat:group.attachment.openFullSizeUnnamed') : t('chat:group.attachment.openFullSize', { file: att.name })}
         data-image-open=""
         onClick={(event) => openInViewer(event, () => setViewing(true))}
       >
@@ -220,14 +223,15 @@ function AttachmentImage({ att }: { att: Attachment }) {
 }
 
 function AttachmentChip({ att }: { att: Attachment }) {
+  const t = useMessages('chat');
   const size = <span className="dc-attach-size">{att.size}</span>;
   const download = (
     <a
       className="gc-att-action"
       href={att.url}
       download={att.name}
-      title={`Download ${att.name}`}
-      aria-label={`Download ${att.name}`}
+      title={att.unnamed ? t('chat:group.attachment.downloadUnnamed') : t('chat:group.attachment.download', { file: att.name })}
+      aria-label={att.unnamed ? t('chat:group.attachment.downloadUnnamed') : t('chat:group.attachment.download', { file: att.name })}
     >
       <span aria-hidden="true">↓</span>
     </a>
@@ -241,7 +245,8 @@ function AttachmentChip({ att }: { att: Attachment }) {
           className="dc-attach-name gc-att-open"
           data-att-md={att.url}
           data-att-name={att.name}
-          title={`View ${att.name}`}
+          data-att-unnamed={att.unnamed ? '' : undefined}
+          title={att.unnamed ? t('chat:group.attachment.viewUnnamed') : t('chat:group.attachment.view', { file: att.name })}
         >
           {att.name}
         </button>
@@ -261,9 +266,9 @@ function AttachmentChip({ att }: { att: Attachment }) {
           href={`${att.url}/view`}
           target="_blank"
           rel="noopener"
-          title={`Open sandboxed preview of ${att.name}`}
+          title={att.unnamed ? t('chat:group.attachment.previewTitleUnnamed') : t('chat:group.attachment.previewTitle', { file: att.name })}
         >
-          Preview
+          {t('chat:group.attachment.preview')}
         </a>
         {download}
       </span>
@@ -274,7 +279,7 @@ function AttachmentChip({ att }: { att: Attachment }) {
       className="dc-msg-att-chip"
       href={att.url}
       download={att.name}
-      title={`Download ${att.name}`}
+      title={att.unnamed ? t('chat:group.attachment.downloadUnnamed') : t('chat:group.attachment.download', { file: att.name })}
     >
       <AttachmentBadge badge={att.badge} />
       <span className="dc-attach-name">{att.name}</span>
@@ -364,12 +369,13 @@ export function Reactions({ msg }: { msg: TranscriptMessage }) {
  * chat and counting the buttons, not by a test.
  */
 function RowActions({ msg }: { msg: TranscriptMessage }) {
+  const t = useMessages('chat');
   if (!(msg.showEdit || msg.showBookmark || msg.showReact)) return null;
   const saved = msg.bookmarked;
   return (
     <>
       {msg.showEdit ? (
-        <button type="button" className="gc-msg-edit" title="Edit" aria-label="Edit message" tabIndex={-1}>
+        <button type="button" className="gc-msg-edit" title={t('chat:group.row.editTitle')} aria-label={t('chat:group.row.edit')} tabIndex={-1}>
           {'\u270F\uFE0F'}
         </button>
       ) : null}
@@ -377,8 +383,8 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
         <button
           type="button"
           className={saved ? 'gc-msg-save gc-msg-saved' : 'gc-msg-save'}
-          title={saved ? 'Saved. Click to unsave' : 'Save to your notifications'}
-          aria-label={saved ? 'Unsave message' : 'Save message'}
+          title={saved ? t('chat:group.row.savedTitle') : t('chat:group.row.saveTitle')}
+          aria-label={saved ? t('chat:group.row.unsave') : t('chat:group.row.save')}
           aria-pressed={saved}
         >
           {/* Solid when saved, outline when not — the state lives in the SHAPE,
@@ -388,7 +394,7 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
         </button>
       ) : null}
       {msg.showReact ? (
-        <button type="button" className="gc-react-add" title="React" aria-label="Add reaction" tabIndex={-1}>
+        <button type="button" className="gc-react-add" title={t('chat:group.row.reactTitle')} aria-label={t('chat:group.row.addReaction')} tabIndex={-1}>
           {'\u{1F642}'}
         </button>
       ) : null}
@@ -427,6 +433,7 @@ export function foldRepeats(messages: TranscriptMessage[]): TranscriptMessage[] 
  * ./proposal-event.tsx's row instead, and nothing else of this kind.
  */
 export const SystemRow = memo(function SystemRow({ msg }: { msg: TranscriptMessage }) {
+  const t = useMessages('chat');
   return (
     <div
       className={`gc-msg-system ${msg.kind === 'vote' ? 'gc-msg-vote' : ''}${msg.voteRowClass ? ` ${msg.voteRowClass}` : ''}${msg.flash ? ' gc-msg-flash' : ''}`}
@@ -434,7 +441,7 @@ export const SystemRow = memo(function SystemRow({ msg }: { msg: TranscriptMessa
     >
       <span className="gc-msg-system-text">{msg.systemText}</span>
       {msg.repeat && msg.repeat > 1 ? (
-        <span className="gc-msg-system-repeat" title={`Posted ${msg.repeat} times in a row; this is the latest`}>{` · ×${msg.repeat}`}</span>
+        <span className="gc-msg-system-repeat" title={t('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
       ) : null}
       {/*
           The controls host, rendered once as an empty span with a constant
@@ -488,6 +495,7 @@ export const SystemRow = memo(function SystemRow({ msg }: { msg: TranscriptMessa
  * address bookkeeping, the fetch and every failure wording stay in the module.
  */
 export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
+  const t = useMessages('chat');
   const [loading, setLoading] = useState(false);
   const spec = msg.specShare;
   if (!spec) return null;
@@ -498,6 +506,7 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
       data-spec-title={spec.previewTitle}
       data-session-id={spec.sessionId ?? ''}
       data-shared-by={spec.sharedBy}
+      data-shared-by-unknown={spec.sharedByUnknown ? '' : undefined}
     >
       <div className="gc-spec-card-header">
         <span className="gc-spec-card-icon">📋</span>
@@ -505,22 +514,22 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
         <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
       </div>
       <div className="gc-spec-card-attribution">
-        {'Shared by '}
-        <strong>{spec.sharedBy}</strong>
-        {` · v${spec.version}`}
-        {spec.built ? ` · ${spec.built}` : null}
-        {spec.prNumber ? (
-          <>
-            {' · '}
-            <a
-              className="gc-spec-pr"
-              href="#"
-              data-pr={spec.prNumber}
-            >
-              {`PR #${spec.prNumber}`}
-            </a>
-          </>
-        ) : null}
+        {/* One sentence per shape, so the name, the version, the date and
+            the link keep their order in the language on screen. */}
+        <RichMessage
+          id={spec.sharedByUnknown
+            ? (spec.built
+              ? (spec.prNumber ? 'chat:group.specCard.sharedBySomeoneBuiltPr' : 'chat:group.specCard.sharedBySomeoneBuilt')
+              : (spec.prNumber ? 'chat:group.specCard.sharedBySomeonePr' : 'chat:group.specCard.sharedBySomeone'))
+            : (spec.built
+              ? (spec.prNumber ? 'chat:group.specCard.sharedByBuiltPr' : 'chat:group.specCard.sharedByBuilt')
+              : (spec.prNumber ? 'chat:group.specCard.sharedByPr' : 'chat:group.specCard.sharedBy'))}
+          values={{ name: spec.sharedBy, version: spec.version, built: spec.built, number: spec.prNumber }}
+          components={[
+            <strong />,
+            <a className="gc-spec-pr" href="#" data-pr={spec.prNumber ?? undefined} />,
+          ]}
+        />
       </div>
       {spec.snippetHtml ? <SpecSnippet html={spec.snippetHtml} /> : null}
       {spec.snippetText ? (
@@ -542,7 +551,7 @@ export const SpecShareRow = memo(function SpecShareRow({ msg }: { msg: Transcrip
             }
           }}
         >
-          {loading ? 'Loading…' : 'View full plan'}
+          {loading ? t('chat:group.specCard.loading') : t('chat:group.specCard.view')}
         </button>
       </div>
       <Reactions msg={msg} />
@@ -587,6 +596,8 @@ function MessageActions({ msg, surface, onReportMessage }: {
   surface: 'main' | 'thread';
   onReportMessage: () => void;
 }) {
+  // Subscribed: the menu's labels are read in the language on screen.
+  useMessages('chat');
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
   const bar = useRef<HTMLDivElement>(null);
@@ -643,55 +654,55 @@ export function messageMenuItems(
   const items: MenuItem[] = [];
   // B9: hand one of your own messages to Homeroom bot, in your words.
   if (surface === 'main' && msg.canAskBot) {
-    items.push({ key: 'ask-bot', label: 'Make this a request', icon: ChatIcon, onSelect: () => { void chat?.makeBotRequest?.(id); } });
+    items.push({ key: 'ask-bot', label: translate('chat:group.menu.makeRequest'), icon: ChatIcon, onSelect: () => { void chat?.makeBotRequest?.(id); } });
   }
   if (surface === 'main' && msg.canThread) {
-    items.push({ key: 'thread', label: msg.thread ? 'View thread' : 'Reply in thread', icon: ThreadIcon, onSelect: () => chat?.openReplyThread?.(id) });
+    items.push({ key: 'thread', label: msg.thread ? translate('chat:group.menu.viewThread') : translate('chat:group.menu.replyInThread'), icon: ThreadIcon, onSelect: () => chat?.openReplyThread?.(id) });
   }
-  if (msg.showEdit) items.push({ key: 'edit', label: 'Edit message', icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
-  if (msg.text) items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', 'Message text copied'); } });
+  if (msg.showEdit) items.push({ key: 'edit', label: translate('chat:group.menu.edit'), icon: PencilSquareIcon, onSelect: () => chat?._startEdit?.(id) });
+  if (msg.text) items.push({ key: 'copy', label: translate('chat:group.menu.copyText'), icon: CopyIcon, onSelect: () => { void copyToClipboard(msg.text || '', translate('chat:group.menu.textCopied')); } });
   // #4055: its pictures onto the device, whoever posted them.
   const pictures = downloadableImages((msg.attachments || []).filter((att) => att.kind === 'image').map((att) => ({ src: att.url, name: att.name })));
   if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
   const link = chat?.messageAddress?.(id);
-  if (link) items.push({ key: 'link', label: 'Copy link to message', icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), 'Link copied'); } });
+  if (link) items.push({ key: 'link', label: translate('chat:group.menu.copyLink'), icon: LinkIcon, onSelect: () => { void copyToClipboard(absoluteLink(link), translate('chat:group.menu.linkCopied')); } });
   if (!msg.mine && surface === 'main') {
     items.push({
-      key: 'unread', label: 'Mark unread', icon: EnvelopeIcon,
-      onSelect: () => { Promise.resolve(chat?.markUnread?.(id)).then(() => toast('Marked unread')).catch(() => toast('Couldn’t mark this unread.')); },
+      key: 'unread', label: translate('chat:group.menu.markUnread'), icon: EnvelopeIcon,
+      onSelect: () => { Promise.resolve(chat?.markUnread?.(id)).then(() => toast(translate('chat:group.menu.markedUnread'))).catch(() => toast(translate('chat:group.menu.markUnreadFailed'))); },
     });
   }
   if (msg.mine && msg.kind === 'message') {
     items.push({
-      key: 'delete', label: 'Delete message', icon: DraftTrashIcon, danger: true, separated: true,
+      key: 'delete', label: translate('chat:group.menu.delete'), icon: DraftTrashIcon, danger: true, separated: true,
       // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
       onSelect: () => {
         void confirmAction({
-          title: 'Delete this message?',
-          message: 'Everyone will see “Message deleted” in its place. This can’t be undone.',
-          confirmLabel: 'Delete',
+          title: translate('chat:group.deleteConfirm.title'),
+          message: translate('chat:group.deleteConfirm.message'),
+          confirmLabel: translate('chat:group.deleteConfirm.confirm'),
           danger: true,
         }).then((ok) => {
           if (!ok) return;
-          Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast('Couldn’t delete this message.'));
+          Promise.resolve(chat?.deleteMessage?.(id)).catch(() => toast(translate('chat:group.menu.deleteFailed')));
         });
       },
     });
   } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
-    items.push({ key: 'report', label: 'Report message', icon: FlagIcon, separated: true, onSelect: onReportMessage });
+    items.push({ key: 'report', label: translate('chat:group.menu.report'), icon: FlagIcon, separated: true, onSelect: onReportMessage });
     items.push({
-      key: 'block', label: `Block @${msg.username}`, icon: NoSymbolIcon, danger: true,
+      key: 'block', label: msg.usernameMissing ? translate('chat:group.menu.blockUnknown') : translate('chat:group.menu.block', { username: msg.username }), icon: NoSymbolIcon, danger: true,
       onSelect: () => {
         const senderId = msg.senderId;
         if (!senderId) return;
         void confirmAction({
-          title: `Block @${msg.username}?`,
-          message: 'Their messages in Messages and app discussions will be hidden.',
-          confirmLabel: 'Block',
+          title: msg.usernameMissing ? translate('chat:group.blockConfirm.titleUnknown') : translate('chat:group.blockConfirm.title', { username: msg.username }),
+          message: translate('chat:group.blockConfirm.message'),
+          confirmLabel: translate('chat:group.blockConfirm.confirm'),
           danger: true,
         }).then((ok) => {
           if (!ok) return;
-          setUserBlocked(senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : 'Couldn’t block this person.'));
+          setUserBlocked(senderId, true).catch((error) => window.alert(error instanceof Error ? error.message : translate('chat:group.menu.blockFailed')));
         });
       },
     });
@@ -715,6 +726,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   /** #2387: this row's reply thread is the one open beside the channel, which lights its chip. */
   threadOpen?: boolean;
 }) {
+  const t = useMessages('chat');
   const [sheet, setSheet] = useState(false);
   const recents = useRecentReactions();
   const chat = controller();
@@ -724,12 +736,12 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   // appear. Nothing is asked for a row without a picture.
   useCanSaveImage((msg.attachments || []).find((att) => att.kind === 'image')?.url || '');
   const longPress = useLongPress(() => setSheet(true), { disabled: !live });
-  const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: `Message from @${msg.username}`, userId: msg.senderId });
+  const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: msg.usernameMissing ? t('chat:group.report.labelUnknown') : t('chat:group.report.label', { username: msg.username }), userId: msg.senderId });
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
   const items = live ? messageMenuItems(msg, surface, reportMessage) : [];
   const sheetItems: MenuItem[] = live ? [
-    ...(!chat?._readOnly?.() ? [{ key: 'reply', label: 'Reply', icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
-    ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? 'Unsave' : 'Save', icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
+    ...(!chat?._readOnly?.() ? [{ key: 'reply', label: t('chat:group.sheet.reply'), icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
+    ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? t('chat:group.sheet.unsave') : t('chat:group.sheet.save'), icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
     ...items,
   ] : [];
   return (
@@ -739,6 +751,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       gutter={grouped ? <span className="gc-msg-gutter-time" title={msg.timeTitle}>{timeOfDay(msg.at) || msg.time}</span> : undefined}
       data-msg-id={msg.id ?? ''}
       data-username={msg.username}
+      data-username-missing={msg.usernameMissing ? '' : undefined}
       // #2236: only when set, so an ordinary row's attribute set is exactly
       // what it was.
       {...(msg.postedVia ? { 'data-posted-via': msg.postedVia } : {})}
@@ -750,7 +763,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       )}
       name={(
         <>
-          {msg.unread ? <span className="gc-unread-dot" aria-label="Unread mention" /> : null}
+          {msg.unread ? <span className="gc-unread-dot" aria-label={t('chat:group.row.unreadMention')} /> : null}
           <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{msg.username}</span>
           <PostedViaChip via={msg.postedVia} className="ml-1.5" />
         </>
@@ -759,13 +772,13 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
         <>
           <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
           {msg.editedTitle && !msg.deleted ? (
-            <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
+            <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
           ) : null}
         </>
       )}
       actions={live ? <MessageActions msg={msg} surface={surface} onReportMessage={reportMessage} /> : undefined}
     >
-      {msg.deleted ? <p className="gc-msg-deleted-text">Message deleted</p> : (
+      {msg.deleted ? <p className="gc-msg-deleted-text">{t('chat:group.row.deleted')}</p> : (
         <>
           {msg.quote ? <QuoteBlock quote={msg.quote} /> : null}
           <Body html={msg.bodyHtml} />
@@ -806,7 +819,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
             </Button>
           ) : null}
           {grouped && msg.editedTitle ? (
-            <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
+            <span className="gc-msg-edited" title={msg.editedTitle}>{t('chat:group.row.edited')}</span>
           ) : null}
           <Reactions msg={msg} />
           {/* B9: the card under your own message that asked Homeroom bot, yours alone. */}
@@ -837,6 +850,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           lastReply={msg.thread.lastReply ? {
             face: <ReplyFace name={msg.thread.lastReply.name} />,
             name: msg.thread.lastReply.name,
+            ...(msg.thread.lastReply.unnamed ? { unnamed: 'someone' as const } : {}),
             text: msg.thread.lastReply.text,
           } : null}
           onOpen={() => chat?.openReplyThread?.(msg.id)}
@@ -956,11 +970,13 @@ function renderRow(msg: TranscriptMessage, fallbackKey: string, main = false, ch
  * it carries none of the row's controls.
  */
 const GitHubRow = memo(function GitHubRow({ msg }: { msg: TranscriptMessage }) {
+  const t = useMessages('project');
   return (
     <ChatMessageRow
       className="gc-msg gc-msg-github"
       data-github-comment={msg.key || ''}
       data-username={msg.username}
+      data-username-missing={msg.usernameMissing ? '' : undefined}
       avatar={(
         <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
           {displayName(msg.username).charAt(0).toUpperCase()}
@@ -968,10 +984,13 @@ const GitHubRow = memo(function GitHubRow({ msg }: { msg: TranscriptMessage }) {
       )}
       name={displayName(msg.username)}
       timestamp={(
-        <>
-          {msg.time ? <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span> : null}
-          <span className="gc-msg-via">{msg.time ? ' · on GitHub' : 'on GitHub'}</span>
-        </>
+        msg.time ? (
+          <RichMessage
+            id="project:topic.request.stream.timeOnGitHub"
+            values={{ time: msg.time }}
+            components={[<span className="gc-msg-time" title={msg.timeTitle} />, <span className="gc-msg-via" />]}
+          />
+        ) : <span className="gc-msg-via">{t('project:topic.request.stream.onGitHub')}</span>
       )}
     >
       <Body html={msg.bodyHtml} />
@@ -989,17 +1008,24 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
   const spec = msg.kind === 'spec_share' ? msg.specShare : null;
   const gh = msg.kind === 'github' ? msg.githubSpec : null;
   const claim = /^(\S+) claimed this (?:issue|request)$/.exec((msg.systemText || '').trim());
+  const t = useMessages('project');
+  const tChat = useMessages('chat');
   let glyph = '•';
   let text: ReactNode = msg.systemText;
+  // Each line is one whole message, with <0> around who did it.
   if (spec) {
     glyph = '📋';
-    text = <><b>{spec.sharedBy}</b>{` posted plan v${spec.version}`}</>;
+    text = spec.sharedByUnknown
+      ? <RichMessage id="project:topic.request.stream.postedSpecVersionUnnamed" values={{ version: spec.version }} components={[<b />]} />
+      : <RichMessage id="project:topic.request.stream.postedSpecVersion" values={{ author: spec.sharedBy, version: spec.version }} components={[<b />]} />;
   } else if (gh) {
     glyph = '📋';
-    text = <><b>{displayName(msg.username)}</b>{' posted a plan'}</>;
+    text = msg.usernameMissing
+      ? <RichMessage id="project:topic.request.stream.postedSpecSystem" components={[<b />]} />
+      : <RichMessage id="project:topic.request.stream.postedSpec" values={{ author: displayName(msg.username) }} components={[<b />]} />;
   } else if (claim) {
     glyph = '✋';
-    text = <><b>{claim[1]}</b>{' started working on this'}</>;
+    text = <RichMessage id="project:topic.request.stream.claimed" values={{ member: claim[1] }} components={[<b />]} />;
   }
   return (
     <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-request-event={spec || gh ? 'spec' : claim ? 'claim' : 'notice'}>
@@ -1007,9 +1033,9 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
       <span className="dev-request-event-text">
         {text}
         {msg.repeat && msg.repeat > 1 ? (
-          <span className="gc-msg-system-repeat" title={`Posted ${msg.repeat} times in a row; this is the latest`}>{` · ×${msg.repeat}`}</span>
+          <span className="gc-msg-system-repeat" title={tChat('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
         ) : null}
-        {onRead ? <>{' · '}<button type="button" className="dev-request-event-link" onClick={onRead}>Read</button></> : null}
+        {onRead ? <>{' · '}<button type="button" className="dev-request-event-link" onClick={onRead}>{t('project:topic.request.stream.read')}</button></> : null}
         {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
       </span>
     </div>
@@ -1026,6 +1052,7 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
  * posting twice, so it is left out (../dev-board/topic/request-model.ts).
  */
 export function RequestRows({ view }: { view: TranscriptView }) {
+  const t = useMessages('project');
   const stream = useMemo(() => requestStream(foldRepeats(view.messages)), [view.messages]);
   const specs = stream.specs;
   const count = replyCount(stream.rows);
@@ -1066,12 +1093,12 @@ export function RequestRows({ view }: { view: TranscriptView }) {
   return (
     <>
       <div className="messages-reply-count" data-request-replies={count}>
-        <span>{count ? `${count} ${count === 1 ? 'reply' : 'replies'}` : loaded ? 'No replies yet' : 'Loading replies…'}</span>
+        <span>{count ? t('project:topic.request.stream.replies', { count }) : loaded ? t('project:topic.request.stream.noReplies') : t('project:topic.request.stream.loading')}</span>
       </div>
       {view.lead.earlier ? (
         <div className="text-center py-1">
           <button type="button" id="gc-thread-earlier" className="messages-load-older" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
-            Load earlier replies
+            {t('project:topic.request.stream.loadEarlier')}
           </button>
         </div>
       ) : null}
@@ -1079,8 +1106,12 @@ export function RequestRows({ view }: { view: TranscriptView }) {
         <div className="dev-request-event dev-request-gh-more">
           <span className="dev-request-event-glyph" aria-hidden="true">•</span>
           <span className="dev-request-event-text">
-            {'Earlier GitHub comments aren’t shown here. '}
-            {more.url ? <a href={more.url} target="_blank" rel="noopener" className="dev-request-event-link">Read them on GitHub</a> : null}
+            {more.url ? (
+              <RichMessage
+                id="project:topic.request.stream.earlierOnGitHub"
+                components={[<a href={more.url} target="_blank" rel="noopener" className="dev-request-event-link" />]}
+              />
+            ) : t('project:topic.request.stream.earlierNotShown')}
           </span>
         </div>
       ) : null}
@@ -1088,7 +1119,7 @@ export function RequestRows({ view }: { view: TranscriptView }) {
         <div role="alert" className="gc-history-error flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
           <span>{view.lead.error}</span>
           <Button type="button" variant="neutral" size="xsText" ink="neutral" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
-            Try again
+            {t('core:common.tryAgain')}
           </Button>
         </div>
       ) : null}
@@ -1105,6 +1136,8 @@ export function RequestRows({ view }: { view: TranscriptView }) {
  * alike. `.gc-msg-system` keeps the module's row hooks.
  */
 const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage }) {
+  const t = useMessages('project');
+  const tChat = useMessages('chat');
   const line = changeLine(msg);
   if (!line) return null;
   const sessionId = Number(msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
@@ -1112,14 +1145,16 @@ const ChangeEvent = memo(function ChangeEvent({ msg }: { msg: TranscriptMessage 
     <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind}>
       <span className="dev-request-event-glyph" aria-hidden="true">{line.glyph}</span>
       <span className="dev-request-event-text">
-        {line.actor ? <b>{line.actor}</b> : null}
-        {line.text}
-        {line.reason ? <span className="dev-change-event-reason">{`: “${line.reason}”`}</span> : null}
+        {/* A line the page words is one whole message: <0> is who did it,
+            <1> a vote's reason. */}
+        {line.id
+          ? <RichMessage id={line.id} values={line.values} components={[<b />, <span className="dev-change-event-reason" />]} />
+          : line.text}
         {msg.repeat && msg.repeat > 1 ? (
-          <span className="gc-msg-system-repeat" title={`Posted ${msg.repeat} times in a row; this is the latest`}>{` · ×${msg.repeat}`}</span>
+          <span className="gc-msg-system-repeat" title={tChat('chat:group.row.repeated', { count: msg.repeat })}>{` · ×${msg.repeat}`}</span>
         ) : null}
         {line.tryIt && sessionId ? (
-          <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => (window as any).AppView?._tryChangePreview?.(sessionId)}>Try it</button></>
+          <>{' · '}<button type="button" className="dev-request-event-link" onClick={() => (window as any).AppView?._tryChangePreview?.(sessionId)}>{t('project:topic.change.stream.tryIt')}</button></>
         ) : null}
         {msg.time ? <span className="dev-request-event-time" title={msg.timeTitle}>{` · ${msg.time}`}</span> : null}
       </span>
@@ -1140,10 +1175,11 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
   const count = changeReplyCount(rows);
   const lead = view.lead.change;
   const loaded = !!lead?.loaded;
+  const t = useMessages('project');
   if (lead?.closed) {
     return (
       <>
-        <div className="messages-reply-count" data-change-replies="0"><span>No replies yet</span></div>
+        <div className="messages-reply-count" data-change-replies="0"><span>{t('project:topic.change.stream.noReplies')}</span></div>
         <p className="dev-change-closed-note">{lead.closed}</p>
       </>
     );
@@ -1168,12 +1204,12 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
   return (
     <>
       <div className="messages-reply-count" data-change-replies={count}>
-        <span>{count ? `${count} ${count === 1 ? 'reply' : 'replies'}` : loaded ? 'No replies yet' : 'Loading replies…'}</span>
+        <span>{count ? t('project:topic.change.stream.replies', { count }) : loaded ? t('project:topic.change.stream.noReplies') : t('project:topic.change.stream.loading')}</span>
       </div>
       {view.lead.earlier ? (
         <div className="text-center py-1">
           <button type="button" id="gc-thread-earlier" className="messages-load-older" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
-            Load earlier replies
+            {t('project:topic.change.stream.loadEarlier')}
           </button>
         </div>
       ) : null}
@@ -1181,7 +1217,7 @@ export function ChangeRows({ view }: { view: TranscriptView }) {
         <div role="alert" className="gc-history-error flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
           <span>{view.lead.error}</span>
           <Button type="button" variant="neutral" size="xsText" ink="neutral" onClick={() => controller()?.loadThreadHistoryForOpen?.()}>
-            Try again
+            {t('core:common.tryAgain')}
           </Button>
         </div>
       ) : null}
@@ -1259,6 +1295,7 @@ export function TranscriptRows({ view, source }: {
   view: TranscriptView;
   source: string;
 }) {
+  const t = useMessages('chat');
   const main = source === 'main';
   // A change page's Discussion (`lead.language === 'chat'`) keeps every row,
   // as a thread does, and draws each in the general chat's language — and
@@ -1333,7 +1370,7 @@ export function TranscriptRows({ view, source }: {
       const replies = rows.length - i - 1;
       drawn.push(
         <div key="reply-count" className="gc-reply-count">
-          <span>{replies ? `${replies} ${replies === 1 ? 'reply' : 'replies'}` : 'No replies yet'}</span>
+          <span>{replies ? t('chat:group.thread.replies', { count: replies }) : t('chat:group.thread.noReplies')}</span>
         </div>,
       );
     }
@@ -1348,7 +1385,7 @@ export function TranscriptRows({ view, source }: {
             className="gc-vote-btn"
             onClick={() => controller()?.loadThreadHistoryForOpen?.()}
           >
-            Load earlier
+            {t('chat:group.history.loadEarlier')}
           </button>
         </div>
       ) : null}
@@ -1374,7 +1411,7 @@ export function TranscriptRows({ view, source }: {
             ink="neutral"
             onClick={() => (main ? controller()?.loadHistory?.() : controller()?.loadThreadHistoryForOpen?.())}
           >
-            Try again
+            {t('core:common.tryAgain')}
           </Button>
         </div>
       ) : null}

@@ -22,6 +22,8 @@ import { useState, type MouseEvent, type ReactNode } from 'react';
 
 import { ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { PageBack } from './page-back';
 import { WorkList, type CardRow, type TopicRef } from './work-row';
 import type { SinceWeek } from './workshop';
@@ -45,14 +47,14 @@ export function weekDate(ms: number): string {
  * now" for the one that has not finished, whose end is the current instant.
  */
 export function weekRange(startMs: number, endMs: number, live?: boolean): string {
-  if (live) return `${weekDate(startMs)} → now`;
-  return `${weekDate(startMs)} – ${weekDate(endMs - 86400000)}`;
+  if (live) return translate('project:since.week.rangeLive', { start: weekDate(startMs) });
+  return translate('project:since.week.range', { start: weekDate(startMs), end: weekDate(endMs - 86400000) });
 }
 
 /** A week's name: "This week", "Last week", or its dates. */
 export function weekName(week: Pick<SinceWeek, 'title' | 'key' | 'startMs' | 'endMs'>): string {
   if (week.title) return week.title;
-  if (week.key === 'lastWeek') return 'Last week';
+  if (week.key === 'lastWeek') return translate('project:weeks.lastWeek');
   return weekRange(week.startMs, week.endMs);
 }
 
@@ -62,9 +64,9 @@ export function weekFresh(week: Pick<SinceWeek, 'fresh'>): CardRow[] {
 }
 
 /** How many changes went live in the week, where the server can stand behind it. */
-function weekLive(week: SinceWeek): string | null {
+function weekLive(week: SinceWeek): { count: number; partial: boolean } | null {
   if (!week.counts || !week.counts.closed) return null;
-  return week.counts.partial ? `${week.counts.closed}+` : String(week.counts.closed);
+  return { count: week.counts.closed, partial: !!week.counts.partial };
 }
 
 export interface WeekGroup {
@@ -83,11 +85,11 @@ export function weekGroups(week: SinceWeek): WeekGroup[] {
   const fresh = weekFresh(week);
   const freshKeys = new Set(fresh.map((r) => r.key));
   const groups: WeekGroup[] = [
-    { key: 'new', title: 'New since your last visit', rows: fresh },
-    { key: 'votes', title: 'Waiting for votes', rows: [] },
-    { key: 'live', title: 'Went live', rows: [] },
-    { key: 'requests', title: 'New requests', rows: [] },
-    { key: 'worked', title: 'Being worked on', rows: [] },
+    { key: 'new', title: translate('project:weekPage.group.new'), rows: fresh },
+    { key: 'votes', title: translate('project:weekPage.group.votes'), rows: [] },
+    { key: 'live', title: translate('project:weekPage.group.live'), rows: [] },
+    { key: 'requests', title: translate('project:weekPage.group.requests'), rows: [] },
+    { key: 'worked', title: translate('project:weekPage.group.worked'), rows: [] },
   ];
   const by = (k: WeekGroup['key']) => groups.find((g) => g.key === k)!;
   for (const r of [...week.fresh, ...week.seen]) {
@@ -110,6 +112,7 @@ function Group({ group, slug, openKey, onOpen }: {
   openKey: string | null;
   onOpen: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
 }): ReactNode {
+  const t = useMessages('project');
   const [all, setAll] = useState(false);
   const extra = group.rows.length - WEEK_GROUP_FIRST;
   return (
@@ -122,7 +125,7 @@ function Group({ group, slug, openKey, onOpen }: {
       {extra > 0 && !all ? (
         <button type="button" className="dev-ws-reveal touch-target-32" data-ws-week-group-more="" onClick={() => setAll(true)}>
           <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          {`Show all ${group.rows.length}`}
+          {t('project:weekPage.group.showAll', { count: group.rows.length })}
         </button>
       ) : null}
     </section>
@@ -137,18 +140,33 @@ export function WeekPage({ week, slug, openKey, onOpen, onBack }: {
   onOpen: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
   onBack: () => void;
 }): ReactNode {
+  const t = useMessages('project');
   const live = weekLive(week);
   const groups = weekGroups(week);
+  const liveBold = [<b className="dev-ws-week-live" />];
+  const start = weekDate(week.startMs);
+  const end = weekDate(week.endMs - 86400000);
   return (
     <div className="dev-ws-weekpage" data-ws-week-page={week.key}>
-      <PageBack label="Workshop" title={weekName(week)} onBack={onBack} />
+      <PageBack label={t('project:weekPage.back')} title={weekName(week)} onBack={onBack} />
       <section className="dev-ws-strip" data-ws-week-top="">
         <p className="dev-ws-week-meta">
-          {weekRange(week.startMs, week.endMs, week.live)}
-          {live ? <>{' · '}<b className="dev-ws-week-live">{live}</b> live</> : null}
+          {!live ? weekRange(week.startMs, week.endMs, week.live) : week.live ? (
+            <RichMessage
+              id={live.partial ? 'project:weekPage.meta.nowLiveAtLeast' : 'project:weekPage.meta.nowLive'}
+              values={{ start, count: live.count }}
+              components={liveBold}
+            />
+          ) : (
+            <RichMessage
+              id={live.partial ? 'project:weekPage.meta.rangeLiveAtLeast' : 'project:weekPage.meta.rangeLive'}
+              values={{ start, end, count: live.count }}
+              components={liveBold}
+            />
+          )}
         </p>
         {week.line ? <p className="dev-ws-week-lead" data-ws-week-line="">{week.line}</p> : null}
-        {!groups.length ? <p className="dev-ws-none">Nothing in this week is on the board any more.</p> : null}
+        {!groups.length ? <p className="dev-ws-none">{t('project:weekPage.none')}</p> : null}
       </section>
       {groups.map((g) => <Group key={g.key} group={g} slug={slug} openKey={openKey} onOpen={onOpen} />)}
     </div>
@@ -157,6 +175,7 @@ export function WeekPage({ week, slug, openKey, onOpen, onBack }: {
 
 /** One week, as one row of the Week by week list. */
 export function WeekRow({ week, onOpen }: { week: SinceWeek; onOpen: () => void }): ReactNode {
+  const t = useMessages('project');
   const live = weekLive(week);
   const fresh = weekFresh(week).length;
   const name = weekName(week);
@@ -167,11 +186,19 @@ export function WeekRow({ week, onOpen }: { week: SinceWeek; onOpen: () => void 
         <span className="dev-ws-week-head">
           <b>{name}</b>
           {dated ? null : <span>{weekRange(week.startMs, week.endMs, week.live)}</span>}
-          {fresh ? <span className="dev-ws-week-fresh">{`${fresh} new`}</span> : null}
+          {fresh ? <span className="dev-ws-week-fresh">{t('project:weeks.row.fresh', { count: fresh })}</span> : null}
         </span>
         {week.line ? <span className="dev-ws-week-line">{week.line}</span> : null}
       </span>
-      {live ? <span className="dev-ws-week-n"><b>{live}</b> live</span> : null}
+      {live ? (
+        <span className="dev-ws-week-n">
+          <RichMessage
+            id={live.partial ? 'project:weeks.row.liveAtLeast' : 'project:weeks.row.live'}
+            values={{ count: live.count }}
+            components={[<b />]}
+          />
+        </span>
+      ) : null}
       <ChevronRightIcon className="dev-ws-wrow-chev" aria-hidden="true" />
     </button>
   );

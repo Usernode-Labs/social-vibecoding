@@ -1,5 +1,6 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { CliSetupGuide } from '../cli-setup-guide';
 import { CliTokensList } from '../cli-tokens-list';
 
@@ -12,11 +13,14 @@ import { CliTokensList } from '../cli-tokens-list';
  * App-AI and agent-files panes already have.
  */
 export function CliSection() {
+  // Subscribed: settings.js toggles #cli-tokens-more's `hidden` and writes the
+  // status line, and replaces no text node this component rendered.
+  const t = useMessages('settings');
   return (
     <div data-settings-section="cli" className="hidden">
       <div id="cli-tokens-section">
-        <SectionHeading title={<>CLI &amp; coding-agent access</>}>
-          Credentials approved for the Homeroom CLI, Codex, Claude Code, or OpenCode. Revoking an active credential takes effect immediately.
+        <SectionHeading title={<>{t('settings:cli.title')}</>}>
+          {t('settings:cli.intro')}
         </SectionHeading>
         <CliSetupGuide />
         <div id="cli-tokens-list" className="space-y-2">
@@ -27,7 +31,7 @@ export function CliSection() {
           type="button"
           className="hidden mt-3 rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
         >
-          Load more
+          {t('settings:cli.tokens.loadMore')}
         </button>
         <StatusLine id="cli-tokens-status" size="xs" />
       </div>

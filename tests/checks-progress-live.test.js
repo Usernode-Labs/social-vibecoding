@@ -354,6 +354,7 @@ function makeAppView() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${SESSION_TRANSCRIPT_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -830,6 +831,7 @@ test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in 
   }
   const ctx = { module: {}, console, connectionExhaustionMessage: () => '', ROLLOUT_RETRY_DETAIL: '' };
   ctx.globalThis = ctx;
+  ctx.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
   const rows = JSON.parse(JSON.stringify(ctx.__rows('me')));
@@ -1036,6 +1038,30 @@ test('the board card and the running badge carry the live count', () => {
   const css = read('public/css/app.css');
   assert.match(css, /\.checks-chip-bar-busy \{[\s\S]*?dev-ledger-progress-pulse/, 'the pulse is the ledger bar\'s own');
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.checks-chip-bar-busy \{ animation: none; \}/, 'still under reduced motion');
+  // Every word on the chip and its bar is read from the catalog: the label,
+  // and the count and tooltip, a whole message for each of the bar's cases.
+  const src = APP_VIEW_SRC;
+  assert.match(src, /label: fresh \? PlatformI18n\.t\('changes:badge\.tag\.checksStarting'\) : PlatformI18n\.t\('changes:badge\.tag\.checks'\),/);
+  assert.match(src, /text: PlatformI18n\.t\('changes:chips\.checks\.progress\.of', \{ done, count: bar\.expected \}\)/);
+  assert.match(src, /\? PlatformI18n\.t\('changes:chips\.checks\.progress\.soFar', \{ count: live\.bar\.ran \}\)\s*: PlatformI18n\.t\('changes:chips\.checks\.progress\.starting'\);/);
+  assert.match(src, /title: AppView\._checksChipTitle\(live, progress\),/);
+  const { message } = require('./lib/platform-i18n');
+  assert.equal(message('changes:badge.tag.checks'), 'Checks');
+  assert.equal(message('changes:badge.tag.checksStarting'), 'Checks starting…');
+  assert.equal(message('changes:chips.checks.label'), 'Checks');
+  assert.equal(message('changes:chips.checks.running'), 'Checks running…');
+  assert.equal(message('changes:chips.checks.runningRan', { ran: 7 }), 'Checks running… 7');
+  assert.equal(message('changes:chips.checks.progress.of', { done: 12, count: 523 }), '12 of 523 checks done');
+  assert.equal(message('changes:chips.checks.progress.soFar', { count: 7 }), '7 checks done so far');
+  assert.equal(message('changes:chips.checks.progress.starting'), 'Checks starting');
+  assert.equal(message('changes:chips.checks.progressTitle.of', { done: 12, count: 523 }),
+    '12 of 523 checks done. Automated tests are still running on the staging build. Merge is blocked until they pass.');
+  assert.equal(message('changes:chips.checks.progressTitle.soFar', { count: 7 }),
+    '7 checks done so far. Automated tests are still running on the staging build. Merge is blocked until they pass.');
+  assert.equal(message('changes:chips.checks.progressTitle.starting'),
+    'Checks starting. Automated tests are still running on the staging build. Merge is blocked until they pass.');
+  assert.equal(message('changes:chips.checks.runningTitle'),
+    'Automated tests are still running on the staging build. Merge is blocked until they pass.');
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {

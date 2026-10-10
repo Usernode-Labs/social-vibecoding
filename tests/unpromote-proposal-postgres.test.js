@@ -397,12 +397,18 @@ test('the proposal menu and detail view offer the move to the author only', () =
   const menu = APP_VIEW_SRC.match(/_proposalMenuItems\(pr, state\) \{[\s\S]*?\n  \},/);
   assert.ok(menu);
   assert.match(menu[0],
-    /if \(st\.mine && !ro && !isMerged && !isMerging && pr\.status === 'promoted'\) \{\s*items\.push\(\{\s*label: 'Move back to Underway'/);
-  assert.match(APP_VIEW_SRC, /key: 'unpromote', cls: 'gc-vote-btn', label: 'Move back to Underway'/);
+    /if \(st\.mine && !ro && !isMerged && !isMerging && pr\.status === 'promoted'\) \{\s*items\.push\(\{\s*label: PlatformI18n\.t\('changes:proposal\.menu\.moveBack'\)/);
+  assert.equal(require('./lib/platform-i18n').message('changes:proposal.menu.moveBack'), 'Move back to Underway');
+  assert.match(APP_VIEW_SRC, /key: 'unpromote', cls: 'gc-vote-btn', label: PlatformI18n\.t\('changes:card\.actions\.moveBack'\)/);
+  assert.equal(require('./lib/platform-i18n').message('changes:card.actions.moveBack'), 'Move back to Underway');
   assert.match(APP_VIEW_SRC, /fetch\(`\/api\/sessions\/\$\{sessionId\}\/unpromote`, \{ method: 'POST' \}\)/,
     'the client path is spelled literally so the Global Chat inventory can see it');
   const fn = APP_VIEW_SRC.match(/async unpromoteProposal\(sessionId\) \{[\s\S]*?\n  \},/);
   assert.ok(fn);
-  assert.match(fn[0], /Its votes are cleared and it cannot be merged until you propose it again/);
+  // The confirm copy is read from the catalog.
+  assert.match(fn[0], /message: PlatformI18n\.t\('changes:proposal\.moveBack\.message', \{ number: prNum \}\),/);
+  const confirmCopy = require('./lib/platform-i18n').message('changes:proposal.moveBack.message', { number: 7 });
+  assert.match(confirmCopy, /Its votes are cleared and it cannot be merged until you propose it again/);
   assert.doesNotMatch(fn[0], /—/, 'no em dashes in the confirm copy');
+  assert.doesNotMatch(confirmCopy, /—/, 'no em dashes in the confirm copy');
 });

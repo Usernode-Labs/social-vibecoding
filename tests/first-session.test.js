@@ -14,6 +14,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -21,7 +22,9 @@ const DIR = 'frontend/src/features/first-session';
 const GC_FORM_SRC = 'frontend/src/features/group-chat/composer.tsx';
 
 test('the invited tour: nine steps, each screen whole or the tap that leads on, ending in Discussion', () => {
-  const { invitedSteps, MENU_TEXT, SUGGEST_TEXT } = loadTsx(`${DIR}/tour-steps.ts`);
+  // MENU_TEXT and SUGGEST_TEXT are message ids; the words are the catalog's.
+  const { invitedSteps, MENU_TEXT: MENU_ID, SUGGEST_TEXT: SUGGEST_ID } = loadTsx(`${DIR}/tour-steps.ts`);
+  const [MENU_TEXT, SUGGEST_TEXT] = [message(MENU_ID), message(SUGGEST_ID)];
   const steps = invitedSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club' });
   assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'discussion']);
   assert.deepEqual(steps.map((s) => (s.tap ? 'tap' : 'look')), ['tap', 'look', 'tap', 'look', 'tap', 'tap', 'look', 'tap', 'look']);
@@ -52,7 +55,8 @@ test('the invited tour: nine steps, each screen whole or the tap that leads on, 
 });
 
 test('starting a community and joining one share their first seven cards, word for word', () => {
-  const { invitedSteps, makerSteps, SUGGEST_TEXT } = loadTsx(`${DIR}/tour-steps.ts`);
+  const { invitedSteps, makerSteps, SUGGEST_TEXT: SUGGEST_ID } = loadTsx(`${DIR}/tour-steps.ts`);
+  const SUGGEST_TEXT = message(SUGGEST_ID);
   const project = { slug: 'sunday-run-club', name: 'Sunday Run Club', conversationId: 4 };
   assert.deepEqual(makerSteps(project).slice(0, 7), invitedSteps(project).slice(0, 7));
   // Never "group" for the people of a community, on any card of any tour.
@@ -70,7 +74,8 @@ test('starting a community and joining one share their first seven cards, word f
 // reader taps the Homeroom mark and the real menu opens, its Suggest button
 // pointed at but not pressed (Next, so no suggestion starts), and ✕ last.
 test('the invited and maker tours open the Homeroom menu for Suggest an improvement, after the app and before ✕', () => {
-  const { invitedSteps, makerSteps, MENU_TEXT, SUGGEST_TEXT, APP_MENU } = loadTsx(`${DIR}/tour-steps.ts`);
+  const { invitedSteps, makerSteps, MENU_TEXT: MENU_ID, SUGGEST_TEXT: SUGGEST_ID, APP_MENU } = loadTsx(`${DIR}/tour-steps.ts`);
+  const [MENU_TEXT, SUGGEST_TEXT] = [message(MENU_ID), message(SUGGEST_ID)];
   assert.equal(APP_MENU, '#apps-switcher-sheet');
   for (const steps of [
     invitedSteps({ slug: 'x', name: 'X' }),
@@ -156,9 +161,11 @@ test('the Communities, Messages and Discover steps point at the bar\'s own tabs,
   // One <a> per tab, its id drawn from its key, inside the one #platform-tabs
   // that app.css lays out as the phone's bottom bar or, from 768px, the rail.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
-  assert.match(bar, /\{ key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon \}/);
-  assert.match(bar, /\{ key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon \}/);
-  assert.match(bar, /\{ key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon \}/);
+  assert.match(bar, /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities', Icon: UserGroupIcon \}/);
+  assert.match(bar, /\{ key: 'messages' as const, label: 'core:tabs\.messages', href: '#messages', Icon: ChatIcon \}/);
+  assert.match(bar, /\{ key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps', Icon: SearchIcon \}/);
+  assert.deepEqual(['communities', 'messages', 'discover'].map((tab) => message(`core:tabs.${tab}`)),
+    ['Communities', 'Messages', 'Discover']);
   assert.match(bar, /id=\{`platform-tab-\$\{key\}`\}/);
   assert.equal((bar.match(/id="platform-tabs"/g) || []).length, 1);
 });
@@ -424,7 +431,8 @@ test('somebody an invite is bringing in is asked to join it once, and not what t
   // Unless the project's page took the link (#3700): its Join settles it.
   assert.match(app, /\} finally \{\s+if \(!deferred\) settle\(joinedHere\);\s+(?:\/\/[^\n]*\n\s*)*if \(held\) App\._endWelcomeHold\(\);\s+\}\s+\},/);
   assert.match(app, /if \(standing\.mine === 'joined' && standing\.slug\) \{\s+joinedHere = true;/);
-  assert.match(app, /toast\(DEAD\[result\.reason\] \|\| 'Could not join\. Try again\.', true\); return; \}\s+joinedHere = true;/);
+  assert.match(app, /toast\(PlatformI18n\.t\(DEAD\[result\.reason\] \|\| 'shell:invite\.couldNotJoin'\), true\); return; \}\s+joinedHere = true;/);
+  assert.equal(message('shell:invite.couldNotJoin'), 'Could not join. Try again.');
   // Join pressed on the link's page, then a password sign-in: no second ask.
   assert.match(app, /pressed = sessionStorage\.getItem\('usernode:invite-join'\) === `\/invite\/\$\{token\}`;\s+sessionStorage\.removeItem\('usernode:invite-join'\);/);
   assert.match(app, /const ok = pressed \? true : window\.ConfirmModal \? await ConfirmModal\.show\(\{/);
@@ -471,9 +479,11 @@ test("You're in says that you joined, and shows the community: its app and its p
   const src = read(`${DIR}/index.tsx`);
   // The welcome, what the community makes, who is in it, and the button.
   // The story was told once, on the invite page; the tour teaches the rest.
-  assert.match(src, /<h1 id="first-session-title"[^>]*>\s+\{`Welcome to \$\{info\.name\}`\}/);
+  assert.match(src, /<h1 id="first-session-title"[^>]*>\s+\{t\('onboarding:firstSession\.welcome\.title', \{ community: info\.name \}\)\}/);
+  assert.equal(message('onboarding:firstSession.welcome.title', { community: 'Page Turners' }), 'Welcome to Page Turners');
   assert.doesNotMatch(src, /Welcome, \$\{who\}|You joined/);
-  assert.match(src, /\{`Go to \$\{info\.name\}`\}/);
+  assert.match(src, /\{t\('onboarding:firstSession\.welcome\.goTo', \{ community: info\.name \}\)\}/);
+  assert.equal(message('onboarding:firstSession.welcome.goTo', { community: 'Page Turners' }), 'Go to Page Turners');
   const youreIn = src.slice(src.indexOf('export function YoureIn('), src.indexOf('export type Mode ='));
   assert.ok(youreIn.length > 200, 'YoureIn is found');
   assert.doesNotMatch(youreIn, /How it works|group|Have a look|On Homeroom|You're in, |JoinedPicture|!`|!'/);
@@ -536,7 +546,8 @@ test('"You\'re in" reads who is in the community itself, and the picture is no l
   assert.match(src, /setCount\(Number\(body\.member_count\) \|\| null\);\s+setDescription\(/);
   assert.match(read('src/routes/apps.js'), /communities\.listMembers\(pool, app\.id, req\.query\.members === 'all' \? 200 : 8\)/);
   // While that is read, the list's place breathes; a read that fails shows no list.
-  assert.match(src, /<SkeletonGroup label="Loading who is in it"/);
+  assert.match(src, /<SkeletonGroup label=\{t\('onboarding:firstSession\.welcome\.loadingPeople'\)\}/);
+  assert.equal(message('onboarding:firstSession.welcome.loadingPeople'), 'Loading who is in it');
   assert.match(src, /\.catch\(\(\) => \{ if \(live\) setMembers\(\[\]\); \}\);/);
   // The inviter's row comes first: both ways in hand over their username.
   assert.match(read('public/js/app.js'), /inviter: standing\.inviter \|\| null,\s+inviterName: standing\.inviterName \|\| standing\.inviter \|\| null,/);
@@ -613,6 +624,7 @@ function followHarness({ fromLanding = true, landed = null, pressed = false, sta
       welcome(info) { events.push(`welcome:${info.slug}`); return true; },
     },
   };
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   const App = vm.runInNewContext(`({ ${methods} })`, sandbox);
   Object.assign(App, {
     INVITE_LANDING_KEY: 'usernode:invite-landing',
@@ -1014,7 +1026,8 @@ test('the maker\'s tour ends on the plan: "working on it" until it is in the cha
   // The open plan card in the chat with the bot, by the state its view draws.
   assert.equal(PLAN_WAITING, '.messages-thread-direct [data-bot-plan="open"]');
   assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan=\{shown\}/);
-  assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan-build=""\s+onClick=\{\(\) => \{ setBuiltHere\(true\); onBuild\?\.\(picked\); \}\}\s*>Build it<\/button>/);
+  assert.equal(message('messages:bot.plan.build'), 'Build it');
+  assert.match(read('frontend/src/features/messages/bot-plan-view.tsx'), /data-bot-plan-build=""\s+onClick=\{\(\) => \{ setBuiltHere\(true\); onBuild\?\.\(picked\); \}\}\s*>\{t\('messages:bot\.plan\.build'\)\}<\/button>/);
   // Read with the cut-out each frame, so the words change when the plan comes.
   const doc = (planShown) => ({
     querySelectorAll: (sel) => (sel === PLAN_WAITING && planShown

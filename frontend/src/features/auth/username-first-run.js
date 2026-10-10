@@ -83,9 +83,9 @@
   // this one value opts back in, writing nothing.
   const SHOT = 'choose-username';
 
-  // The sentence beside the field (#3575). The same words as
-  // USERNAME_PUBLIC_NOTE in ./shared.ts.
-  const PUBLIC_NOTE = 'Your username will be public to other users on Homeroom.';
+  // The sentence beside the field (#3575), as a message id read when the
+  // sheet is built. The same words as USERNAME_PUBLIC_NOTE in ./shared.ts.
+  const PUBLIC_NOTE = 'onboarding:username.publicNote';
 
   const UsernameFirstRun = {
     _presented: false,
@@ -244,7 +244,7 @@
       const panel = el('div', 'px-4 pb-5');
       panel.setAttribute('data-choose-username', '');
       panel.appendChild(el('div', 'text-lg font-bold py-3',
-        forPublic ? 'Pick a username' : 'Choose your username'));
+        forPublic ? PlatformI18n.t('onboarding:username.titleForPublic') : PlatformI18n.t('onboarding:username.title')));
       // The same vocabulary the profile sheet uses for this field
       // (features/profile/profile-edit-sheet.tsx): "your @handle is your
       // sign-in name and your public page address". No promise about
@@ -255,14 +255,12 @@
       panel.appendChild(el('p',
         'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
         forPublic
-          ? 'Public apps show this, not your name. Letters, numbers and ' +
-            'underscores, 3 to 32 characters.'
-          : 'This is your @handle: your sign-in name and your public page ' +
-            'address. Letters, numbers and underscores, 3 to 32 characters.'));
+          ? PlatformI18n.t('onboarding:username.introForPublic')
+          : PlatformI18n.t('onboarding:username.intro')));
 
       const label = el('label',
         'block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1',
-        'Username');
+        PlatformI18n.t('onboarding:username.fieldLabel'));
       label.htmlFor = 'choose-username-input';
       panel.appendChild(label);
 
@@ -276,13 +274,13 @@
       input.maxLength = 32;
       input.spellcheck = false;
       input.setAttribute('autocapitalize', 'none');
-      input.placeholder = 'yourname';
+      input.placeholder = PlatformI18n.t('onboarding:username.placeholder');
       input.setAttribute('aria-describedby', 'choose-username-public');
       panel.appendChild(input);
 
       // #3575: next to the field, who will see what goes in it. Its own
       // line, above the error line, so a refusal never displaces it.
-      const note = el('p', 'text-sm text-zinc-500 dark:text-zinc-400 mt-1', PUBLIC_NOTE);
+      const note = el('p', 'text-sm text-zinc-500 dark:text-zinc-400 mt-1', PlatformI18n.t(PUBLIC_NOTE));
       note.id = 'choose-username-public';
       note.setAttribute('data-choose-username-public', '');
       panel.appendChild(note);
@@ -299,7 +297,7 @@
       const save = el('button',
         'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 mt-2 ' +
         'text-sm font-medium text-white disabled:opacity-60',
-        'Continue');
+        PlatformI18n.t('onboarding:username.submit'));
       save.setAttribute('data-choose-username-save', '');
       panel.appendChild(save);
 
@@ -312,7 +310,7 @@
       if (forPublic) {
         notNow = el('button',
           'w-full rounded-lg px-4 py-2 mt-2 text-sm font-medium text-zinc-600 dark:text-zinc-300',
-          'Not now');
+          PlatformI18n.t('onboarding:username.notNow'));
         notNow.type = 'button';
         notNow.setAttribute('data-choose-username-not-now', '');
         panel.appendChild(notNow);
@@ -331,7 +329,7 @@
 
       const submit = async () => {
         const username = input.value.trim();
-        if (!username) { setError('Enter a username.'); return; }
+        if (!username) { setError(PlatformI18n.t('onboarding:username.error.empty')); return; }
         if (opts && opts.demo) {
           // The screenshot state writes nothing. Same stance as app.js's
           // ?shot=terms-consent, which presents the sheet with a fixture
@@ -354,7 +352,7 @@
             // Somebody already got through on another tab — the gate is
             // done, so close rather than pinning an error nobody can fix.
             if (body.alreadyChosen) { dismiss(); report(true); return; }
-            setError(body.error || 'Could not save that username.');
+            setError(body.error || PlatformI18n.t('onboarding:username.error.notSaved'));
             save.disabled = false;
             input.disabled = false;
             return;
@@ -373,10 +371,10 @@
           }
           dismiss();
           report(true);
-          if (window.PlatformUI) PlatformUI.toast(`You are @${body.username}.`);
+          if (window.PlatformUI) PlatformUI.toast(PlatformI18n.t('onboarding:username.chosenToast', { username: body.username }));
         } catch (err) {
           console.warn('[username-first-run] choose failed:', err);
-          setError('Network error. Try again.');
+          setError(PlatformI18n.t('onboarding:username.error.network'));
           save.disabled = false;
           input.disabled = false;
         }

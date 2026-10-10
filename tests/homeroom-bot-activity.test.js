@@ -29,6 +29,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -161,7 +162,7 @@ test('WP1: a card in words, as the person reads it, in the client\'s own labels'
   const tsx = read(CARD);
   const table = (name) => {
     const body = tsx.slice(tsx.indexOf(`export const ${name}`), tsx.indexOf('};', tsx.indexOf(`export const ${name}`)));
-    return Object.fromEntries([...body.matchAll(/(\w+): '([^']*)'/g)].map((m) => [m[1], m[2].replace(/’/g, '\'')]));
+    return Object.fromEntries([...body.matchAll(/(\w+): '([^']*)'/g)].map((m) => [m[1], (m[2].startsWith('messages:') ? message(m[2]) : m[2]).replace(/’/g, '\'')]));
   };
   assert.deepEqual(table('ACTIVITY_OUTCOME_LABELS'), { ...activity.OUTCOME_LABELS });
   assert.deepEqual(table('ACTIVITY_OUTCOME_TONES'), { ...activity.OUTCOME_TONES });

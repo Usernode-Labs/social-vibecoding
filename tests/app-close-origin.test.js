@@ -146,6 +146,7 @@ function router(start, opts = {}) {
   const h = makeHistory(start, { ...opts, onTopTraversal: () => App._routeFromHash() });
   const noop = () => undefined;
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     location: h.location, history: h.history, URL, URLSearchParams, console, setTimeout, clearTimeout,
     document: {
       title: '',

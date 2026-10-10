@@ -1,0 +1,1250 @@
+{
+  "username.title": {
+    "text": "Choose your username",
+    "description": "Heading of the sheet a new member must answer right after signing in: they pick the username their account will have."
+  },
+  "username.titleForPublic": {
+    "text": "Pick a username",
+    "description": "Heading of the same username sheet when it appears later, before a member who joined by invite opens something public for the first time. They may close this one without answering."
+  },
+  "username.intro": {
+    "text": "This is your @handle: your sign-in name and your public page address. Letters, numbers and underscores, 3 to 32 characters.",
+    "description": "Explanation under the heading on the sheet where a new member chooses a username: what a username is used for and which characters it may have. Keep @handle as written; the username is shown with an @ in front."
+  },
+  "username.introForPublic": {
+    "text": "Public apps show this, not your name. Letters, numbers and underscores, 3 to 32 characters.",
+    "description": "Explanation under the heading on the username sheet shown before a member opens something public: public apps show the username instead of the person's real name, and which characters it may have."
+  },
+  "username.fieldLabel": {
+    "text": "Username",
+    "description": "Label of the text field on the sheet where a member chooses a username."
+  },
+  "username.placeholder": {
+    "text": "yourname",
+    "description": "Placeholder inside the empty username field: an example of what a username looks like. One lower-case word with no spaces, since a username cannot contain spaces."
+  },
+  "username.publicNote": {
+    "text": "Your username will be public to other users on Homeroom.",
+    "description": "Note directly under the username field on the choose-a-username sheet: tells the person that everyone on Homeroom can see the username. Homeroom is the product's name."
+  },
+  "username.submit": {
+    "text": "Continue",
+    "description": "Main button on the choose-a-username sheet: saves the username typed in the field and closes the sheet."
+  },
+  "username.notNow": {
+    "text": "Not now",
+    "description": "Secondary button on the username sheet shown before opening something public: closes the sheet without choosing a username, and the person stays where they were."
+  },
+  "username.error.empty": {
+    "text": "Enter a username.",
+    "description": "Error under the username field when the person presses Continue with the field empty."
+  },
+  "username.error.notSaved": {
+    "text": "Could not save that username.",
+    "description": "Error under the username field when the server refused the username and gave no reason of its own."
+  },
+  "username.error.network": {
+    "text": "Network error. Try again.",
+    "description": "Error under the username field when the request to save the username could not reach the server."
+  },
+  "username.chosenToast": {
+    "text": "You are @{{username}}.",
+    "description": "Brief confirmation shown after a username was saved. {{username}} is the username just chosen; keep the @ directly in front of it."
+  },
+  "communities.welcome": {
+    "text": "Welcome to Homeroom!",
+    "description": "Heading of the first screen a new account sees after choosing a username: a welcome, above a list of communities to join. Homeroom is the product's name."
+  },
+  "communities.intro": {
+    "text": "Homeroom is a place where communities build the apps they use together.",
+    "description": "Sentence under the welcome heading on a new account's first screen: says what Homeroom is. Homeroom is the product's name."
+  },
+  "communities.question": {
+    "text": "What communities do you want to join?",
+    "description": "Question above the list of communities on a new account's first screen. Each community in the list can be ticked to join it."
+  },
+  "communities.listLabel": {
+    "text": "Communities",
+    "description": "Accessible name of the list of communities a new account can tick to join, on its first screen."
+  },
+  "communities.memberCount_one": {
+    "text": "{{memberCount}} member",
+    "description": "Read by screen readers for the number shown at the end of a community's row on the join screen: how many members that community has. {{memberCount}} is the number, already formatted with separators, for example 1,284."
+  },
+  "communities.memberCount_other": {
+    "text": "{{memberCount}} members",
+    "description": "Read by screen readers for the number shown at the end of a community's row on the join screen: how many members that community has. {{memberCount}} is the number, already formatted with separators, for example 1,284."
+  },
+  "communities.footnote": {
+    "text": "You can join or leave any time from Discover, and start your own private or public community once you are in.",
+    "description": "Small print under the list of communities on a new account's first screen. Discover is the name of a tab in the main navigation; write it as that tab is named."
+  },
+  "communities.skip": {
+    "text": "Skip for now",
+    "description": "Quiet button under the main button on the join-communities screen: goes on without joining any community."
+  },
+  "communities.pickOne": {
+    "text": "Pick at least one",
+    "description": "Text of the main button on the join-communities screen while no community is ticked. The button is disabled; the text tells the person to tick one."
+  },
+  "communities.continue": {
+    "text": "Continue",
+    "description": "Text of the main button on the join-communities screen when the only community ticked is Homeroom's own, which the account is already in: goes on to Home without joining anything."
+  },
+  "communities.join_one": {
+    "text": "Join {{count}} community",
+    "description": "Text of the main button on the join-communities screen: joins the communities the person ticked. {{count}} is how many."
+  },
+  "communities.join_other": {
+    "text": "Join {{count}} communities",
+    "description": "Text of the main button on the join-communities screen: joins the communities the person ticked. {{count}} is how many."
+  },
+  "communities.error.notJoined": {
+    "text": "Could not join those. Try again.",
+    "description": "Error above the buttons on the join-communities screen when the server refused the request and gave no reason of its own. \"Those\" are the communities the person ticked."
+  },
+  "communities.error.network": {
+    "text": "Network error. Try again.",
+    "description": "Error above the buttons on the join-communities screen when the request could not reach the server."
+  },
+  "communities.joinedToast_one": {
+    "text": "You joined {{count}} community.",
+    "description": "Brief confirmation shown after the join-communities screen closes. {{count}} is how many communities the person just joined."
+  },
+  "communities.joinedToast_other": {
+    "text": "You joined {{count}} communities.",
+    "description": "Brief confirmation shown after the join-communities screen closes. {{count}} is how many communities the person just joined."
+  },
+  "terms.updatedToast": {
+    "text": "We updated our terms. By continuing to use Homeroom, you agree to them.",
+    "description": "Brief notice shown once to a signed-in member who had accepted an earlier version of the terms of use, after the terms changed. Homeroom is the product's name."
+  },
+  "buildLine.planning": {
+    "text": "Homeroom bot is planning it",
+    "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made: the assistant called Homeroom bot is writing the plan for the project. \"it\" is the project. Homeroom bot is a name."
+  },
+  "buildLine.plan": {
+    "text": "Your plan is ready to review",
+    "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made, shown to the person who started the project: Homeroom bot's plan for it is waiting for them to read and approve."
+  },
+  "buildLine.planMember": {
+    "text": "Planning it",
+    "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made, shown to other members while the plan waits for the person who started the project. \"it\" is the project."
+  },
+  "buildLine.question": {
+    "text": "Homeroom bot has a question for you",
+    "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made, shown to the person who started the project: the assistant called Homeroom bot asked them something and waits for the answer. Homeroom bot is a name."
+  },
+  "buildLine.building": {
+    "text": "Building it",
+    "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made: the first version is being built now. \"Building\" is a verb in progress and \"it\" is the project; nobody is being asked to build anything."
+  },
+  "buildLine.testing": {
+    "text": "Testing it",
+    "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made: the first version is built and is being tested. \"it\" is the project."
+  },
+  "buildLine.ready": {
+    "text": "Ready to try",
+    "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made: the first version is finished and can be opened and tried, before it goes live."
+  },
+  "buildLine.live": {
+    "text": "Live",
+    "description": "One-line status under a new project's card, on its Home tile and on its hub while its first version is being made: the first version has been published and the app is running for everyone. An adjective, not the verb \"to live\"."
+  },
+  "buildLine.working": {
+    "text": "Homeroom bot is working on it",
+    "description": "One-line status on a new project's hub card while the welcome tour is running, in place of the line that asks the person to review the plan. \"it\" is the project. Homeroom bot is a name."
+  },
+  "buildLine.withNote": {
+    "text": "{{line}} · {{note}}",
+    "description": "A project's build status followed by a short note, on one line, for example \"Building it · usually 10 to 25 min\". {{line}} is the status and {{note}} the note, both already translated; only the separator between them is translated."
+  },
+  "firstSession.template.tier.title": {
+    "text": "A tier list",
+    "description": "Title of one of three examples of what a group can make (a tier list), in the list on the signed-out welcome page."
+  },
+  "firstSession.template.tier.line": {
+    "text": "Rank your favorite spots, games, anything",
+    "description": "Line under the example titled \"A tier list\" on the signed-out welcome page: what it is for."
+  },
+  "firstSession.template.tier.short": {
+    "text": "Tier list",
+    "description": "Label of a tile on the screen that asks a member \"What do you want to make?\": picks a tier list as the starting idea for the new project."
+  },
+  "firstSession.template.tier.note": {
+    "text": "I'm making us a tier list. Join and tell me what it needs.",
+    "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the tier list idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
+  },
+  "firstSession.template.tier.restaurants.label": {
+    "text": "Restaurants",
+    "description": "Chip under the tier list sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.tier.restaurants.sentence": {
+    "text": "A tier list for our favorite <0>restaurants</0>. Anyone can add items, everyone sorts them, and we can see where they land.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Tier list tile and the \"Restaurants\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the word the chip filled in, which is shown highlighted; keep the tags around that word."
+  },
+  "firstSession.template.tier.restaurants.name": {
+    "text": "Restaurant Tier List",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Restaurants\" option of the tier list idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.tier.restaurants.description": {
+    "text": "A restaurant tier list",
+    "description": "One-line description saved with a new project made from the \"Restaurants\" option of the tier list idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.tier.hikes.label": {
+    "text": "Hikes",
+    "description": "Chip under the tier list sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.tier.hikes.sentence": {
+    "text": "A tier list for our favorite <0>hikes</0>. Anyone can add items, everyone sorts them, and we can see where they land.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Tier list tile and the \"Hikes\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the word the chip filled in, which is shown highlighted; keep the tags around that word."
+  },
+  "firstSession.template.tier.hikes.name": {
+    "text": "Hiking Tier List",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Hikes\" option of the tier list idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.tier.hikes.description": {
+    "text": "A hiking tier list",
+    "description": "One-line description saved with a new project made from the \"Hikes\" option of the tier list idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.tier.cities.label": {
+    "text": "Cities",
+    "description": "Chip under the tier list sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.tier.cities.sentence": {
+    "text": "A tier list for our favorite <0>cities</0>. Anyone can add items, everyone sorts them, and we can see where they land.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Tier list tile and the \"Cities\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the word the chip filled in, which is shown highlighted; keep the tags around that word."
+  },
+  "firstSession.template.tier.cities.name": {
+    "text": "City Tier List",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Cities\" option of the tier list idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.tier.cities.description": {
+    "text": "A city tier list",
+    "description": "One-line description saved with a new project made from the \"Cities\" option of the tier list idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.tier.games.label": {
+    "text": "Games",
+    "description": "Chip under the tier list sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.tier.games.sentence": {
+    "text": "A tier list for our favorite <0>games</0>. Anyone can add items, everyone sorts them, and we can see where they land.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Tier list tile and the \"Games\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the word the chip filled in, which is shown highlighted; keep the tags around that word."
+  },
+  "firstSession.template.tier.games.name": {
+    "text": "Game Tier List",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Games\" option of the tier list idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.tier.games.description": {
+    "text": "A game tier list",
+    "description": "One-line description saved with a new project made from the \"Games\" option of the tier list idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.tier.own.sentence": {
+    "text": "A tier list for our favorite <0>{{words}}</0>. Anyone can add items, everyone sorts them, and we can see where they land.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Tier list tile and the \"Your own…\" chip are picked. A text field stands where <0>{{words}}</0> is, and {{words}} is what the maker types there, for example \"taco spots\". It is also sent as the description of what to make."
+  },
+  "firstSession.template.tier.own.example": {
+    "text": "taco spots",
+    "description": "Placeholder in the blank of the tier list sentence (\"A tier list for our favorite …\") when the maker fills it in themselves: an example of what could be ranked. It must read naturally in that blank."
+  },
+  "firstSession.template.tier.own.name": {
+    "text": "{{words}} Tier List",
+    "description": "Name suggested for a new project made from the tier list idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized, for example \"Taco Spots\"."
+  },
+  "firstSession.template.tier.own.description": {
+    "text": "A tier list",
+    "description": "One-line description saved with a new project made from the tier list idea with the maker's own words, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.game.title": {
+    "text": "A game",
+    "description": "Title of one of three examples of what a group can make (a game), in the list on the signed-out welcome page."
+  },
+  "firstSession.template.game.line": {
+    "text": "A new one, built and played together",
+    "description": "Line under the example titled \"A game\" on the signed-out welcome page: what it is for."
+  },
+  "firstSession.template.game.short": {
+    "text": "A game",
+    "description": "Label of a tile on the screen that asks a member \"What do you want to make?\": picks a game as the starting idea for the new project."
+  },
+  "firstSession.template.game.note": {
+    "text": "I'm making us a game. Join and tell me what it needs.",
+    "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the game idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
+  },
+  "firstSession.template.game.board.label": {
+    "text": "Board game",
+    "description": "Chip under the game sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.game.board.sentence": {
+    "text": "A new game we build together. For the first version, <0>a board game where</0> {{words}}",
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"Board game\" chip are picked. On screen the whole sentence is shown with a mark (an ellipsis in English) where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it. <0>…</0> wraps the starter, which is shown highlighted."
+  },
+  "firstSession.template.game.board.name": {
+    "text": "Board Game Night",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Board game\" option of the game idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.game.board.description": {
+    "text": "A board game",
+    "description": "One-line description saved with a new project made from the \"Board game\" option of the game idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.game.board.example": {
+    "text": "For example, we roll dice and race each other around the board",
+    "description": "Placeholder in the box where the maker finishes the game sentence that ends \"… a board game where\": an example of how it could end. It continues that sentence, so it has no capital after the comma and no full stop."
+  },
+  "firstSession.template.game.shooter.label": {
+    "text": "Space shooter",
+    "description": "Chip under the game sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.game.shooter.sentence": {
+    "text": "A new game we build together. For the first version, <0>an arcade space shooter where</0> {{words}}",
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"Space shooter\" chip are picked. On screen the whole sentence is shown with a mark (an ellipsis in English) where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it. <0>…</0> wraps the starter, which is shown highlighted."
+  },
+  "firstSession.template.game.shooter.name": {
+    "text": "Space Shooter",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Space shooter\" option of the game idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.game.shooter.description": {
+    "text": "An arcade space shooter",
+    "description": "One-line description saved with a new project made from the \"Space shooter\" option of the game idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.game.shooter.example": {
+    "text": "For example, we fly together through storms of sparks and collect stardust",
+    "description": "Placeholder in the box where the maker finishes the game sentence that ends \"… an arcade space shooter where\": an example of how it could end. It continues that sentence, so it has no capital after the comma and no full stop."
+  },
+  "firstSession.template.game.blocks.label": {
+    "text": "3D blocks",
+    "description": "Chip under the game sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.game.blocks.sentence": {
+    "text": "A new game we build together. For the first version, <0>a 3D block game where</0> {{words}}",
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"3D blocks\" chip are picked. On screen the whole sentence is shown with a mark (an ellipsis in English) where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it. <0>…</0> wraps the starter, which is shown highlighted."
+  },
+  "firstSession.template.game.blocks.name": {
+    "text": "Block World",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"3D blocks\" option of the game idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.game.blocks.description": {
+    "text": "A 3D block game",
+    "description": "One-line description saved with a new project made from the \"3D blocks\" option of the game idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.game.blocks.example": {
+    "text": "For example, we build whatever we want together",
+    "description": "Placeholder in the box where the maker finishes the game sentence that ends \"… a 3D block game where\": an example of how it could end. It continues that sentence, so it has no capital after the comma and no full stop."
+  },
+  "firstSession.template.game.trivia.label": {
+    "text": "Trivia",
+    "description": "Chip under the game sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.game.trivia.sentence": {
+    "text": "A new game we build together. For the first version, <0>a trivia game where</0> {{words}}",
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile and the \"Trivia\" chip are picked. On screen the whole sentence is shown with a mark (an ellipsis in English) where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it. <0>…</0> wraps the starter, which is shown highlighted."
+  },
+  "firstSession.template.game.trivia.name": {
+    "text": "Trivia Night",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Trivia\" option of the game idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.game.trivia.description": {
+    "text": "A trivia game",
+    "description": "One-line description saved with a new project made from the \"Trivia\" option of the game idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.game.trivia.example": {
+    "text": "For example, every question is about one of us",
+    "description": "Placeholder in the box where the maker finishes the game sentence that ends \"… a trivia game where\": an example of how it could end. It continues that sentence, so it has no capital after the comma and no full stop."
+  },
+  "firstSession.template.game.own.sentence": {
+    "text": "A new game we build together. For the first version, {{words}}",
+    "description": "Sentence on the screen that asks a member \"What do you want to make?\" after the game tile is picked with the \"Your own…\" chip. On screen the whole sentence is shown with nothing where {{words}} stands; the maker types those words in a box below. With their words in place of {{words}} it is sent as the description of what to make. {{words}} may stand anywhere in the sentence, and text may follow it."
+  },
+  "firstSession.make.wordsBlank": {
+    "text": "…",
+    "description": "The mark shown in a game sentence on the \"What do you want to make?\" screen where the maker's own words will go, beside the highlighted starter (\"… a board game where …\"). In English an ellipsis; use whatever your language writes for words left out."
+  },
+  "firstSession.make.wordsWithStop": {
+    "text": "{{words}}.",
+    "description": "The maker's own words with the punctuation that ends a sentence, used in the description sent for a new game when they typed their words without any. {{words}} is exactly what they typed. Only the closing punctuation is translated, for example a different full stop."
+  },
+  "firstSession.make.sentenceEnders": {
+    "text": ".!?",
+    "description": "Not shown on screen. The characters that already end a sentence: when the maker's own words for a new game end in one of them, no closing punctuation is added to the description that is sent. List the sentence-ending marks of your language, with nothing between them."
+  },
+  "firstSession.template.game.own.example": {
+    "text": "For example, a drawing game where one of us draws and everyone guesses",
+    "description": "Placeholder in the box where the maker describes their own game, finishing the sentence that ends \"For the first version, …\". An example of an ending; no full stop."
+  },
+  "firstSession.template.game.own.description": {
+    "text": "A game",
+    "description": "One-line description saved with a new project made from the game idea in the maker's own words, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.organizer.title": {
+    "text": "An organizer",
+    "description": "Title of one of three examples of what a group can make (an organizer), in the list on the signed-out welcome page."
+  },
+  "firstSession.template.organizer.line": {
+    "text": "Groceries, chores, a shared library",
+    "description": "Line under the example titled \"An organizer\" on the signed-out welcome page: what it is for."
+  },
+  "firstSession.template.organizer.short": {
+    "text": "Organizer",
+    "description": "Label of a tile on the screen that asks a member \"What do you want to make?\": picks an organizer as the starting idea for the new project."
+  },
+  "firstSession.template.organizer.note": {
+    "text": "I'm making us an organizer. Join and tell me what it needs.",
+    "description": "Suggested text of the personal note a maker sends with the invite link to their group, when their new project started from the organizer idea. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
+  },
+  "firstSession.template.organizer.groceries.label": {
+    "text": "Groceries",
+    "description": "Chip under the organizer sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.organizer.groceries.sentence": {
+    "text": "An app to organize our <0>groceries</0>: one shared list, and whoever's at the store checks things off.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Organizer tile and the \"Groceries\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.organizer.groceries.name": {
+    "text": "Grocery List",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Groceries\" option of the organizer idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.organizer.groceries.description": {
+    "text": "A grocery list",
+    "description": "One-line description saved with a new project made from the \"Groceries\" option of the organizer idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.organizer.chores.label": {
+    "text": "Chores",
+    "description": "Chip under the organizer sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.organizer.chores.sentence": {
+    "text": "An app to organize our <0>chores</0>: who's on what this week, and whose turn it is next.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Organizer tile and the \"Chores\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.organizer.chores.name": {
+    "text": "Chore List",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Chores\" option of the organizer idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.organizer.chores.description": {
+    "text": "A chore list",
+    "description": "One-line description saved with a new project made from the \"Chores\" option of the organizer idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.organizer.library.label": {
+    "text": "Shared library",
+    "description": "Chip under the organizer sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.organizer.library.sentence": {
+    "text": "An app to organize our <0>shared library</0>: what we can borrow, who has it now, and who's asking for it next.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Organizer tile and the \"Shared library\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.organizer.library.name": {
+    "text": "Lending Library",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Shared library\" option of the organizer idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.organizer.library.description": {
+    "text": "A lending library",
+    "description": "One-line description saved with a new project made from the \"Shared library\" option of the organizer idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.organizer.potlucks.label": {
+    "text": "Potlucks",
+    "description": "Chip under the organizer sentence on the screen that asks a member \"What do you want to make?\": picks this option to fill the sentence's blank."
+  },
+  "firstSession.template.organizer.potlucks.sentence": {
+    "text": "An app to organize our <0>potlucks</0>: who's bringing what, so we don't end up with six salads.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Organizer tile and the \"Potlucks\" chip are picked. It is also sent as the description of what to make. <0>…</0> wraps the words the chip filled in, which are shown highlighted; keep the tags around them."
+  },
+  "firstSession.template.organizer.potlucks.name": {
+    "text": "Potluck Planner",
+    "description": "Name suggested for the new project in the \"What should we call it?\" field when the \"Potlucks\" option of the organizer idea is picked. A title; the maker can change it."
+  },
+  "firstSession.template.organizer.potlucks.description": {
+    "text": "A potluck planner",
+    "description": "One-line description saved with a new project made from the \"Potlucks\" option of the organizer idea, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.template.organizer.own.sentence": {
+    "text": "An app to organize our <0>{{words}}</0>, so everyone can see what's where and who's on it.",
+    "description": "Sentence shown on the screen that asks a member \"What do you want to make?\" after the Organizer tile and the \"Your own…\" chip are picked. A text field stands where <0>{{words}}</0> is, and {{words}} is what the maker types there, for example \"camping gear\". It is also sent as the description of what to make."
+  },
+  "firstSession.template.organizer.own.example": {
+    "text": "camping gear",
+    "description": "Placeholder in the blank of the organizer sentence (\"An app to organize our …\") when the maker fills it in themselves: an example of something a group keeps track of. It must read naturally in that blank."
+  },
+  "firstSession.template.organizer.own.name": {
+    "text": "{{words}} List",
+    "description": "Name suggested for a new project made from the organizer idea with the maker's own words. {{words}} is what they typed in the sentence's blank, with each word capitalized, for example \"Camping Gear\"."
+  },
+  "firstSession.template.organizer.own.description": {
+    "text": "An organizer",
+    "description": "One-line description saved with a new project made from the organizer idea with the maker's own words, shown under the project's name. At most 90 characters."
+  },
+  "firstSession.make.eyebrow.create": {
+    "text": "New project",
+    "description": "Small heading above the question on the \"What do you want to make?\" screen, where a member describes a new project, when the screen was opened from the Create button. A noun phrase: this is a new project."
+  },
+  "firstSession.make.eyebrow.hello": {
+    "text": "Hi {{name}}!",
+    "description": "Small greeting above the question on the \"What do you want to make?\" screen, where a member describes a new project, the first time a new member signs in. {{name}} is the member's display name or username."
+  },
+  "firstSession.make.eyebrow.youreIn": {
+    "text": "You're in!",
+    "description": "Small greeting above the question on the \"What do you want to make?\" screen, where a member describes a new project, the first time a new member signs in, when their name is not known: they now have access to Homeroom."
+  },
+  "firstSession.make.title": {
+    "text": "What do you want to make?",
+    "description": "Heading of the screen where a member starts a new project by describing what the app should be."
+  },
+  "firstSession.make.startFromIdea": {
+    "text": "Start from an idea",
+    "description": "Label above the grid of ready ideas (Tier list, A game, Organizer, Your own idea) on the \"What do you want to make?\" screen, where a member describes a new project."
+  },
+  "firstSession.make.ideasLabel": {
+    "text": "Ideas",
+    "description": "Accessible name of the group of idea tiles on the \"What do you want to make?\" screen, where a member describes a new project."
+  },
+  "firstSession.make.ownIdea": {
+    "text": "Your own idea",
+    "description": "Label of the fourth tile on the \"What do you want to make?\" screen, where a member describes a new project: instead of a ready idea, the member writes their own description in a text box."
+  },
+  "firstSession.make.briefLabel": {
+    "text": "What should it do?",
+    "description": "Label of the field on the \"What do you want to make?\" screen, where a member describes a new project where the member says what the new app should do. \"it\" is the app."
+  },
+  "firstSession.make.writeItYourself": {
+    "text": "Write it yourself",
+    "description": "Link beside the \"What should it do?\" label while a ready idea's sentence is shown: turns that sentence into plain text the member can edit freely. \"it\" is the description."
+  },
+  "firstSession.make.ownWordsLabel": {
+    "text": "Your own words",
+    "description": "Accessible name of the small text field inside a ready idea's sentence, where the member types their own words for the blank."
+  },
+  "firstSession.make.finishLabel": {
+    "text": "Finish it in your own words",
+    "description": "Label of the box under the game sentence on the \"What do you want to make?\" screen, where a member describes a new project: the member types the rest of that sentence. \"it\" is the sentence."
+  },
+  "firstSession.make.choicesLabel": {
+    "text": "Choices",
+    "description": "Accessible name of the row of chips under a ready idea's sentence; each chip fills the sentence's blank with a different option."
+  },
+  "firstSession.make.ownChip": {
+    "text": "Your own…",
+    "description": "Chip beside the ready options under an idea's sentence on the \"What do you want to make?\" screen, where a member describes a new project: lets the member type their own words into the sentence's blank instead of picking an option. Keep the ellipsis."
+  },
+  "firstSession.make.readyMade": {
+    "text": "Ready-made: nothing to build, so it is ready as soon as it is set up.",
+    "description": "Hint under a ready idea's sentence when the picked option is an app Homeroom already has: the project will not need to be built first. \"it\" is the new app."
+  },
+  "firstSession.make.briefPlaceholder": {
+    "text": "A map of our favorite swimming spots…",
+    "description": "Placeholder in the empty \"What should it do?\" box: an example of a description a member might write for a new app. Keep the ellipsis."
+  },
+  "firstSession.make.waitlistIdea": {
+    "text": "Filled in from your waitlist answer.",
+    "description": "Hint under the \"What should it do?\" box when it was filled in with what the member wrote when they joined the waitlist."
+  },
+  "firstSession.make.nameLabel": {
+    "text": "What should we call it?",
+    "description": "Label of the name field on the \"What do you want to make?\" screen, where a member describes a new project: the name of the new project. \"it\" is the project."
+  },
+  "firstSession.make.namePlaceholder": {
+    "text": "For example, Hiking Tier List",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen, where a member describes a new project: an example of a project name."
+  },
+  "firstSession.make.nameHint": {
+    "text": "It's your group's name too. You can change it later.",
+    "description": "Hint under the name field on the \"What do you want to make?\" screen, where a member describes a new project: the project's name is also the name of the community created with it."
+  },
+  "firstSession.make.needed.blank": {
+    "text": "Fill in the blank first.",
+    "description": "Error under a ready idea's sentence when the member pressed Make it without typing their own words into the sentence's blank."
+  },
+  "firstSession.make.needed.finish": {
+    "text": "Finish the sentence first.",
+    "description": "Error under the game sentence when the member pressed Make it without typing the rest of the sentence in the box."
+  },
+  "firstSession.make.needed.brief": {
+    "text": "Say what it should do first.",
+    "description": "Error under the empty \"What should it do?\" box when the member pressed Make it. \"it\" is the app."
+  },
+  "firstSession.make.needed.briefShort": {
+    "text": "Say a little more about what it should do.",
+    "description": "Error under the \"What should it do?\" box when the member pressed Make it with a description that is too short. \"it\" is the app."
+  },
+  "firstSession.make.needed.name": {
+    "text": "Give it a name to make it. You can change it later.",
+    "description": "Error under the empty name field when the member pressed Make it. Both \"it\" are the project."
+  },
+  "firstSession.make.error.notMade": {
+    "text": "Could not make it. Try again.",
+    "description": "Error above the Make it button when creating the project failed and the server gave no reason of its own. \"it\" is the project."
+  },
+  "firstSession.make.making": {
+    "text": "Making it…",
+    "description": "Text of the main button on the \"What do you want to make?\" screen, where a member describes a new project while the project is being created after the member pressed it."
+  },
+  "firstSession.make.submit": {
+    "text": "Make it",
+    "description": "Main button on the \"What do you want to make?\" screen, where a member describes a new project: creates the project from the description and name. \"Make\" is a verb and \"it\" is the project."
+  },
+  "firstSession.make.importLink": {
+    "text": "Import from a GitHub repo",
+    "description": "Link under the Make it button, when the screen was opened from the Create button: switches to a form that brings in an existing app from a GitHub repository instead of describing a new one. GitHub is a name."
+  },
+  "firstSession.make.lookAround": {
+    "text": "Not sure yet? <0>Look around first</0>",
+    "description": "Line under the Make it button on a new member's first screen. <0>…</0> is a link that skips making a project and shows a short tour of Home instead."
+  },
+  "firstSession.import.title": {
+    "text": "Import a GitHub repo",
+    "description": "Heading of the form that brings an existing app in from a GitHub repository as a new project. \"Import\" is a verb. GitHub is a name."
+  },
+  "firstSession.import.line": {
+    "text": "Bring an app that already exists. Your group builds on it from here.",
+    "description": "Line under the heading on the form that imports an existing app from a GitHub repository as a new project: what importing is for."
+  },
+  "firstSession.import.urlLabel": {
+    "text": "GitHub repo URL",
+    "description": "Label of the field on the form that imports an existing app from a GitHub repository as a new project where the member pastes the repository's address."
+  },
+  "firstSession.import.urlPlaceholder": {
+    "text": "github.com/owner/repo",
+    "description": "Placeholder in the repository address field on the form that imports an existing app from a GitHub repository as a new project: the shape of a GitHub address. \"owner\" and \"repo\" stand for the account's and the repository's names; github.com stays as it is."
+  },
+  "firstSession.import.check": {
+    "text": "Check",
+    "description": "Button beside the repository address field on the form that imports an existing app from a GitHub repository as a new project: checks that Homeroom's bot account can reach that repository. A verb."
+  },
+  "firstSession.import.recheck": {
+    "text": "Re-check",
+    "description": "The same button beside the repository address field after a check succeeded: runs the check again. A verb."
+  },
+  "firstSession.import.checking": {
+    "text": "Checking bot access…",
+    "description": "Status under the repository address field while the check runs: Homeroom is finding out whether its bot account can reach the repository."
+  },
+  "firstSession.import.hasAccess": {
+    "text": "✓ usernode-bot has Write access to {{repo}}.",
+    "description": "Status under the repository address field after a successful check. usernode-bot is the name of Homeroom's GitHub account and stays as written; \"Write\" is GitHub's name for that permission. {{repo}} is the repository, as owner/name. Keep the check mark first."
+  },
+  "firstSession.import.inviteBot": {
+    "text": "Invite usernode-bot to the repo first (Write access on an organization repo).",
+    "description": "Hint under the repository address field before any check: what the member must do on GitHub first. usernode-bot is the name of Homeroom's GitHub account and stays as written; \"Write\" is GitHub's name for that permission."
+  },
+  "firstSession.import.needed.repo": {
+    "text": "Check the repo first.",
+    "description": "Error under the repository address field when the member pressed Import it before the repository was checked. \"Check\" is a verb."
+  },
+  "firstSession.import.nameLabel": {
+    "text": "What should we call it?",
+    "description": "Label of the name field on the form that imports an existing app from a GitHub repository as a new project: the name the imported project will have. \"it\" is the project."
+  },
+  "firstSession.import.namePlaceholder": {
+    "text": "For example, Sunday Run Club",
+    "description": "Placeholder in the empty name field on the form that imports an existing app from a GitHub repository as a new project: an example of a project name."
+  },
+  "firstSession.import.nameHint": {
+    "text": "It's your group's name too. You can change it later.",
+    "description": "Hint under the name field on the form that imports an existing app from a GitHub repository as a new project: the project's name is also the name of the community created with it."
+  },
+  "firstSession.import.needed.name": {
+    "text": "Give it a name to import it. You can change it later.",
+    "description": "Error under the empty name field when the member pressed Import it. Both \"it\" are the project."
+  },
+  "firstSession.import.importing": {
+    "text": "Importing…",
+    "description": "Text of the main button on the form that imports an existing app from a GitHub repository as a new project while the import request is running."
+  },
+  "firstSession.import.submit": {
+    "text": "Import it",
+    "description": "Main button on the form that imports an existing app from a GitHub repository as a new project: creates the project from the checked repository. \"Import\" is a verb and \"it\" is the app."
+  },
+  "firstSession.import.describeInstead": {
+    "text": "Describe a new project instead",
+    "description": "Link under the Import it button: goes back to the form where a new project is described in words."
+  },
+  "firstSession.import.error.noUrl": {
+    "text": "Paste a GitHub repo URL first.",
+    "description": "Error under the repository address field when the member pressed Check with the field empty."
+  },
+  "firstSession.import.error.network": {
+    "text": "Network error. Try again.",
+    "description": "Error under the repository address field when the check could not reach the server."
+  },
+  "firstSession.import.error.checkFailed": {
+    "text": "Check failed (HTTP {{status}}).",
+    "description": "Error under the repository address field when the check failed and the server gave no reason. \"Check\" is a noun here. {{status}} is the numeric HTTP status code, for example 502."
+  },
+  "firstSession.import.error.notImported": {
+    "text": "Could not import it. Try again.",
+    "description": "Error above the Import it button when the import failed and the server gave no reason of its own. \"it\" is the repository's app."
+  },
+  "firstSession.import.note.unread": {
+    "text": "Couldn’t read this repo’s dapp.json. Anything it sets still applies once it’s imported.",
+    "description": "Note under the import form after a repository was checked but its settings file could not be read. dapp.json is the name of a settings file in the repository and stays as written."
+  },
+  "firstSession.import.note.public": {
+    "text": "Its dapp.json says anyone can find it, join and build, so it starts that way rather than as a private community.",
+    "description": "Note under the import form after a repository was checked: its settings file makes the project open to everyone, to see and to build. \"Its\" is the repository's and \"it\" the project. \"Build\" means making changes to the app. dapp.json is the name of a settings file in the repository and stays as written."
+  },
+  "firstSession.import.note.viewPublic": {
+    "text": "Its dapp.json says anyone can see it, and only people invited can build, so it starts that way rather than as a private community.",
+    "description": "Note under the import form after a repository was checked: its settings file lets everyone see the project but only invited people change it. \"Its\" is the repository's and \"it\" the project. \"Build\" means making changes to the app. dapp.json is the name of a settings file in the repository and stays as written."
+  },
+  "firstSession.import.note.buildPublic": {
+    "text": "Its dapp.json says anyone can build it, so it starts that way rather than as a private community.",
+    "description": "Note under the import form after a repository was checked: its settings file lets anyone make changes to the project. \"Its\" is the repository's and \"it\" the project. \"Build\" means making changes to the app. dapp.json is the name of a settings file in the repository and stays as written."
+  },
+  "firstSession.import.note.private": {
+    "text": "Its dapp.json says it is private to the people invited. Its code stays public on GitHub., so it starts that way rather than as a private community.",
+    "description": "Note under the import form after a repository was checked, in a rare case: its settings file says anyone may see the project but does not say who may change it. The English is kept exactly as the product has always shown it, stray full stop included. dapp.json is the name of a settings file in the repository and stays as written. GitHub is a name."
+  },
+  "firstSession.welcome.opening": {
+    "text": "Opening your invite",
+    "description": "Accessible name of the placeholder screen shown for a moment after a person follows an invite link, while the community they were invited to loads."
+  },
+  "firstSession.welcome.title": {
+    "text": "Welcome to {{community}}",
+    "description": "Heading of the screen an invited person sees right after joining. {{community}} is the name of the community they joined."
+  },
+  "firstSession.welcome.goTo": {
+    "text": "Go to {{community}}",
+    "description": "Main button on the welcome screen an invited person sees after joining: opens the community and starts a short tour. {{community}} is the community's name."
+  },
+  "firstSession.welcome.loadingPeople": {
+    "text": "Loading who is in it",
+    "description": "Accessible name of the placeholder shown on an invited person's welcome screen while the list of the community's members loads. \"it\" is the community."
+  },
+  "firstSession.welcome.member.you": {
+    "text": "You",
+    "description": "Line under the viewer's own name in the list of members on an invited person's welcome screen: marks which row is them."
+  },
+  "firstSession.welcome.member.invitedYou": {
+    "text": "Invited you",
+    "description": "Line under a member's name in the list of members on an invited person's welcome screen: this is the person who invited the viewer. Read as \"(this person) invited you\"."
+  },
+  "firstSession.people.count_one": {
+    "text": "{{count}} person",
+    "description": "How many people are in a community: the heading over the list of members on an invited person's welcome screen, and the screen-reader text for a row of members' faces. {{count}} is the number."
+  },
+  "firstSession.people.count_other": {
+    "text": "{{count}} people",
+    "description": "How many people are in a community: the heading over the list of members on an invited person's welcome screen, and the screen-reader text for a row of members' faces. {{count}} is the number."
+  },
+  "firstSession.people.you": {
+    "text": "You",
+    "description": "Accessible name of the row of faces above a newly made project, which shows who is in its community: only the viewer so far."
+  },
+  "firstSession.people.youAndName": {
+    "text": "You and {{name}}",
+    "description": "Accessible name of the row of faces above a newly made project, which shows who is in its community: the viewer and one other member. {{name}} is that member's username or name."
+  },
+  "firstSession.people.youAndOthers_one": {
+    "text": "You and {{count}} other",
+    "description": "Accessible name of the row of faces above a newly made project, which shows who is in its community: the viewer and other members. {{count}} is how many others."
+  },
+  "firstSession.people.youAndOthers_other": {
+    "text": "You and {{count}} others",
+    "description": "Accessible name of the row of faces above a newly made project, which shows who is in its community: the viewer and other members. {{count}} is how many others."
+  },
+  "firstSession.made.communityLabel": {
+    "text": "Your new community",
+    "description": "Heading on the screen shown right after a project is made, above the new project's card: making a project also made a community for it."
+  },
+  "firstSession.made.inviteHint": {
+    "text": "Invite people to use it and help improve it together.",
+    "description": "Line above the buttons on the screen shown right after a project is made, before any invite has been sent. \"it\" is the new app."
+  },
+  "firstSession.made.noBotNote": {
+    "text": "Your description is its first request. You or anyone you invite can build it from there.",
+    "description": "Note under the new project's card on the screen shown right after a project is made, when the assistant Homeroom bot is not building it: the description the maker wrote was filed as the project's first request (a request is an item asking for a change). \"Build\" means making that change."
+  },
+  "firstSession.made.sent.copied": {
+    "text": "Link copied.",
+    "description": "Line above the buttons on the screen shown right after a project is made, once the invite link was copied to the clipboard."
+  },
+  "firstSession.made.sent.copiedTour": {
+    "text": "Link copied. Next, a short tour.",
+    "description": "Line above the buttons on the screen shown right after a project is made, once the invite link was copied to the clipboard, when a short tour of Homeroom comes next."
+  },
+  "firstSession.made.sent.shared": {
+    "text": "Invite shared.",
+    "description": "Line above the buttons on the screen shown right after a project is made, once the invite link was handed to the device's share sheet. \"Invite\" is a noun."
+  },
+  "firstSession.made.sent.sharedTour": {
+    "text": "Invite shared. Next, a short tour.",
+    "description": "Line above the buttons on the screen shown right after a project is made, once the invite link was handed to the device's share sheet, when a short tour of Homeroom comes next. \"Invite\" is a noun."
+  },
+  "firstSession.made.shareInvite": {
+    "text": "Share invite",
+    "description": "Main button on the screen shown right after a project is made: opens a sheet for sending an invite link to the new community. \"Share\" is a verb and \"invite\" a noun."
+  },
+  "firstSession.made.shareAgain": {
+    "text": "Share again",
+    "description": "Button on the screen shown right after a project is made after an invite link has gone out: opens the invite sheet again to send the link once more. \"Share\" is a verb."
+  },
+  "firstSession.made.inviteLater": {
+    "text": "Invite people later",
+    "description": "Secondary button on the screen shown right after a project is made, before any invite has been sent: goes on without inviting anyone now."
+  },
+  "firstSession.made.startTour": {
+    "text": "Start the tour",
+    "description": "Button on the screen shown right after a project is made once an invite has gone out, on a new member's first session: goes on to a short tour of Homeroom."
+  },
+  "firstSession.made.goTo": {
+    "text": "Go to {{community}}",
+    "description": "Button on the screen shown right after a project is made once an invite has gone out, when the project was started from the Create button: opens the new project. {{community}} is its name."
+  },
+  "firstSession.made.sketching": {
+    "text": "Sketching {{app}} from your description…",
+    "description": "Read by screen readers on the screen shown right after a project is made while a preview card for the project is being drawn from what the maker wrote. {{app}} is the project's name."
+  },
+  "firstSession.made.needsYou": {
+    "text": "Needs you",
+    "description": "Small label over a card on the screen shown right after a project is made that waits for the maker to do something: answer a plan, retry a setup that failed, or set secrets. Read as \"this needs you\"."
+  },
+  "firstSession.made.planWaits": {
+    "text": "Homeroom bot has a plan for {{app}}",
+    "description": "Title of the card on the screen shown right after a project is made when the assistant called Homeroom bot has written a plan and waits for the maker's answer. {{app}} is the project's name. Homeroom bot is a name."
+  },
+  "firstSession.made.planAnswer": {
+    "text": "Answer it in your chat, and it starts building.",
+    "description": "Line under the title of the card that says Homeroom bot has a plan: the first \"it\" is the plan, the second is Homeroom bot, which starts building the app once the plan is answered."
+  },
+  "firstSession.made.goToChat": {
+    "text": "Go to chat",
+    "description": "Button on the card that says Homeroom bot has a plan: opens the maker's chat with Homeroom bot, where the plan is answered."
+  },
+  "firstSession.made.stalled.failed": {
+    "text": "Setup stopped before it was running",
+    "description": "Title of the card on the screen shown right after a project is made when setting the project up failed. \"it\" is the app."
+  },
+  "firstSession.made.stalled.needsSecrets": {
+    "text": "It needs secrets to start",
+    "description": "Title of the card on the screen shown right after a project is made when the project cannot start until its secrets are set. Secrets are private configuration values such as API keys. \"It\" is the app."
+  },
+  "firstSession.made.stalled.setSecrets": {
+    "text": "Set secrets",
+    "description": "Button on the card that says the project needs secrets to start: opens the dialog where the project's secrets (private configuration values such as API keys) are entered. \"Set\" is a verb."
+  },
+  "firstSession.made.line.failed": {
+    "text": "Setting it up didn’t finish.",
+    "description": "Status line on the new project's plain card on the screen shown right after a project is made: setting the project up stopped with an error. \"it\" is the project."
+  },
+  "firstSession.made.line.needsSecrets": {
+    "text": "It needs its secrets before it can start.",
+    "description": "Status line on the new project's plain card on the screen shown right after a project is made: the app waits for its secrets (private configuration values such as API keys) to be set."
+  },
+  "firstSession.made.line.importing": {
+    "text": "Importing it from GitHub…",
+    "description": "Status line on the new project's plain card on the screen shown right after a project is made, for a project imported from a GitHub repository: the import is still running. GitHub is a name."
+  },
+  "firstSession.made.line.imported": {
+    "text": "Imported. It’s running.",
+    "description": "Status line on the new project's plain card on the screen shown right after a project is made, for a project imported from a GitHub repository: the import finished and the app is running."
+  },
+  "firstSession.made.line.settingUp": {
+    "text": "Setting it up…",
+    "description": "Status line on the new project's plain card on the screen shown right after a project is made: the project is still being set up. \"it\" is the project."
+  },
+  "firstSession.made.line.readyToUse": {
+    "text": "Ready to use.",
+    "description": "Status line on the new project's plain card on the screen shown right after a project is made, for a project made from one of Homeroom's ready-made apps: it is set up and can be used now."
+  },
+  "firstSession.made.line.versionOneReady": {
+    "text": "Version one is ready to try.",
+    "description": "Status line on the new project's plain card on the screen shown right after a project is made: the first version of the app has been built and can be opened and tried."
+  },
+  "firstSession.made.line.botBuilds": {
+    "text": "Homeroom bot builds it from your description.",
+    "description": "Status line on the new project's plain card on the screen shown right after a project is made: the assistant called Homeroom bot will build the app from what the maker wrote. Homeroom bot is a name."
+  },
+  "firstSession.made.line.firstRequest": {
+    "text": "Your description is its first request.",
+    "description": "Status line on the new project's plain card on the screen shown right after a project is made, when Homeroom bot is not building the project: what the maker wrote was filed as the project's first request (an item asking for a change)."
+  },
+  "firstSession.made.note.failed": {
+    "text": "Trying again usually clears it. If it stops again, ask an admin.",
+    "description": "Second line under the new project's card on the screen shown right after a project is made, when setting the project up failed. \"it\" is first the problem, then the setup."
+  },
+  "firstSession.made.note.needsSecrets": {
+    "text": "Set them, and it finishes starting.",
+    "description": "Second line under the new project's card on the screen shown right after a project is made, when the project waits for its secrets. \"them\" are the secrets (private configuration values) and \"it\" is the app."
+  },
+  "firstSession.made.note.imported": {
+    "text": "Its repo says what it does. You and anyone you invite build on it from here.",
+    "description": "Second line under the new project's card on the screen shown right after a project is made, for a project imported from a GitHub repository. \"Its repo\" is the project's repository; \"build on it\" means making changes to the app."
+  },
+  "firstSession.made.note.readyMade": {
+    "text": "It works as it is. You and anyone you invite can change it from there.",
+    "description": "Second line under the new project's card on the screen shown right after a project is made, for a project made from one of Homeroom's ready-made apps. \"change\" is a verb: to alter the app."
+  },
+  "firstSession.made.note.noBot": {
+    "text": "You or anyone you invite can build it from there.",
+    "description": "Second line under the new project's card on the screen shown right after a project is made, when Homeroom bot is not building the project: members build it themselves, starting from the first request. \"build\" is a verb."
+  },
+  "firstSession.made.note.planWaits": {
+    "text": "Homeroom bot is waiting for your go-ahead.",
+    "description": "Second line under the new project's card on the screen shown right after a project is made, when Homeroom bot has sent a plan and will not start building until the maker approves it. Homeroom bot is a name."
+  },
+  "firstSession.made.note.making": {
+    "text": "Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.",
+    "description": "Second line under the new project's card on the screen shown right after a project is made, while the first version is being built. Homeroom is the product's name."
+  },
+  "firstSession.made.people.you": {
+    "text": "you",
+    "description": "Stands where a member's username is shown under the single face in the people row on the screen shown right after a project is made, when the maker's own username is not known yet: the only person here is the reader. Shown alone; lower case in English, like a username."
+  },
+  "firstSession.invite.title": {
+    "text": "Invite people to {{community}}",
+    "description": "Heading of the sheet for sending an invite link. {{community}} is the name of the community people are invited to."
+  },
+  "firstSession.invite.previewLabel": {
+    "text": "What they'll see",
+    "description": "Small label on the sheet for sending an invite link to a community, over a preview of the invite as the people receiving it will see it. \"they\" are the people invited."
+  },
+  "firstSession.invite.line": {
+    "text": "{{inviter}} invited you to {{community}}",
+    "description": "The invite as its receiver sees it: shown in the preview on the sheet for sending an invite link to a community and used as the title of the shared link. {{inviter}} is the name of the member sending the invite and {{community}} the community's name. \"you\" is the person receiving it."
+  },
+  "firstSession.invite.lineAnonymous": {
+    "text": "You're invited to {{community}}",
+    "description": "The invite as its receiver sees it, when the sender's name is not known: shown in the preview on the sheet for sending an invite link to a community and used as the title of the shared link. {{community}} is the community's name."
+  },
+  "firstSession.invite.noteDefault": {
+    "text": "I'm making this for us. Join and tell me what it needs.",
+    "description": "Suggested text of the personal note a maker sends with an invite link, already filled in when the sheet opens. Written in the maker's voice, to their friends, while the app is still being made. No exclamation mark."
+  },
+  "firstSession.invite.noteLabel": {
+    "text": "Your note",
+    "description": "Accessible name of the text box on the sheet for sending an invite link to a community where the sender writes a personal note that goes with the link."
+  },
+  "firstSession.invite.notePlaceholder": {
+    "text": "Add a note",
+    "description": "Placeholder in the empty note box on the sheet for sending an invite link to a community."
+  },
+  "firstSession.invite.noteHint": {
+    "text": "When you share, your note also goes in the group chat as your first message.",
+    "description": "Hint under the note box on the sheet for sending an invite link to a community: the note is also posted in the community's chat."
+  },
+  "firstSession.invite.shareLink": {
+    "text": "Share link",
+    "description": "Main button on the sheet for sending an invite link to a community on a phone or tablet: opens the device's share sheet with the invite link. \"Share\" is a verb."
+  },
+  "firstSession.invite.shareOther": {
+    "text": "Share…",
+    "description": "Secondary button on the sheet for sending an invite link to a community on a computer, beside Copy link: opens the system's share sheet with the invite link. A verb; keep the ellipsis."
+  },
+  "firstSession.invite.copyLink": {
+    "text": "Copy link",
+    "description": "Button on the sheet for sending an invite link to a community: copies the note and the invite link to the clipboard. \"Copy\" is a verb."
+  },
+  "firstSession.invite.copied": {
+    "text": "✓ Copied",
+    "description": "Shown on the Copy link button for a moment after the invite link was copied. Keep the check mark first."
+  },
+  "firstSession.invite.status.shared": {
+    "text": "✓ Link shared",
+    "description": "Status on the sheet for sending an invite link to a community after the invite link was handed to the device's share sheet. Keep the check mark first."
+  },
+  "firstSession.invite.status.copied": {
+    "text": "Link copied. Paste it in your group chat.",
+    "description": "Status on the sheet for sending an invite link to a community after the invite link was copied to the clipboard: tells the sender what to do with it."
+  },
+  "firstSession.invite.status.ready": {
+    "text": "Your link is ready. Press Share again to send it.",
+    "description": "Status on the sheet for sending an invite link to a community when the link was made but the browser would not open the share sheet: pressing the Share button a second time will work. \"Share\" names that button."
+  },
+  "firstSession.invite.error.noLink": {
+    "text": "Could not make a link. Try again.",
+    "description": "Error on the sheet for sending an invite link to a community when the invite link could not be created and the server gave no reason of its own."
+  },
+  "firstSession.invite.error.notShared": {
+    "text": "Could not share the link. Try again.",
+    "description": "Error on the sheet for sending an invite link to a community when sharing the invite link failed."
+  },
+  "firstSession.invite.error.notCopied": {
+    "text": "Could not copy the link. Try again.",
+    "description": "Error on the sheet for sending an invite link to a community when the invite link could not be copied to the clipboard."
+  },
+  "firstSession.invite.limits": {
+    "text": "Anyone with the link can join for the next 7 days, up to 25 people.",
+    "description": "Small print at the bottom of the invite sheet: how long the link works and how many people may use it. The numbers 7 and 25 are fixed."
+  },
+  "firstSession.tour.counter": {
+    "text": "{{step}} of {{total}}",
+    "description": "Small counter at the top of each card of a new member's tour: which card this is. {{step}} is its number and {{total}} how many cards the tour has, for example \"3 of 9\"."
+  },
+  "firstSession.tour.skip": {
+    "text": "Skip",
+    "description": "Button on each card of a new member's tour except the last: ends the tour now."
+  },
+  "firstSession.tour.next": {
+    "text": "Next",
+    "description": "Button on a card of a new member's tour: goes to the next card."
+  },
+  "firstSession.tour.gotIt": {
+    "text": "Got it",
+    "description": "Button on the last card of a new member's tour: ends the tour."
+  },
+  "firstSession.tour.onHome.title": {
+    "text": "{{app}} is on your Home",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, title: points at the project's tile on the Home screen. {{app}} is the project's name. Home is the name of the screen."
+  },
+  "firstSession.tour.onHome.text": {
+    "text": "Open it any time from here.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, text under the title that says the project is on Home. \"it\" is the app; \"here\" is its tile on Home."
+  },
+  "firstSession.tour.onHome.tap": {
+    "text": "Tap it",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, link on the card that points at the project's tile on Home: asks the person to tap the tile, and taps it for them when pressed."
+  },
+  "firstSession.tour.opens.title": {
+    "text": "{{app}} opens here",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, title: the app is now open on screen. {{app}} is the project's name."
+  },
+  "firstSession.tour.opens.text": {
+    "text": "This is the app your community makes together.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, text under the title that says the app opens here."
+  },
+  "firstSession.tour.menu.title": {
+    "text": "Suggest an improvement",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, title: points at the Homeroom mark at the top of the app, which opens a menu with a button of this same name."
+  },
+  "firstSession.tour.menu.text": {
+    "text": "Every app has this menu. Tap it.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, text: points at the Homeroom mark at the top of an app, which opens the app's menu."
+  },
+  "firstSession.tour.menu.tap": {
+    "text": "Tap the menu",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, link on the card that points at the Homeroom mark: asks the person to tap it, and opens the menu for them when pressed."
+  },
+  "firstSession.tour.suggest.title": {
+    "text": "Suggest an improvement",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, title: points at the button of this name in the app's menu, where a member says what the app should do differently."
+  },
+  "firstSession.tour.suggest.text": {
+    "text": "It doesn't vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group, and you can follow along.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, text about the Suggest an improvement button. Each \"it\" is the suggestion. Homeroom bot is the name of the assistant that builds changes."
+  },
+  "firstSession.tour.back.title": {
+    "text": "✕ takes you back to Home",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, title: points at the ✕ button at the top of an open app. Keep the ✕ sign; Home is the name of the screen."
+  },
+  "firstSession.tour.back.text": {
+    "text": "Open {{app}} again from Home any time.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, text under the title about the ✕ button. {{app}} is the project's name. Home is the name of the screen."
+  },
+  "firstSession.tour.back.tap": {
+    "text": "Tap ✕",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, link on the card about the ✕ button: asks the person to tap ✕, and taps it for them when pressed. Keep the ✕ sign."
+  },
+  "firstSession.tour.communities.title": {
+    "text": "You can find {{community}} here",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, title: points at the Communities tab in the main navigation. {{community}} is the name of the person's new community."
+  },
+  "firstSession.tour.communities.text": {
+    "text": "Communities lists every community you're in.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, text about the Communities tab. The first word is the tab's name; write it as the tab is named."
+  },
+  "firstSession.tour.communities.tap": {
+    "text": "Tap Communities",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, link on the card about the Communities tab: asks the person to tap that tab, and taps it for them when pressed. Communities is the tab's name."
+  },
+  "firstSession.tour.hub.title": {
+    "text": "The {{community}} hub",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, title: the community's hub page is on screen. {{community}} is the community's name; the hub is its main page."
+  },
+  "firstSession.tour.hub.text": {
+    "text": "The discussion and the app's changes are here.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, text under the title naming the community's hub. \"changes\" is a noun: the changes proposed to the app."
+  },
+  "firstSession.tour.sayHi.title": {
+    "text": "Say hi, or share an idea",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, title of the last card for an invited member: points at the community's discussion and its message box."
+  },
+  "firstSession.tour.sayHi.text": {
+    "text": "The people using the app decide what goes in.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, text of the last card for an invited member: the members decide which changes are made to the app."
+  },
+  "firstSession.tour.private.opens.text": {
+    "text": "You and everyone in its community use it, and make it better together.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a person invited before they have full access: text under the title that says the app opens here. \"it\" is the app."
+  },
+  "firstSession.tour.private.suggest.text": {
+    "text": "Got an idea for {{app}}? Suggest it here. Homeroom bot builds it, or brings it to the group, and you can follow along.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a person invited before they have full access: text about the Suggest an improvement button. {{app}} is the project's name. Homeroom bot is the name of the assistant that builds changes."
+  },
+  "firstSession.tour.private.hub.text": {
+    "text": "Talk with the group here, and vote on what changes.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a person invited before they have full access: text under the title naming the community's hub. \"changes\" is a verb here: vote on what is changed."
+  },
+  "firstSession.tour.private.bot.title": {
+    "text": "Meet Homeroom bot",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a person invited before they have full access, title: points at the Messages tab, where the assistant called Homeroom bot is. Homeroom bot is a name."
+  },
+  "firstSession.tour.private.bot.text": {
+    "text": "Tell it what {{app}} should do next, and it builds it for the group to try. It's always here in Messages.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a person invited before they have full access: text about Homeroom bot. {{app}} is the project's name. Messages is the name of a tab."
+  },
+  "firstSession.tour.private.waitlist.title": {
+    "text": "Your own apps start here",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a person invited before they have full access, title of the last card: points at the card on Home for joining the waitlist."
+  },
+  "firstSession.tour.private.waitlist.text": {
+    "text": "Join the waitlist to get your spot.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a person invited before they have full access, text of the last card: joining the waitlist is how they get to make apps of their own."
+  },
+  "firstSession.tour.maker.bot.title": {
+    "text": "Homeroom bot is in Messages",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title: points at the Messages tab. Homeroom bot is the name of the assistant and Messages the name of the tab."
+  },
+  "firstSession.tour.maker.bot.text": {
+    "text": "It makes {{app}} with you. You can always find it here.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project: text about Homeroom bot. \"It\" is Homeroom bot and {{app}} the project's name."
+  },
+  "firstSession.tour.maker.bot.tap": {
+    "text": "Tap Messages",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, link on the card about Homeroom bot: asks the person to tap the Messages tab, and taps it for them when pressed. Messages is the tab's name."
+  },
+  "firstSession.tour.maker.working.title": {
+    "text": "Homeroom bot is working on {{app}}",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title of the last card, shown over their chat with Homeroom bot. {{app}} is the project's name. Homeroom bot is a name."
+  },
+  "firstSession.tour.maker.working.text": {
+    "text": "It'll let you know here when there's something to look at.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, text of the last card. \"It\" is Homeroom bot and \"here\" is this chat."
+  },
+  "firstSession.tour.maker.plan.title": {
+    "text": "Homeroom bot has a plan for you",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, title of the last card when Homeroom bot's plan is already waiting in the chat. Homeroom bot is a name."
+  },
+  "firstSession.tour.maker.plan.text": {
+    "text": "Answer it here: tap Build it, or tell it what to change.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for the person who made the project, text of the last card when a plan is waiting. \"Build it\" is the name of a button under the plan; the first \"it\" is the plan and the last is Homeroom bot."
+  },
+  "firstSession.tour.look.make.title": {
+    "text": "Make something any time",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the tile on Home that starts a new project."
+  },
+  "firstSession.tour.look.make.text": {
+    "text": "New project starts a community and its app.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the tile on Home labelled \"New project\". Write New project as that tile is named."
+  },
+  "firstSession.tour.look.discover.title": {
+    "text": "Find apps in Discover",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the Discover tab. Discover is the tab's name."
+  },
+  "firstSession.tour.look.discover.text": {
+    "text": "Open any app, or join its community.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the Discover tab. \"Open\" and \"join\" are verbs."
+  },
+  "firstSession.tour.look.communities.title": {
+    "text": "Communities you join show up here",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the Communities tab."
+  },
+  "firstSession.tour.look.communities.text": {
+    "text": "Each one has its own hub and discussion.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the Communities tab. \"Each one\" is a community; its hub is its main page."
+  },
+  "firstSession.tour.look.bot.title": {
+    "text": "Homeroom bot is in Messages",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title of the last card: points at the Messages tab. Homeroom bot is the name of the assistant and Messages the name of the tab."
+  },
+  "firstSession.tour.look.bot.text": {
+    "text": "It makes apps with you. You can always find it here.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, text of the last card. \"It\" is Homeroom bot."
+  },
+  "tour.counter": {
+    "text": "{{step}} of {{total}}",
+    "description": "Small counter at the top of each card of the welcome tour on the Home screen, started from the Getting started card or from Settings. {{step}} is the card's number and {{total}} how many cards there are, for example \"3 of 5\"."
+  },
+  "tour.skip": {
+    "text": "Skip",
+    "description": "Button on each card of the welcome tour on the Home screen, started from the Getting started card or from Settings: asks whether to leave the tour."
+  },
+  "tour.next": {
+    "text": "Next",
+    "description": "Button on each card of the welcome tour on the Home screen, started from the Getting started card or from Settings except the last: goes to the next card."
+  },
+  "tour.finish": {
+    "text": "Finish",
+    "description": "Button on the last card of the welcome tour on the Home screen, started from the Getting started card or from Settings: ends the tour. A verb."
+  },
+  "tour.confirm.text": {
+    "text": "Are you sure? You can reopen this from Settings.",
+    "description": "Question shown in the tour's card after Skip is pressed in the welcome tour on the Home screen, started from the Getting started card or from Settings. \"this\" is the tour. Settings is the name of a screen."
+  },
+  "tour.confirm.keepGoing": {
+    "text": "Keep going",
+    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from the Getting started card or from Settings: stays in the tour."
+  },
+  "tour.confirm.skip": {
+    "text": "Skip the tour",
+    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from the Getting started card or from Settings: leaves the tour."
+  },
+  "tour.step.communities.title": {
+    "text": "Communities",
+    "description": "Title of the first card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the Communities tab. The tab's name."
+  },
+  "tour.step.communities.body": {
+    "text": "Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.",
+    "description": "Text of the first card of the welcome tour on the Home screen, started from the Getting started card or from Settings, which points at the Communities tab. \"Just you\", \"Private community\" and \"Public community\" are the names the product gives the three kinds of community; write them as it does. \"change\" is a noun: a change to a project. Homeroom is the product's name."
+  },
+  "tour.step.apps.title": {
+    "text": "My apps",
+    "description": "Title of the second card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
+  },
+  "tour.step.apps.body": {
+    "text": "The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.",
+    "description": "Text of the second card of the welcome tour on the Home screen, started from the Getting started card or from Settings, about the My apps section. \"people\" and \"a lock\" describe two small icons drawn on an app's tile."
+  },
+  "tour.step.appMenu.title": {
+    "text": "The Homeroom menu",
+    "description": "Title of the third card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the Homeroom mark, the logo button that opens an app's menu. Homeroom is the product's name."
+  },
+  "tour.step.appMenu.body": {
+    "text": "Inside any app, this mark opens its menu. Tap it, or tap Next to open it.",
+    "description": "Text of the third card of the welcome tour on the Home screen, started from the Getting started card or from Settings, about the Homeroom mark. \"this mark\" is the logo button and \"Next\" is the name of the button on this card."
+  },
+  "tour.step.menuActions.title": {
+    "text": "Suggest an improvement",
+    "description": "Title of the fourth card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the button of this name in an app's menu, where a member says what the app should do differently."
+  },
+  "tour.step.menuActions.body": {
+    "text": "Say what should change. It doesn't vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.",
+    "description": "Text of the fourth card of the welcome tour on the Home screen, started from the Getting started card or from Settings, about the Suggest an improvement button. \"change\" is a verb. Each \"it\" is the suggestion, and \"a request\" is an item the group votes on. Homeroom bot is the name of the assistant that builds changes."
+  },
+  "tour.step.settings.title": {
+    "text": "Replay this any time",
+    "description": "Title of the last card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the profile tab. \"this\" is the tour."
+  },
+  "tour.step.settings.body": {
+    "text": "You can replay this tour any time from Settings, on your profile.",
+    "description": "Text of the last card of the welcome tour on the Home screen, started from the Getting started card or from Settings. Settings is the name of a screen reached from the person's profile."
+  },
+  "firstSession.template.game.board.starterLine": {
+    "text": "Starts from a game that already works, a dice race, and Homeroom bot builds your idea on it.",
+    "description": "Line under the chips on the screen that asks a member \"What do you want to make?\" when the \"Board game\" chip of the game idea is picked: the project starts as a working multiplayer game (a dice race), and Homeroom bot, the assistant, then builds the maker's own idea on top of it."
+  },
+  "firstSession.template.game.shooter.starterLine": {
+    "text": "Starts from a game that already works, a scrolling run dodging storms of sparks, and Homeroom bot builds your idea on it.",
+    "description": "Line under the chips on the screen that asks a member \"What do you want to make?\" when the \"Space shooter\" chip of the game idea is picked: the project starts as a working multiplayer game (a scrolling arcade run dodging storms of sparks), and Homeroom bot, the assistant, then builds the maker's own idea on top of it."
+  },
+  "firstSession.template.game.blocks.starterLine": {
+    "text": "Starts from a game that already works, a shared 3D block world, and Homeroom bot builds your idea on it.",
+    "description": "Line under the chips on the screen that asks a member \"What do you want to make?\" when the \"3D blocks\" chip of the game idea is picked: the project starts as a working multiplayer game (a shared 3D block world), and Homeroom bot, the assistant, then builds the maker's own idea on top of it."
+  },
+  "firstSession.template.game.trivia.starterLine": {
+    "text": "Starts from a game that already works, trivia about each other, and Homeroom bot builds your idea on it.",
+    "description": "Line under the chips on the screen that asks a member \"What do you want to make?\" when the \"Trivia\" chip of the game idea is picked: the project starts as a working multiplayer game (a trivia game about the group's own members), and Homeroom bot, the assistant, then builds the maker's own idea on top of it."
+  },
+  "firstSession.make.starterLine.fallback": {
+    "text": "Starts from a game that already works, a working game, and Homeroom bot builds your idea on it.",
+    "description": "Line under the chips on the screen that asks a member \"What do you want to make?\" when a game chip with a starter is picked and nothing more is known about the starter: the project starts as a working game, and Homeroom bot, the assistant, then builds the maker's own idea on top of it."
+  },
+  "firstSession.tour.general.title": {
+    "text": "Talk in #general",
+    "description": "Card of the short tour a new member is walked through after joining a project, title: points at #general in the project's list of places (its channels). #general is the name of the channel everyone in the community reads; keep it as it is."
+  },
+  "firstSession.tour.general.text": {
+    "text": "Everyone in {{community}} reads it. It is with the project's other places.",
+    "description": "Card of the short tour a new member is walked through after joining a project, text about #general, the channel everyone in the community reads. {{community}} is the community's name and \"it\" is #general; \"the project's other places\" are its other channels, listed together."
+  },
+  "firstSession.tour.general.tap": {
+    "text": "Open #general",
+    "description": "Card of the short tour a new member is walked through after joining a project, link on the card about #general: asks the person to open that channel, and opens it for them when pressed. #general is the channel's name; keep it as it is."
+  }
+}

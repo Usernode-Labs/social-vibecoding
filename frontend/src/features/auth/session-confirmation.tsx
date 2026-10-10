@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 
 import { alertVariants } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { useMessages } from '../../lib/i18n/react';
 import { finishLogin as confirmSession, legacy, type LoginCompletionFailure } from './shared';
 
 export interface SessionConfirmationDetails extends LoginCompletionFailure {
@@ -70,13 +71,14 @@ export function sessionConfirmationText(details: SessionConfirmationDetails): st
   ].join('\n');
 }
 
+// Message ids, read when the notice renders.
 const MESSAGES: Record<LoginCompletionFailure['code'], string> = {
-  'session-rejected': 'Sign-in was accepted, but the server did not recognise your session. Check that this browser allows cookies for Homeroom, then retry the session check.',
-  'server-response': 'Sign-in was accepted, but the server could not confirm your session. Wait a moment, then retry the session check.',
-  'network-error': 'Sign-in was accepted, but we could not reach the server to confirm your session. Check your connection, then retry the session check.',
-  timeout: 'Sign-in was accepted, but confirming your session took too long. Check your connection, then retry the session check.',
-  'invalid-response': 'Sign-in was accepted, but the session response could not be read. Retry the session check. If it keeps failing, copy the details for support.',
-  'client-error': 'Your session could not be opened on this device. Retry the session check. If it keeps failing, copy the details for support.',
+  'session-rejected': 'auth:session.failure.rejected',
+  'server-response': 'auth:session.failure.serverResponse',
+  'network-error': 'auth:session.failure.network',
+  timeout: 'auth:session.failure.timeout',
+  'invalid-response': 'auth:session.failure.invalidResponse',
+  'client-error': 'auth:session.failure.client',
 };
 
 export function useSessionConfirmation() {
@@ -112,22 +114,23 @@ export function SessionConfirmationNotice({ completion }: {
   completion: ReturnType<typeof useSessionConfirmation>;
 }) {
   const [copyStatus, setCopyStatus] = useState('');
+  const t = useMessages('auth');
   if (!completion.failure) return null;
   const details = sessionConfirmationText(completion.failure);
   return (
     <div className={`${alertVariants({ variant: 'notice', density: 'roomy' })} my-4 space-y-3`}>
-      <p role="alert">{MESSAGES[completion.failure.code]}</p>
+      <p role="alert">{t(MESSAGES[completion.failure.code])}</p>
       <Button type="button" variant="neutral" ink="neutral" disabled={completion.checking}
         onClick={() => { setCopyStatus(''); void completion.finishLogin(); }}>
-        {completion.checking ? 'Checking session…' : 'Retry session check'}
+        {completion.checking ? t('auth:session.checking') : t('auth:session.retry')}
       </Button>
       <details>
-        <summary className="min-h-11 cursor-pointer text-sm font-medium leading-[44px]">Sign-in details</summary>
+        <summary className="min-h-11 cursor-pointer text-sm font-medium leading-[44px]">{t('auth:session.details')}</summary>
         <pre className="whitespace-pre-wrap break-words rounded-lg bg-zinc-100 p-3 text-xs text-zinc-800 select-text dark:bg-zinc-800 dark:text-zinc-100">{details}</pre>
         <Button type="button" variant="neutral" ink="neutral" onClick={async () => {
-          try { await navigator.clipboard.writeText(details); setCopyStatus('Details copied'); }
-          catch { setCopyStatus('Could not copy. You can select the details above.'); }
-        }}>Copy details</Button>
+          try { await navigator.clipboard.writeText(details); setCopyStatus(t('auth:session.copied')); }
+          catch { setCopyStatus(t('auth:session.copyFailed')); }
+        }}>{t('auth:session.copy')}</Button>
         <p role="status" className="text-sm">{copyStatus}</p>
       </details>
     </div>

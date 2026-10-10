@@ -53,6 +53,7 @@ import {
   ArrowUpIcon, BallotIcon, ChatBubbleTailIcon, CheckIcon, ChevronRightIcon, PencilSquareIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { WorkList, type CardRow, type TopicRef } from '../workshop/work-row';
@@ -130,6 +131,7 @@ function Step({ col, active, loading, last }: { col: KanbanColView; active: bool
  * above the board's columns, from the same store.
  */
 export function StageStrip(): ReactNode {
+  const t = useMessages('project');
   const v = useStoreState(devKanbanStore);
   const narrow = useNarrowViewport();
   const ref = useRef<HTMLDivElement>(null);
@@ -148,7 +150,7 @@ export function StageStrip(): ReactNode {
   }, [narrow, v.activeTab, v.cols.length]);
   if (!v.cols.length) return null;
   return (
-    <div ref={ref} id="dev-kanban-tabs" role="tablist" aria-label="Board columns" className="dev-kanban-stages">
+    <div ref={ref} id="dev-kanban-tabs" role="tablist" aria-label={t('project:kanban.tabs.name')} className="dev-kanban-stages">
       {v.cols.map((col, i) => (
         <Step key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} last={i === v.cols.length - 1} />
       ))}
@@ -188,11 +190,11 @@ function Column(
     onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
   },
 ): ReactNode {
+  const t = useMessages('project');
   const hostRef = useRef<HTMLDivElement>(null);
   const hasReviewSort = col.key === 'inreview' && !!col.reviewSort;
-  const sortLabel = col.reviewSort === 'priority' ? 'Vote priority' : 'Newest';
+  const sortLabel = col.reviewSort === 'priority' ? t('project:kanban.sort.priority') : t('project:kanban.sort.newest');
   const nextSort = col.reviewSort === 'priority' ? 'newest' : 'priority';
-  const nextSortLabel = nextSort === 'priority' ? 'Vote priority' : 'Newest';
   const statusTone = col.status?.tone === 'blocked'
     ? 'text-red-700 dark:text-red-300'
     : col.status?.tone === 'progress'
@@ -226,7 +228,7 @@ function Column(
   if (deferred) {
     cards = null;
   } else if (loading) {
-    cards = <CardSkeleton n={2} label={`Loading ${col.title}`} />;
+    cards = <CardSkeleton n={2} label={t('project:kanban.column.loading', { column: col.title })} />;
   } else if (col.empty) {
     cards = <div className="dev-kanban-empty">{col.empty}</div>;
   } else if (unfolded) {
@@ -260,10 +262,8 @@ function Column(
       <button
         type="button"
         className="dev-ws-chip dev-kanban-sort"
-        aria-label={`Sort Waiting for approval: ${sortLabel}. Switch to ${nextSortLabel}.`}
-        title={`${col.reviewSort === 'priority'
-          ? 'Unvoted first, then fewest qualifying votes still needed. Within each vote group, already-qualified proposals follow those still short. Newest breaks ties.'
-          : 'Most recently submitted for review first.'} Click to switch to ${nextSortLabel}.`}
+        aria-label={col.reviewSort === 'priority' ? t('project:kanban.sort.namePriority') : t('project:kanban.sort.nameNewest')}
+        title={col.reviewSort === 'priority' ? t('project:kanban.sort.titlePriority') : t('project:kanban.sort.titleNewest')}
         onClick={() => callAppView('_setReviewSort', nextSort)}
       >
         <ArrowUpIcon aria-hidden="true" className="dev-kanban-sort-icon" />

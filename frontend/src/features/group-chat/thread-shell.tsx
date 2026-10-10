@@ -58,6 +58,7 @@
 
 import { useRef } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { JumpToLatest } from '../messages/jump-to-latest';
 import { ComposerForm, ComposerSlots, StatusLine } from './composer';
 
@@ -147,12 +148,13 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
  * `.dev-request` is what app.css tells the two apart by.
  */
 function RequestShell(props: ThreadShellProps) {
+  const t = useMessages('project');
   const scroll = useRef<HTMLDivElement>(null);
   const change = !!props.change;
   return (
     <div className={change ? 'dev-request dev-change platform-kb-column' : 'dev-request platform-kb-column'}>
       <div id="gc-thread-back" className="dev-request-back" />
-      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? 'Change' : 'Request'}>
+      <section className="dev-request-sheet dc-lift dc-lift-session" aria-label={change ? t('project:topic.change.sheetLabel') : t('project:topic.request.sheetLabel')}>
         <div id="gc-thread-bar" className="dev-request-bar" />
         <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain">
           <div id="gc-thread-head" />

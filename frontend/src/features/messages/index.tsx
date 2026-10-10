@@ -15,6 +15,8 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
@@ -29,7 +31,7 @@ import { botHead } from './bot-head-card';
 import { NO_PLAN_LAYOUT, planLayout } from './bot-plan';
 import { botMeta } from './bot-question';
 import { isReadyMessage } from './bot-ready';
-import { changeBlocks, type ChangeBlock } from './bot-shared';
+import { changeBlocks, dotText, type ChangeBlock } from './bot-shared';
 import { BotWorkButton, BotWorkPanel, BotWorkStatusLine, BotWorkSync, newestBotMessageId } from './bot-work';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
@@ -78,6 +80,7 @@ import {
   useMessagesSnapshot,
   openBot,
 } from './store';
+import { typingLine } from './typing-line';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
 import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
@@ -85,7 +88,7 @@ import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
 import { useSidePaneBeside } from '../agent-session/spec-layout';
-import { ACTIVITY_LABEL, agentActivity } from '../agent-session/activity';
+import { agentActivity } from '../agent-session/activity';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
 import {
   deactivateAgentSession,
@@ -166,6 +169,7 @@ function directPerson(conversation: ConversationSummary) {
 }
 
 const ConversationRow = memo(function ConversationRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
+  const t = useMessages('messages');
   const peer = directPerson(conversation);
   const invited = conversation.membershipStatus === 'invited';
   const unread = conversation.unreadCount > 0;
@@ -193,12 +197,12 @@ const ConversationRow = memo(function ConversationRow({ conversation, active }: 
             unread row state itself three ways — bold name, accent time, count
             pill — without adding a third line. */}
         <div className="messages-row-line">
-          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? senderName(peer) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">AI</span> : null}{conversation.kind === 'group' && !invited ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
+          <span className="messages-row-name">{conversation.kind === 'direct' && peer ? senderName(peer) : conversation.title}{conversation.kind === 'direct' && peer?.bot ? <span className="messages-bot-badge">{t('messages:inbox.aiBadge')}</span> : null}{conversation.kind === 'group' && !invited ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
           <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
-          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? `${conversation.kind === 'direct' ? 'Message request' : 'Group invitation'} · Tap to review` : conversation.latestSummary || 'No messages yet'}</span>
-          {conversation.unreadCount > 0 ? <span className="messages-unread" aria-label={`${conversation.unreadCount} unread`}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
+          <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? (conversation.kind === 'direct' ? t('messages:inbox.requestReview') : t('messages:inbox.invitationReview')) : conversation.latestSummary || t('messages:inbox.noMessages')}</span>
+          {conversation.unreadCount > 0 ? <span className="messages-unread" aria-label={t('messages:inbox.unread', { count: conversation.unreadCount })}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
         </div>
       </div>
     </a>
@@ -217,9 +221,10 @@ const ConversationRow = memo(function ConversationRow({ conversation, active }: 
 function KindPill({ kind }: { kind: 'agent' }) {
   // Only an agent wears one now (#2783): the channels have a section of
   // their own, headed, so an "App" pill on each of them said it twice.
+  const t = useMessages('messages');
   return (
     <span className="messages-kind-pill" data-kind={kind}>
-      Agent
+      {t('messages:inbox.agentPill')}
     </span>
   );
 }
@@ -233,6 +238,7 @@ function KindPill({ kind }: { kind: 'agent' }) {
  * person's row has their face.
  */
 const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active }: { conversation: ConversationSummary; active: boolean }) {
+  const t = useMessages('messages');
   const unread = conversation.unreadCount > 0;
   const activity = agoStamp(conversation.lastActivityAt);
   const by = conversation.latestMessage?.sender?.username;
@@ -259,10 +265,10 @@ const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active
         <div className="messages-row-line">
           <span className="messages-row-preview">
             {conversation.latestSummary
-              ? (by ? `@${by}: ${conversation.latestSummary}` : conversation.latestSummary)
-              : 'Everyone on Homeroom'}
+              ? (by ? t('messages:inbox.previewBy', { username: by, message: conversation.latestSummary }) : conversation.latestSummary)
+              : t('messages:inbox.everyone')}
           </span>
-          {unread ? <span className="messages-unread" aria-label={`${conversation.unreadCount} unread`}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
+          {unread ? <span className="messages-unread" aria-label={t('messages:inbox.unread', { count: conversation.unreadCount })}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}
         </div>
       </div>
     </a>
@@ -282,6 +288,7 @@ const GeneralChannelRow = memo(function GeneralChannelRow({ conversation, active
  * opens it in a tab the way every other row on this screen does.
  */
 const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { discussion: AppDiscussion; active: boolean }) {
+  const t = useMessages('messages');
   const activity = discussion.lastAt ? agoStamp(discussion.lastAt) : null;
   // #2387: app channels keep a read cursor now, so they carry a count like
   // #general's — only while the viewer is not reading it.
@@ -319,10 +326,10 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
         <div className="messages-row-line">
           <span className="messages-row-preview">
             {discussion.lastMessage
-              ? (discussion.lastBy ? `@${discussion.lastBy}: ${plainText(discussion.lastMessage)}` : plainText(discussion.lastMessage))
-              : 'No messages yet'}
+              ? (discussion.lastBy ? t('messages:inbox.previewBy', { username: discussion.lastBy, message: plainText(discussion.lastMessage) }) : plainText(discussion.lastMessage))
+              : t('messages:inbox.noMessages')}
           </span>
-          {unread ? <span className="messages-unread" aria-label={`${unread} unread`}>{unread > 99 ? '99+' : unread}</span> : null}
+          {unread ? <span className="messages-unread" aria-label={t('messages:inbox.unread', { count: unread })}>{unread > 99 ? '99+' : unread}</span> : null}
         </div>
       </div>
     </a>
@@ -356,6 +363,7 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
  * heavier gesture.
  */
 const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentChat; active: boolean }) {
+  const t = useMessages('messages');
   const at = chat.updatedAt || chat.createdAt || null;
   const activity = at ? agoStamp(at) : null;
   const [confirming, setConfirming] = useState(false);
@@ -368,21 +376,21 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
       await removeGlobalChatThread(chat.id);
     } catch {
       setRemoving(false);
-      window.PlatformUI?.toast?.('Could not delete this chat.');
+      window.PlatformUI?.toast?.(t('messages:inbox.agentChat.deleteFailed'));
     }
   }
 
   if (confirming) {
     return (
       <div className="messages-conversation-row messages-row-confirm" data-inbox-agent={chat.id}>
-        <span className="min-w-0 flex-1">Delete this chat?</span>
+        <span className="min-w-0 flex-1">{t('messages:inbox.agentChat.deleteConfirm')}</span>
         <button
           type="button"
           className="messages-row-confirm-cancel"
           disabled={removing}
           onClick={() => setConfirming(false)}
         >
-          Cancel
+          {t('core:common.cancel')}
         </button>
         <button
           type="button"
@@ -390,7 +398,7 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
           disabled={removing}
           onClick={() => void remove()}
         >
-          {removing ? 'Deleting…' : 'Delete'}
+          {removing ? t('messages:inbox.agentChat.deleting') : t('messages:inbox.agentChat.delete')}
         </button>
       </div>
     );
@@ -416,14 +424,14 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
       </span>
       <div className="min-w-0 flex-1">
         <div className="messages-row-line">
-          <span className="messages-row-name">{chat.title || 'Untitled chat'}<KindPill kind="agent" /></span>
+          <span className="messages-row-name">{chat.title || t('messages:inbox.agentChat.untitled')}<KindPill kind="agent" /></span>
           {activity
             ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
             : null}
         </div>
         <div className="messages-row-line">
           <span className="messages-row-preview">
-            {chat.busy ? 'Working…' : (chat.summary || 'No messages yet')}
+            {chat.busy ? t('messages:inbox.agentChat.working') : (chat.summary || t('messages:inbox.noMessages'))}
           </span>
         </div>
       </div>
@@ -432,7 +440,7 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
       <button
         type="button"
         className="messages-row-delete"
-        aria-label={`Delete ${chat.title || 'this chat'}`}
+        aria-label={chat.title ? t('messages:inbox.agentChat.deleteNamed', { chat: chat.title }) : t('messages:inbox.agentChat.deleteUnnamed')}
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirming(true); }}
       >
         <DraftTrashIcon className="w-4 h-4" aria-hidden="true" />
@@ -519,9 +527,10 @@ const AgentSessionRow = memo(function AgentSessionRow({ session, active }: { ses
  * is against a DOM that screen owns. At rest they are the same object.
  */
 function InboxFilters({ filter }: { filter: InboxFilter }) {
+  const t = useMessages('messages');
   return (
     <div id="messages-filters" className="messages-filters">
-      <div className="messages-filter-track" role="group" aria-label="Show">
+      <div className="messages-filter-track" role="group" aria-label={t('messages:inbox.filterGroup')}>
         {INBOX_FILTERS.map(([key, label]) => (
           <button
             key={key}
@@ -532,7 +541,7 @@ function InboxFilters({ filter }: { filter: InboxFilter }) {
             className="messages-filter"
             onClick={() => setFilter(key)}
           >
-            {label}
+            {t(label)}
           </button>
         ))}
       </div>
@@ -547,14 +556,14 @@ function InboxFilters({ filter }: { filter: InboxFilter }) {
  * building it yourself, then people.
  */
 const NEW_CHOICES = [
-  { key: 'bot', label: 'Homeroom bot', hint: 'Make an app or suggest an improvement' },
+  { key: 'bot', label: 'messages:inbox.new.bot.label', hint: 'messages:inbox.new.bot.hint' },
   // #2779: a conversation with the Mayor that works on any app, so there is
   // no app to pick first. It replaced "Agent chat", which asked which app and
   // opened a classic dev session there; those are no longer created. B8:
   // named for what it is beside Homeroom bot, building it yourself.
-  { key: 'agent', label: 'Build it now', hint: 'Plan and build a change with a coding agent' },
-  { key: 'direct', label: 'Direct message', hint: 'Talk to one person' },
-  { key: 'group', label: 'Group chat', hint: 'Bring a few people together' },
+  { key: 'agent', label: 'messages:inbox.new.agent.label', hint: 'messages:inbox.new.agent.hint' },
+  { key: 'direct', label: 'messages:inbox.new.direct.label', hint: 'messages:inbox.new.direct.hint' },
+  { key: 'group', label: 'messages:inbox.new.group.label', hint: 'messages:inbox.new.group.hint' },
 ] as const;
 type NewChoice = typeof NEW_CHOICES[number]['key'];
 
@@ -593,6 +602,7 @@ function startNew(choice: NewChoice) {
  * it is portalled to the end of <body>, so Tab walked the whole page first.
  */
 function NewMessageButton() {
+  const t = useMessages('messages');
   const [rect, setRect] = useState<AnchorRect | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -607,7 +617,7 @@ function NewMessageButton() {
     const pu = (window as any).PlatformUI;
     if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
       pu.actionSheet({
-        actions: newChoices().map((item) => ({ label: item.label, handler: () => startNew(item.key) })),
+        actions: newChoices().map((item) => ({ label: t(item.label), handler: () => startNew(item.key) })),
       });
       return;
     }
@@ -630,8 +640,8 @@ function NewMessageButton() {
         className="messages-new-btn"
         aria-haspopup="menu"
         aria-expanded={open ? 'true' : 'false'}
-        aria-label="New message"
-        title="New message"
+        aria-label={t('messages:inbox.new.button')}
+        title={t('messages:inbox.new.button')}
         onClick={toggle}
       >
         <PlusIcon aria-hidden="true" />
@@ -642,7 +652,7 @@ function NewMessageButton() {
           id="messages-new-menu"
           className="messages-new-pop"
           role="menu"
-          aria-label="Start a new conversation"
+          aria-label={t('messages:inbox.new.menuName')}
           style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
           onClick={(event) => event.stopPropagation()}
           onKeyDown={menuKeys.onKeyDown}
@@ -661,8 +671,8 @@ function NewMessageButton() {
               {item.key === 'agent' ? <SparklesIcon aria-hidden="true" /> : null}
               {item.key === 'bot' ? <img src="/brand/homeroom-mark.png" alt="" aria-hidden="true" className="messages-new-option-mark" /> : null}
               <span className="min-w-0">
-                <span className="messages-new-option-label">{item.label}</span>
-                <span className="messages-new-option-hint">{item.hint}</span>
+                <span className="messages-new-option-label">{t(item.label)}</span>
+                <span className="messages-new-option-hint">{t(item.hint)}</span>
               </span>
             </button>
           ))}
@@ -675,8 +685,8 @@ function NewMessageButton() {
 
 /** The heading over each part of the list (#2783). */
 const SECTION_LABELS: Record<InboxSection, string> = {
-  chats: 'Chats',
-  channels: 'Channels',
+  chats: 'messages:inbox.section.chats',
+  channels: 'messages:inbox.section.channels',
 };
 
 /**
@@ -715,8 +725,9 @@ function inboxMatches(text: string | null | undefined, query: string): boolean {
  * stops halfway reads as a short list rather than a loading one.
  */
 function ConversationRowSkeleton() {
+  const t = useMessages('messages');
   return (
-    <SkeletonGroup label="Loading conversations">
+    <SkeletonGroup label={t('messages:inbox.loading')}>
       {Array.from({ length: 6 }, (_, i) => (
         <div key={i} className="messages-conversation-row">
           {/* The `lg` square UserAvatar's 44px box. */}
@@ -738,6 +749,7 @@ function ConversationRowSkeleton() {
 }
 
 function ConversationList() {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   // Agent chats come from the chat's OWN store (#2718): that list is already
   // loaded, merged on every thread event and invalidated by the chat itself,
@@ -866,12 +878,12 @@ function ConversationList() {
       <span className="messages-more-channels-glyph" aria-hidden="true">
         <ChevronDownIcon className={snap.showMoreChannels ? 'rotate-180' : ''} />
       </span>
-      <span>{snap.showMoreChannels ? 'Show less' : `Show ${moreEntries.length} more`}</span>
+      <span>{snap.showMoreChannels ? t('messages:inbox.showLess') : t('messages:inbox.showMore', { count: moreEntries.length })}</span>
     </button>
   ) : null;
 
   return (
-    <section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
+    <section className={`messages-list-pane ${specBeside ? 'hidden' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('messages:inbox.listName')}>
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is
@@ -885,14 +897,14 @@ function ConversationList() {
           id="messages-search"
           type="search"
           className="messages-search-input"
-          placeholder="Search messages…"
-          aria-label="Search messages"
+          placeholder={t('messages:inbox.searchPlaceholder')}
+          aria-label={t('messages:inbox.searchLabel')}
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
         />
       </div>
       <InboxFilters filter={snap.filter} />
-      {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
+      {!snap.online ? <div className="messages-network-banner">{t('messages:inbox.offline')}</div> : null}
       {/* #1953: a click on the list's own blank space — below the last row,
           not on a row or a button — closes the open conversation, as it
           would in a desktop mail client. Only the list itself counts
@@ -907,22 +919,22 @@ function ConversationList() {
         }}
       >
         {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
-        {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>Try again</button></div> : null}
+        {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>{t('core:common.tryAgain')}</button></div> : null}
         {/* THE EMPTY STATE IS STILL THE CONVERSATIONS', and that is the
             correct reading: "no messages yet" offers to start one, which is
             an answer about people. An inbox that is empty only because a
             FILTER is narrow says something else, below. */}
         {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length && !inbox.length
-          ? <div className="messages-empty"><h3>No messages yet</h3><p>Start a direct conversation or bring a group together.</p><button type="button" onClick={() => openDialog('messagesCreate')}>New conversation</button></div>
+          ? <div className="messages-empty"><h3>{t('messages:inbox.empty.title')}</h3><p>{t('messages:inbox.empty.body')}</p><button type="button" onClick={() => openDialog('messagesCreate')}>{t('messages:inbox.empty.action')}</button></div>
           : null}
         {!snap.loadingList && !snap.error && snap.listLoaded && !inbox.length && snap.filter !== 'all'
-          ? <div id="messages-filter-empty" className="messages-state"><p>Nothing here under this filter.</p></div>
+          ? <div id="messages-filter-empty" className="messages-state"><p>{t('messages:inbox.filterEmpty')}</p></div>
           : null}
         {/* A QUERY THAT MATCHED NOTHING is not an empty inbox, and must not
             borrow the empty inbox's offer to start a conversation: the rows
             are there, this one word is what hid them. */}
         {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !shown.length
-          ? <div id="messages-search-empty" className="messages-state"><p>No messages match “{deferredQuery.trim()}”.</p></div>
+          ? <div id="messages-search-empty" className="messages-state"><p>{t('messages:inbox.searchEmpty', { query: deferredQuery.trim() })}</p></div>
           : null}
         {/* ONE LIST, TWO SECTIONS (#2783). ./inbox.ts orders them — the
             chats on one clock, then the channels — and returns DESCRIPTORS
@@ -954,7 +966,7 @@ function ConversationList() {
             ? moreToggle : null;
           return [
             run.head
-              ? <h3 key={`head-${run.section}`} className="messages-section-head" data-inbox-section={run.section}>{SECTION_LABELS[run.section]}</h3>
+              ? <h3 key={`head-${run.section}`} className="messages-section-head" data-inbox-section={run.section}>{t(SECTION_LABELS[run.section])}</h3>
               : null,
             <div key={`card-${run.section}`} className="messages-section-card" data-inbox-card={run.section}>
               {rows}
@@ -1007,6 +1019,7 @@ function ConversationList() {
 }
 
 function InvitationBanner() {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const active = snap.active;
   const [busy, setBusy] = useState(false);
@@ -1014,11 +1027,10 @@ function InvitationBanner() {
   if (!active || active.membershipStatus !== 'invited') return null;
   const conversationId = active.id;
   const requesterUser = active.requester;
-  const requester = requesterUser?.username ? `@${requesterUser.username}` : 'Someone';
   async function answer(action: 'accept' | 'decline') {
     setBusy(true); setError('');
     try { await respond(action); }
-    catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t update this invitation.'); }
+    catch (err) { setError(err instanceof Error ? err.message : t('messages:invitation.error.respond')); }
     finally { setBusy(false); }
   }
   async function declineAndBlock() {
@@ -1032,16 +1044,16 @@ function InvitationBanner() {
       await api.setBlock(requesterId, true);
       await finishDirectBlock(conversationId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Couldn’t decline and block this requester.');
+      setError(err instanceof Error ? err.message : t('messages:invitation.error.declineBlock'));
     } finally { setBusy(false); }
   }
   return (
     <div className="messages-invitation">
-      <div className="min-w-0 flex-1"><strong>{active.kind === 'direct' ? 'Message request' : 'Group invitation'}</strong><p>{requester} invited you. Accepting gives you access to the complete retained conversation history.</p>{error ? <span role="alert">{error}</span> : null}</div>
+      <div className="min-w-0 flex-1"><strong>{active.kind === 'direct' ? t('messages:invitation.messageRequest') : t('messages:invitation.groupInvitation')}</strong><p>{requesterUser?.unnamed ? t('messages:invitation.invitedByUnknown') : requesterUser?.username ? t('messages:invitation.invitedBy', { username: requesterUser.username }) : t('messages:invitation.invitedBySomeone')}</p>{error ? <span role="alert">{error}</span> : null}</div>
       <div className="messages-invite-actions">
-        <button type="button" disabled={busy} onClick={() => void answer('decline')} className="messages-invite-decline">Decline</button>
-        {requesterUser?.id ? <button type="button" disabled={busy} onClick={() => void declineAndBlock()} className="messages-invite-block">Decline &amp; block @{requesterUser.username}</button> : null}
-        <button type="button" disabled={busy} onClick={() => void answer('accept')} className="messages-invite-accept">Accept</button>
+        <button type="button" disabled={busy} onClick={() => void answer('decline')} className="messages-invite-decline">{t('messages:invitation.decline')}</button>
+        {requesterUser?.id ? <button type="button" disabled={busy} onClick={() => void declineAndBlock()} className="messages-invite-block">{requesterUser.unnamed ? t('messages:invitation.declineAndBlockUnknown') : t('messages:invitation.declineAndBlock', { username: requesterUser.username })}</button> : null}
+        <button type="button" disabled={busy} onClick={() => void answer('accept')} className="messages-invite-accept">{t('messages:invitation.accept')}</button>
       </div>
     </div>
   );
@@ -1068,6 +1080,7 @@ function InvitationBanner() {
  * stays open through it (`data-bot-work-keep`, #3770; ./bot-work.tsx).
  */
 function FullWidthToggle() {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   // A Mayor session's side pane (its spec or a preview) open beside its chat
   // has already moved the list aside (ConversationList), so here the control
@@ -1079,7 +1092,7 @@ function FullWidthToggle() {
   // A channel is always full width (see the layout's note), so a toggle for
   // a list it never shows would do nothing.
   if (snap.route.appSlug || (snap.active?.kind === 'channel' && snap.active.id === snap.route.conversationId)) return null;
-  const label = collapsed ? 'Show the conversation list' : 'Full width';
+  const label = collapsed ? t('messages:header.showList') : t('messages:header.fullWidth');
   return (
     <button
       type="button"
@@ -1104,6 +1117,7 @@ function FullWidthToggle() {
  * list, and like the hub's own pages it says so in the page (#3407).
  */
 function ThreadHeader() {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const active = snap.active;
   const [menu, setMenu] = useState(false);
@@ -1136,9 +1150,9 @@ function ThreadHeader() {
     // QA 2026-09-24 Q15: the app's own confirm (lib/confirm.ts), not the
     // browser's, which some webview hosts suppress.
     const ok = await confirmAction({
-      title: `Block ${senderName(peer)}?`,
-      message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
-      confirmLabel: 'Block',
+      title: peer.unnamed ? (peer.id ? t('messages:header.block.titleUnknownHandle') : t('messages:header.block.titleUnknown')) : t('messages:header.block.title', { name: senderName(peer) }),
+      message: t('messages:header.block.message'),
+      confirmLabel: t('messages:header.block.confirm'),
       danger: true,
     });
     if (!ok) return;
@@ -1146,7 +1160,7 @@ function ThreadHeader() {
     if (!conversationId) return;
     setBusy(true);
     try { await setUserBlocked(peer.id, true); }
-    catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : 'Couldn’t block this user.'); }
+    catch (err) { window.PlatformUI?.toast?.(err instanceof Error ? err.message : t('messages:header.block.failed')); }
     finally { setBusy(false); setMenu(false); }
   }
   // QA 2026-09-24 Q14: rename, for whoever the server lets rename — the
@@ -1162,10 +1176,10 @@ function ThreadHeader() {
       toast?: (message: string) => void;
     };
     if (!ui?.prompt) return;
-    const next = await ui.prompt({ title: 'Rename group', value: current, placeholder: 'Group name', confirmLabel: 'Save', maxLength: 80 });
+    const next = await ui.prompt({ title: t('messages:header.rename.title'), value: current, placeholder: t('messages:header.rename.placeholder'), confirmLabel: t('core:common.save'), maxLength: 80 });
     if (next == null) return;
     try { await renameConversation(next); }
-    catch (err) { ui.toast?.(err instanceof Error ? err.message : 'Couldn’t rename this group.'); }
+    catch (err) { ui.toast?.(err instanceof Error ? err.message : t('messages:header.rename.failed')); }
   }
   const channel = active.kind === 'channel';
   const invited = active.membershipStatus === 'invited';
@@ -1176,17 +1190,18 @@ function ThreadHeader() {
   const botDm = active.kind === 'direct' && !!active.homeroomBot && active.membershipStatus === 'member';
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
-  const count = (n: number) => `${n} ${n === 1 ? 'member' : 'members'}`;
   // QA 2026-09-24 Q14: "1 member", not "1 members". An invitee is not shown
   // the roster until they accept, so the count the server gives them is 0 —
   // they read the invitation's state instead of "0 members".
   const subtitle = channel
-    ? `The Homeroom community's channel · ${count(active.memberCount)}`
+    ? t('messages:header.subtitle.channel', { count: active.memberCount })
     : invited
-      ? 'Invitation pending'
+      ? t('messages:header.subtitle.invited')
       : active.kind === 'group'
-        ? `${count(active.memberCount)}${active.myRole === 'owner' ? ' · you own this group' : ''}`
-        : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
+        ? (active.myRole === 'owner'
+          ? t('messages:header.subtitle.groupOwner', { count: active.memberCount })
+          : t('messages:header.subtitle.group', { count: active.memberCount }))
+        : active.awaitingAcceptance ? t('messages:header.subtitle.requestPending') : t('messages:header.subtitle.direct');
   return (
     <header className="messages-thread-header">
       {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
@@ -1198,26 +1213,28 @@ function ThreadHeader() {
         className="min-w-0 text-left flex-1"
         onClick={() => { if (active.kind === 'group') openDialog('messagesMembers'); }}
       >
-        <div className="messages-thread-name">{active.kind === 'direct' && person ? senderName(person) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">AI</span> : null}</div>
+        <div className="messages-thread-name">{active.kind === 'direct' && person ? senderName(person) : channel ? `#${active.channelKey || active.title}` : active.title}{active.kind === 'direct' && person?.bot ? <span className="messages-bot-badge">{t('messages:header.aiBadge')}</span> : null}</div>
         {botDm ? <BotWorkStatusLine /> : <div className="messages-thread-sub">{subtitle}</div>}
       </button>
-      {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
+      {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
       {botDm ? <BotWorkButton /> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>
-        <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
+        <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
         {menu ? (
-          <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label="Conversation actions" onKeyDown={menuKeys.onKeyDown}>
+          <div ref={menuRef} className="messages-thread-menu" role="menu" aria-label={t('messages:header.actions')} onKeyDown={menuKeys.onKeyDown}>
             {active.kind === 'group' && active.canManage
-              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>Rename group</button>
+              ? <button type="button" role="menuitem" data-rename-group="" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); void renameGroup(); }}>{t('messages:header.menu.rename')}</button>
               : null}
             {active.kind === 'group'
-              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button>
+              ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openDialog('messagesMembers'); }}>{t('messages:header.menu.members')}</button>
               : active.kind === 'direct'
-                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block {senderName(peer)}</button>
+                ? <button type="button" role="menuitem" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">{!peer ? t('messages:header.menu.blockUnknown')
+                  : peer.unnamed ? (peer.id ? t('messages:header.menu.blockUnnamedHandle') : t('messages:header.menu.blockUnnamed'))
+                    : t('messages:header.menu.block', { name: senderName(peer) })}</button>
                 : null}
-            {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer), userId: peer.id }); }}>Report user</button> : null}
-            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>Refresh conversation</button>
+            {peer ? <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); openReport({ targetType: 'user', target: peer.username, label: senderName(peer), userId: peer.id }); }}>{t('messages:header.menu.report')}</button> : null}
+            <button type="button" role="menuitem" onClick={() => { menuBtnRef.current?.focus({ preventScroll: true }); setMenu(false); void loadConversations(true); }}>{t('messages:header.menu.refresh')}</button>
           </div>
         ) : null}
       </div>
@@ -1256,10 +1273,10 @@ function dayLabel(message: ConversationMessage): string {
   const date = new Date(message.createdAt);
   if (Number.isNaN(date.getTime())) return '';
   const today = new Date();
-  if (date.toDateString() === today.toDateString()) return 'Today';
+  if (date.toDateString() === today.toDateString()) return translate('messages:thread.day.today');
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  if (date.toDateString() === yesterday.toDateString()) return translate('messages:thread.day.yesterday');
   return date.toLocaleDateString(undefined, date.getFullYear() === today.getFullYear()
     ? { month: 'short', day: 'numeric' }
     : { month: 'short', day: 'numeric', year: 'numeric' });
@@ -1293,6 +1310,7 @@ function dayLabel(message: ConversationMessage): string {
  * on a skeleton until the answer is here.
  */
 function AppDiscussionThread({ slug }: { slug: string }) {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const host = useRef<HTMLDivElement | null>(null);
   const context = snap.discussionContext;
@@ -1353,8 +1371,8 @@ function AppDiscussionThread({ slug }: { slug: string }) {
   if (snap.discussionError) {
     return (
       <section className="flex messages-thread-pane messages-no-selection" aria-label={name}>
-        <h2>This discussion could not be opened.</h2>
-        <p>It may have been removed, or you may not be a member of that app.</p>
+        <h2>{t('messages:discussion.error.title')}</h2>
+        <p>{t('messages:discussion.error.body')}</p>
       </section>
     );
   }
@@ -1383,8 +1401,8 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           <span className="messages-thread-name block">{name}</span>
           <span className="messages-thread-sub block">
             {archived
-              ? 'Earlier project discussion · read-only'
-              : `${handle ? `#${handle} · ` : ''}Everyone building this project`}
+              ? t('messages:discussion.subtitle.archived')
+              : handle ? t('messages:discussion.subtitle.channel', { channel: handle }) : t('messages:discussion.subtitle.everyone')}
           </span>
         </span>
         <FullWidthToggle />
@@ -1435,6 +1453,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
  * a store that is already showing it.
  */
 function MayorSessionThread({ id }: { id: number | 'new' }) {
+  const t = useMessages('messages');
   useEffect(() => {
     void openAgentSession({ id, host: 'messages' });
     return () => {
@@ -1456,7 +1475,7 @@ function MayorSessionThread({ id }: { id: number | 'new' }) {
   return (
     <section
       className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"
-      aria-label="Agent session"
+      aria-label={t('messages:agent.sessionName')}
       data-agent-session-thread={id}
     >
       <AgentSessionPanel embedded headerAction={<FullWidthToggle />} />
@@ -1469,7 +1488,16 @@ function MayorSessionThread({ id }: { id: number | 'new' }) {
  * where its active change stands. A link to the inbox's own address for it,
  * which a phone's router swaps for the conversation's screen.
  */
+/** What a session is doing, as its row says it to a screen reader after the title. */
+const ACTIVITY_SAID: Record<'working' | 'done', string> = {
+  working: 'messages:agent.row.activity.working',
+  done: 'messages:agent.row.activity.done',
+};
+
 const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { session: MayorSession; active: boolean }) {
+  const t = useMessages('messages');
+  // Subscribed: changeRowWords reads where the change stands from the agent catalog.
+  useMessages('agent');
   const at = session.lastActivityAt || session.createdAt || null;
   const activity = at ? agoStamp(at) : null;
   const thread: MessagesAgentThread = { kind: 'agent', id: session.id };
@@ -1480,8 +1508,11 @@ const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { ses
   // carries it ("Goes live in about 8 minutes"), where any other change
   // going live says "Going live" (changeRowWords).
   const status = change
-    ? `${change.title || (change.prNumber ? `PR #${change.prNumber}` : `Change ${change.id}`)} · ${changeRowWords(change)}`
-    : 'No active change';
+    ? dotText([
+      change.title || (change.prNumber ? t('messages:agent.row.prNumber', { number: change.prNumber }) : t('messages:agent.row.changeId', { id: change.id })),
+      changeRowWords(change),
+    ])
+    : t('messages:agent.row.noChange');
   return (
     <a
       href={href}
@@ -1503,15 +1534,15 @@ const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { ses
       </span>
       <div className="min-w-0 flex-1">
         <div className="messages-row-line">
-          <span className="messages-row-name">{session.title || 'New session'}</span>
-          {mark ? <span className="sr-only">{`, ${ACTIVITY_LABEL[mark].toLowerCase()}`}</span> : null}
+          <span className="messages-row-name">{session.title || t('messages:agent.row.newSession')}</span>
+          {mark ? <span className="sr-only">{t(ACTIVITY_SAID[mark])}</span> : null}
           {activity
             ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
             : null}
         </div>
         <div className="messages-row-line">
           <span className="messages-row-preview">
-            {session.busy ? 'Working…' : `${session.focusApp?.name ? `${session.focusApp.name} · ` : ''}${status}`}
+            {session.busy ? t('messages:agent.row.working') : dotText([session.focusApp?.name, status])}
           </span>
         </div>
       </div>
@@ -1520,6 +1551,7 @@ const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { ses
 });
 
 function AgentChatThread({ id }: { id: string }) {
+  const t = useMessages('messages');
   useEffect(() => {
     void openGlobalChat({ threadId: id, host: 'messages' });
     return () => {
@@ -1530,7 +1562,7 @@ function AgentChatThread({ id }: { id: string }) {
   return (
     <section
       className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"
-      aria-label="Agent chat"
+      aria-label={t('messages:agent.chatName')}
       data-agent-chat={id}
     >
       <GlobalChatPanel embedded headerAction={<FullWidthToggle />} />
@@ -1566,6 +1598,7 @@ function AgentChatThread({ id }: { id: string }) {
  * instead — says so here, with the full-view link to try the app itself.
  */
 function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
+  const t = useMessages('messages');
   const host = useRef<HTMLDivElement | null>(null);
   const [phase, setPhase] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const full = fullScreenAddress({ kind: 'session', slug, id });
@@ -1598,26 +1631,27 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
   return (
     <section
       className="flex messages-thread-pane messages-thread-session"
-      aria-label="Agent session"
+      aria-label={t('messages:agent.sessionName')}
       data-agent-session={`${slug}/${id}`}
     >
       <div className="messages-session-bar">
-        <a className="messages-session-full" href={full}>Open full view</a>
+        <a className="messages-session-full" href={full}>{t('messages:agent.session.openFull')}</a>
         <FullWidthToggle />
       </div>
       {phase === 'unavailable' ? (
         <div className="messages-state messages-state-error">
-          <p>This session could not be opened here.</p>
-          <a href={full}>Open it in the app</a>
+          <p>{t('messages:agent.session.unavailable')}</p>
+          <a href={full}>{t('messages:agent.session.openInApp')}</a>
         </div>
       ) : null}
       {phase === 'loading' ? (
-        <div className="messages-state"><span className="messages-spinner" />Loading session…</div>
+        <div className="messages-state"><span className="messages-spinner" />{t('messages:agent.session.loading')}</div>
       ) : null}
       <div ref={host} className="messages-session-host flex-1 min-h-0" hidden={phase === 'unavailable'} />
     </section>
   );
 }
+
 
 /**
  * The open conversation. `embedded` is the copy a community's page mounts
@@ -1627,6 +1661,7 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
  * which — so the ids its rows carry are never on the page twice.
  */
 function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
@@ -1777,7 +1812,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // draws no second copy of it; and the page's copy draws nothing once
   // Messages has taken the store back.
   if (!!snap.route.embedded !== embedded) {
-    return embedded ? null : <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2></section>;
+    return embedded ? null : <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2></section>;
   }
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
   if (snap.route.agent?.kind === 'chat') return <AgentChatThread key={snap.route.agent.id} id={snap.route.agent.id} />;
@@ -1786,7 +1821,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     const { slug, id } = snap.route.agent;
     return <AgentSessionThread key={`${slug}/${id}`} slug={slug} id={id} />;
   }
-  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2><p>Your chats open here. A community's channel is on its hub, under Communities.</p></section>;
+  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2><p>{t('messages:thread.empty.body')}</p></section>;
   // The kind is on the SECTION — `messages-thread-direct`, `-group` or
   // `-channel` — so the scroller's class string below stays the one the
   // safe-area test pins. It no longer changes the rows' shape: every kind is
@@ -1877,7 +1912,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
             className="messages-card-run-more"
             data-card-run-more={hidden}
             aria-expanded="false"
-            aria-label={`Show ${hidden} more ${hidden === 1 ? 'card' : 'cards'}`}
+            aria-label={t('messages:thread.showMoreCards', { count: hidden })}
             onClick={() => setExpandedRuns((open) => new Set(open).add(runKey))}
           >{cardRunLabel(hidden)}</button>
         </div>,
@@ -1889,7 +1924,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     }
   }
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || 'Conversation'}>
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || t('messages:thread.paneName')}>
       {embedded ? null : <ThreadHeader />}
       {/* #3692: the bot's activity panel drops over the transcript from under its header. */}
       {botDm && !embedded ? <BotWorkPanel /> : null}
@@ -1916,32 +1951,32 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
             A refresh of the visible thread — the realtime echo of every send
             is one — re-reads it silently: this row drawn above the messages
             pushed the whole transcript down on each message sent. */}
-        {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />Loading messages…</div> : null}
+        {snap.loadingThread && !snap.messages.length ? <div className="messages-state"><span className="messages-spinner" />{t('messages:thread.loading')}</div> : null}
         {/* QA 2026-09-24 Q16: a conversation that cannot come back offers the
             way out, not a Try again that reads the same answer. Leaving it
             here is said plainly, in the ordinary state colour: it is what
             the viewer asked for, not an error. */}
-        {snap.threadGone === 'left' ? <div className="messages-state" data-thread-gone="left"><p>You left this group.</p><button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button></div> : null}
+        {snap.threadGone === 'left' ? <div className="messages-state" data-thread-gone="left"><p>{t('messages:thread.left')}</p><button type="button" onClick={() => messagesController.open(null)}>{t('messages:thread.backToMessages')}</button></div> : null}
         {snap.threadError && !snap.messages.length ? <div className="messages-state messages-state-error"><p>{snap.threadError}</p>{snap.threadGone === 'missing'
-          ? <button type="button" onClick={() => messagesController.open(null)}>Back to Messages</button>
-          : <button type="button" onClick={() => messagesController.route(conversationId)}>Try again</button>}</div> : null}
-        {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>No messages yet. Say hello.</p></div> : null}
-        {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? 'Loading…' : 'Load earlier messages'}</button></div> : null}
+          ? <button type="button" onClick={() => messagesController.open(null)}>{t('messages:thread.backToMessages')}</button>
+          : <button type="button" onClick={() => messagesController.route(conversationId)}>{t('core:common.tryAgain')}</button>}</div> : null}
+        {!snap.loadingThread && !snap.threadError && snap.active && snap.active.membershipStatus === 'member' && !snap.messages.length ? <div className="messages-thread-empty"><span aria-hidden="true">👋</span><p>{t('messages:thread.emptyConversation')}</p></div> : null}
+        {snap.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={snap.loadingOlder} onClick={() => void older()} className="messages-load-older">{snap.loadingOlder ? t('messages:thread.loadingOlder') : t('messages:thread.loadEarlier')}</button></div> : null}
         {rows}
         {/* #2387: a message link opened the transcript part-way back. */}
         {snap.nextAfter ? (
           <div className="messages-newer">
-            <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}>{snap.loadingOlder ? 'Loading…' : 'Load newer messages'}</button>
-            <button type="button" className="messages-load-older" onClick={() => { pinned.current = true; jumpToPresent(); }}>Jump to present</button>
+            <button type="button" className="messages-load-older" disabled={snap.loadingOlder} onClick={() => void loadNewer()}>{snap.loadingOlder ? t('messages:thread.loadingNewer') : t('messages:thread.loadNewer')}</button>
+            <button type="button" className="messages-load-older" onClick={() => { pinned.current = true; jumpToPresent(); }}>{t('messages:thread.jumpToPresent')}</button>
           </div>
         ) : null}
       </div>
       {/* Jump to latest, over the transcript's foot whenever the reader is
           not at the bottom, with a dot for what arrived while they were up. */}
       <TranscriptOverlay edge="foot">
-        <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title="Jump to latest" onClick={jumpToLatest} />
+        <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
-      <div className="messages-typing" aria-live="polite">{typing.length === 1 ? `${typing[0]} is typing…` : typing.length > 1 ? `${typing.slice(0, 2).join(', ')} are typing…` : ''}</div>
+      <div className="messages-typing" aria-live="polite">{typingLine(t, typing)}</div>
       <MessageComposer />
     </section>
   );
@@ -1952,6 +1987,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
  * the shared card, told who replied and what, and to open that thread.
  */
 function ThreadActivityRow({ replies }: { replies: ConversationMessage[] }) {
+  // Subscribed: the time range is read from the catalog as this renders.
+  useMessages('messages');
   const first = replies[0];
   const last = replies[replies.length - 1];
   const rootId = first.threadRootId as number;
@@ -1962,7 +1999,7 @@ function ThreadActivityRow({ replies }: { replies: ConversationMessage[] }) {
     <ThreadActivityCard
       rootText={root?.content || ''}
       rootDeleted={!!root?.deleted}
-      time={start === end ? start : `${start} – ${end}`}
+      time={start === end ? start : translate('messages:thread.activityTimeRange', { start, end })}
       timeTitle={fullTime(last.createdAt)}
       replies={replies.map((reply) => ({
         key: reply.clientKey || reply.id,
@@ -1986,6 +2023,7 @@ function ThreadActivityRow({ replies }: { replies: ConversationMessage[] }) {
  * of everyone's way, and a DM has no one else in it (store: canThread).
  */
 function ReplyThreadPanel() {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const conversationId = snap.route.conversationId;
@@ -2025,13 +2063,13 @@ function ReplyThreadPanel() {
   const replies = thread?.messages || [];
   let previous: ConversationMessage | null = null;
   return (
-    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label="Thread" data-reply-thread={rootId}>
+    <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:replies.paneName')} data-reply-thread={rootId}>
       <header className="messages-thread-header">
         <div className="min-w-0 flex-1">
-          <div className="messages-thread-name">Thread</div>
+          <div className="messages-thread-name">{t('messages:replies.title')}</div>
           {where ? <div className="messages-thread-sub">{where}</div> : null}
         </div>
-        <button type="button" className="messages-thread-action" aria-label="Close thread" title="Close thread" onClick={() => closeThread()}>
+        <button type="button" className="messages-thread-action" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
           <XIcon aria-hidden="true" />
         </button>
       </header>
@@ -2040,10 +2078,10 @@ function ReplyThreadPanel() {
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread /> : null}
         <div className="messages-reply-count" aria-hidden={!replies.length}>
-          <span>{replies.length ? `${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}` : thread?.loading ? 'Loading replies…' : 'No replies yet'}</span>
+          <span>{replies.length ? t('messages:replies.count', { count: replies.length }) : thread?.loading ? t('messages:replies.loading') : t('messages:replies.none')}</span>
         </div>
-        {thread?.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? 'Loading…' : 'Load earlier replies'}</button></div> : null}
-        {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}>Try again</button></div> : null}
+        {thread?.nextBefore ? <div className="flex justify-center py-2"><button type="button" disabled={thread.loading} onClick={() => void loadOlderReplies()} className="messages-load-older">{thread.loading ? t('messages:replies.loadingEarlier') : t('messages:replies.loadEarlier')}</button></div> : null}
+        {thread?.error ? <div className="messages-state messages-state-error"><p>{thread.error}</p><button type="button" onClick={() => void loadReplyThread(conversationId, rootId, true)}>{t('core:common.tryAgain')}</button></div> : null}
         {replies.map((message) => {
           const grouped = !!previous && !previous.failed && !message.failed
             && groupsWithPrevious(
@@ -2072,6 +2110,7 @@ function ReplyThreadPanel() {
  * it is connected to, and that is the channel pane's to establish.
  */
 function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number }) {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const context = snap.discussionContext;
   const ready = !!context && context.slug === slug;
@@ -2085,7 +2124,7 @@ function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number })
       readOnly={ready ? context.readOnly : true}
       where={handle ? `#${handle}` : (ready ? context.name : slug)}
       close={(
-        <a className="messages-thread-action" href={back} aria-label="Close thread" title="Close thread">
+        <a className="messages-thread-action" href={back} aria-label={t('messages:replies.close')} title={t('messages:replies.close')}>
           <XIcon aria-hidden="true" />
         </a>
       )}
@@ -2108,6 +2147,7 @@ export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close
   where: string;
   close: ReactNode;
 }) {
+  const t = useMessages('messages');
   const host = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = host.current;
@@ -2127,8 +2167,8 @@ export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close
         container: el,
         fullHeight: true,
         readOnly,
-        placeholder: 'Reply in thread…',
-        notice: 'Only members of this app can reply here.',
+        placeholder: translate('messages:replies.app.placeholder'),
+        notice: translate('messages:replies.app.membersOnly'),
       });
     };
     timer = window.setTimeout(mount, 0);
@@ -2142,10 +2182,10 @@ export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close
     };
   }, [slug, rootId, ready, readOnly]);
   return (
-    <aside className="messages-reply-pane messages-reply-pane-app" aria-label="Thread" data-reply-thread={rootId}>
+    <aside className="messages-reply-pane messages-reply-pane-app" aria-label={t('messages:replies.paneName')} data-reply-thread={rootId}>
       <header className="messages-thread-header">
         <div className="min-w-0 flex-1">
-          <div className="messages-thread-name">Thread</div>
+          <div className="messages-thread-name">{t('messages:replies.title')}</div>
           <div className="messages-thread-sub">{where}</div>
         </div>
         {close}

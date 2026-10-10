@@ -37,6 +37,8 @@ import { useRef, useState, type ReactNode } from 'react';
 import { ChevronLeftIcon, TerminalIcon } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { improveStore } from '../improve/improve-store.js';
 import { stagingHandlers, stagingRefs, stagingStore } from './staging-store.js';
@@ -49,8 +51,8 @@ import { useStoreState } from '../../lib/use-store-state';
  */
 export function previewBannerText(solo: boolean): string {
   return solo
-    ? "Preview of your change. It goes live when you vote it in. Anything you add here stays in the preview and won't carry over."
-    : "Preview of this change. Members can try it before they vote. Anything you add here stays in the preview and won't carry over.";
+    ? translate('devchat:staging.banner.solo')
+    : translate('devchat:staging.banner.group');
 }
 
 /**
@@ -61,15 +63,17 @@ export function previewBannerText(solo: boolean): string {
  * show; this line says why today's date is not the one on screen.
  */
 export function previewClockText(label: string, asNow: boolean): string {
-  return asNow ? 'Showing it as it is now.' : `Showing it as on ${label}.`;
+  return asNow ? translate('devchat:staging.clock.showingNow') : translate('devchat:staging.clock.showingAt', { moment: label });
 }
 
 /** The button beside it: the other of the two moments. */
 export function previewClockToggleText(label: string, asNow: boolean): string {
-  return asNow ? `See it as on ${label}` : 'See it as now';
+  return asNow ? translate('devchat:staging.clock.seeAt', { moment: label }) : translate('devchat:staging.clock.seeNow');
 }
 
 export function StagingOverlay(): ReactNode {
+  // Subscribed: the helpers above read their text through the runtime.
+  const t = useMessages('devchat');
   const state = useStoreState(stagingStore);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const loaderRef = useRef<HTMLDivElement | null>(null);
@@ -194,7 +198,7 @@ export function StagingOverlay(): ReactNode {
           onClick={() => stagingHandlers.onBack?.()}
         >
           <ChevronLeftIcon className="w-4 h-4" />
-          Back
+          {t('core:common.back')}
         </button>
         <span className="flex-1">
         </span>
@@ -209,7 +213,7 @@ export function StagingOverlay(): ReactNode {
           title={state.testBtnTitle || undefined}
           onClick={() => stagingHandlers.onTest?.()}
         >
-          Test this change
+          {t('devchat:staging.testThisChange')}
         </button>
         {/*
             #771: docked-mode toggle. In the docked side panel it reads
@@ -226,7 +230,7 @@ export function StagingOverlay(): ReactNode {
           title={state.fsBtnTitle || undefined}
           onClick={() => stagingHandlers.onFullscreen?.()}
         >
-          {state.fsBtnText}
+          {state.fsBtnText ?? t('devchat:staging.fullScreen')}
         </button>
         {/*
             The preview's title, "Flat 4B Chores · Preview", set by
@@ -249,7 +253,7 @@ export function StagingOverlay(): ReactNode {
         <button
           id="staging-dev-console-btn"
           className="relative text-zinc-400 hover:text-zinc-200"
-          aria-label="Open developer console"
+          aria-label={t('devchat:staging.openConsole')}
         >
           <TerminalIcon className="w-5 h-5" />
           <span
@@ -266,7 +270,7 @@ export function StagingOverlay(): ReactNode {
         <button
           id="staging-dock-close"
           className="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0"
-          aria-label="Close preview"
+          aria-label={t('devchat:staging.closePreview')}
           onClick={() => stagingHandlers.onDockClose?.()}
         >
           &times;
@@ -347,14 +351,14 @@ export function StagingOverlay(): ReactNode {
         >
           <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
             <span className="text-xs font-semibold text-violet-300">
-              How to test
+              {t('devchat:staging.howToTest')}
             </span>
             <span className="flex-1">
             </span>
             <button
               id="staging-testing-close"
               className="text-zinc-400 hover:text-zinc-200 text-sm leading-none px-1"
-              aria-label="Dismiss testing instructions"
+              aria-label={t('devchat:staging.dismissTesting')}
               onClick={() => stagingHandlers.onTestingClose?.()}
             >
               &times;
@@ -385,7 +389,7 @@ export function StagingOverlay(): ReactNode {
           <div ref={spinnerRef} className="w-9 h-9 border-2 border-zinc-700 border-t-violet-400 rounded-full animate-spin">
           </div>
           <div id="staging-loader-title" className="text-sm text-zinc-200 font-medium">
-            {state.loaderTitle}
+            {state.loaderTitle ?? t('devchat:staging.loader.opening')}
           </div>
           <div id="staging-loader-sub" className="text-xs text-zinc-400 max-w-xs leading-relaxed">
             {state.loaderSub}
@@ -400,7 +404,7 @@ export function StagingOverlay(): ReactNode {
             className="hidden min-h-[44px] px-4 py-2 text-sm font-medium"
             onClick={() => stagingHandlers.onRetry?.()}
           >
-            {state.loaderRetryLabel}
+            {state.loaderRetryLabel ?? t('devchat:staging.loader.retrySignIn')}
           </Button>
         </div>
       </div>

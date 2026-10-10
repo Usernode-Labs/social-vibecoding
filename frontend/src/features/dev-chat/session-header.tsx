@@ -7,6 +7,7 @@ import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { EllipsisHorizontalIcon, EyeIcon, LockIcon, PencilSparklesIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import { useStoreState } from '../../lib/use-store-state';
@@ -69,7 +70,8 @@ export function MergeStatusPill({ life }: { life: MergeLife }): ReactNode {
  * attributes and the position all stay exactly as `selectorHtml` wrote them.
  */
 function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']> }): ReactNode {
-  const busyTitle = 'Wait for the current response to finish before changing where this session is built.';
+  const t = useMessages('devchat');
+  const busyTitle = t('devchat:header.venue.busyTitle');
   return (
     <button
       type="button"
@@ -79,7 +81,7 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
       data-venue-current={venue.id}
       data-venue-busy={venue.disabled ? '1' : undefined}
       aria-haspopup="menu"
-      aria-label={venue.disabled ? `${venue.label}. Unavailable while the agent is thinking.` : undefined}
+      aria-label={venue.disabled ? t('devchat:header.venue.busyLabel', { venue: venue.label }) : undefined}
       disabled={venue.disabled}
       title={venue.disabled ? busyTitle : venue.title}
       onClick={venue.disabled
@@ -90,7 +92,7 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
       {venue.disabled ? (
         <span className="dc-venue-busy" aria-hidden="true">
           <LockIcon className="dc-venue-busy-icon" />
-          <span>Thinking…</span>
+          <span>{t('devchat:header.venue.thinking')}</span>
         </span>
       ) : (
         <span className="dc-venue-caret" aria-hidden="true">{'▾'}</span>
@@ -154,6 +156,7 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  * strip falls back to the bare `Building` chip it used to carry.
  */
 function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
+  const t = useMessages('devchat');
   const { previewSessionId, previewUrl, previewBuildable, previewActive } = useStoreState(improveStore) as {
     previewSessionId: number | null; previewUrl: string | null;
     previewBuildable: boolean; previewActive: boolean;
@@ -202,7 +205,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-100 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 shrink-0 cursor-default"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden="true" />
-        Building
+        {t('devchat:header.mode.building')}
       </span>
     );
   }
@@ -218,7 +221,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
       ref={trackRef}
       className="relative shrink-0 flex items-center rounded-full bg-zinc-200 p-0.5 dark:bg-zinc-800"
       role="group"
-      aria-label="Preview or build this change"
+      aria-label={t('devchat:header.mode.groupLabel')}
     >
       {/* THE THUMB. One element for both states, so the fill travels rather
           than one pill vanishing and another appearing. Hidden until the
@@ -239,34 +242,34 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         ref={eyeRef}
         type="button"
         className={seeing ? `${SEG_ON} text-zinc-900` : SEG_OFF}
-        aria-label={previewUrl ? 'Preview this change' : 'Build a preview of this change'}
+        aria-label={previewUrl ? t('devchat:header.mode.previewLabel') : t('devchat:header.mode.buildPreviewLabel')}
         aria-pressed={seeing ? 'true' : 'false'}
         title={previewUrl
-          ? 'Preview this change on staging'
-          : 'Build a staging preview of this change (it went to sleep, or was never built)'}
+          ? t('devchat:header.mode.previewTitle')
+          : t('devchat:header.mode.buildPreviewTitle')}
         onClick={() => {
           if (seeing) return;
           (window as any).AppView?.swapToStagingForSession?.(previewSessionId, previewUrl);
         }}
       >
         <EyeIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-        {seeing ? <span id="dc-mode-chip">Preview</span> : null}
+        {seeing ? <span id="dc-mode-chip">{t('devchat:header.mode.preview')}</span> : null}
       </button>
       <button
         id="session-build-btn"
         ref={penRef}
         type="button"
         className={seeing ? SEG_OFF : `${SEG_ON} text-white`}
-        aria-label="Back to building"
+        aria-label={t('devchat:header.mode.backToBuilding')}
         aria-pressed={seeing ? 'false' : 'true'}
-        title="Back to the session chat"
+        title={t('devchat:header.mode.backToChat')}
         onClick={() => {
           if (!seeing) return;
           (window as any).AppView?.closeStagingOverlay?.();
         }}
       >
         <PencilSparklesIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-        {!seeing ? <span id="dc-mode-chip">Building</span> : null}
+        {!seeing ? <span id="dc-mode-chip">{t('devchat:header.mode.building')}</span> : null}
       </button>
     </span>
   );
@@ -348,6 +351,7 @@ export async function openSessionActionsMenu(
 
 function SessionActionsMenu({ actions }: { actions: SessionAction[] }): ReactNode {
   const [open, setOpen] = useState(false);
+  const t = useMessages('devchat');
   if (!actions.length) return null;
   return (
     <button
@@ -359,8 +363,8 @@ function SessionActionsMenu({ actions }: { actions: SessionAction[] }): ReactNod
       data-session-actions="1"
       aria-haspopup="menu"
       aria-expanded={open ? 'true' : 'false'}
-      aria-label="Session actions"
-      title="Session actions"
+      aria-label={t('devchat:header.actions')}
+      title={t('devchat:header.actions')}
       onClick={(e: MouseEvent<HTMLButtonElement>) => {
         if (open) return;
         setOpen(true);
@@ -374,6 +378,7 @@ function SessionActionsMenu({ actions }: { actions: SessionAction[] }): ReactNod
 
 export function SessionHeader({ embedded = false }: { embedded?: boolean }): ReactNode {
   const s = useStoreState(sessionHeaderStore);
+  const t = useMessages('devchat');
   return (
     <>
       {/* The in-strip ← retired (Streamlined Concept): the platform header's
@@ -405,7 +410,7 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
           title={s.prTitle}
           onClick={() => controller()?.openProposalCard?.()}
         >
-          Open proposal card
+          {t('devchat:header.openCard')}
         </button>
       ) : (
         /* "New change" is the PR link's resting state — it says only "no PR
@@ -414,7 +419,7 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
            row is the name and the switch, nothing else; hiding it below `sm`
            is the nearest thing to that which still shows it where there is
            room. */
-        <span className="max-sm:hidden shrink-0 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
+        <span className="max-sm:hidden shrink-0 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>{t('devchat:header.newChange')}</span>
       )}
       {/* #1348: where this session is built. It states the venue and opens the
           sheet that changes it. Here it survives the launchpad swap, and it is

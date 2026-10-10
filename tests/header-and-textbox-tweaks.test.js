@@ -23,6 +23,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -108,7 +109,8 @@ test('both message text boxes use it, keyed on their own value', () => {
   // typing, pasting, a clear on send and a draft restored on mount.
   assert.match(COMPOSER, /useAutoGrow\(inputRef, value\)/);
   assert.match(ROW, /useAutoGrow\(editRef, editValue\)/);
-  assert.match(ROW, /<textarea ref=\{editRef\} aria-label="Edit message"/);
+  assert.equal(message('messages:row.editLabel'), 'Edit message');
+  assert.match(ROW, /<textarea ref=\{editRef\} aria-label=\{t\('messages:row\.editLabel'\)\}/);
 });
 
 test('a hand-dragged edit box is not undone by the next keystroke', () => {

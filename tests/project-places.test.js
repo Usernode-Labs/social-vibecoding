@@ -16,6 +16,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -312,5 +313,7 @@ test('a topic\'s line: what it is for and its requests, nothing for none, and wh
   assert.deepEqual({ ...topicLine({ ...t, state: 'merged' }, 'onboarding') }, { about: 'Merged into #onboarding. Read only.', link: null });
   assert.deepEqual({ ...topicLine({ ...t, state: 'archived' }) }, { about: 'Archived. Read only.', link: null });
   // A topic's empty room says so in its own words, not a reply thread's.
-  assert.match(read('public/js/group-chat.js'), /a\.type === 'category' \? 'Nothing said here yet\.' : 'No messages yet\. Start the thread\.'/);
+  assert.match(read('public/js/group-chat.js'), /a\.type === 'category' \? PlatformI18n\.t\('chat:group\.topicChannel\.empty'\) : PlatformI18n\.t\('chat:group\.thread\.empty'\)/);
+  assert.equal(message('chat:group.topicChannel.empty'), 'Nothing said here yet.');
+  assert.equal(message('chat:group.thread.empty'), 'No messages yet. Start the thread.');
 });

@@ -22,6 +22,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -62,7 +63,8 @@ test('each Agent sessions row says the app it is on and where it stands, under i
   ]);
   assert.deepEqual(rows.map((r) => r.sub), ['Run Club · in progress', 'Run Club · waiting for approval', 'In progress'],
     'the change\'s app, else the one it started from; alone, where it stands');
-  assert.equal(model.agentSub('Notes', 'Agent session'), 'Notes · agent session');
+  assert.equal(model.agentSub('Notes', 'session'), 'Notes · agent session');
+  assert.equal(model.agentSub(null, 'session'), 'Agent session', 'alone, the line starts with a capital: its own message');
   // A change that went live says so in the newcomer's word, not "merged".
   const [live] = model.continueRows([conversation({
     activeChange: { appSlug: 'run', appName: 'Run Club', status: 'merged', title: 'x' },
@@ -176,12 +178,15 @@ test('the mark\'s menu: the app\'s own rows first, then Agent chats, after mount
   // "Agent chats" again (5 Oct 2026). It was "Continue", then "Agent
   // sessions", then "More", a plain word for a newcomer, who no longer sees
   // the section at all.
-  assert.match(section, /<div className=\{SECTION\}>Agent chats<\/div>/, 'it was "Continue", then "Agent sessions", then "More"');
+  assert.match(section, /<div className=\{SECTION\}>\{t\('agent:appContext\.agentChats\.heading'\)\}<\/div>/, 'it was "Continue", then "Agent sessions", then "More"');
+  assert.equal(message('agent:appContext.agentChats.heading'), 'Agent chats');
   assert.doesNotMatch(sheet, /<div className=\{SECTION\}>(?:More|Agent sessions)<\/div>/);
   assert.doesNotMatch(sheet, />Continue</);
   // Each session says what app it is on and where it stands, under its title.
   assert.match(sheet, /label=\{row\.title\}\s+sub=\{row\.sub\}/);
-  assert.match(sheet, /\{continuing\.more \? \(\s*<a\s+id="app-menu-continue-all"\s+href="#messages"\s+className=\{CONTINUE_ALL\}[\s\S]{0,200}setMessagesFilter\('agents'\)[\s\S]{0,200}>\s*Show more\s*<ChevronRightIcon /,
+  assert.match(sheet, /\{continuing\.more \? \(\s*<a\s+id="app-menu-continue-all"\s+href="#messages"\s+className=\{CONTINUE_ALL\}[\s\S]{0,200}setMessagesFilter\('agents'\)[\s\S]{0,200}>\s*\{t\('agent:appContext\.agentChats\.showMore'\)\}\s*<ChevronRightIcon /,
+    'only when there are more, and it opens Messages\' Agents list');
+  assert.equal(message('agent:appContext.agentChats.showMore'), 'Show more',
     'only when there are more, and it opens Messages\' Agents list');
   // #3405: a link under the list in the action accent, not one more row.
   assert.match(sheet, /const CONTINUE_ALL = 'inline-flex[^;]*text-violet-700 dark:text-violet-300/);
@@ -210,7 +215,8 @@ test('"paused" is shown nowhere, and nobody is asked to pause or resume anything
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.doesNotMatch(devChat, /key: 'pause', label: 'Pause'/);
   assert.doesNotMatch(devChat, /key: 'resume', label: 'Resume'/);
-  assert.match(devChat, /key: 'free', label: 'Free worker'/, 'a promoted session can still free its worker');
+  assert.match(devChat, /key: 'free', label: PlatformI18n\.t\('devchat:sessions\.action\.free'\)/, 'a promoted session can still free its worker');
+  assert.equal(message('devchat:sessions.action.free'), 'Free worker');
   for (const file of ['src/routes/sessions.js', 'src/routes/proposal-handoff.js', 'src/services/connector-limits.js']) {
     assert.doesNotMatch(read(file), /Pause or archive one first|Pause one first/, `${file} never asks the user to pause`);
   }
@@ -280,7 +286,9 @@ test('an agent session\'s finished run opens the conversation from the bell and 
   // #3181: a change that stopped before finishing opens the same place.
   assert.match(client, /const sessionTurnEnd = item\.kind === 'session_done' \|\| item\.kind === 'session_stalled';/);
   assert.match(client, /sessionTurnEnd && item\.agentSessionId[\s\S]{0,200}#messages\/agent\//);
-  assert.match(client, /n\.agentSessionId \? 'The coding agent finished' : 'Session finished'/);
+  assert.match(client, /n\.agentSessionId \? t\('notifications:row\.session\.agentFinished'\) : t\('notifications:row\.session\.finished'\)/);
+  assert.deepEqual([message('notifications:row.session.agentFinished'), message('notifications:row.session.finished')],
+    ['The coding agent finished', 'Session finished']);
   assert.match(read('public/js/dev-alerts.js'), /if \(info && info\.agentSessionId\) return `#messages\/agent\/\$\{info\.agentSessionId\}`;/);
   assert.equal(typeof require('../src/services/session-bus').subscriberCount, 'function');
 });

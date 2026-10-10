@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { PasswordInput } from '@/components/ui/password-input';
+import { useMessages } from '../../../lib/i18n/react';
 
 import { pressButton, returnKeyHandler } from '../../../lib/return-to-next';
 
@@ -24,11 +25,12 @@ function submitShown(): void {
 }
 
 export function PasswordSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="password" className="hidden">
       <div id="change-password-section" onKeyDown={returnKeyHandler({ submit: submitShown })}>
-        <SectionHeading title="Change password">
-          Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here. No password yet? Choose one here; until then you sign in with an emailed code.
+        <SectionHeading title={t('settings:password.title')}>
+          {t('settings:password.intro')}
         </SectionHeading>
         {/* One card, the three fields as its rows. */}
         <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
@@ -37,7 +39,7 @@ export function PasswordSection() {
               id="cp-current"
               autoComplete="current-password"
               enterKeyHint="next"
-              placeholder="Current password"
+              placeholder={t('settings:password.currentPlaceholder')}
               box="card"
               ring="bare"
               hint="dim"
@@ -48,7 +50,7 @@ export function PasswordSection() {
               id="cp-new"
               autoComplete="new-password"
               enterKeyHint="next"
-              placeholder="New password (at least 8 characters)"
+              placeholder={t('settings:password.newPlaceholder')}
               box="card"
               ring="bare"
               hint="dim"
@@ -59,7 +61,7 @@ export function PasswordSection() {
               id="cp-confirm"
               autoComplete="new-password"
               enterKeyHint="done"
-              placeholder="Confirm new password"
+              placeholder={t('settings:password.confirmPlaceholder')}
               box="card"
               ring="bare"
               hint="dim"
@@ -68,11 +70,11 @@ export function PasswordSection() {
         </div>
         {/* Default (password) submit */}
         <Button id="cp-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3">
-          Change password
+          {t('settings:password.submit')}
         </Button>
         {/* Wallet (signature) submit — shown only in wallet mode */}
         <Button id="cp-wallet-save" layout="hiddenStacked" variant="pillAccent" size="pillLg">
-          Sign &amp; change password
+          {t('settings:password.submitWithWallet')}
         </Button>
         {/*
             Mode switches. cp-wallet-mode is itself hidden unless the user
@@ -80,12 +82,12 @@ export function PasswordSection() {
         */}
         <p id="cp-wallet-mode" className="hidden text-xs text-center mt-2">
           <a id="cp-use-wallet" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
-            Don’t have a password? Create one
+            {t('settings:password.useWallet')}
           </a>
         </p>
         <p id="cp-password-mode" className="hidden text-xs text-center mt-2">
           <a id="cp-use-password" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
-            Use current password instead
+            {t('settings:password.usePassword')}
           </a>
         </p>
         <StatusLine id="cp-status" />

@@ -21,6 +21,7 @@
 //      a measurement taken after the draw.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -268,7 +269,8 @@ test('the conversation follows a reader who was at the bottom before the message
     'another conversation opens at its newest line');
   assert.match(THREAD, /shownFocus\.current = focusId;\s*previousLast\.current = last;\s*pinned\.current = false;/,
     'a message link lands on its message, and late growth does not take it to the bottom');
-  assert.match(THREAD, /onClick=\{\(\) => \{ pinned\.current = true; jumpToPresent\(\); \}\}>Jump to present</);
+  assert.equal(message('messages:thread.jumpToPresent'), 'Jump to present');
+  assert.match(THREAD, /onClick=\{\(\) => \{ pinned\.current = true; jumpToPresent\(\); \}\}>\{t\('messages:thread\.jumpToPresent'\)\}</);
 });
 
 // ── 4. #4511: your own send follows you only from the bottom ────────────

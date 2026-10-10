@@ -20,6 +20,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -64,6 +65,7 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
   sandbox.window.window = sandbox.window;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(SRC, sandbox, { filename: 'topochain-challenges.js' });
 
   const pane = sandbox.window.TopochainChallenges;
@@ -141,7 +143,8 @@ test('the rank rule: First challenges leads while unfinished and goes last once 
   assert.deepEqual(ranks(false), [0, 1, 2, 3]);
   assert.deepEqual(ranks(true), [4, 1, 2, 3], 'only First challenges moves');
   assert.equal(pane._groupRankOf(null, false), 3, 'no group ranks as Season challenges');
-  assert.deepEqual({ ...pane.GROUPS.ONBOARDING }, { key: 'setup', heading: 'First challenges', order: 0 },
+  assert.equal(message('leaderboard:challenges.group.setup'), 'First challenges');
+  assert.deepEqual({ ...pane.GROUPS.ONBOARDING }, { key: 'setup', heading: 'leaderboard:challenges.group.setup', order: 0 },
     'the key stays `setup`: ids and tests name it');
 
   // Finished, with an onboarding summary: the server's gate alone decides.
@@ -392,7 +395,8 @@ test('#3203: the page says when the challenge ends, as a moment, and the header 
   // before the organiser's 2099 end; the other groups keep the organiser's.
   const weekEnds = pane._endsText(pane._weekEnd());
   assert.match(weekEnds, /^ends Mon \d+ \w+, 00:00$/);
-  assert.equal(groupOf(grid, 'week').metaTitle, pane._cap(weekEnds), 'the header’s clock as a moment');
+  assert.equal(groupOf(grid, 'week').metaTitle, pane._endsTitle(pane._weekEnd()), 'the header’s clock as a moment');
+  assert.match(pane._endsTitle(pane._weekEnd()), /^Ends Mon,? \d+ \w+, 00:00$/, 'its own sentence, capital and all');
   assert.equal(groupOf(grid, 'always').metaTitle, null, 'no deadline, no tooltip');
   assert.equal(groupOf(grid, 'other').metaTitle, 'Ends Mon 12 Oct, 02:00');
 
@@ -438,7 +442,7 @@ test('a season without the board’s categories keeps the ungrouped grid: open, 
   }
   assert.deepEqual(idsOf(pane), [2, 3, 1]);
   assert.equal(grid.groups[0].cards[0].deadline, '3d left', 'the card keeps its deadline');
-  assert.deepEqual({ ...grid.progress }, { done: 1, total: 3, caption: 'done' });
+  assert.deepEqual({ ...grid.progress }, { done: 1, total: 3 }, 'no scope: the shared progress says "done"');
   const d = pageOf(pane, challenges[1]);
   assert.deepEqual([d.eyebrow, d.deadline], ['SPOTLIGHT', '3d left'], 'the page keeps the category and the deadline');
   pane._detailChallenge = null;
@@ -457,7 +461,8 @@ test('while setup gates the rest the progress is the First challenges group’s 
   });
   pane._renderGrid();
   let grid = gridOf(store);
-  assert.deepEqual({ ...grid.progress }, { done: 1, total: 2, caption: 'done in First challenges' });
+  assert.deepEqual({ ...grid.progress }, { done: 1, total: 2, scope: 'first' });
+  assert.equal(message('leaderboard:progress.firstLabel', { done: 1, count: 2 }), '1 of 2 done in First challenges');
   assert.deepEqual(headers(grid), { setup: { meta: '1/2', allDone: false, collapsed: false } });
   // 2026-10-01: what a new account finishes is its Getting started list.
   assert.equal(grid.notice, 'Finish Getting started to unlock the rest of the season.');
@@ -479,8 +484,9 @@ test('while setup gates the rest the progress is the First challenges group’s 
   grid = gridOf(store);
   // QA 2026-09-24 Q17: the tab's tally names its scope as an event, since
   // Home's and the profile's "done in Season 2" count the whole season. The
-  // event's own name stays out of the caption (issue #4528).
-  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in this event' },
+  // event's own name stays out of the words (issue #4528).
+  assert.equal(message('leaderboard:progress.eventLabel', { done: 2, count: 3 }), '2 of 3 done in this event');
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, scope: 'event' },
     'the tally counts finished cards across groups, not a finished tail of the grid');
   assert.deepEqual(keysOf(grid), ['week', 'setup'], 'the finished First challenges follows what is left to do');
   assert.equal('notice' in grid, false, 'unlocked, there is no notice');
@@ -511,8 +517,11 @@ test('the points summary totals numeric rewards only, earned from the viewer’s
   pane._renderGrid();
   const grid = gridOf(store);
   assert.deepEqual({ ...grid.progress, points: undefined },
-    { done: 2, total: 4, caption: 'done in this event', points: undefined });
+    { done: 2, total: 4, scope: 'event', points: undefined });
   assert.deepEqual({ ...grid.progress.points }, { earned: 800, total: 1750 });
+  // The shared progress draws the pair as one line, in its own words.
+  assert.equal(message('leaderboard:progress.pointsLabel', { earned: '800', total: '1,750', count: 1750 }),
+    '800 of 1,750 pts earned');
 });
 
 test('while the gate is closed the points read the First challenges only', () => {
@@ -529,7 +538,7 @@ test('while the gate is closed the points read the First challenges only', () =>
   pane._renderGrid();
   const grid = gridOf(store);
   assert.deepEqual({ ...grid.progress, points: undefined },
-    { done: 1, total: 2, caption: 'done in First challenges', points: undefined },
+    { done: 1, total: 2, scope: 'first', points: undefined },
     'the count follows the gate, and so do the points');
   assert.deepEqual({ ...grid.progress.points }, { earned: 500, total: 750 },
     'the weekly row\'s 900 on offer and earned are both out of scope');

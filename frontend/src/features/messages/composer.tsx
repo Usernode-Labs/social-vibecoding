@@ -1,9 +1,11 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
+import { waitingFor } from './waiting-for';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot } from './store';
-import { mirrorsReplies, requestPlace } from './bot-question';
+import { mirrorsReplies, postedNote } from './bot-question';
 import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
 import { fileSize, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
@@ -65,6 +67,7 @@ function useStagedCard(object: StagedObject | null): SharedObjectCard | null {
  * Messages lands in the conversation, never inside a thread.
  */
 export function MessageComposer({ threadRootId = null }: { threadRootId?: number | null } = {}) {
+  const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const conversationId = snap.route.conversationId || 0;
   const active = snap.active;
@@ -398,14 +401,14 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   async function addFiles(files: File[]) {
     const room = Math.max(0, MAX_ATTACHMENTS - attachments.length - uploading);
     const selected = files.slice(0, room);
-    if (!selected.length) { setError(`You can attach up to ${MAX_ATTACHMENTS} files.`); return; }
+    if (!selected.length) { setError(t('messages:composer.attachLimit', { count: MAX_ATTACHMENTS })); return; }
     // #4065: one line for every file left out — the first reason, and how
     // many more went with it. The files past the room used to go silently.
     const tooLarge = selected.filter((file) => file.size > attachmentLimit(file));
     const cut = files.length - selected.length;
     const firstReason = tooLarge.length
-      ? `${tooLarge[0].name} is too large for this file type.`
-      : (cut ? `You can attach up to ${MAX_ATTACHMENTS} files.` : '');
+      ? t('messages:composer.fileTooLarge', { file: tooLarge[0].name })
+      : (cut ? t('messages:composer.attachLimit', { count: MAX_ATTACHMENTS }) : '');
     const refused = refusalSummary(firstReason, tooLarge.length + cut - 1);
     setError(refused);
     for (const file of selected) {
@@ -415,7 +418,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
         const attachment = await api.uploadAttachment(conversationId, file);
         setAttachments((items) => [...items, attachment]);
       }
-      catch (err) { setError(err instanceof Error ? err.message : `Couldn’t upload ${file.name}.`); }
+      catch (err) { setError(err instanceof Error ? err.message : t('messages:composer.uploadFailed', { file: file.name })); }
       finally { setUploading((count) => Math.max(0, count - 1)); }
     }
   }
@@ -461,7 +464,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     const input = { content: value.trim(), attachmentIds: attachments.map((item) => item.id), attachments, object: object ? referenceOf(object) : undefined };
     setValue(''); setAttachments([]); setObject(null);
     requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-    send({ ...input, threadRootId }).catch((err) => setError(err instanceof Error ? err.message : 'Your message wasn’t sent.'));
+    send({ ...input, threadRootId }).catch((err) => setError(err instanceof Error ? err.message : t('messages:composer.sendFailed')));
   }
 
   if (!active || active.membershipStatus !== 'member') return null;
@@ -473,21 +476,18 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // for. Every later send used to come back "Not sent · Retry", and the
   // Retry could never work.
   const awaiting = !inThread && !!active.awaitingAcceptance;
-  const waitingOn = awaiting
-    ? active.peer?.username || active.members.find((member) => member.status === 'invited')?.username || ''
-    : '';
-  const who = waitingOn ? `@${waitingOn}` : 'them';
+  const { name: waitingOn, unknown: waitingUnknown } = awaiting ? waitingFor(active) : { name: '', unknown: false };
   if (awaiting && (!active.canSend || snap.messages.length > 0)) {
     return (
       <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">
         <div className="messages-awaiting" role="status">
-          <strong>Message request sent</strong>
-          <p>Waiting for {who} to accept your message request. You can send more once they do.</p>
+          <strong>{t('messages:composer.requestSent.title')}</strong>
+          <p>{waitingUnknown ? t('messages:composer.requestSent.waitingUnknown') : waitingOn ? t('messages:composer.requestSent.waitingNamed', { username: waitingOn }) : t('messages:composer.requestSent.waitingUnnamed')}</p>
         </div>
       </div>
     );
   }
-  if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">You can’t send messages in this conversation.</div>;
+  if (!active.canSend) return <div className="messages-composer-disabled platform-safe-bar">{t('messages:composer.cannotSend')}</div>;
   // Where the count turns amber, and the only length a phone shows it at.
   const nearLimit = value.length > 7600;
 
@@ -496,20 +496,20 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       {/* QA 2026-09-24 Q2: before the opening message of a request, what it
           will be — so the composer turning into a notice after it is no
           surprise. */}
-      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingOn ? `@${waitingOn} gets` : 'They get'} your first message as a message request. You can send more once they accept.</p> : null}
+      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingUnknown ? t('messages:composer.firstMessageHintUnknown') : waitingOn ? t('messages:composer.firstMessageHintNamed', { username: waitingOn }) : t('messages:composer.firstMessageHintUnnamed')}</p> : null}
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
-      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to {senderName(reply.sender)}</span><p className="truncate">{plainText(reply.content) || 'Attachment'}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{`Your reply is posted on ${requestPlace(reply.metadata.homeroomBot)}’s public discussion.`}</p> : null}{reply.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? <p className="messages-bot-note">Say what to change, and Homeroom bot sends a new plan. Only you see this.</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label="Cancel reply">×</button></div> : null}
-      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => { setObject(null); setPrompt(null); }} aria-label="Remove shared item">×</button></div> : null}
-      {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
-      {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="Channels">{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
-      {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="People">{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
+      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">{reply.sender.unnamed ? (reply.sender.id ? t('messages:composer.replyingToUnknownHandle') : t('messages:composer.replyingToUnknown')) : t('messages:composer.replyingTo', { name: senderName(reply.sender) })}</span><p className="truncate">{plainText(reply.content) || t('messages:composer.replyAttachment')}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{postedNote(reply.metadata.homeroomBot, 'reply')}</p> : null}{reply.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? <p className="messages-bot-note">{t('messages:composer.planReplyNote')}</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label={t('messages:composer.cancelReply')}>×</button></div> : null}
+      {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => { setObject(null); setPrompt(null); }} aria-label={t('messages:composer.removeSharedItem')}>×</button></div> : null}
+      {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
+      {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.channelsMenu')}>{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
+      {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.peopleMenu')}>{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
       {emojiOpen && emoji ? (
         <div className="messages-mention-menu messages-emoji-menu">
-          <div className="messages-emoji-menu-heading">Emoji matching <span className="messages-emoji-menu-query">:{emoji.query}</span></div>
-          <div ref={emojiListRef} className="messages-emoji-menu-list" role="listbox" aria-label="Emoji">
+          <div className="messages-emoji-menu-heading"><RichMessage id="messages:composer.emojiMatching" values={{ query: emoji.query }} components={[<span className="messages-emoji-menu-query" />]} /></div>
+          <div ref={emojiListRef} className="messages-emoji-menu-list" role="listbox" aria-label={t('messages:composer.emojiMenu')}>
             {emoji.items.map((item, i) => (
               <button key={item.emoji} type="button" role="option" aria-selected={i === emojiActive} data-emoji-option={item.shortcode} onMouseDown={(event) => event.preventDefault()} onClick={() => insertEmoji(item.emoji)}>
                 <span className="messages-emoji-option-glyph" aria-hidden="true">{item.emoji}</span>
@@ -522,27 +522,27 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
         <div className="messages-composer-add" ref={addRef}>
-          <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label="Add to message" title="Add to message"><PlusIcon aria-hidden="true" /></button>
+          <button type="button" className="messages-composer-action" onClick={() => setAddOpen((open) => !open)} aria-haspopup="menu" aria-expanded={addOpen} aria-label={t('messages:composer.addToMessage')} title={t('messages:composer.addToMessage')}><PlusIcon aria-hidden="true" /></button>
           {addOpen ? (
-            <div className="messages-composer-menu" role="menu" aria-label="Add to message">
+            <div className="messages-composer-menu" role="menu" aria-label={t('messages:composer.addToMessage')}>
               {/* The attachment cap disables the ROW, not the whole control:
                   sharing an item is still available with four files queued,
                   which a disabled "+" would have taken away with it. */}
               <button type="button" role="menuitem" disabled={attachments.length + uploading >= MAX_ATTACHMENTS} onClick={() => { setAddOpen(false); fileRef.current?.click(); }}>
                 <PaperClipIcon aria-hidden="true" />
-                <span>Attach files</span>
+                <span>{t('messages:composer.attachFiles')}</span>
               </button>
               {inThread ? null : (
                 <button type="button" role="menuitem" onClick={() => { setAddOpen(false); window.UsernodeReact?.dialogs?.messagesShare?.open(); }}>
                   <ArrowUpTrayIcon aria-hidden="true" />
-                  <span>Share item</span>
+                  <span>{t('messages:composer.shareItem')}</span>
                 </button>
               )}
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? 'Reply in thread…' : (prompt || 'Message…')} aria-label={inThread ? 'Reply in thread' : 'Message'} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
-        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message"><ArrowUpIcon aria-hidden="true" /></button>
+        <textarea ref={inputRef} value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder={inThread ? t('messages:composer.placeholderThread') : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={!!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       {/* The count's line is not laid out until the text nears the limit

@@ -37,6 +37,7 @@ poolMod.getPool = () => ({
 
 const { authRoutes } = require('../src/routes/auth');
 const { shellMarkup } = require('./lib/shell-markup');
+const { message } = require('./lib/platform-i18n');
 
 let server, base;
 let user = null;
@@ -245,8 +246,10 @@ test('the Settings picker is offered to everyone, with Auto and the shipped lang
   // could not say what it did. It is listed for everyone again; every read
   // path above this line is untouched.
   const js = read('frontend/src/features/settings/settings.js');
-  assert.match(js, /\{ key: 'language', label: 'Language', group: 'Preferences' \}/,
+  assert.match(js, /\{ key: 'language', label: 'settings:nav\.part\.language', group: 'settings:nav\.group\.preferences' \}/,
     'no capability gate on the registry entry');
+  assert.equal(message('settings:nav.part.language'), 'Language');
+  assert.equal(message('settings:nav.group.preferences'), 'Preferences');
   const html = shellMarkup();
   assert.match(html, /id="settings-language-section">/, 'the pane ships without an inner hidden');
   const select = html.slice(html.indexOf('id="settings-locale"'));

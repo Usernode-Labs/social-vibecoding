@@ -1,0 +1,2210 @@
+{
+  "group.mention.aiBadge": {
+    "text": "AI",
+    "description": "Small badge beside Homeroom's assistant in the list of people offered while typing @ in a chat message. Short for artificial intelligence; it marks the entry as not a person."
+  },
+  "group.mention.you": {
+    "text": "you",
+    "description": "Small tag beside the person's own username in the list of people offered while typing @ in a chat message. Lower case, it follows the username."
+  },
+  "group.emojiMenu.heading": {
+    "text": "Emoji matching <0>{{query}}</0>",
+    "description": "Heading of the list of emoji offered while typing a shortcode such as :smile in a chat message. {{query}} is what the person typed so far, with its leading colon, for example :smi. Keep the <0> tags around it."
+  },
+  "group.emojiMenu.label": {
+    "text": "Emoji",
+    "description": "Accessible name of the list of emoji offered while typing a shortcode in a chat message."
+  },
+  "group.composer.replyingTo": {
+    "text": "↩ Replying to {{name}}",
+    "description": "Line above the message box in a community chat while the person is writing a reply to an earlier message. {{name}} is whose message it is: an @username, or a label such as a proposal's name. Keep the arrow first."
+  },
+  "group.composer.replyingToPr": {
+    "text": "↩ Replying to PR #{{number}}",
+    "description": "Label over the message box while the person replies to a line about a pull request. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
+  },
+  "group.composer.replyingToPrUnnumbered": {
+    "text": "↩ Replying to PR #",
+    "description": "Label over the message box while the person replies to a line about a pull request whose number is not known."
+  },
+  "group.composer.cancelReply": {
+    "text": "Cancel reply",
+    "description": "Accessible name of the ✕ button beside the 'Replying to' line above the chat message box: the message stops being a reply."
+  },
+  "group.composer.attachFiles": {
+    "text": "Attach files",
+    "description": "Tooltip and accessible name of the paperclip button beside the chat message box: opens the file chooser to add files to the message."
+  },
+  "group.composer.send": {
+    "text": "Send",
+    "description": "Label, tooltip and accessible name of the button that sends the chat message the person typed. Send is a verb."
+  },
+  "group.composer.page.attachFiles": {
+    "text": "Attach files",
+    "description": "Tooltip and accessible name of the + button beside the reply box at the foot of a request's or a change's page: opens the file chooser to add files to the reply."
+  },
+  "group.composer.page.reply": {
+    "text": "Reply",
+    "description": "Accessible name of the reply box at the foot of a request's or a change's page, where the person writes a reply to it. A noun: the reply being written."
+  },
+  "group.composer.page.send": {
+    "text": "Send",
+    "description": "Tooltip and accessible name of the round arrow button beside the reply box at the foot of a request's or a change's page: sends the reply the person typed. A verb."
+  },
+  "group.composer.placeholder": {
+    "text": "Type a message...",
+    "description": "Placeholder inside the empty message box of a community's channel."
+  },
+  "group.readOnly.devSpace": {
+    "text": "You’re viewing this app’s dev space read-only. Only collaborators can post.",
+    "description": "Notice in place of the message box in a project's channel when the person may read it but not write. 'Dev space' is the project's area for building; 'post' is a verb, to send a message."
+  },
+  "group.specPanel.resize": {
+    "text": "Resize plan panel",
+    "description": "Accessible name of the draggable divider between the chat and the side panel that shows a plan (the written description of a change)."
+  },
+  "group.postedVia.title": {
+    "text": "Posted by a coding agent on this person's behalf",
+    "description": "Tooltip of the 'via agent' chip beside a message's author: the message was sent by that person's AI coding agent, not typed by them. Posted is a verb form, to post a message."
+  },
+  "group.postedVia.chip": {
+    "text": "via agent",
+    "description": "Small chip beside a message's author when the person's AI coding agent sent the message for them. Lower case; it follows the author's name."
+  },
+  "group.quiet.change.nobody": {
+    "text": "Nobody has commented on this change yet",
+    "description": "Heading of the card shown in the empty discussion of a proposed change that has never had a comment. 'Change' is a noun: a proposed change to a project."
+  },
+  "group.quiet.change.lately": {
+    "text": "It has been quiet on this change lately",
+    "description": "Heading of the card shown in the discussion of a proposed change when there are no recent comments to show. 'Change' is a noun: a proposed change to a project."
+  },
+  "group.quiet.app.nobody": {
+    "text": "Nobody has said anything here yet",
+    "description": "Heading of the card shown in a project's channel that has never had a message."
+  },
+  "group.quiet.app.lately": {
+    "text": "It has been quiet in here lately",
+    "description": "Heading of the card shown in a project's channel when there are no recent messages to show."
+  },
+  "group.quiet.change.invite": {
+    "text": "👋 Ask a question, or say what you think of it.",
+    "description": "Line under the heading of the empty-discussion card of a proposed change, for a person who may comment. 'It' is the change. Keep the waving hand first."
+  },
+  "group.quiet.change.readOnly": {
+    "text": "Comments from the group will show up here.",
+    "description": "Line under the heading of the empty-discussion card of a proposed change, for a person who may read but not comment. 'The group' is the project's community."
+  },
+  "group.quiet.app.invite": {
+    "text": "👋 Say hi, ask a question, or share what you would like to see next in {{app}}.",
+    "description": "Line under the heading of the empty-channel card of a project, for a person who may write. {{app}} is the project's name. Keep the waving hand first."
+  },
+  "group.quiet.app.readOnly": {
+    "text": "Messages from the people building {{app}} will show up here.",
+    "description": "Line under the heading of the empty-channel card of a project, for a person who may read but not write. {{app}} is the project's name."
+  },
+  "group.reactionBar.moreEmoji": {
+    "text": "More emoji",
+    "description": "Accessible name of the ＋ button on the reaction bar that appears on a touched chat message: opens the full grid of emoji to react with."
+  },
+  "group.reactionBar.edit": {
+    "text": "Edit message",
+    "description": "Accessible name of the pencil button on the reaction bar that appears on the person's own chat message on a touch screen: starts editing that message."
+  },
+  "group.reactionBar.report": {
+    "text": "Report message",
+    "description": "Button on the reaction bar that appears on someone else's chat message: reports the message to the moderators. Report is a verb."
+  },
+  "group.starters.label": {
+    "text": "Start a reply",
+    "description": "Accessible name of the row of suggested first messages above the message box of a channel the person has not written in yet."
+  },
+  "group.starters.hi": {
+    "text": "👋 Hi!",
+    "description": "Suggested first message above a channel's message box. Tapping it puts exactly this text in the message box; it is not sent until the person sends it. Keep the waving hand."
+  },
+  "group.starters.loveIt": {
+    "text": "Love it!",
+    "description": "Suggested first message above a channel's message box. Tapping it puts exactly this text in the message box. 'It' is the project the channel belongs to."
+  },
+  "group.starters.couldItAlso": {
+    "text": "Could it also…",
+    "description": "Chip above a channel's message box that starts a suggestion for the project. Tapping it puts the beginning of this sentence in the message box for the person to finish. 'It' is the project."
+  },
+  "group.starters.couldItAlsoText": {
+    "text": "Could it also",
+    "description": "The beginning of a sentence put in the message box when the person taps the 'Could it also…' chip; they type the rest. 'It' is the project. No ellipsis and no final punctuation: the person's own words follow it."
+  },
+  "group.spec.sections": {
+    "text": "Plan sections",
+    "description": "Accessible name of the two tabs (User-facing, Technical) at the top of a plan shown in the chat's side panel. A plan is the written description of a change."
+  },
+  "group.spec.tab.user": {
+    "text": "User-facing",
+    "description": "Tab of a plan in the chat's side panel: the part that describes what people using the project will see."
+  },
+  "group.spec.tab.tech": {
+    "text": "Technical",
+    "description": "Tab of a plan in the chat's side panel: the part that describes how the change is built."
+  },
+  "group.spec.tabEmpty": {
+    "text": "Nothing in this section.",
+    "description": "Shown under a plan's User-facing or Technical tab in the chat's side panel when that part of the plan is empty."
+  },
+  "group.spec.copy.label": {
+    "text": "Copy markdown",
+    "description": "Button in the header of the plan side panel: copies the whole plan to the clipboard as Markdown text. Copy is a verb."
+  },
+  "group.spec.copy.title": {
+    "text": "Copy the whole plan as markdown",
+    "description": "Tooltip and accessible name of the 'Copy markdown' button in the header of the plan side panel."
+  },
+  "group.spec.copy.copied": {
+    "text": "Copied!",
+    "description": "Replaces the 'Copy markdown' button's label for a moment after the plan was copied to the clipboard."
+  },
+  "group.spec.copy.failed": {
+    "text": "Copy failed",
+    "description": "Replaces the 'Copy markdown' button's label for a moment when the plan could not be copied to the clipboard."
+  },
+  "group.spec.copy.failedToast": {
+    "text": "Couldn’t copy. Select the text and copy it manually",
+    "description": "Brief notice shown when the plan could not be copied to the clipboard from the plan side panel."
+  },
+  "group.spec.close": {
+    "text": "Close plan panel",
+    "description": "Accessible name of the × button in the header of the plan side panel: closes the panel. Close is a verb."
+  },
+  "group.botChip.reading": {
+    "text": "Homeroom bot is looking at this",
+    "description": "Status chip under a chat message that asked Homeroom bot for something, seen by everyone in the channel: the bot has taken the message and is reading it. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botChip.building": {
+    "text": "Homeroom bot is building this",
+    "description": "Status chip under a chat message that asked Homeroom bot for something, seen by everyone in the channel: the bot is building the change that was asked for. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botChip.fixing": {
+    "text": "Homeroom bot is fixing this",
+    "description": "Status chip under a chat message that asked Homeroom bot to fix one of its changes, seen by everyone in the channel: the bot is working on the fix. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botChip.hasThis": {
+    "text": "Homeroom bot has this",
+    "description": "Status chip under a chat message that asked Homeroom bot for something while the project's first version is not live yet: the bot has taken the request and has not started. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botChip.hasThisSaid": {
+    "text": "Homeroom bot has this, and starts on it once the first version is live",
+    "description": "What a screen reader says for the 'Homeroom bot has this' status chip under a chat message: the bot took the request and waits for the project's first version to go live. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botChip.live": {
+    "text": "Live",
+    "description": "Status chip under a chat message that asked Homeroom bot for something: the change that was built is now live, in use in the project. An adjective."
+  },
+  "group.botChip.liveSaid": {
+    "text": "Homeroom bot built this, and it’s live",
+    "description": "What a screen reader says for the 'Live' status chip under a chat message: the bot built what the message asked for and the change is in use. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botChip.tryIt": {
+    "text": "Try it",
+    "description": "Chip under a chat message that asked Homeroom bot for something, once the change is built: opens a preview of the change so anyone can try it out. 'It' is the change."
+  },
+  "group.botCard.label": {
+    "text": "Homeroom bot, only you can see this",
+    "description": "Accessible name of Homeroom bot's private card under the person's own chat message. Nobody else in the channel sees the card. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botCard.onlyYou": {
+    "text": "Only you can see this",
+    "description": "Small heading at the top of Homeroom bot's private card under the person's own chat message: nobody else in the channel sees the card."
+  },
+  "group.botCard.shared": {
+    "text": "Everyone here can see Homeroom bot has it.",
+    "description": "Line on Homeroom bot's private card under the person's own chat message, just after a request was taken: the status chip on their message is visible to the whole channel. 'It' is the request. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botCard.choices": {
+    "text": "Choices",
+    "description": "Accessible name of the row of buttons on Homeroom bot's private card under the person's own chat message."
+  },
+  "group.botCard.withStays": {
+    "text": "{{words}} It stays in the project’s requests with your name on it.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message on the person's first request in a project. {{words}} is the complete sentence or sentences the card says about the request, for example 'Got it: Add dark mode.'; this adds that the request stays listed in the project's requests under their name. 'Requests' is a noun: the project's list of things people asked for."
+  },
+  "group.botCard.approval.has": {
+    "text": "It has the approvals it needs.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …': the change has been approved by enough people. 'It' is the change."
+  },
+  "group.botCard.approval.needs_one": {
+    "text": "Needs one approval from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many approvals the built change still needs and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number of approvals; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
+  },
+  "group.botCard.approval.needs_other": {
+    "text": "Needs {{count}} approvals from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many approvals the built change still needs and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number of approvals; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\"."
+  },
+  "group.botCard.approval.needsMore_one": {
+    "text": "Needs one more approval from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many more approvals the built change needs, once it has some, and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number still missing; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
+  },
+  "group.botCard.approval.needsMore_other": {
+    "text": "Needs {{count}} more approvals from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying how many more approvals the built change needs, once it has some, and who can give them (any of the people listed will do). \"Needs\" is a verb whose subject, the change, is left out. {{count}} is the number still missing; the singular form spells it out as \"one\". {{people}} is a list of people, for example \"you, @ada or @ben\": the word for the reader, account names, and sometimes \"2 others\"."
+  },
+  "group.botCard.approval.waitingFrom": {
+    "text": "Waiting for approval from {{people}}.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying that every person listed still has to approve the built change. {{people}} is a list joined with \"and\", for example \"you, @ada and 2 more\"."
+  },
+  "group.botCard.approval.waitingFromYou": {
+    "text": "Waiting for approval from you.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …', saying that every person listed still has to approve the built change. Used when the reader's own approval is the only one the change is waiting for. A complete sentence."
+  },
+  "group.botCard.approval.waiting": {
+    "text": "Waiting for approval.",
+    "description": "Sentence on Homeroom bot's private card under the person's own chat message, after 'Built: …': the change still needs approval and nobody in particular is named."
+  },
+  "group.botCard.filed.firstVersionWait": {
+    "text": "Got it: {{title}}. Waiting for the first version to go live. I’ll start on this as soon as it does.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request and will start once the project's first version is live. {{title}} is the request's title, in the person's own words. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.firstVersionWaitUntitled": {
+    "text": "Got it: your request. Waiting for the first version to go live. I’ll start on this as soon as it does.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request and will start once the project's first version is live. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.waitingBuilder": {
+    "text": "Got it: {{title}}. Waiting for a free builder.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request and it waits in line; a 'builder' is one of the workers that build changes. {{title}} is the request's title, in the person's own words. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.waitingBuilderUntitled": {
+    "text": "Got it: your request. Waiting for a free builder.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request and it waits in line; a 'builder' is one of the workers that build changes. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.building": {
+    "text": "Building it now: {{title}}.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot is building the change that was asked for. {{title}} is the request's title, in the person's own words. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.buildingUntitled": {
+    "text": "Building it now: your request.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot is building the change that was asked for. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.checking": {
+    "text": "Built: {{title}}. Testing it now.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change is built and its tests are running. {{title}} is the request's title, in the person's own words. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.checkingUntitled": {
+    "text": "Built: your request. Testing it now.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change is built and its tests are running. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.proposed": {
+    "text": "Built: {{title}}. {{approval}}",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change is built and waits for approval. {{title}} is the request's title, in the person's own words. {{approval}} is a complete sentence, already in the reader's language, saying who still has to approve it, for example 'Waiting for approval from you and @ada.' The bot speaks as 'I'."
+  },
+  "group.botCard.filed.proposedUntitled": {
+    "text": "Built: your request. {{approval}}",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change is built and waits for approval. Used when the request has no title, so it is called 'your request'. {{approval}} is a complete sentence, already in the reader's language, saying who still has to approve it, for example 'Waiting for approval from you and @ada.' The bot speaks as 'I'."
+  },
+  "group.botCard.filed.approved": {
+    "text": "Approved: {{title}}. It’s going live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change was approved and is being released; 'going live' means becoming the version people use. {{title}} is the request's title, in the person's own words. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.approvedUntitled": {
+    "text": "Approved: your request. It’s going live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change was approved and is being released; 'going live' means becoming the version people use. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.live": {
+    "text": "Live: {{title}}.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change that was asked for is now in use. {{title}} is the request's title, in the person's own words. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.liveUntitled": {
+    "text": "Live: your request.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change that was asked for is now in use. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.closed": {
+    "text": "Closed: {{title}}. It won’t go live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change was closed without being released. Closed is an adjective here. {{title}} is the request's title, in the person's own words. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.closedUntitled": {
+    "text": "Closed: your request. It won’t go live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change was closed without being released. Closed is an adjective here. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.gotIt": {
+    "text": "Got it: {{title}}.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request. {{title}} is the request's title, in the person's own words. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.gotItUntitled": {
+    "text": "Got it: your request.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.gotItMinutes_one": {
+    "text": "Got it: {{title}}. Usually about {{count}} minutes.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request, and how long a change like it usually takes. {{title}} is the request's title, in the person's own words; {{count}} is a number of minutes."
+  },
+  "group.botCard.filed.gotItMinutesUntitled_one": {
+    "text": "Got it: your request. Usually about {{count}} minutes.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request, and how long a change like it usually takes. Used when the request has no title. {{count}} is a number of minutes."
+  },
+  "group.botCard.filed.gotItMinutes_other": {
+    "text": "Got it: {{title}}. Usually about {{count}} minutes.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request, and how long a change like it usually takes. {{title}} is the request's title, in the person's own words; {{count}} is a number of minutes."
+  },
+  "group.botCard.filed.gotItMinutesUntitled_other": {
+    "text": "Got it: your request. Usually about {{count}} minutes.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request, and how long a change like it usually takes. Used when the request has no title. {{count}} is a number of minutes."
+  },
+  "group.botCard.filed.question": {
+    "text": "I have a question about this. It’s in our chat.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: before building, the bot asked the person something in their private chat with it. The bot speaks as 'I'; 'our chat' is that private conversation."
+  },
+  "group.botCard.filed.person": {
+    "text": "I left this for the group to decide.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot did not build the request and left it as a request for the project's community to decide on. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.stopped": {
+    "text": "I couldn’t finish this. Our chat says why.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot stopped before finishing the change; the reason is in the person's private chat with the bot. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.checking.firstVersion": {
+    "text": "Updated the first version. Testing it now.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the fix was added to the change and its tests are running. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.checking.titled": {
+    "text": "Updated “{{title}}”. Testing it now.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the fix was added to the change and its tests are running. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.checking.untitled": {
+    "text": "Updated that change. Testing it now.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the fix was added to the change and its tests are running. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.proposed.firstVersion": {
+    "text": "Updated the first version. {{approval}}",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the fix was added and the change waits for approval. The change is the project's first version. {{approval}} is a complete sentence, already in the reader's language, saying who still has to approve it, for example 'Waiting for approval from you and @ada.' The bot speaks as 'I'."
+  },
+  "group.botCard.revise.proposed.titled": {
+    "text": "Updated “{{title}}”. {{approval}}",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the fix was added and the change waits for approval. {{title}} is the change's title; keep the quotation marks around it. {{approval}} is a complete sentence, already in the reader's language, saying who still has to approve it, for example 'Waiting for approval from you and @ada.' The bot speaks as 'I'."
+  },
+  "group.botCard.revise.proposed.untitled": {
+    "text": "Updated that change. {{approval}}",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the fix was added and the change waits for approval. Used when the change has no title. 'Change' is a noun: a proposed change to the project. {{approval}} is a complete sentence, already in the reader's language, saying who still has to approve it, for example 'Waiting for approval from you and @ada.' The bot speaks as 'I'."
+  },
+  "group.botCard.revise.asked.firstVersion": {
+    "text": "I have a question about your fix. It’s in the discussion of the first version.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot asked the person something about the fix, in that change's discussion. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.asked.titled": {
+    "text": "I have a question about your fix. It’s in the discussion of “{{title}}”.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot asked the person something about the fix, in that change's discussion. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.asked.untitled": {
+    "text": "I have a question about your fix. It’s in the discussion of that change.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot asked the person something about the fix, in that change's discussion. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.answered.firstVersion": {
+    "text": "I answered you in the discussion of the first version.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot replied to the person in that change's discussion instead of changing anything. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.answered.titled": {
+    "text": "I answered you in the discussion of “{{title}}”.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot replied to the person in that change's discussion instead of changing anything. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.answered.untitled": {
+    "text": "I answered you in the discussion of that change.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot replied to the person in that change's discussion instead of changing anything. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.person.firstVersion": {
+    "text": "I left your fix to the first version for the group to decide.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot did not make the fix and left it for the project's community to decide. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.person.titled": {
+    "text": "I left your fix to “{{title}}” for the group to decide.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot did not make the fix and left it for the project's community to decide. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.person.untitled": {
+    "text": "I left your fix to that change for the group to decide.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot did not make the fix and left it for the project's community to decide. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.approved.firstVersion": {
+    "text": "The first version was approved. It’s going live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change was approved and is being released; 'going live' means becoming the version people use. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.approved.titled": {
+    "text": "“{{title}}” was approved. It’s going live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change was approved and is being released; 'going live' means becoming the version people use. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.approved.untitled": {
+    "text": "That change was approved. It’s going live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change was approved and is being released; 'going live' means becoming the version people use. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.live.firstVersion": {
+    "text": "The first version is live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change is now in use. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.live.titled": {
+    "text": "“{{title}}” is live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change is now in use. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.live.untitled": {
+    "text": "That change is live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change is now in use. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.closed.firstVersion": {
+    "text": "The first version was closed. It won’t go live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change was closed without being released. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.closed.titled": {
+    "text": "“{{title}}” was closed. It won’t go live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change was closed without being released. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.closed.untitled": {
+    "text": "That change was closed. It won’t go live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change was closed without being released. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.stopped.firstVersion": {
+    "text": "I couldn’t finish fixing the first version.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot stopped before finishing the fix. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.stopped.titled": {
+    "text": "I couldn’t finish fixing “{{title}}”.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot stopped before finishing the fix. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.stopped.untitled": {
+    "text": "I couldn’t finish fixing that change.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot stopped before finishing the fix. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.taken.firstVersion": {
+    "text": "Got it. I’ll fix that in the first version before it goes live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot took the fix and will add it to the change before the change is released. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.taken.titled": {
+    "text": "Got it. I’ll fix that in “{{title}}” before it goes live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot took the fix and will add it to the change before the change is released. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.taken.untitled": {
+    "text": "Got it. I’ll fix that in that change before it goes live.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot took the fix and will add it to the change before the change is released. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.refused.firstVersion": {
+    "text": "I couldn’t change the first version just now. You can say what you want in its discussion.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot could not start the fix; the person can write in that change's discussion instead. 'Change' at the start is a verb, to alter. The change is the project's first version. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.refused.titled": {
+    "text": "I couldn’t change “{{title}}” just now. You can say what you want in its discussion.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot could not start the fix; the person can write in that change's discussion instead. 'Change' at the start is a verb, to alter. {{title}} is the change's title; keep the quotation marks around it. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.refused.untitled": {
+    "text": "I couldn’t change that change just now. You can say what you want in its discussion.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the bot could not start the fix; the person can write in that change's discussion instead. 'Change' at the start is a verb, to alter. Used when the change has no title. 'Change' is a noun: a proposed change to the project. The bot speaks as 'I'."
+  },
+  "group.botCard.group": {
+    "text": "Filed as a request for the group: {{title}}.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot did not build the idea itself and added it to the project's list of requests for the community to decide on. {{title}} is the request's title, in the person's own words. 'Filed' is a verb form, to record; 'request' is a noun."
+  },
+  "group.botCard.groupUntitled": {
+    "text": "Filed as a request for the group: your request.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot added the idea to the project's list of requests for the community to decide on. Used when the request has no title. 'Filed' is a verb form, to record."
+  },
+  "group.botCard.offer": {
+    "text": "Suggest this to the group? It goes in the project’s requests as “{{title}}”, in your name.",
+    "description": "Question on Homeroom bot's private card under the person's own chat message, for a newcomer whose message reads like an idea for the project: offers to add it to the project's list of requests. {{title}} is the title the request would get; keep the quotation marks around it."
+  },
+  "group.botCard.offerUntitled": {
+    "text": "Suggest this to the group? It goes in the project’s requests, in your name.",
+    "description": "Question on Homeroom bot's private card under the person's own chat message, for a newcomer whose message reads like an idea for the project: offers to add it to the project's list of requests. Used when no title was worked out for it."
+  },
+  "group.botCard.unsure": {
+    "text": "Want me to file this as a request?",
+    "description": "Question on Homeroom bot's private card under the person's own chat message, when the bot is not sure the message was asking for a change: offers to record it as a request to build. 'File' is a verb, to record; 'request' is a noun. The bot speaks as 'me'."
+  },
+  "group.botCard.unsureTitled": {
+    "text": "Want me to file this as a request? {{title}}",
+    "description": "Question on Homeroom bot's private card under the person's own chat message, when the bot is not sure the message was asking for a change: offers to record it as a request to build, followed by {{title}}, the title the request would get. 'File' is a verb, to record. The bot speaks as 'me'."
+  },
+  "group.botCard.question": {
+    "text": "I answer questions in our chat.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message was a question rather than a request to build something: the bot answers in the person's private chat with it. The bot speaks as 'I'."
+  },
+  "group.botCard.busy": {
+    "text": "You’ve asked me for a lot in the last hour. Try again in a little while.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the person reached the limit of requests to the bot per hour. The bot speaks as 'me'."
+  },
+  "group.botCard.failed": {
+    "text": "I couldn’t file it just now. Try again in a minute.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when recording the request failed. 'File' is a verb, to record; 'it' is the request. The bot speaks as 'I'."
+  },
+  "group.botCard.action.tryIt": {
+    "text": "Try it",
+    "description": "Button on Homeroom bot's private card under the person's own chat message, once the change is built: opens a preview of the change to try it out. 'It' is the change."
+  },
+  "group.botCard.action.seeChange": {
+    "text": "See change",
+    "description": "Button on Homeroom bot's private card under the person's own chat message: opens the page of the change the fix was sent to. 'Change' is a noun: a proposed change to the project."
+  },
+  "group.botCard.action.openChat": {
+    "text": "Open chat",
+    "description": "Button on Homeroom bot's private card under the person's own chat message: opens the person's private chat with Homeroom bot. Open is a verb."
+  },
+  "group.botCard.action.seeRequest": {
+    "text": "See request",
+    "description": "Button on Homeroom bot's private card under the person's own chat message: opens the request as it is listed in the project's requests. 'Request' is a noun."
+  },
+  "group.botCard.action.seeProgress": {
+    "text": "See progress",
+    "description": "Button on Homeroom bot's private card under the person's own chat message, while the bot is working: opens the person's private chat with Homeroom bot, where the progress of the build is shown."
+  },
+  "group.botCard.action.fileIt": {
+    "text": "File it",
+    "description": "Button on Homeroom bot's private card under the person's own chat message, answering 'Want me to file this as a request?': records the message as a request to build. 'File' is a verb, to record."
+  },
+  "group.botCard.action.notNow": {
+    "text": "Not now",
+    "description": "Button on Homeroom bot's private card under the person's own chat message, answering the card's offer to file or suggest the message as a request: declines and removes the card."
+  },
+  "group.botCard.action.suggestIt": {
+    "text": "Suggest it",
+    "description": "Button on Homeroom bot's private card under the person's own chat message, answering 'Suggest this to the group?': adds the idea to the project's list of requests in the person's name."
+  },
+  "group.botCard.action.tryAgain": {
+    "text": "Try again",
+    "description": "Button on Homeroom bot's private card under the person's own chat message, after recording the request failed: tries to record it again."
+  },
+  "group.event.votedYes": {
+    "text": "Voted yes",
+    "description": "Activity line in a project's channel or in a change's discussion, after the name of the person who voted: they voted in favour of the change."
+  },
+  "group.event.votedNo": {
+    "text": "Voted no",
+    "description": "Activity line in a project's channel or in a change's discussion, after the name of the person who voted: they voted against the change."
+  },
+  "group.event.votedYesReason": {
+    "text": "Voted yes: “{{reason}}”",
+    "description": "Activity line in a project's channel or in a change's discussion, after the name of the person who voted in favour. {{reason}} is the reason they wrote; keep the quotation marks around it."
+  },
+  "group.event.votedNoReason": {
+    "text": "Voted no: “{{reason}}”",
+    "description": "Activity line in a project's channel or in a change's discussion, after the name of the person who voted against. {{reason}} is the reason they wrote; keep the quotation marks around it."
+  },
+  "group.event.here.submitted": {
+    "text": "Asked for approval",
+    "description": "Activity line in the discussion on a proposed change's own page, where the change is not named because the page's heading names it, after the name of the person who did it: they put the change up for the community's vote."
+  },
+  "group.event.here.forced": {
+    "text": "An admin made this change live",
+    "description": "Activity line in the discussion on a proposed change's own page, where the change is not named because the page's heading names it: an administrator released the change without the usual vote. 'Live' means in use."
+  },
+  "group.event.here.forcedTally": {
+    "text": "An admin made this change live ({{tally}} votes)",
+    "description": "Activity line in the discussion on a proposed change's own page, where the change is not named because the page's heading names it: an administrator released the change without waiting for the vote. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it."
+  },
+  "group.event.here.liveSoonCredits": {
+    "text": "This change was approved and will be live in a few minutes. {{credits}}",
+    "description": "Activity line in the discussion on a proposed change's own page, where the change is not named because the page's heading names it: the change was approved and is being released. {{credits}} is a complete sentence, already in the reader's language, naming who built, backed and shaped it, for example 'Built by evan, backed by alice and bob.'"
+  },
+  "group.event.here.liveSoon": {
+    "text": "This change was approved and will be live in a few minutes",
+    "description": "Activity line in the discussion on a proposed change's own page, where the change is not named because the page's heading names it: the change was approved and is being released. No final full stop."
+  },
+  "group.event.here.liveSoonTally": {
+    "text": "This change was approved with {{tally}} votes and will be live in a few minutes",
+    "description": "Activity line in the discussion on a proposed change's own page, where the change is not named because the page's heading names it: the change was approved and is being released. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it. No final full stop."
+  },
+  "group.event.here.liveCredits": {
+    "text": "This change is live. {{credits}}",
+    "description": "Activity line in the discussion on a proposed change's own page, where the change is not named because the page's heading names it: the change was approved and is now in use. {{credits}} is a complete sentence, already in the reader's language, naming who built, backed and shaped it, for example 'Built by evan, backed by alice and bob.'"
+  },
+  "group.event.here.wentLive": {
+    "text": "This change went live",
+    "description": "Activity line in the discussion on a proposed change's own page, where the change is not named because the page's heading names it: the change was approved and is now in use. No final full stop."
+  },
+  "group.event.here.wentLiveTally": {
+    "text": "This change went live with {{tally}} votes",
+    "description": "Activity line in the discussion on a proposed change's own page, where the change is not named because the page's heading names it: the change was approved and is now in use. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it. No final full stop."
+  },
+  "group.event.submitted": {
+    "text": "Asked for approval: {{title}}",
+    "description": "Activity line in a project's channel, after the name of the person who did it: they put a change up for the community's vote. {{title}} is the change's title."
+  },
+  "group.event.submittedUntitled": {
+    "text": "Asked for approval on a change",
+    "description": "Activity line in a project's channel, after the name of the person who did it: they put a change up for the community's vote. Used when the change has no title. 'Change' is a noun."
+  },
+  "group.event.forced": {
+    "text": "An admin made “{{title}}” live",
+    "description": "Activity line in a project's channel: an administrator released a change without the usual vote. {{title}} is the change's title; keep the quotation marks around it."
+  },
+  "group.event.forcedTally": {
+    "text": "An admin made “{{title}}” live ({{tally}} votes)",
+    "description": "Activity line in a project's channel: an administrator released a change without waiting for the vote. {{title}} is the change's title; keep the quotation marks around it. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it."
+  },
+  "group.event.forcedUntitled": {
+    "text": "An admin made a change live",
+    "description": "Activity line in a project's channel: an administrator released a change without the usual vote. Used when the change has no title."
+  },
+  "group.event.forcedUntitledTally": {
+    "text": "An admin made a change live ({{tally}} votes)",
+    "description": "Activity line in a project's channel: an administrator released a change without waiting for the vote. Used when the change has no title. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it."
+  },
+  "group.event.liveSoonCredits": {
+    "text": "{{title}} was approved and will be live in a few minutes. {{credits}}",
+    "description": "Activity line in a project's channel: a change was approved and is being released. {{title}} is the change's title and starts the sentence. {{credits}} is a complete sentence, already in the reader's language, naming who built, backed and shaped it, for example 'Built by evan, backed by alice and bob.'"
+  },
+  "group.event.liveSoonCreditsUntitled": {
+    "text": "A change was approved and will be live in a few minutes. {{credits}}",
+    "description": "Activity line in a project's channel: a change was approved and is being released. Used when the change has no title. {{credits}} is a complete sentence, already in the reader's language, naming who built, backed and shaped it, for example 'Built by evan, backed by alice and bob.'"
+  },
+  "group.event.liveSoon": {
+    "text": "“{{title}}” was approved and will be live in a few minutes",
+    "description": "Activity line in a project's channel: a change was approved and is being released. {{title}} is the change's title; keep the quotation marks around it. No final full stop."
+  },
+  "group.event.liveSoonTally": {
+    "text": "“{{title}}” was approved with {{tally}} votes and will be live in a few minutes",
+    "description": "Activity line in a project's channel: a change was approved and is being released. {{title}} is the change's title; keep the quotation marks around it. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it. No final full stop."
+  },
+  "group.event.liveSoonUntitled": {
+    "text": "A change was approved and will be live in a few minutes",
+    "description": "Activity line in a project's channel: a change was approved and is being released. Used when the change has no title. No final full stop."
+  },
+  "group.event.liveSoonUntitledTally": {
+    "text": "A change was approved with {{tally}} votes and will be live in a few minutes",
+    "description": "Activity line in a project's channel: a change was approved and is being released. Used when the change has no title. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it. No final full stop."
+  },
+  "group.event.liveCredits": {
+    "text": "{{title}} is live. {{credits}}",
+    "description": "Activity line in a project's channel: a change was approved and is now in use. {{title}} is the change's title and starts the sentence. {{credits}} is a complete sentence, already in the reader's language, naming who built, backed and shaped it, for example 'Built by evan, backed by alice and bob.'"
+  },
+  "group.event.liveCreditsUntitled": {
+    "text": "A change is live. {{credits}}",
+    "description": "Activity line in a project's channel: a change was approved and is now in use. Used when the change has no title. {{credits}} is a complete sentence, already in the reader's language, naming who built, backed and shaped it, for example 'Built by evan, backed by alice and bob.'"
+  },
+  "group.event.wentLive": {
+    "text": "{{title}} went live",
+    "description": "Activity line in a project's channel: a change was approved and is now in use. {{title}} is the change's title and starts the sentence. No final full stop."
+  },
+  "group.event.wentLiveTally": {
+    "text": "{{title}} went live with {{tally}} votes",
+    "description": "Activity line in a project's channel: a change was approved and is now in use. {{title}} is the change's title and starts the sentence. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it. No final full stop."
+  },
+  "group.event.wentLiveUntitled": {
+    "text": "A change went live",
+    "description": "Activity line in a project's channel: a change was approved and is now in use. Used when the change has no title. No final full stop."
+  },
+  "group.event.wentLiveUntitledTally": {
+    "text": "A change went live with {{tally}} votes",
+    "description": "Activity line in a project's channel: a change was approved and is now in use. Used when the change has no title. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it. No final full stop."
+  },
+  "group.event.tail.earlier": {
+    "text": "· on an earlier version, not counted",
+    "description": "Muted note after 'Voted yes' or 'Voted no' on an activity line: the vote was cast on an earlier version of the change and no longer counts. Keep the middle dot first; lower case, it continues the line."
+  },
+  "group.event.tail.tally": {
+    "text": "{{tally}} votes",
+    "description": "Muted note at the end of an activity line saying a change is live. {{tally}} is the vote tally as the server wrote it, for example 2/3 (votes in favour out of votes needed); it is not a plain count, so the word for votes does not change with it."
+  },
+  "group.event.open": {
+    "text": "Open this change",
+    "description": "Tooltip of an activity line about a proposed change in a project's channel: clicking it opens that change's page. Open is a verb; 'change' is a noun."
+  },
+  "group.names.next": {
+    "text": "{{names}}, {{name}}",
+    "description": "Joins people's usernames into a list, as in 'alice, bob and carol'. {{names}} is the names listed so far and {{name}} the next one, which is not the last. Only the punctuation between them is translated."
+  },
+  "group.names.last": {
+    "text": "{{names}} and {{name}}",
+    "description": "Ends a list of people's usernames, as in 'alice and bob' or 'alice, bob and carol'. {{names}} is the names listed so far and {{name}} is the last one."
+  },
+  "group.credits.built": {
+    "text": "Built by {{author}}.",
+    "description": "Sentence that names who made a change that went live, on an activity line or the weekly summary in a project's channel. {{author}} is the username of the person who built it."
+  },
+  "group.credits.builtBacked": {
+    "text": "Built by {{author}}, backed by {{backers}}.",
+    "description": "Sentence that names who made a change that went live, on an activity line or the weekly summary in a project's channel. {{author}} is the username of the person who built it; {{backers}} is the list of usernames of the people who voted for it, already joined."
+  },
+  "group.credits.builtShaped": {
+    "text": "Built by {{author}}, shaped by {{shapers}}.",
+    "description": "Sentence that names who made a change that went live, on an activity line or the weekly summary in a project's channel. {{author}} is the username of the person who built it; {{shapers}} is the list of usernames of the people whose comments shaped it, already joined."
+  },
+  "group.credits.builtBackedShaped": {
+    "text": "Built by {{author}}, backed by {{backers}}, shaped by {{shapers}}.",
+    "description": "Sentence that names who made a change that went live, on an activity line or the weekly summary in a project's channel. {{author}} is the username of the person who built it; {{backers}} is the joined list of usernames of the people who voted for it; {{shapers}} is the joined list of those whose comments shaped it."
+  },
+  "group.credits.backed": {
+    "text": "Backed by {{backers}}.",
+    "description": "Sentence that names who made a change that went live, on an activity line or the weekly summary in a project's channel, when the builder is not named. {{backers}} is the list of usernames of the people who voted for it, already joined."
+  },
+  "group.credits.backedShaped": {
+    "text": "Backed by {{backers}}, shaped by {{shapers}}.",
+    "description": "Sentence that names who made a change that went live, on an activity line or the weekly summary in a project's channel, when the builder is not named. {{backers}} is the joined list of usernames of the people who voted for it; {{shapers}} is the joined list of those whose comments shaped it."
+  },
+  "group.credits.shaped": {
+    "text": "Shaped by {{shapers}}.",
+    "description": "Sentence that names who made a change that went live, on an activity line or the weekly summary in a project's channel, when only the people whose comments shaped it are named. {{shapers}} is the list of their usernames, already joined."
+  },
+  "group.weekly.title": {
+    "text": "This week on {{app}}",
+    "description": "Heading of the weekly summary card posted in a project's channel, and the card's one-line text. {{app}} is the project's name."
+  },
+  "group.weekly.titleNoApp": {
+    "text": "This week on the app",
+    "description": "One-line text of the weekly summary card posted in a project's channel when the project's name is not known."
+  },
+  "group.weekly.nothingLanded": {
+    "text": "Nothing landed this week",
+    "description": "Subheading on the weekly summary card posted in a project's channel when no change went live this week. 'Landed' means was released."
+  },
+  "group.weekly.wentLive_one": {
+    "text": "{{count}} change went live",
+    "description": "Subheading on the weekly summary card posted in a project's channel, above the list of changes released this week. {{count}} is how many. 'Change' is a noun."
+  },
+  "group.weekly.wentLive_other": {
+    "text": "{{count}} changes went live",
+    "description": "Subheading on the weekly summary card posted in a project's channel, above the list of changes released this week. {{count}} is how many. 'Changes' is a noun."
+  },
+  "group.weekly.authorBacked": {
+    "text": "{{author}}, backed by {{backers}}",
+    "description": "After a change's title on the weekly summary card posted in a project's channel, following a middle dot. {{author}} is the username of the person who built the change; {{backers}} is the joined list of usernames of the people who voted for it."
+  },
+  "group.weekly.moreLive_one": {
+    "text": "and {{count}} more",
+    "description": "Last line of the list of changes released this week on the weekly summary card posted in a project's channel: {{count}} further changes went live that the card does not list. Lower case, it continues the list."
+  },
+  "group.weekly.moreLive_other": {
+    "text": "and {{count}} more",
+    "description": "Last line of the list of changes released this week on the weekly summary card posted in a project's channel: {{count}} further changes went live that the card does not list. Lower case, it continues the list."
+  },
+  "group.weekly.waiting_one": {
+    "text": "One change is waiting for approval",
+    "description": "Subheading on the weekly summary card posted in a project's channel, above the list of changes waiting for the community's vote, when there is exactly one. {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
+  },
+  "group.weekly.waiting_other": {
+    "text": "{{count}} changes are waiting for approval",
+    "description": "Subheading on the weekly summary card posted in a project's channel, above the list of changes waiting for the community's vote. {{count}} is how many."
+  },
+  "group.weekly.moreWaiting_one": {
+    "text": "and {{count}} more",
+    "description": "Last line of the list of changes waiting for approval on the weekly summary card posted in a project's channel: {{count}} further changes are waiting that the card does not list. Lower case, it continues the list."
+  },
+  "group.weekly.moreWaiting_other": {
+    "text": "and {{count}} more",
+    "description": "Last line of the list of changes waiting for approval on the weekly summary card posted in a project's channel: {{count}} further changes are waiting that the card does not list. Lower case, it continues the list."
+  },
+  "group.weekly.door": {
+    "text": "Open the Workshop ›",
+    "description": "Link at the bottom of the weekly summary card posted in a project's channel: opens the project's Workshop, the tab that lists its changes and requests. Open is a verb; Workshop is the tab's name. Keep the › at the end."
+  },
+  "group.attachment.openFullSize": {
+    "text": "{{file}}: open full size",
+    "description": "Tooltip of a picture attached to a chat message: clicking it opens the picture at full size. {{file}} is the file's name. Open is a verb."
+  },
+  "group.attachment.openFullSizeUnnamed": {
+    "text": "file: open full size",
+    "description": "Tooltip of a picture attached to a chat message: clicking it opens the picture at full size. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
+  "group.attachment.download": {
+    "text": "Download {{file}}",
+    "description": "Tooltip and accessible name of the download control on a file attached to a chat message. {{file}} is the file's name. Download is a verb."
+  },
+  "group.attachment.downloadUnnamed": {
+    "text": "Download file",
+    "description": "Tooltip and accessible name of the download control on a file attached to a chat message. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
+  "group.attachment.view": {
+    "text": "View {{file}}",
+    "description": "Tooltip of a Markdown file attached to a chat message: clicking its name opens the file for reading in the side panel. {{file}} is the file's name. View is a verb."
+  },
+  "group.attachment.viewUnnamed": {
+    "text": "View file",
+    "description": "Tooltip of a Markdown file attached to a chat message: clicking its name opens the file for reading in the side panel. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
+  "group.attachment.previewTitle": {
+    "text": "Open sandboxed preview of {{file}}",
+    "description": "Tooltip of the Preview link on an HTML file attached to a chat message: opens the page in a new tab, isolated ('sandboxed') so it cannot touch the person's account. {{file}} is the file's name. Open is a verb."
+  },
+  "group.attachment.previewTitleUnnamed": {
+    "text": "Open sandboxed preview of file",
+    "description": "Tooltip of the Preview link on an HTML file attached to a chat message: opens the page in a new tab, isolated ('sandboxed') so it cannot touch the person's account. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
+  "group.attachment.unnamed": {
+    "text": "file",
+    "description": "Stands where a file's name would be on a chat attachment that has none. Shown alone, as the chip's label. A noun, lower case."
+  },
+  "group.attachment.preview": {
+    "text": "Preview",
+    "description": "Link on an HTML file attached to a chat message: opens the page in a new tab to look at it. A verb here."
+  },
+  "group.row.editTitle": {
+    "text": "Edit",
+    "description": "Tooltip of the pencil button that appears on the person's own chat message: starts editing that message. A verb."
+  },
+  "group.row.edit": {
+    "text": "Edit message",
+    "description": "Accessible name of the pencil button that appears on the person's own chat message: starts editing that message."
+  },
+  "group.row.savedTitle": {
+    "text": "Saved. Click to unsave",
+    "description": "Tooltip of the bookmark button on a chat message the person has saved: clicking removes it from their saved items."
+  },
+  "group.row.saveTitle": {
+    "text": "Save to your notifications",
+    "description": "Tooltip of the bookmark button on a chat message: clicking keeps the message in the person's notifications list so they can find it later. Save is a verb."
+  },
+  "group.row.unsave": {
+    "text": "Unsave message",
+    "description": "Accessible name of the bookmark button on a chat message the person has saved: removes it from their saved items."
+  },
+  "group.row.save": {
+    "text": "Save message",
+    "description": "Accessible name of the bookmark button on a chat message: keeps the message in the person's saved items. Save is a verb, to bookmark."
+  },
+  "group.row.reactTitle": {
+    "text": "React",
+    "description": "Tooltip of the smiley button on a chat message: opens the emoji to react to the message with. A verb."
+  },
+  "group.row.addReaction": {
+    "text": "Add reaction",
+    "description": "Accessible name of the smiley button on a chat message: opens the emoji to react to the message with."
+  },
+  "group.row.repeated_one": {
+    "text": "Posted {{count}} times in a row; this is the latest",
+    "description": "Tooltip of the ×N mark after an automatic line that was posted several times running and is shown once, in a chat and among the replies on a request's or a change's page. {{count}} is how many times. Posted is a verb form."
+  },
+  "group.row.repeated_other": {
+    "text": "Posted {{count}} times in a row; this is the latest",
+    "description": "Tooltip of the ×N mark after an automatic line that was posted several times running and is shown once, in a chat and among the replies on a request's or a change's page. {{count}} is how many times. Posted is a verb form."
+  },
+  "group.row.unreadMention": {
+    "text": "Unread mention",
+    "description": "Accessible name of the dot before the author of a chat message that mentions the person and that they have not read yet."
+  },
+  "group.row.edited": {
+    "text": "edited",
+    "description": "Small muted word after a chat message's time when its author changed the message after sending it. Lower case."
+  },
+  "group.row.deleted": {
+    "text": "Message deleted",
+    "description": "Shown in place of a chat message's content after its author deleted it."
+  },
+  "group.specCard.sharedBy": {
+    "text": "Shared by <0>{{name}}</0> · v{{version}}",
+    "description": "Line on the card of a plan (the written description of a change) that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the plan's version number, and 'v' abbreviates version. Shared is a verb form."
+  },
+  "group.specCard.sharedBySomeone": {
+    "text": "Shared by <0>Someone</0> · v{{version}}",
+    "description": "Line on the card of a plan (the written description of a change) that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number."
+  },
+  "group.specCard.sharedByBuilt": {
+    "text": "Shared by <0>{{name}}</0> · v{{version}} · {{built}}",
+    "description": "Line on the card of a plan that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the plan's version number, and 'v' abbreviates version; {{built}} is the date and time the change was built, already formatted."
+  },
+  "group.specCard.sharedBySomeoneBuilt": {
+    "text": "Shared by <0>Someone</0> · v{{version}} · {{built}}",
+    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{built}} is when it was built, already formatted."
+  },
+  "group.specCard.sharedByPr": {
+    "text": "Shared by <0>{{name}}</0> · v{{version}} · <1>PR #{{number}}</1>",
+    "description": "Line on the card of a plan that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the plan's version number, and 'v' abbreviates version; the <1> link opens the pull request, and {{number}} is its number. PR is the usual abbreviation of pull request."
+  },
+  "group.specCard.sharedBySomeonePr": {
+    "text": "Shared by <0>Someone</0> · v{{version}} · <1>PR #{{number}}</1>",
+    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{number}} is the pull request's number; keep \"PR #\"."
+  },
+  "group.specCard.sharedByBuiltPr": {
+    "text": "Shared by <0>{{name}}</0> · v{{version}} · {{built}} · <1>PR #{{number}}</1>",
+    "description": "Line on the card of a plan that someone shared in a chat. {{name}} is that person's username, inside the <0> tags; {{version}} is the plan's version number; {{built}} is the date and time the change was built, already formatted; the <1> link opens the pull request, and {{number}} is its number. PR abbreviates pull request."
+  },
+  "group.specCard.sharedBySomeoneBuiltPr": {
+    "text": "Shared by <0>Someone</0> · v{{version}} · {{built}} · <1>PR #{{number}}</1>",
+    "description": "Line on the card of a plan that someone shared in a chat. Used when nobody can be named; \"Someone\" is written as the line has always shown it. {{version}} is the plan's version number. {{built}} is when it was built, already formatted. {{number}} is the pull request's number; keep \"PR #\"."
+  },
+  "group.specCard.loading": {
+    "text": "Loading…",
+    "description": "Replaces the label of the 'View full plan' button on a shared plan's card while the plan is being fetched."
+  },
+  "group.specCard.view": {
+    "text": "View full plan",
+    "description": "Button on the card of a plan (the written description of a change) shared in a chat: opens the whole plan in the side panel. View is a verb."
+  },
+  "group.menu.makeRequest": {
+    "text": "Make this a request",
+    "description": "Item in a chat message's menu: asks Homeroom bot to treat the message as a request to build something for the project. 'Request' is a noun."
+  },
+  "group.menu.viewThread": {
+    "text": "View thread",
+    "description": "Item in a chat message's menu, when the message already has replies: opens the thread of replies under it."
+  },
+  "group.menu.replyInThread": {
+    "text": "Reply in thread",
+    "description": "Item in a chat message's menu, when the message has no replies yet: opens a thread under the message to reply there. Reply is a verb."
+  },
+  "group.menu.edit": {
+    "text": "Edit message",
+    "description": "Item in the menu of the person's own chat message: starts editing it."
+  },
+  "group.menu.copyText": {
+    "text": "Copy text",
+    "description": "Item in a chat message's menu: copies the message's text to the clipboard. Copy is a verb."
+  },
+  "group.menu.textCopied": {
+    "text": "Message text copied",
+    "description": "Brief notice after 'Copy text' in a chat message's menu: the message's text is on the clipboard."
+  },
+  "group.menu.copyLink": {
+    "text": "Copy link to message",
+    "description": "Item in a chat message's menu: copies a web link that opens the chat at this message. Copy is a verb."
+  },
+  "group.menu.linkCopied": {
+    "text": "Link copied",
+    "description": "Brief notice after 'Copy link to message' in a chat message's menu: the link is on the clipboard."
+  },
+  "group.menu.markUnread": {
+    "text": "Mark unread",
+    "description": "Item in the menu of someone else's chat message: marks the channel as unread from this message on, so it shows as new again. Mark is a verb."
+  },
+  "group.menu.markedUnread": {
+    "text": "Marked unread",
+    "description": "Brief notice after 'Mark unread' in a chat message's menu: the channel now shows as unread from that message."
+  },
+  "group.menu.markUnreadFailed": {
+    "text": "Couldn’t mark this unread.",
+    "description": "Brief notice when 'Mark unread' in a chat message's menu failed. 'This' is the message."
+  },
+  "group.menu.delete": {
+    "text": "Delete message",
+    "description": "Item in the menu of the person's own chat message: asks for confirmation, then deletes the message for everyone."
+  },
+  "group.menu.deleteFailed": {
+    "text": "Couldn’t delete this message.",
+    "description": "Brief notice when deleting the person's own chat message failed."
+  },
+  "group.menu.report": {
+    "text": "Report message",
+    "description": "Item in the menu of someone else's chat message: opens the form that reports the message to the moderators. Report is a verb."
+  },
+  "group.menu.block": {
+    "text": "Block @{{username}}",
+    "description": "Item in the menu of someone else's chat message: asks for confirmation, then hides that person's messages from the reader. {{username}} is the author's username; keep the @ before it. Block is a verb."
+  },
+  "group.menu.blockUnknown": {
+    "text": "Block @System",
+    "description": "Item in the menu of someone else's chat message: asks for confirmation, then hides that person's messages from the reader. Used on a message whose author did not come with it and is shown as \"System\"."
+  },
+  "group.menu.blockFailed": {
+    "text": "Couldn’t block this person.",
+    "description": "Alert shown when blocking a chat message's author failed and the server gave no reason. Block is a verb: to hide a person's messages."
+  },
+  "group.deleteConfirm.title": {
+    "text": "Delete this message?",
+    "description": "Title of the confirmation dialog before the person's own chat message is deleted."
+  },
+  "group.deleteConfirm.message": {
+    "text": "Everyone will see “Message deleted” in its place. This can’t be undone.",
+    "description": "Body of the confirmation dialog before the person's own chat message is deleted. “Message deleted” is the exact text shown where the message was; translate it the same way as that text."
+  },
+  "group.deleteConfirm.confirm": {
+    "text": "Delete",
+    "description": "Confirm button of the dialog that asks whether to delete the person's own chat message. A verb."
+  },
+  "group.blockConfirm.title": {
+    "text": "Block @{{username}}?",
+    "description": "Title of the confirmation dialog before a chat message's author is blocked. {{username}} is that person's username; keep the @ before it. Block is a verb: to hide a person's messages."
+  },
+  "group.blockConfirm.titleUnknown": {
+    "text": "Block @System?",
+    "description": "Title of the confirmation dialog before a chat message's author is blocked. Used on a message whose author did not come with it and is shown as \"System\"."
+  },
+  "group.blockConfirm.message": {
+    "text": "Their messages in Messages and app discussions will be hidden.",
+    "description": "Body of the confirmation dialog before a person is blocked from a chat message's menu. The second 'Messages' is the name of the Messages tab; 'app discussions' are the projects' channels."
+  },
+  "group.blockConfirm.confirm": {
+    "text": "Block",
+    "description": "Confirm button of the dialog that asks whether to block a chat message's author. A verb: to hide a person's messages."
+  },
+  "group.report.label": {
+    "text": "Message from @{{username}}",
+    "description": "Names what is being reported, at the top of the report form opened from a chat message. {{username}} is the message author's username; keep the @ before it."
+  },
+  "group.report.labelUnknown": {
+    "text": "Message from @System",
+    "description": "Names what is being reported, at the top of the report form opened from a chat message. Used on a message whose author did not come with it and is shown as \"System\"."
+  },
+  "group.sheet.reply": {
+    "text": "Reply",
+    "description": "Item on the sheet that opens when a chat message is pressed and held on a touch screen: starts a reply to that message. A verb."
+  },
+  "group.sheet.unsave": {
+    "text": "Unsave",
+    "description": "Item on the sheet that opens when a saved chat message is pressed and held: removes the message from the person's saved items."
+  },
+  "group.sheet.save": {
+    "text": "Save",
+    "description": "Item on the sheet that opens when a chat message is pressed and held: keeps the message in the person's saved items. A verb, to bookmark; not saving a form."
+  },
+  "group.thread.replies_one": {
+    "text": "{{count}} reply",
+    "description": "Divider under the first message of an open thread in a chat: how many replies follow. {{count}} is that number. Reply is a noun."
+  },
+  "group.thread.replies_other": {
+    "text": "{{count}} replies",
+    "description": "Divider under the first message of an open thread in a chat: how many replies follow. {{count}} is that number. Replies is a noun."
+  },
+  "group.thread.noReplies": {
+    "text": "No replies yet",
+    "description": "Divider under the first message of an open thread in a chat that nobody has replied to."
+  },
+  "group.history.loadEarlier": {
+    "text": "Load earlier",
+    "description": "Button at the top of a discussion's messages: fetches the older messages before the ones shown. Load is a verb."
+  },
+  "group.composer.replyingToPlatform": {
+    "text": "↩ Replying to a platform message",
+    "description": "Line above the message box in a community chat while the person is writing a reply to an automatic line that Homeroom itself posted, such as a change being put up for a vote. Keep the arrow first."
+  },
+  "group.composer.replyingToMessage": {
+    "text": "↩ Replying to a message",
+    "description": "Line above the message box in a community chat while the person is writing a reply to a message whose author is no longer known. Keep the arrow first."
+  },
+  "group.composer.replyingToSystem": {
+    "text": "↩ Replying to @System",
+    "description": "Label over the message box while the person replies to a chat line that came with no author and shows \"System\" in the author's place. \"@System\" is written as it has always been shown."
+  },
+  "group.composer.replyingToSomeone": {
+    "text": "↩ Replying to @Someone",
+    "description": "Label over the message box while the person replies to a shared plan card whose sharer is not known and shows \"Someone\". \"@Someone\" is written as it has always been shown."
+  },
+  "group.quiet.app.inviteUnnamed": {
+    "text": "👋 Say hi, ask a question, or share what you would like to see next in this app.",
+    "description": "Line under the heading of the empty-channel card of a project whose name is not known, for a person who may write. Keep the waving hand first."
+  },
+  "group.quiet.app.readOnlyUnnamed": {
+    "text": "Messages from the people building this app will show up here.",
+    "description": "Line under the heading of the empty-channel card of a project whose name is not known, for a person who may read but not write."
+  },
+  "group.typing.one": {
+    "text": "{{name}} is typing...",
+    "description": "Status line under the messages of a chat while one other person is typing. {{name}} is their username."
+  },
+  "group.typing.several": {
+    "text": "{{names}} are typing...",
+    "description": "Status line under the messages of a chat while several other people are typing. {{names}} is their usernames, already joined into a list."
+  },
+  "group.send.notSentReason": {
+    "text": "Not sent. {{reason}}",
+    "description": "Brief notice when a chat message was refused. {{reason}} is the server's own complete sentence saying why, for example that the channel has moved or the topic was closed."
+  },
+  "group.send.notSentJoin": {
+    "text": "Not sent. Join this project to post here.",
+    "description": "Brief notice when a chat message was refused because the person is not a member of the project. Join and post are verbs: become a member, send a message."
+  },
+  "group.send.rateLimited_one": {
+    "text": "Not sent. You're sending messages too fast. Try again in {{count}} second.",
+    "description": "Brief notice when a chat message was refused because the person sent too many in a short time. {{count}} is the number of seconds to wait."
+  },
+  "group.send.rateLimited_other": {
+    "text": "Not sent. You're sending messages too fast. Try again in {{count}} seconds.",
+    "description": "Brief notice when a chat message was refused because the person sent too many in a short time. {{count}} is the number of seconds to wait."
+  },
+  "group.send.rateLimitedMoment": {
+    "text": "Not sent. You're sending messages too fast. Try again in a moment.",
+    "description": "Brief notice when a chat message was refused because the person sent too many in a short time, and the wait is not known."
+  },
+  "group.send.error": {
+    "text": "Something went wrong. Try again.",
+    "description": "Brief notice when the chat connection reported an error and gave no explanation of its own."
+  },
+  "group.send.notSentError": {
+    "text": "Not sent. Something went wrong. Try again.",
+    "description": "Brief notice when a chat message could not be delivered because its channel moved or its topic was closed, and the server gave no explanation of its own."
+  },
+  "group.systemSender": {
+    "text": "System",
+    "description": "Stands in for the author's name on a chat line that no person wrote, such as an automatic notice, when the project's name is not available. A noun: the platform itself."
+  },
+  "group.history.failed": {
+    "text": "Couldn’t load messages.",
+    "description": "Error line in a project's channel when its messages could not be fetched. A 'Try again' button follows it."
+  },
+  "group.thread.readOnly": {
+    "text": "This thread is read-only.",
+    "description": "Notice in place of the message box of a discussion thread the person may read but not write in."
+  },
+  "group.thread.placeholder": {
+    "text": "Reply in thread…",
+    "description": "Placeholder inside the empty message box of a discussion thread. Reply is a verb."
+  },
+  "group.thread.empty": {
+    "text": "No messages yet. Start the thread.",
+    "description": "Line shown in a discussion thread that has no messages. Start is a verb: write the first message."
+  },
+  "group.thread.loading": {
+    "text": "Loading…",
+    "description": "Line shown in a discussion thread while its messages are being fetched."
+  },
+  "group.thread.failed": {
+    "text": "Couldn’t load this thread.",
+    "description": "Error line in a discussion thread when its messages could not be fetched. A 'Try again' button follows it."
+  },
+  "group.thread.unknownAuthor": {
+    "text": "someone",
+    "description": "Stands where a person's username is shown on the card under a chat message that previews the newest reply in its thread, when the reply's author is not known. Shown alone in the name's own element; lower case in English, like a username."
+  },
+  "group.quote.spec": {
+    "text": "Plan",
+    "description": "Stands in for the text of a shared plan that has no title, in the preview of the message being replied to above the chat message box. A plan is the written description of a change."
+  },
+  "group.quote.file": {
+    "text": "file",
+    "description": "Stands in for an attached file's name when it has none, after a paperclip, in the preview of the message being replied to above the chat message box. A noun, lower case."
+  },
+  "group.quote.pr": {
+    "text": "PR #{{number}}",
+    "description": "Stands where an author's name would be on a quoted line that came from a pull request, and in a shared plan's subtitle. PR is the abbreviation of pull request; {{number}} is its number. Keep the # before the number."
+  },
+  "group.quote.prUnnumbered": {
+    "text": "PR #",
+    "description": "Stands where an author's name would be on a quoted line that came from a pull request whose number is not known."
+  },
+  "group.quote.system": {
+    "text": "system",
+    "description": "Stands where an author's name would be on a quoted line that no person wrote. Lower case, one word: the platform itself."
+  },
+  "group.bookmark.saveFailed": {
+    "text": "Couldn't save that message",
+    "description": "Brief notice when bookmarking a chat message failed. Save means keep it in the person's saved items."
+  },
+  "group.bookmark.unsaveFailed": {
+    "text": "Couldn't unsave that message",
+    "description": "Brief notice when removing a chat message from the person's saved items failed."
+  },
+  "group.bot.askFailed": {
+    "text": "Couldn’t ask Homeroom bot just now.",
+    "description": "Brief notice when 'Make this a request' on a chat message could not reach Homeroom bot, the product's assistant that builds changes. Keep the name Homeroom bot."
+  },
+  "group.row.editedAt": {
+    "text": "edited {{when}}",
+    "description": "Tooltip of the 'edited' mark on a chat message. {{when}} is the date and time of the last edit, already formatted, for example Jun 16, 2026, 02:41 PM. Lower case."
+  },
+  "group.row.editedTooltip": {
+    "text": "edited",
+    "description": "Tooltip of the 'edited' mark on a chat message when the time of the edit is not known. Lower case."
+  },
+  "group.edit.notConnected": {
+    "text": "Not connected. Your edit wasn’t sent, so try again in a moment.",
+    "description": "Notice beside the Save and Cancel buttons while editing a chat message, when the change could not be sent because the connection is down. 'Edit' is a noun here: the changed message."
+  },
+  "group.report.selected": {
+    "text": "Selected message",
+    "description": "Names what is being reported, at the top of the report form opened from the reaction bar of a chat message on a touch screen."
+  },
+  "group.attach.tooBig.image": {
+    "text": "\"{{file}}\" is too big. Images max {{megabytes}} MB.",
+    "description": "Error above the chat message box when a picture chosen to attach is over the size limit. {{file}} is the file's name; {{megabytes}} is the limit in megabytes. Keep the quotation marks around the name."
+  },
+  "group.attach.tooBig.markdown": {
+    "text": "\"{{file}}\" is too big. Markdown files max {{kilobytes}} KB.",
+    "description": "Error above the chat message box when a Markdown file chosen to attach is over the size limit. {{file}} is the file's name; {{kilobytes}} is the limit in kilobytes. Keep the quotation marks around the name."
+  },
+  "group.attach.tooBig.html": {
+    "text": "\"{{file}}\" is too big. HTML files max {{megabytes}} MB.",
+    "description": "Error above the chat message box when an HTML file chosen to attach is over the size limit. {{file}} is the file's name; {{megabytes}} is the limit in megabytes. Keep the quotation marks around the name."
+  },
+  "group.attach.tooBig.other": {
+    "text": "\"{{file}}\" is too big. Files max {{megabytes}} MB.",
+    "description": "Error above the chat message box when a file chosen to attach is over the size limit for files in general. {{file}} is the file's name; {{megabytes}} is the limit in megabytes. Keep the quotation marks around the name."
+  },
+  "group.attach.maxPerMessage_one": {
+    "text": "Up to {{count}} files per message.",
+    "description": "Error above the chat message box when more files were chosen than one message may carry. {{count}} is the limit."
+  },
+  "group.attach.maxPerMessage_other": {
+    "text": "Up to {{count}} files per message.",
+    "description": "Error above the chat message box when more files were chosen than one message may carry. {{count}} is the limit."
+  },
+  "group.attach.uploadFailedStatus": {
+    "text": "Upload failed (HTTP {{status}})",
+    "description": "Error above the chat message box when a file could not be uploaded and the server gave no reason. {{status}} is the HTTP status code, a number such as 500."
+  },
+  "group.attach.uploadFailed": {
+    "text": "Upload failed",
+    "description": "Error above the chat message box when a file could not be uploaded and nothing more is known."
+  },
+  "group.attach.stillUploading": {
+    "text": "Still uploading, one moment…",
+    "description": "Notice above the chat message box when Send was pressed while an attached file is still uploading; the message is not sent yet."
+  },
+  "group.file.loadFailedStatus": {
+    "text": "Couldn't load {{file}} (HTTP {{status}})",
+    "description": "Shown in the side panel when a Markdown file attached to a chat message could not be fetched for viewing. {{file}} is the file's name; {{status}} is the HTTP status code, a number such as 404."
+  },
+  "group.file.loadFailedStatusUnnamed": {
+    "text": "Couldn't load file (HTTP {{status}})",
+    "description": "Shown in the side panel when a Markdown file attached to a chat message could not be fetched for viewing. Used when the attached file has no name; \"file\" is written as it has always been shown. {{status}} is the HTTP status number."
+  },
+  "group.file.loadFailed": {
+    "text": "Failed to load file",
+    "description": "Shown in the side panel when a Markdown file attached to a chat message could not be fetched for viewing and nothing more is known."
+  },
+  "group.spec.title": {
+    "text": "Plan v{{version}}",
+    "description": "Title of a shared plan that has no title of its own, on its card in the chat and in the side panel. {{version}} is the plan's version number; 'v' abbreviates version. A plan is the written description of a change."
+  },
+  "group.spec.previewTitle": {
+    "text": "plan v{{version}}",
+    "description": "Title shown in the side panel's header while a shared plan with no title of its own is being fetched. {{version}} is the plan's version number; 'v' abbreviates version. Lower case."
+  },
+  "group.spec.someone": {
+    "text": "Someone",
+    "description": "Stands in for the username of the person who shared a plan in a chat when it is not known, in 'Shared by …' on the plan's card."
+  },
+  "group.spec.gone": {
+    "text": "This plan is no longer available. The sharer may have deleted the session.",
+    "description": "Shown in the side panel when a plan shared in a chat no longer exists. 'The sharer' is the person who shared it; a 'session' is the piece of work with the AI builder that the plan belonged to."
+  },
+  "group.spec.loadFailed": {
+    "text": "Failed to load plan (HTTP {{status}}).",
+    "description": "Shown in the side panel when a plan shared in a chat could not be fetched. {{status}} is the HTTP status code, a number such as 500."
+  },
+  "group.spec.empty": {
+    "text": "(empty plan)",
+    "description": "Shown in the side panel in place of the content of a shared plan that has no content. Keep the parentheses."
+  },
+  "group.spec.error": {
+    "text": "Error: {{message}}",
+    "description": "Shown in the side panel when fetching a shared plan failed. {{message}} is the browser's own technical error message."
+  },
+  "group.spec.loading": {
+    "text": "Loading…",
+    "description": "Shown in the side panel in place of a shared plan's content while it is being fetched again after the page was reloaded."
+  },
+  "group.status.reconnecting": {
+    "text": "Reconnecting…",
+    "description": "Status line under the messages of a project's channel while the connection to the chat is down and being restored."
+  },
+  "group.status.reconnectingQueued_one": {
+    "text": "Reconnecting… ({{count}} queued)",
+    "description": "Status line under the messages of a project's channel while the connection is down. {{count}} is how many of the person's messages are waiting to be sent once it is back."
+  },
+  "group.status.reconnectingQueued_other": {
+    "text": "Reconnecting… ({{count}} queued)",
+    "description": "Status line under the messages of a project's channel while the connection is down. {{count}} is how many of the person's messages are waiting to be sent once it is back."
+  },
+  "group.ref.byUser": {
+    "text": "by {{username}}",
+    "description": "Stands in for the title of a proposed change that has none, in the list of changes offered while typing # in a chat message. {{username}} is the username of the person who proposed it. Lower case."
+  },
+  "global.screen.label": {
+    "text": "Chat (experimental)",
+    "description": "Accessible name of the screen of Global Chat, the experimental screen for chatting with Homeroom's assistant."
+  },
+  "global.toolbar.title": {
+    "text": "Chat <0>(experimental)</0>",
+    "description": "Heading of Global Chat, the experimental screen for chatting with Homeroom's assistant. The <0> tags mute the part in parentheses; keep them around it."
+  },
+  "global.toolbar.saved": {
+    "text": "Saved in Messages.",
+    "description": "Line under the heading of Global Chat, the experimental screen for chatting with Homeroom's assistant: the conversation is kept and can be found again under the Messages tab. Messages is that tab's name."
+  },
+  "global.toolbar.closeChat": {
+    "text": "Close chat",
+    "description": "Tooltip and accessible name of the Close button in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant: leaves the chat and returns to the previous screen. Close is a verb."
+  },
+  "global.toolbar.close": {
+    "text": "Close",
+    "description": "Button in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant: leaves the chat and returns to the previous screen. A verb."
+  },
+  "global.toolbar.startNew": {
+    "text": "Start a new chat",
+    "description": "Accessible name of the New button in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant: begins a fresh conversation with the assistant."
+  },
+  "global.toolbar.newChat": {
+    "text": "New chat",
+    "description": "Tooltip of the New button in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant: begins a fresh conversation with the assistant."
+  },
+  "global.toolbar.new": {
+    "text": "New",
+    "description": "Button in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant: begins a fresh conversation. Short for 'new chat'."
+  },
+  "global.budget.title": {
+    "text": "Global Chat spend this month and overall OpenRouter allowance",
+    "description": "Tooltip of the spending figures in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant: what the chat has cost this month, and what is left of the account's allowance with OpenRouter, the AI provider. Global Chat is the feature's name."
+  },
+  "global.budget.spent": {
+    "text": "Chat {{spent}}",
+    "description": "Spending figure in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant. {{spent}} is what the chat has cost this month, as an amount in dollars such as $0.42."
+  },
+  "global.budget.spentCap": {
+    "text": "Chat {{spent}} / {{cap}}",
+    "description": "Spending figure in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant. {{spent}} is what the chat has cost this month and {{cap}} the monthly limit, both amounts in dollars such as $0.42."
+  },
+  "global.budget.spentLeft": {
+    "text": "Chat {{spent}} · {{remaining}} left",
+    "description": "Spending figure in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant. {{spent}} is what the chat has cost this month; {{remaining}} is what is left of the account's overall allowance. Both are amounts in dollars such as $0.42."
+  },
+  "global.budget.spentCapLeft": {
+    "text": "Chat {{spent}} / {{cap}} · {{remaining}} left",
+    "description": "Spending figure in the header of Global Chat, the experimental screen for chatting with Homeroom's assistant. {{spent}} is what the chat has cost this month, {{cap}} the monthly limit, and {{remaining}} what is left of the account's overall allowance. All are amounts in dollars such as $0.42."
+  },
+  "global.progress.label": {
+    "text": "Global Chat progress",
+    "description": "Accessible name of the progress box shown in Global Chat, the experimental screen for chatting with Homeroom's assistant while the assistant is working on an answer. Global Chat is the feature's name."
+  },
+  "global.progress.elapsed_one": {
+    "text": "{{count}}s",
+    "description": "Timer in the progress box of Global Chat while the assistant works: seconds elapsed so far. {{count}} is the number; s abbreviates seconds."
+  },
+  "global.progress.elapsed_other": {
+    "text": "{{count}}s",
+    "description": "Timer in the progress box of Global Chat while the assistant works: seconds elapsed so far. {{count}} is the number; s abbreviates seconds."
+  },
+  "global.progress.activity": {
+    "text": "Activity",
+    "description": "Label of the fold in the progress box of Global Chat that opens the list of steps the assistant has taken so far. A noun."
+  },
+  "global.progress.model": {
+    "text": "Model: {{model}}",
+    "description": "Line in the details of Global Chat's progress box. {{model}} is the technical name of the AI model answering."
+  },
+  "global.progress.reasoning": {
+    "text": "Reasoning: {{effort}} effort",
+    "description": "Line in the details of Global Chat's progress box: how much reasoning the AI model was asked to do. {{effort}} is the setting's value as the server sends it, an English word such as low, medium or high."
+  },
+  "global.progress.attempt": {
+    "text": "Attempt: {{number}}",
+    "description": "Line in the details of Global Chat's progress box, shown from the second try on. {{number}} is which try this is, for example 2."
+  },
+  "global.progress.understanding": {
+    "text": "Understanding your request…",
+    "description": "First step shown in the progress box of Global Chat after the person sends a message, while the assistant reads it."
+  },
+  "global.progress.reconnecting": {
+    "text": "Reconnecting to the saved turn…",
+    "description": "Step shown in the progress box of Global Chat when the connection dropped mid-answer and the chat is fetching the answer the server kept. A 'turn' is one question and its answer."
+  },
+  "global.suggestions.label": {
+    "text": "Suggested next steps",
+    "description": "Accessible name of the row of suggestion buttons under an answer in Global Chat, the experimental screen for chatting with Homeroom's assistant."
+  },
+  "global.suggestions.holdTitle": {
+    "text": "Hold for related options",
+    "description": "Tooltip of a suggestion button in Global Chat that has related suggestions: pressing and holding it opens them. Hold is a verb."
+  },
+  "global.suggestions.more": {
+    "text": "More suggestions",
+    "description": "Button at the end of the row of suggestions in Global Chat: asks the assistant for further suggestions."
+  },
+  "global.suggestions.relatedLabel": {
+    "text": "More options for {{suggestion}}",
+    "description": "Accessible name of the menu of related suggestions that opens when a suggestion button in Global Chat is held. {{suggestion}} is that button's label."
+  },
+  "global.suggestions.holdHint": {
+    "text": "Hold an option for related suggestions.",
+    "description": "Hint above the first suggestions in an empty Global Chat: pressing and holding a suggestion opens related ones. Hold is a verb."
+  },
+  "global.turn.moreSuggestions": {
+    "text": "More suggestions",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press the 'More suggestions' button."
+  },
+  "global.result.loading": {
+    "text": "Loading result",
+    "description": "Accessible name of the spinner shown in a Global Chat answer while one of its result cards is being fetched."
+  },
+  "global.composer.placeholder": {
+    "text": "Ask Homeroom…",
+    "description": "Placeholder inside the empty message box of Global Chat. Homeroom is the product's name."
+  },
+  "global.composer.placeholderUnavailable": {
+    "text": "OpenRouter is required",
+    "description": "Placeholder inside the disabled message box of Global Chat when the account has no key for OpenRouter, the AI provider it needs."
+  },
+  "global.composer.label": {
+    "text": "Message Global Chat",
+    "description": "Accessible name of the message box of Global Chat. Message is a verb here: write to. Global Chat is the feature's name."
+  },
+  "global.composer.stopLabel": {
+    "text": "Stop response",
+    "description": "Accessible name of the round button beside the message box of Global Chat while the assistant is answering: stops the answer. Stop is a verb."
+  },
+  "global.composer.sendLabel": {
+    "text": "Send message",
+    "description": "Accessible name of the round button beside the message box of Global Chat: sends what the person typed."
+  },
+  "global.composer.stop": {
+    "text": "Stop",
+    "description": "Tooltip of the round button beside the message box of Global Chat while the assistant is answering: stops the answer. A verb."
+  },
+  "global.composer.send": {
+    "text": "Send",
+    "description": "Tooltip of the round button beside the message box of Global Chat: sends what the person typed. A verb."
+  },
+  "global.unavailable.disabledTitle": {
+    "text": "Enable Global Chat to start",
+    "description": "Heading shown in Global Chat when the feature is switched off for the account. Global Chat is the feature's name."
+  },
+  "global.unavailable.noModelTitle": {
+    "text": "Free-form chat needs OpenRouter",
+    "description": "Heading shown in Global Chat when the account has no key for OpenRouter, the AI provider: typed questions cannot be answered without it."
+  },
+  "global.unavailable.disabledBody": {
+    "text": "Global Chat is an optional experimental feature.",
+    "description": "Line under 'Enable Global Chat to start' in Global Chat. Global Chat is the feature's name."
+  },
+  "global.unavailable.noModelBody": {
+    "text": "The direct options below still work without it.",
+    "description": "Line under 'Free-form chat needs OpenRouter' in Global Chat: the suggestion buttons below can be used without an OpenRouter key. 'It' is OpenRouter."
+  },
+  "global.unavailable.openSettings": {
+    "text": "Open Settings",
+    "description": "Button in Global Chat when it cannot be used yet: leaves the chat and opens the Settings page where it is switched on or the key is added. Open is a verb."
+  },
+  "global.unavailable.useClassic": {
+    "text": "Use Classic",
+    "description": "Button in Global Chat when it cannot be used yet: leaves the chat for the ordinary screens of Homeroom, which the chat calls Classic."
+  },
+  "global.history.earlier": {
+    "text": "Earlier messages",
+    "description": "Button at the top of the Global Chat transcript: fetches the older messages of this conversation."
+  },
+  "global.devSettings.requestFailedStatus": {
+    "text": "Request failed ({{status}}).",
+    "description": "Error on the Development AI settings card that Global Chat shows inline when a request to the server failed and it gave no reason. {{status}} is the HTTP status code, a number such as 500."
+  },
+  "global.devSettings.loadFailed": {
+    "text": "Development AI settings could not be loaded.",
+    "description": "Error on the Development AI settings card that Global Chat shows inline when the current settings could not be fetched."
+  },
+  "global.devSettings.chooseModel": {
+    "text": "Choose an OpenRouter model first.",
+    "description": "Error on the Development AI settings card that Global Chat shows inline when Save is pressed with OpenRouter chosen and no model picked. OpenRouter is the AI provider's name."
+  },
+  "global.devSettings.savingStatus": {
+    "text": "Saving…",
+    "description": "Status line under the Save button on the Development AI settings card that Global Chat shows inline while the settings are being saved."
+  },
+  "global.devSettings.saving": {
+    "text": "Saving…",
+    "description": "Replaces the label of the 'Save development AI' button on the Development AI settings card that Global Chat shows inline while the settings are being saved."
+  },
+  "global.devSettings.saved": {
+    "text": "Development AI settings saved.",
+    "description": "Status line on the Development AI settings card that Global Chat shows inline after the OpenRouter settings were saved."
+  },
+  "global.devSettings.claudeDefault": {
+    "text": "Claude Code is now the default development AI.",
+    "description": "Status line on the Development AI settings card that Global Chat shows inline after Claude Code was saved as the AI that builds changes. Claude Code is a product name."
+  },
+  "global.devSettings.saveFailed": {
+    "text": "Development AI settings could not be saved.",
+    "description": "Error on the Development AI settings card that Global Chat shows inline when saving failed and the server gave no reason."
+  },
+  "global.devSettings.loading": {
+    "text": "Loading current settings…",
+    "description": "Shown in place of the Development AI settings card that Global Chat shows inline while the current settings are being fetched."
+  },
+  "global.devSettings.backendLabel": {
+    "text": "Development AI",
+    "description": "Label of the first select on the Development AI settings card that Global Chat shows inline: which AI service builds changes for this person (OpenRouter or Claude Code)."
+  },
+  "global.devSettings.modelLabel": {
+    "text": "Model",
+    "description": "Label of the select on the Development AI settings card that Global Chat shows inline that picks the AI model used to build changes."
+  },
+  "global.devSettings.modelRecommended": {
+    "text": "{{model}} · Recommended",
+    "description": "Option in the Model select on the Development AI settings card that Global Chat shows inline, for the model Homeroom recommends. {{model}} is the model's name."
+  },
+  "global.devSettings.modelRecommendedFavorite": {
+    "text": "{{model}} · Recommended · ★",
+    "description": "Option in the Model select on the Development AI settings card that Global Chat shows inline, for the recommended model when it is also one of the person's favourites. {{model}} is the model's name; keep the star."
+  },
+  "global.devSettings.effortLabel": {
+    "text": "Reasoning effort",
+    "description": "Label of the select on the Development AI settings card that Global Chat shows inline that sets how much the AI model reasons before answering."
+  },
+  "global.devSettings.effort.default": {
+    "text": "Default",
+    "description": "Option of the 'Reasoning effort' select on the Development AI settings card: leave the amount of reasoning to the model's own default."
+  },
+  "global.devSettings.effort.minimal": {
+    "text": "Minimal",
+    "description": "Option of the 'Reasoning effort' select on the Development AI settings card: the least reasoning."
+  },
+  "global.devSettings.effort.low": {
+    "text": "Low",
+    "description": "Option of the 'Reasoning effort' select on the Development AI settings card: little reasoning."
+  },
+  "global.devSettings.effort.medium": {
+    "text": "Medium",
+    "description": "Option of the 'Reasoning effort' select on the Development AI settings card: a middling amount of reasoning."
+  },
+  "global.devSettings.effort.high": {
+    "text": "High",
+    "description": "Option of the 'Reasoning effort' select on the Development AI settings card: much reasoning."
+  },
+  "global.devSettings.effort.xhigh": {
+    "text": "Extra high",
+    "description": "Option of the 'Reasoning effort' select on the Development AI settings card: the most reasoning."
+  },
+  "global.devSettings.unavailable": {
+    "text": "OpenRouter development AI is unavailable for this account.",
+    "description": "Note on the Development AI settings card that Global Chat shows inline when the account cannot use OpenRouter to build changes. OpenRouter is the AI provider's name."
+  },
+  "global.devSettings.save": {
+    "text": "Save development AI",
+    "description": "Button on the Development AI settings card that Global Chat shows inline: saves which AI builds changes and its model. Save is a verb."
+  },
+  "global.devSettings.note": {
+    "text": "This changes development work only. It does not change the Global Chat model.",
+    "description": "Note at the bottom of the Development AI settings card that Global Chat shows inline: the choice applies to building changes, not to the model that answers in the chat. Global Chat is the feature's name."
+  },
+  "global.activity.loadingOptions": {
+    "text": "Loading options…",
+    "description": "Status line in Global Chat after 'More suggestions' was pressed, while further suggestions are fetched."
+  },
+  "global.activity.thinking": {
+    "text": "Thinking…",
+    "description": "Status line in Global Chat just after the person sent a message, while the assistant prepares its answer."
+  },
+  "global.activity.working": {
+    "text": "Working…",
+    "description": "Status line in Global Chat while the assistant runs a step that has no name of its own."
+  },
+  "global.activity.preparingConfirmation": {
+    "text": "Preparing confirmation…",
+    "description": "Status line in Global Chat while the assistant prepares the card that asks the person to confirm an action."
+  },
+  "global.activity.reconnecting": {
+    "text": "Reconnecting…",
+    "description": "Status line in Global Chat when the connection dropped mid-answer and is being restored."
+  },
+  "global.activity.loading": {
+    "text": "Loading…",
+    "description": "Status line in Global Chat after a suggestion or a result button was pressed, while its answer is fetched."
+  },
+  "global.activity.applying": {
+    "text": "Applying…",
+    "description": "Status line in Global Chat after Confirm was pressed, while the confirmed action is carried out."
+  },
+  "global.error.request": {
+    "text": "Global Chat could not complete that request.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: something failed and nothing more is known. Global Chat is the feature's name."
+  },
+  "global.error.unavailable": {
+    "text": "Global Chat is unavailable.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the chat could not be started. Global Chat is the feature's name."
+  },
+  "global.error.loadChat": {
+    "text": "Could not load this chat.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the chosen conversation could not be fetched."
+  },
+  "global.error.enableFirst": {
+    "text": "Enable experimental Global Chat in Settings first.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the feature is switched off for the account. Settings is the page's name. Global Chat is the feature's name."
+  },
+  "global.error.needKey": {
+    "text": "Add or claim an OpenRouter key in Settings to use Global Chat.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the account has no key for OpenRouter, the AI provider. 'Claim' means take the free key Homeroom offers. Global Chat is the feature's name."
+  },
+  "global.error.turnFailed": {
+    "text": "That request could not be completed.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the assistant failed to answer and gave no explanation of its own."
+  },
+  "global.error.interrupted": {
+    "text": "The connection was interrupted before an answer was saved. Please try again.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the connection dropped and no answer could be recovered."
+  },
+  "global.error.directAction": {
+    "text": "That direct action could not be completed.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: a suggestion or result button's action failed. A 'direct action' is one that runs without asking the AI model."
+  },
+  "global.error.openFirst": {
+    "text": "Open a Global Chat first.",
+    "description": "Error under a result card in Global Chat when one of its buttons was pressed with no conversation open. Open is a verb. Global Chat is the feature's name."
+  },
+  "global.error.loadEarlier": {
+    "text": "Could not load earlier messages.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the older messages of the conversation could not be fetched."
+  },
+  "global.error.startNew": {
+    "text": "Could not start a new chat.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: a fresh conversation could not be created."
+  },
+  "global.error.action": {
+    "text": "That action could not be completed.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the action the person confirmed failed and the server gave no reason."
+  },
+  "global.error.browserActionUnavailable": {
+    "text": "That browser action is unavailable.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the assistant proposed an action for the browser to carry out that the chat refuses as unsafe or unknown."
+  },
+  "global.error.browserActionNoTarget": {
+    "text": "That browser action is missing its target.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the assistant proposed an action for the browser to carry out without saying what to act on."
+  },
+  "global.error.localSettingUnavailable": {
+    "text": "That local setting is unavailable.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the assistant proposed changing a setting kept on this device that the chat does not know."
+  },
+  "global.error.actionFailedStatus": {
+    "text": "Action failed ({{status}}).",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: an action the browser carried out for the assistant was refused and the server gave no reason. {{status}} is the HTTP status code, a number such as 403."
+  },
+  "global.error.handoffNoApp": {
+    "text": "That development handoff is missing its app.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: the assistant tried to open a building session without naming the project it is for. A 'handoff' passes the task from the chat to the building agent."
+  },
+  "global.error.browserAction": {
+    "text": "That browser action could not be completed.",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: an action the browser carried out for the assistant failed."
+  },
+  "global.error.requestFailedStatus": {
+    "text": "Request failed ({{status}}).",
+    "description": "Error shown in Global Chat or its settings when a request to the server failed and it gave no reason. {{status}} is the HTTP status code, a number such as 500."
+  },
+  "global.error.chatRequestFailedStatus": {
+    "text": "Global Chat request failed ({{status}}).",
+    "description": "Error line at the bottom of the Global Chat transcript, with a Retry button: sending the message failed and the server gave no reason. {{status}} is the HTTP status code, a number such as 500. Global Chat is the feature's name."
+  },
+  "global.kind.app": {
+    "text": "App",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: an app (project) on Homeroom."
+  },
+  "global.kind.issue": {
+    "text": "Request",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a request, something people asked to have built or fixed. A noun."
+  },
+  "global.kind.proposal": {
+    "text": "Proposal",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a proposed change waiting for the community's vote. A noun."
+  },
+  "global.kind.session": {
+    "text": "Development",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a piece of building work in progress with the AI builder. A noun."
+  },
+  "global.kind.conversation": {
+    "text": "Conversation",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a conversation in Messages."
+  },
+  "global.kind.notification": {
+    "text": "Notification",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: one of the person's notifications."
+  },
+  "global.kind.profile": {
+    "text": "Profile",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a person's profile."
+  },
+  "global.kind.leaderboard": {
+    "text": "Leaderboard",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: the ranking of contributors."
+  },
+  "global.kind.challenge": {
+    "text": "Challenge",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a challenge, a task with a reward that people can take on. A noun."
+  },
+  "global.kind.wallet": {
+    "text": "Wallet",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: the person's wallet of tokens."
+  },
+  "global.kind.staking": {
+    "text": "Staking",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: tokens the person has staked (locked up to earn rewards)."
+  },
+  "global.kind.setting": {
+    "text": "Setting",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a setting of the person's account. A noun."
+  },
+  "global.kind.adminRecord": {
+    "text": "Admin",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a record from the administrators' console. Short for administration."
+  },
+  "global.kind.result": {
+    "text": "Result",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a result of no particular kind. A noun."
+  },
+  "global.kind.error": {
+    "text": "Error",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: an error the assistant ran into."
+  },
+  "global.kind.form": {
+    "text": "Form",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a form to fill in. A noun."
+  },
+  "global.kind.results": {
+    "text": "Results",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a list of results grouped under headings. A noun."
+  },
+  "global.kind.confirmation": {
+    "text": "Confirmation",
+    "description": "Heading of a result card in a Global Chat answer, and the name used for an item of that kind that has no title: a request to confirm an action."
+  },
+  "global.item.kindWithId": {
+    "text": "{{kind}} {{id}}",
+    "description": "Title of a row on a result card in Global Chat when the item has no title of its own. {{kind}} is what the item is, already in the reader's language (for example Request or Proposal); {{id}} is its number or identifier."
+  },
+  "global.item.selectRequest": {
+    "text": "{{action}} {{target}}",
+    "description": "Accessible name of a row on a result card in Global Chat when pressing the row runs an action on it, and the text shown as the person's own message after they press it. {{action}} is the action's name as the assistant gave it, for example 'Open'; {{target}} is the item's title."
+  },
+  "global.item.detailsFailed": {
+    "text": "Could not load those details.",
+    "description": "Error under a row of a result card in Global Chat when one of its detail buttons failed and the server gave no reason."
+  },
+  "global.item.actionLoading": {
+    "text": "Loading…",
+    "description": "Replaces the label of a button under a row of a result card in Global Chat while that button's details are being fetched."
+  },
+  "global.item.loadingSettings": {
+    "text": "Loading current settings…",
+    "description": "Shown under a row of the settings result card in Global Chat while that group of settings is being fetched."
+  },
+  "global.openInClassic": {
+    "text": "Open in Classic",
+    "description": "Button on result cards in Global Chat: leaves the chat and opens the same thing on Homeroom's ordinary screens, which the chat calls Classic. Open is a verb."
+  },
+  "global.value.yes": {
+    "text": "Yes",
+    "description": "Value shown on a result card in Global Chat for a field that is switched on or true."
+  },
+  "global.value.no": {
+    "text": "No",
+    "description": "Value shown on a result card in Global Chat for a field that is switched off or false."
+  },
+  "global.value.seconds_one": {
+    "text": "{{count}} sec",
+    "description": "Value of 'Active time (7d)' on an app's result card in Global Chat. {{count}} is a number of seconds; sec abbreviates seconds."
+  },
+  "global.value.seconds_other": {
+    "text": "{{count}} sec",
+    "description": "Value of 'Active time (7d)' on an app's result card in Global Chat. {{count}} is a number of seconds; sec abbreviates seconds."
+  },
+  "global.value.minutes_one": {
+    "text": "{{count}} min",
+    "description": "Value of 'Active time (7d)' on an app's result card in Global Chat. {{count}} is a number of minutes; min abbreviates minutes."
+  },
+  "global.value.minutes_other": {
+    "text": "{{count}} min",
+    "description": "Value of 'Active time (7d)' on an app's result card in Global Chat. {{count}} is a number of minutes; min abbreviates minutes."
+  },
+  "global.value.hours": {
+    "text": "{{hours}} hr",
+    "description": "Value of 'Active time (7d)' on an app's result card in Global Chat. {{hours}} is a number of hours already formatted, possibly with one decimal such as 1.5; hr abbreviates hours."
+  },
+  "global.result.githubIssues": {
+    "text": "GitHub issues",
+    "description": "Heading of a result card in Global Chat that lists issues from the project's GitHub repository. GitHub is a product name."
+  },
+  "global.result.platformIssues": {
+    "text": "Platform issues",
+    "description": "Heading of a result card in Global Chat that lists requests filed on Homeroom itself rather than on GitHub."
+  },
+  "global.result.appActivity": {
+    "text": "Recent app activity",
+    "description": "Heading of a result card in Global Chat that lists apps with how active each has been lately."
+  },
+  "global.result.appDiscussions": {
+    "text": "App discussions",
+    "description": "Heading of a result card in Global Chat that lists messages from an app's channel."
+  },
+  "global.result.openInClassic": {
+    "text": "Open in Classic",
+    "description": "Heading of a result card in Global Chat whose only content is a button that opens a page on Homeroom's ordinary screens, which the chat calls Classic. Open is a verb."
+  },
+  "global.result.readyToApply": {
+    "text": "Ready to apply",
+    "description": "Heading of a result card in Global Chat that holds a change the assistant prepared and the person can apply with one button."
+  },
+  "global.result.globalChatSettings": {
+    "text": "Global Chat settings",
+    "description": "Heading of the result card in Global Chat that holds the chat's own settings. Global Chat is the feature's name."
+  },
+  "global.result.developmentSettings": {
+    "text": "Development AI settings",
+    "description": "Heading of the result card in Global Chat that holds the settings of the AI that builds changes."
+  },
+  "global.result.showMore": {
+    "text": "Show more",
+    "description": "Button at the bottom of a result card in Global Chat: reveals the next few rows of the list. A down arrow follows it."
+  },
+  "global.empty.app": {
+    "text": "No apps found.",
+    "description": "Shown on a result card in Global Chat when a search for apps found none."
+  },
+  "global.empty.issue": {
+    "text": "No issues found.",
+    "description": "Shown on a result card in Global Chat when a search for issues or requests found none."
+  },
+  "global.empty.proposal": {
+    "text": "No current proposals.",
+    "description": "Shown on a result card in Global Chat when no proposed change is waiting for a vote."
+  },
+  "global.empty.session": {
+    "text": "No active development found.",
+    "description": "Shown on a result card in Global Chat when no building work is in progress."
+  },
+  "global.empty.conversation": {
+    "text": "No conversations found.",
+    "description": "Shown on a result card in Global Chat when a search for conversations found none."
+  },
+  "global.empty.notification": {
+    "text": "No notifications found.",
+    "description": "Shown on a result card in Global Chat when the person has no notifications matching the question."
+  },
+  "global.empty.leaderboard": {
+    "text": "No leaderboard entries found.",
+    "description": "Shown on a result card in Global Chat when the ranking of contributors is empty."
+  },
+  "global.empty.setting": {
+    "text": "No settings found.",
+    "description": "Shown on a result card in Global Chat when a search for settings found none."
+  },
+  "global.empty.other": {
+    "text": "No results found.",
+    "description": "Shown on a result card in Global Chat when the assistant looked something up and found nothing."
+  },
+  "global.confirm.thisAction": {
+    "text": "this action",
+    "description": "Stands in for the name of an action on the confirmation card in Global Chat when the action has no name. Shown alone as the card's bold first line; lower case."
+  },
+  "global.confirm.cancelled": {
+    "text": "Cancelled.",
+    "description": "Replaces a confirmation card in Global Chat after the person pressed Cancel on it: the action was not carried out."
+  },
+  "global.confirm.label": {
+    "text": "Confirm action",
+    "description": "Accessible name of the card in Global Chat that asks the person to confirm an action before the assistant carries it out. Confirm is a verb."
+  },
+  "global.confirm.before": {
+    "text": "Confirm before {{time}}.",
+    "description": "Line on the confirmation card in Global Chat: after this time the confirmation expires. {{time}} is a time of day, already formatted, such as 02:41 PM."
+  },
+  "global.confirm.confirmed": {
+    "text": "Confirmed",
+    "description": "Label of the disabled main button of a confirmation card in Global Chat after the action was confirmed."
+  },
+  "global.confirm.confirm": {
+    "text": "Confirm",
+    "description": "Main button of the confirmation card in Global Chat: carries out the action the assistant prepared. A verb."
+  },
+  "global.action.details": {
+    "text": "Details",
+    "description": "Button under an expanded row of a result card in Global Chat: shows more about that item inside the chat."
+  },
+  "global.action.issues": {
+    "text": "Issues",
+    "description": "Button under an expanded row of a result card in Global Chat, on an app: asks the chat for that app's issues and requests."
+  },
+  "global.action.discussions": {
+    "text": "Discussions",
+    "description": "Button under an expanded row of a result card in Global Chat, on an app: asks the chat for the messages in that app's channel."
+  },
+  "global.action.comments": {
+    "text": "Comments",
+    "description": "Button under an expanded row of a result card in Global Chat, on a request: shows the comments on it."
+  },
+  "global.action.beforeAfter": {
+    "text": "Before & after",
+    "description": "Button under an expanded row of a result card in Global Chat, on a proposal: shows the screenshots of the app before and after the proposed change."
+  },
+  "global.action.checks": {
+    "text": "Checks",
+    "description": "Button under an expanded row of a result card in Global Chat, on a piece of building work: shows the results of its automated checks (tests). A noun."
+  },
+  "global.action.profile": {
+    "text": "Profile",
+    "description": "Button under an expanded row of a result card in Global Chat, on a leaderboard entry: shows that person's profile."
+  },
+  "global.action.mergedWork": {
+    "text": "Merged work",
+    "description": "Button under an expanded row of a result card in Global Chat, on a leaderboard entry: lists that person's changes that were accepted and merged."
+  },
+  "global.action.view": {
+    "text": "View",
+    "description": "Button under an expanded row of a result card in Global Chat, on a group of settings: shows the current values of those settings. A verb."
+  },
+  "global.request.about": {
+    "text": "About {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to see an app's details. {{target}} is the app's name."
+  },
+  "global.request.issuesFor": {
+    "text": "Issues for {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to list an app's issues. {{target}} is the app's name."
+  },
+  "global.request.discussionsIn": {
+    "text": "Discussions in {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to list the messages in an app's channel. {{target}} is the app's name."
+  },
+  "global.request.open": {
+    "text": "Open {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to see an item's details. {{target}} is the item's title. Open is a verb."
+  },
+  "global.request.commentsOn": {
+    "text": "Comments on {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to see the comments on a request. {{target}} is the request's title."
+  },
+  "global.request.beforeAfterFor": {
+    "text": "Before & after for {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to see the before and after screenshots of a proposal. {{target}} is the proposal's title."
+  },
+  "global.request.detailsFor": {
+    "text": "Details for {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to see the details of a piece of building work. {{target}} is its title."
+  },
+  "global.request.checksFor": {
+    "text": "Checks for {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to see the automated check results of a piece of building work. {{target}} is its title. Checks is a noun."
+  },
+  "global.request.profileFor": {
+    "text": "Profile for {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to see a person's profile from the leaderboard. {{target}} is their username."
+  },
+  "global.request.mergedWorkBy": {
+    "text": "Merged work by {{target}}",
+    "description": "Shown as the person's own message in Global Chat's transcript after they press a button on a result card to list a person's merged changes from the leaderboard. {{target}} is their username."
+  },
+  "global.target.proposal": {
+    "text": "{{title}} (proposal #{{id}})",
+    "description": "How a proposal is named in Global Chat when its title does not contain its number, in the person's request and in what is sent to the assistant. {{title}} is the proposal's title and {{id}} its number. Proposal is a noun, lower case."
+  },
+  "global.target.session": {
+    "text": "{{title}} (development #{{id}})",
+    "description": "How a piece of building work is named in Global Chat when its title does not contain its number. {{title}} is its title and {{id}} its number. Development is a noun, lower case."
+  },
+  "global.meta.read": {
+    "text": "Read",
+    "description": "Status in the small line under a notification's title on a result card in Global Chat: the notification has been read. An adjective (past participle), not the verb."
+  },
+  "global.meta.unread": {
+    "text": "Unread",
+    "description": "Status in the small line under a notification's title on a result card in Global Chat: the notification has not been read yet."
+  },
+  "global.field.messages7d": {
+    "text": "Messages (7d)",
+    "description": "Label of a field in the details of an app on a result card in Global Chat: how many messages were sent in the app's channel in the last seven days. 7d abbreviates seven days."
+  },
+  "global.field.activeTime7d": {
+    "text": "Active time (7d)",
+    "description": "Label of a field in the details of an app on a result card in Global Chat: how long people used the app in the last seven days. 7d abbreviates seven days."
+  },
+  "global.field.activeUsers": {
+    "text": "Active users",
+    "description": "Label of a field in the details of an app on a result card in Global Chat: how many people used it recently."
+  },
+  "global.field.development": {
+    "text": "Development",
+    "description": "Label of a field in the details of an app on the 'Recent app activity' card in Global Chat: how many pieces of building work are in progress. A noun."
+  },
+  "global.field.openIssues": {
+    "text": "Open issues",
+    "description": "Label of a field in the details of an app on a result card in Global Chat: how many issues are not yet resolved. Open is an adjective."
+  },
+  "global.field.openProposals": {
+    "text": "Open proposals",
+    "description": "Label of a field in the details of an app on a result card in Global Chat: how many proposed changes are waiting for a vote. Open is an adjective."
+  },
+  "global.field.activeDevelopment": {
+    "text": "Active development",
+    "description": "Label of a field in the details of an app on a result card in Global Chat: how many pieces of building work are in progress."
+  },
+  "global.field.app": {
+    "text": "App",
+    "description": "Label of a field in the details of a proposal or a piece of building work on a result card in Global Chat: the app it belongs to."
+  },
+  "global.field.yesVotes": {
+    "text": "Yes",
+    "description": "Label of a field in the details of a proposal on a result card in Global Chat: the number of votes in favour."
+  },
+  "global.field.noVotes": {
+    "text": "No",
+    "description": "Label of a field in the details of a proposal on a result card in Global Chat: the number of votes against."
+  },
+  "global.field.checks": {
+    "text": "Checks",
+    "description": "Label of a field in the details of a proposal or a piece of building work on a result card in Global Chat: the state of its automated checks (tests). A noun."
+  },
+  "global.field.phase": {
+    "text": "Phase",
+    "description": "Label of a field in the details of a piece of building work on a result card in Global Chat: which stage its automated checks have reached."
+  },
+  "global.field.unread": {
+    "text": "Unread",
+    "description": "Label of a field in the details of a conversation on a result card in Global Chat: the number of unread messages in it."
+  },
+  "global.field.members": {
+    "text": "Members",
+    "description": "Label of a field in the details of a conversation on a result card in Global Chat: the number of people in it."
+  },
+  "global.field.from": {
+    "text": "From",
+    "description": "Label of a field in the details of a notification on a result card in Global Chat: the username of the person whose action caused it."
+  },
+  "global.field.pr": {
+    "text": "PR",
+    "description": "Label of a field in the details of a notification on a result card in Global Chat: the number of the pull request it is about. PR is the usual abbreviation of pull request."
+  },
+  "global.field.kudos": {
+    "text": "Kudos",
+    "description": "Label of a field in the details of a leaderboard entry on a result card in Global Chat: how many kudos (thanks from other members) the person received."
+  },
+  "global.field.prsRecognized": {
+    "text": "PRs recognized",
+    "description": "Label of a field in the details of a leaderboard entry on a result card in Global Chat: how many of the person's pull requests received kudos. PR abbreviates pull request."
+  },
+  "global.field.merged": {
+    "text": "Merged",
+    "description": "Label of a field in the details of a leaderboard entry on a result card in Global Chat: how many of the person's recognised pull requests were merged (accepted)."
+  },
+  "global.field.spentThisMonth": {
+    "text": "Spent this month",
+    "description": "Label of a field in the details of the Global Chat usage setting on a result card: what the chat has cost this month."
+  },
+  "global.field.monthlyCap": {
+    "text": "Monthly cap",
+    "description": "Label of a field in the details of the Global Chat usage setting on a result card: the monthly spending limit."
+  },
+  "global.field.capRemaining": {
+    "text": "Cap remaining",
+    "description": "Label of a field in the details of the Global Chat usage setting on a result card: how much of the monthly spending limit is left."
+  },
+  "global.field.openRouterRemaining": {
+    "text": "OpenRouter remaining",
+    "description": "Label of a field in the details of the Global Chat usage setting on a result card: what is left of the account's allowance with OpenRouter, the AI provider."
+  },
+  "global.field.model": {
+    "text": "Model",
+    "description": "Label of a field in the details of a setting on a result card in Global Chat: the AI model in use."
+  },
+  "global.field.reasoning": {
+    "text": "Reasoning",
+    "description": "Label of a field in the details of a setting on a result card in Global Chat: how much the AI model reasons before answering."
+  },
+  "global.field.enabled": {
+    "text": "Enabled",
+    "description": "Label of a field in the details of a setting on a result card in Global Chat: whether the feature is switched on."
+  },
+  "global.field.backend": {
+    "text": "Backend",
+    "description": "Label of a field in the details of a setting on a result card in Global Chat: which AI service is used."
+  },
+  "global.setting.changeLabel": {
+    "text": "Change {{setting}}",
+    "description": "Accessible name of the text field in which the person tells Global Chat what to change in a group of settings. {{setting}} is that group's name. Change is a verb."
+  },
+  "global.setting.changePlaceholder": {
+    "text": "What should change in {{setting}}?",
+    "description": "Placeholder of the text field in which the person tells Global Chat what to change in a group of settings. {{setting}} is that group's name."
+  },
+  "global.setting.continue": {
+    "text": "Continue",
+    "description": "Button beside the text field in which the person told Global Chat what to change in a group of settings: sends the instruction to the assistant, which then asks for confirmation."
+  },
+  "global.setting.changeThese": {
+    "text": "Change these settings",
+    "description": "Button under a group of settings on a result card in Global Chat: opens a text field to say what should change. Change is a verb."
+  },
+  "global.setting.controlsLabel": {
+    "text": "Change {{setting}}",
+    "description": "Accessible name of the row of choice buttons under a setting kept on this device (theme, alerts) on a result card in Global Chat. {{setting}} is the setting's name. Change is a verb."
+  },
+  "global.setting.theme.system": {
+    "text": "System",
+    "description": "Choice for the Theme setting on a result card in Global Chat: follow the device's light or dark mode."
+  },
+  "global.setting.theme.light": {
+    "text": "Light",
+    "description": "Choice for the Theme setting on a result card in Global Chat: the light colour scheme."
+  },
+  "global.setting.theme.dark": {
+    "text": "Dark",
+    "description": "Choice for the Theme setting on a result card in Global Chat: the dark colour scheme."
+  },
+  "global.setting.alerts.on": {
+    "text": "On",
+    "description": "Choice for the development alerts setting on a result card in Global Chat: alerts are shown."
+  },
+  "global.setting.alerts.off": {
+    "text": "Off",
+    "description": "Choice for the development alerts setting on a result card in Global Chat: alerts are not shown."
+  },
+  "global.setting.devConsole.always": {
+    "text": "Always",
+    "description": "Choice for the developer console setting on a result card in Global Chat: the console is always shown."
+  },
+  "global.setting.devConsole.errorsOnly": {
+    "text": "Errors only",
+    "description": "Choice for the developer console setting on a result card in Global Chat: the console is shown only when an error happens."
+  },
+  "global.setting.adminPreview.on": {
+    "text": "On",
+    "description": "Choice for the administrator's preview setting on a result card in Global Chat: the preview is switched on."
+  },
+  "global.setting.adminPreview.off": {
+    "text": "Off",
+    "description": "Choice for the administrator's preview setting on a result card in Global Chat: the preview is switched off."
+  },
+  "global.setting.notReturned": {
+    "text": "The setting update was not returned.",
+    "description": "Error under a setting on a result card in Global Chat when the server did not send back the change to apply."
+  },
+  "global.setting.applyFailed": {
+    "text": "Could not apply this setting.",
+    "description": "Error under a setting on a result card in Global Chat when the chosen value could not be applied on this device."
+  },
+  "global.setting.saveFailed": {
+    "text": "Could not save this setting.",
+    "description": "Error under a setting on a result card in Global Chat when saving the chosen value failed and nothing more is known."
+  },
+  "global.setting.saving": {
+    "text": "Saving…",
+    "description": "Label of the save button under a setting on a result card in Global Chat while the chosen value is being saved."
+  },
+  "global.setting.saved": {
+    "text": "Saved",
+    "description": "Label of the disabled save button under a setting on a result card in Global Chat when the chosen value is the one already saved."
+  },
+  "global.setting.save": {
+    "text": "Save",
+    "description": "Button under a setting on a result card in Global Chat: saves the chosen value. A verb."
+  },
+  "global.clientAction.applying": {
+    "text": "Applying…",
+    "description": "Main button of a result card in Global Chat that holds an action the assistant prepared, while the action is being carried out."
+  },
+  "global.clientAction.done": {
+    "text": "Done",
+    "description": "Main button of a result card in Global Chat that holds an action the assistant prepared, disabled, after the action was carried out."
+  },
+  "global.clientAction.openInClassic": {
+    "text": "Open in Classic",
+    "description": "Main button of a result card in Global Chat that holds an action the assistant prepared, when the action is opening a page on Homeroom's ordinary screens, which the chat calls Classic. Open is a verb."
+  },
+  "global.clientAction.apply": {
+    "text": "Apply",
+    "description": "Main button of a result card in Global Chat that holds an action the assistant prepared, when the action changes a setting kept on this device. A verb."
+  },
+  "global.clientAction.openAgentSession": {
+    "text": "Open agent session",
+    "description": "Main button of a result card in Global Chat that holds an action the assistant prepared, when the action is starting building work: opens a new session with the AI building agent, with the task filled in. Open is a verb."
+  },
+  "global.clientAction.open": {
+    "text": "Open",
+    "description": "Main button of a result card in Global Chat that holds an action the assistant prepared, when the action opens a link in a new tab. A verb."
+  },
+  "group.botCard.filed.approvedRelease": {
+    "text": "Approved: {{title}}. {{release}}.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change was approved and merged into Homeroom itself, and goes live with the platform's next release. {{title}} is the request's title, in the person's own words. {{release}} is a sentence, without its full stop, saying when that release goes out, for example 'Merged; goes live in the next release (about 8 minutes)'. The bot speaks as 'I'."
+  },
+  "group.botCard.filed.approvedReleaseUntitled": {
+    "text": "Approved: your request. {{release}}.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the change was approved and merged into Homeroom itself, and goes live with the platform's next release. Used when the request has no title, so it is called 'your request'. {{release}} is a sentence, without its full stop, saying when that release goes out, for example 'Merged; goes live in the next release (about 8 minutes)'. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.approvedRelease.firstVersion": {
+    "text": "The first version was approved. {{release}}.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change was approved and merged into Homeroom itself, and goes live with the platform's next release. The change is the project's first version. {{release}} is a sentence, without its full stop, saying when that release goes out, for example 'Merged; goes live in the next release (about 8 minutes)'. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.approvedRelease.titled": {
+    "text": "“{{title}}” was approved. {{release}}.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change was approved and merged into Homeroom itself, and goes live with the platform's next release. {{title}} is the change's title; keep the quotation marks around it. {{release}} is a sentence, without its full stop, saying when that release goes out, for example 'Merged; goes live in the next release (about 8 minutes)'. The bot speaks as 'I'."
+  },
+  "group.botCard.revise.approvedRelease.untitled": {
+    "text": "That change was approved. {{release}}.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message, when the message asked for a fix to a change the bot built that is still waiting for approval: the change was approved and merged into Homeroom itself, and goes live with the platform's next release. Used when the change has no title. 'Change' is a noun: a proposed change to the project. {{release}} is a sentence, without its full stop, saying when that release goes out, for example 'Merged; goes live in the next release (about 8 minutes)'. The bot speaks as 'I'."
+  },
+  "group.topicChannel.empty": {
+    "text": "Nothing said here yet.",
+    "description": "Line shown in a topic's channel of a project's discussion when nobody has written in it yet. A topic is one of a project's own named channels, such as #onboarding."
+  }
+}

@@ -2647,8 +2647,8 @@ const App = {
       const staging = info.env === 'staging';
       const label = staging ? 'staging' : 'dev';
       const tip = staging
-        ? 'Staging preview of the platform, built without a commit SHA, so there is no revision to link'
-        : 'Running outside of a deploy (no GIT_SHA set)';
+        ? PlatformI18n.htmlText('shell:version.tip.staging')
+        : PlatformI18n.htmlText('shell:version.tip.dev');
       paint(`
         <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`, 'idle');
       return;
@@ -2660,12 +2660,18 @@ const App = {
       const elapsed = deploy.startedAt
         ? Math.max(0, Math.floor((Date.now() - new Date(deploy.startedAt).getTime()) / 1000))
         : null;
-      const tipParts = [`Deploying ${newShort || 'new build'}`];
-      if (oldShort) tipParts.push(`from ${oldShort}`);
-      if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
-      const shaLabel = newShort ? `→ ${newShort}` : 'deploying';
+      // One whole tooltip per case: the new build named or not, the time
+      // elapsed known or not. `oldShort` is the running build's, always here.
+      const deployTip = newShort
+        ? (elapsed != null
+          ? PlatformI18n.htmlText('shell:version.tip.deployingElapsed', { newSha: newShort, oldSha: oldShort, count: elapsed })
+          : PlatformI18n.htmlText('shell:version.tip.deploying', { newSha: newShort, oldSha: oldShort }))
+        : (elapsed != null
+          ? PlatformI18n.htmlText('shell:version.tip.deployingNewBuildElapsed', { oldSha: oldShort, count: elapsed })
+          : PlatformI18n.htmlText('shell:version.tip.deployingNewBuild', { oldSha: oldShort }));
+      const shaLabel = newShort ? `→ ${newShort}` : PlatformI18n.htmlText('shell:version.label.deploying');
       paint(`
-        <span class="drawer-ver drawer-ver--deploying" title="${tipParts.join(' · ')}">
+        <span class="drawer-ver drawer-ver--deploying" title="${deployTip}">
           <span class="drawer-ver-spinner" aria-hidden="true"></span>${shaLabel}
         </span>`, 'deploying');
       return;
@@ -2690,8 +2696,8 @@ const App = {
         // is one.
         paint(`
           <span class="drawer-ver drawer-ver--stale drawer-ver--fetching"
-                title="Platform updated from ${oldShort} to ${newShort}. Downloading it now; the reload appears once there is something to switch to.">
-            <span class="drawer-ver-spinner" aria-hidden="true"></span>${newShort} · updating…
+                title="${PlatformI18n.htmlText('shell:version.tip.downloading', { oldSha: oldShort, newSha: newShort })}">
+            <span class="drawer-ver-spinner" aria-hidden="true"></span>${PlatformI18n.htmlText('shell:version.label.updating', { sha: newShort })}
           </span>`, 'downloading');
         return;
       }
@@ -2701,20 +2707,20 @@ const App = {
       // this row had before, and a tab with no way back would be worse.
       const failed = !!(update && update.state === 'failed');
       const tip = failed
-        ? `Platform updated from ${oldShort} to ${newShort}. Click to reload (the update could not be pre-downloaded, so this may take two tries).`
-        : `Platform updated from ${oldShort} to ${newShort}, and the new build is ready. Click to reload.`;
+        ? PlatformI18n.htmlText('shell:version.tip.reloadFailedPrefetch', { oldSha: oldShort, newSha: newShort })
+        : PlatformI18n.htmlText('shell:version.tip.reloadReady', { oldSha: oldShort, newSha: newShort });
       paint(`
         <button type="button"
                 class="drawer-ver drawer-ver--stale"
                 title="${tip}"
-                onclick="location.reload()">${newShort} · reload</button>`, failed ? 'failed' : 'ready');
+                onclick="location.reload()">${PlatformI18n.htmlText('shell:version.label.reload', { sha: newShort })}</button>`, failed ? 'failed' : 'ready');
       return;
     }
 
     const shortSha = runningSha.slice(0, 7);
     const href = `${repoUrl.replace(/\/$/, '')}/commit/${runningSha}`;
     paint(`
-      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="Platform commit ${shortSha}">${shortSha}</a>`, 'idle');
+      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="${PlatformI18n.htmlText('shell:version.tip.commit', { sha: shortSha })}">${shortSha}</a>`, 'idle');
   },
 
   // Tiny local HTML-escaper for server-sourced strings interpolated into
@@ -4334,7 +4340,7 @@ const App = {
     App._publishBootSession({ signedOut: true });
     if (!reload) {
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast('You are signed out. Sign in again to join.', { error: true });
+        PlatformUI.toast(PlatformI18n.t('shell:invite.signedOut'), { error: true });
       }
       return;
     }
@@ -4419,10 +4425,10 @@ const App = {
         if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
       };
       const DEAD = {
-        expired: 'That invite link has expired.',
-        revoked: 'That invite link was turned off.',
-        used_up: 'That invite link has been used as many times as it allows.',
-        unknown: 'That invite link does not work.',
+        expired: 'shell:invite.dead.expired',
+        revoked: 'shell:invite.dead.revoked',
+        used_up: 'shell:invite.dead.usedUp',
+        unknown: 'shell:invite.dead.unknown',
       };
       const openHub = (slug) => {
         if (!slug) return;
@@ -4459,7 +4465,7 @@ const App = {
         // Only the link's own answer says what is wrong with it: 200 with its
         // state, or 404 for one that never existed. A 500 or a 429 is a read
         // that did not land, and the link may be fine.
-        if (status !== 200 && status !== 404) { toast('Could not open that invite link. Try again.', true); return; }
+        if (status !== 200 && status !== 404) { toast(PlatformI18n.t('shell:invite.couldNotOpen'), true); return; }
         if (standing.mine === 'joined' && standing.slug) {
           joinedHere = true;
           // Joined by the sign-in that brought them here (within the last
@@ -4472,13 +4478,17 @@ const App = {
           openHub(standing.slug);
           return;
         }
-        if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
-        const name = standing.project && standing.project.name ? standing.project.name : 'this project';
+        if (!standing.live) { toast(PlatformI18n.t(DEAD[standing.reason] || DEAD.unknown), true); return; }
+        const name = standing.project && standing.project.name ? standing.project.name : null;
         const count = standing.memberCount || 0;
         // Who it is from, in the words the invite page uses, then their note.
         const from = standing.inviterMadeIt && standing.inviterName
-          ? `${standing.inviterName} ${standing.building ? 'is making' : 'made'} it and invited you.`
-          : (standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.');
+          ? (standing.building
+            ? PlatformI18n.t('shell:invite.from.isMaking', { inviter: standing.inviterName })
+            : PlatformI18n.t('shell:invite.from.made', { inviter: standing.inviterName }))
+          : (standing.inviter
+            ? PlatformI18n.t('shell:invite.from.handle', { handle: standing.inviter })
+            : PlatformI18n.t('shell:invite.from.unknown'));
         // Join was already pressed on the link's own page, and the person chose
         // "Sign in with a password" from its sheet (features/auth/
         // sign-in-sheet.tsx): that press was the consent, so it is not asked
@@ -4514,12 +4524,18 @@ const App = {
           return;
         }
         const ok = pressed ? true : window.ConfirmModal ? await ConfirmModal.show({
-          title: `Join ${name}?`,
-          message: from
-            + (standing.note ? ` “${standing.note}”` : '')
-            + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
-          confirmLabel: 'Join',
-          cancelLabel: 'Not now',
+          title: name
+            ? PlatformI18n.t('shell:invite.confirm.title', { project: name })
+            : PlatformI18n.t('shell:invite.confirm.titleUnnamed'),
+          // Up to three whole sentences, in this order: who invited them,
+          // their note, how many people are in it.
+          message: App._inviteConfirmMessage([
+            from,
+            standing.note ? PlatformI18n.t('shell:invite.confirm.note', { note: standing.note }) : null,
+            count ? PlatformI18n.t('shell:invite.confirm.members', { count }) : null,
+          ]),
+          confirmLabel: PlatformI18n.t('shell:invite.confirm.join'),
+          cancelLabel: PlatformI18n.t('shell:invite.confirm.notNow'),
         }) : true;
         if (!ok) return;
         // A public community asks a provisional handle for a username first
@@ -4533,7 +4549,7 @@ const App = {
         if (joined.status === 401) { App._inviteSessionEnded(address); return; }
         const result = await joined.json().catch(() => ({}));
         if (result.reason === 'username_required') { toast(result.error, true); return; }
-        if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
+        if (!joined.ok || !result.ok) { toast(PlatformI18n.t(DEAD[result.reason] || 'shell:invite.couldNotJoin'), true); return; }
         joinedHere = true;
         // Read Home's challenges again now. Home painted them above, before
         // the confirm, and they are cached for a minute (HomePanels.TTL_MS),
@@ -4548,13 +4564,26 @@ const App = {
           await App._landJoined(result.slug);
         }
       } catch (_) {
-        toast('Could not open that invite link. Try again.', true);
+        toast(PlatformI18n.t('shell:invite.couldNotOpen'), true);
       }
     } finally {
       if (!deferred) settle(joinedHere);
       // The held frame goes, unless "You're in" has taken its place.
       if (held) App._endWelcomeHold();
     }
+  },
+
+  // The confirm's body: the sentences that apply, one after another. Each
+  // is a whole message; the catalog decides what goes between them.
+  _inviteConfirmMessage(sentences) {
+    const said = sentences.filter(Boolean);
+    if (said.length === 3) {
+      return PlatformI18n.t('shell:invite.confirm.threeSentences', { first: said[0], second: said[1], third: said[2] });
+    }
+    if (said.length === 2) {
+      return PlatformI18n.t('shell:invite.confirm.twoSentences', { first: said[0], second: said[1] });
+    }
+    return said[0] || '';
   },
 
   // Where the landing marks the invite link it showed signed out, for a
@@ -4619,7 +4648,7 @@ const App = {
       owed = !!count && Number(count.needs) > 0;
     } catch (_) { /* the hub */ }
     const said = !!(opts && opts.said);
-    if (!said && window.PlatformUI && PlatformUI.toast) PlatformUI.toast("You're in.");
+    if (!said && window.PlatformUI && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('shell:invite.joined'));
     if (typeof AppView !== 'undefined' && AppView._landOnTab) AppView._landOnTab(slug, owed ? 'needs' : 'status');
     App.navigateToApp(slug, 'dev');
   },
@@ -4642,13 +4671,15 @@ const App = {
     const project = standing.project || {};
     return island.open({
       token,
-      name: project.name || 'this community',
+      name: project.name || PlatformI18n.t('shell:invitePreview.unnamed'),
+      // No name came with the link: the Join button has its own wording.
+      unnamed: !project.name,
       iconEmoji: project.iconEmoji || null,
       iconUrl: project.iconUrl || null,
       iconColor: shown.iconColor || null,
       description: project.description || null,
       memberCount: Number(standing.memberCount) || 0,
-      audienceLabel: shown.audienceLabel || 'Private community',
+      audienceLabel: shown.audienceLabel || PlatformI18n.t('shell:invitePreview.privateCommunity'),
       inviter: standing.inviter || null,
       inviterName: standing.inviterName || null,
       inviterMadeIt: !!standing.inviterMadeIt,
@@ -6731,19 +6762,21 @@ const App = {
       and never comes back through here, so Leaderboard._syncTitle asks this
       same method on every section change. One table, both paths.
   */
+  // Message ids: the table is read before the language runtime exists, and
+  // _leaderboardTitle reads the words when it names the screen.
   LEADERBOARD_TITLES: {
-    challenges: 'Challenges',
-    kudos: 'Kudos',
-    prs: 'Kudos',
-    users: 'Kudos',
-    history: 'Kudos',
-    topochain: 'Standings',
-    seasons: 'History',
+    challenges: 'shell:title.leaderboard.challenges',
+    kudos: 'shell:title.leaderboard.kudos',
+    prs: 'shell:title.leaderboard.kudos',
+    users: 'shell:title.leaderboard.kudos',
+    history: 'shell:title.leaderboard.kudos',
+    topochain: 'shell:title.leaderboard.standings',
+    seasons: 'shell:title.leaderboard.history',
   },
 
   _leaderboardTitle(sub, profileUser) {
     if (profileUser) return `@${profileUser}`;
-    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Challenges';
+    return PlatformI18n.t(App.LEADERBOARD_TITLES[sub || 'challenges'] || 'shell:title.leaderboard.challenges');
   },
 
   _routeLeaderboard(sub, profileUser, challengeTarget) {
@@ -6826,7 +6859,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(username ? `@${username}` : 'Profile');
+      App.setHeaderTitle(username ? `@${username}` : PlatformI18n.t('shell:title.profile'));
       // NOTHING IN THE LEFT SLOT. Me is a tab root: the bar is on screen
       // beside it, so a control in the corner that goes home is a second way
       // to press a button already in view.
@@ -6850,7 +6883,7 @@ const App = {
   // not a new screen entry. Keep it out of the global transition gate so
   // drawer navigation still has exactly one transition per screen entry.
   _routeMountedProfile(username) {
-    App.setHeaderTitle(username ? `@${username}` : 'Profile');
+    App.setHeaderTitle(username ? `@${username}` : PlatformI18n.t('shell:title.profile'));
     if (window.Profile?.open) Profile.open(username);
   },
 
@@ -6878,8 +6911,9 @@ const App = {
     'your-requests': 'requests',
     'your-votes': 'votes',
   },
+  // Message ids, read when the screen is named.
   PROFILE_WORK_TITLES: {
-    changes: 'Your changes', requests: 'Your requests', votes: 'Your votes',
+    changes: 'shell:title.yourChanges', requests: 'shell:title.yourRequests', votes: 'shell:title.yourVotes',
   },
 
   navigateToProfileProposals(kind = 'changes') {
@@ -6906,7 +6940,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-proposals-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(App.PROFILE_WORK_TITLES[view]);
+      App.setHeaderTitle(PlatformI18n.t(App.PROFILE_WORK_TITLES[view]));
     }, { type: App._entryTransition(switching || fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -6955,7 +6989,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('browse-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('All apps');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.allApps'));
       // Browse owns the header title / back icon for whichever level the
       // slug selected, so its sync runs after setHeaderTitle above.
       if (window.Browse?.syncChrome) Browse.syncChrome();
@@ -7021,7 +7055,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('workshop-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Communities');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.communities'));
       // Nothing in the left slot: the Workshop is a tab root, and its tab is
       // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
       // — see the table for why a root shows no glyph at all.
@@ -7312,7 +7346,9 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('admin-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
+      App.setHeaderTitle(publicMode
+        ? PlatformI18n.t('shell:title.platformStatus')
+        : PlatformI18n.t('shell:title.admin'));
       if (window.AdminConsole?.syncChrome) AdminConsole.syncChrome();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
@@ -7363,7 +7399,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('settings-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Settings');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.settings'));
       // Runs after app.js's own setHeaderTitle, so on a mobile deep link
       // the header ends up showing the section's name rather than
       // "Settings".
@@ -7422,7 +7458,7 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Messages');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.messages'));
       messages?.syncChrome?.();
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
@@ -7534,7 +7570,7 @@ const App = {
       App._showOnlyScreen('global-chat-screen');
       App._enterScreenChrome();
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('Chat');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.chat'));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -7607,7 +7643,7 @@ const App = {
       App._showOnlyScreen('agent-session-screen');
       App._enterScreenChrome();
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('Agent session');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.agentSession'));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -8177,7 +8213,7 @@ const App = {
     if (AppView.appData?.slug === slug && AppView.appData.name && App.currentTab !== 'dev') {
       App.setHeaderTitle(AppView.appData.name);
     } else if (!AppView.appData) {
-      App.setHeaderTitle('App not available');
+      App.setHeaderTitle(PlatformI18n.t('shell:title.appNotAvailable'));
     }
 
     // "View on GitHub" and "Share app" were drawer rows revealed by hand
@@ -9061,3 +9097,10 @@ try {
 } catch (err) { /* no usable DOM — the router still routes, one paint later */ }
 
 document.addEventListener('DOMContentLoaded', () => App.init());
+
+// The platform version at the foot of the side menu is painted from the last
+// /api/version answer, so it is painted again when the language changes.
+// (A `?shot=` pose owns the row while it is up, as in the poll.)
+document.addEventListener('homeroom:language-changed', () => {
+  if (App._lastVersionInfo && !App._platformUpdateShot) App.renderPlatformVersionPill(App._lastVersionInfo);
+});

@@ -182,8 +182,10 @@ test('the tour no longer sends the reader to a tab called Me', () => {
   const { TOUR_STEPS } = loadTsx('frontend/src/features/home/tour/tour-steps.ts');
   const step = TOUR_STEPS.find((s) => s.id === 'settings');
   assert.ok(step, 'the replay step is still the last word of the tour');
-  assert.doesNotMatch(step.body, /\bMe\b/,
+  // The step's body is a message id; the words are the catalog's.
+  const body = require('./lib/platform-i18n').message(step.body);
+  assert.doesNotMatch(body, /\bMe\b/,
     'the tab carries your name now, so the step names the place instead of a label it no longer shows');
-  assert.match(step.body, /on your profile/);
+  assert.match(body, /on your profile/);
   assert.deepEqual([...step.targets], ['#platform-tab-me'], 'and still points at the tab');
 });

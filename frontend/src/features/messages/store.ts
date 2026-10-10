@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
 import { WORK_CHANGED_EVENT, openAppTarget } from './bot-shared';
@@ -33,8 +34,17 @@ interface PendingSend {
   idempotencyKey: string;
 }
 
+/**
+ * A name on the typing line. The line shows each name once, as it always has:
+ * two people shown by the same word are one entry, and that word leaves when
+ * either of them stops (see `typingHolders`). `unnamed` says the word is only
+ * the stand-in for a member with no username; it is worked out from who is
+ * typing under the word now, so it leaves with that person.
+ */
+export interface Typist { name: string; unnamed: boolean }
+
 interface InternalState extends MessagesSnapshot {
-  typing: Record<number, string[]>;
+  typing: Record<number, Typist[]>;
 }
 
 type Listener = () => void;
@@ -122,6 +132,13 @@ const typingExpiry = new Map<string, number>();
  */
 const landing = new Map<number, number>();
 const heldTyping = new Map<string, { conversationId: number; shown: string }>();
+/**
+ * Who is typing under each shown word: `conversationId:word` to user id to
+ * whether that person has no username. The word is the stand-in only while
+ * everybody typing under it is nameless; one real account makes it a name.
+ * Emptied when the word leaves the line, so nothing outlives the person.
+ */
+const typingHolders = new Map<string, Map<number, boolean>>();
 const TYPING_HOLD_MS = 5000;
 let pendingShare: SharedObjectReference | null | undefined;
 /**
@@ -225,7 +242,7 @@ function currentUser(): { id: number; username: string; avatarUrl?: string | nul
   const user = typeof window !== 'undefined' ? window.App?.user : null;
   return {
     id: Number(user?.id) || 0,
-    username: typeof user?.username === 'string' ? user.username : 'You',
+    username: typeof user?.username === 'string' ? user.username : t('messages:store.you'),
     avatarUrl: typeof user?.avatarUrl === 'string' ? user.avatarUrl : null,
   };
 }
@@ -240,9 +257,9 @@ function isAwaitingAcceptance(error: unknown): boolean {
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof api.MessagesApiError) {
-    if (isAwaitingAcceptance(error)) return 'They need to accept your message request before you can send more.';
-    if (error.status === 404) return 'This conversation is no longer available.';
-    if (error.status === 429) return 'You’re doing that too quickly. Try again in a moment.';
+    if (isAwaitingAcceptance(error)) return t('messages:store.error.awaitingAcceptance');
+    if (error.status === 404) return t('messages:store.error.gone');
+    if (error.status === 429) return t('messages:store.error.tooFast');
     return error.message || fallback;
   }
   return error instanceof Error && error.message ? error.message : fallback;
@@ -439,7 +456,7 @@ export async function loadConversations(force = false): Promise<void> {
       loadingList: false,
       listLoaded: true,
       online: typeof navigator === 'undefined' ? true : navigator.onLine,
-      error: errorMessage(error, 'Couldn’t load your conversations.'),
+      error: errorMessage(error, t('messages:store.error.loadList')),
     });
     resolvePendingChannel();
   }
@@ -627,7 +644,7 @@ export async function loadThread(conversationId: number, force = false, offlineC
       // stood in: no header or composer for a conversation that did not load.
       ...(preserveVisibleThread ? {} : { active: null }),
       loadingThread: false,
-      threadError: errorMessage(error, 'Couldn’t load this conversation.'),
+      threadError: errorMessage(error, t('messages:store.error.loadThread')),
       // A 404 is an answer, not a failure: trying again reads the same one.
       threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
     });
@@ -693,7 +710,8 @@ function newestServerId(rows: ConversationMessage[]): number {
 async function refreshActiveAfterMembershipChange(conversationId: number): Promise<void> {
   await loadThread(conversationId, true);
   if (state.route.conversationId !== conversationId) return;
-  if (state.threadError === 'This conversation is no longer available.') {
+  // The reload answered 404: read from state, not from the sentence shown.
+  if (state.threadGone === 'missing') {
     await finishDirectBlock(conversationId);
   }
 }
@@ -716,7 +734,7 @@ export async function loadNewer(): Promise<void> {
     const last = newestMainId(messages);
     if (!page.nextAfter && last && unreadHold !== conversationId) readMainWhenThere(conversationId);
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load newer messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadNewer')) });
   }
 }
 
@@ -743,7 +761,7 @@ export async function loadOlder(): Promise<void> {
       loadingOlder: false,
     });
   } catch (error) {
-    publish({ loadingOlder: false, threadError: errorMessage(error, 'Couldn’t load older messages.') });
+    publish({ loadingOlder: false, threadError: errorMessage(error, t('messages:store.error.loadOlder')) });
   }
 }
 
@@ -946,7 +964,7 @@ export async function loadDiscussion(slug: string): Promise<void> {
   } catch {
     if (state.route.appSlug !== want) { telemetry?.cancel?.(attemptId); return; }
     telemetry?.outcome?.(attemptId, 'failure', { errorCode });
-    publish({ discussionContext: null, discussionError: 'This discussion could not be opened.' });
+    publish({ discussionContext: null, discussionError: t('messages:store.error.discussion') });
   }
 }
 
@@ -1132,7 +1150,7 @@ export function syncChrome(): void {
   if (hub && !(isMobile() && state.route.threadRootId)) {
     app.setBackIcon?.('arrow', hub);
     app.setHeaderTitle?.(state.route.appSlug
-      ? state.discussionContext?.name || 'Channel'
+      ? state.discussionContext?.name || t('messages:store.header.channel')
       : `#${chromeTitle(state.active)}`);
     return;
   }
@@ -1150,7 +1168,7 @@ export function syncChrome(): void {
     app.setBackIcon?.('arrow', state.route.appSlug
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`);
-    app.setHeaderTitle?.('Thread');
+    app.setHeaderTitle?.(t('messages:store.header.thread'));
     return;
   }
   // 'none' ON THE INBOX (#2718 review). This is a second writer over the
@@ -1161,9 +1179,9 @@ export function syncChrome(): void {
   app.setBackIcon?.(thread ? 'arrow' : 'none', thread ? '#messages' : undefined);
   app.setHeaderTitle?.(thread
     ? (state.route.appSlug
-      ? state.discussionContext?.name || 'Discussion'
-      : state.route.agent ? 'Messages' : chromeTitle(state.active))
-    : 'Messages');
+      ? state.discussionContext?.name || t('messages:store.header.discussion')
+      : state.route.agent ? t('messages:store.header.messages') : chromeTitle(state.active))
+    : t('messages:store.header.messages'));
 }
 
 /**
@@ -1173,11 +1191,11 @@ export function syncChrome(): void {
  * so it takes its requester's name instead, as its header and row do.
  */
 function chromeTitle(active: ConversationDetail | null): string {
-  if (!active) return 'Messages';
+  if (!active) return t('messages:store.header.messages');
   if (active.kind === 'direct' && active.membershipStatus === 'invited' && active.requester?.username) {
     return active.requester.username;
   }
-  return active.title || 'Messages';
+  return active.title || t('messages:store.header.messages');
 }
 
 /**
@@ -1237,7 +1255,7 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
   // (the change page knows both). Anything less is chosen in the Share item
   // dialog, as Share stages one (see share below).
   const attach = !!id && !!reference && stagedComplete(reference);
-  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: ASK_FOR_CHANGES_PLACEHOLDER };
+  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: t(ASK_FOR_CHANGES_PLACEHOLDER) };
   else if (reference) pendingShare = reference;
   const already = !!id && state.route.conversationId === id;
   open(id);
@@ -1248,7 +1266,7 @@ export async function openBot(reference?: StagedObject | null): Promise<void> {
 }
 
 /** What the composer's box asks once Ask for changes has attached a change. */
-export const ASK_FOR_CHANGES_PLACEHOLDER = 'What should change?';
+export const ASK_FOR_CHANGES_PLACEHOLDER = 'messages:store.askForChangesPlaceholder';
 
 /** Pure: whether a staged item names its project and itself, so it can be attached as it is. */
 export function stagedComplete(reference: SharedObjectReference): boolean {
@@ -1419,8 +1437,8 @@ export async function renameConversation(title: string): Promise<void> {
   const id = state.route.conversationId;
   if (!id) return;
   const next = title.trim().replace(/\s+/g, ' ');
-  if (!next) throw new Error('A group needs a name.');
-  if (next.length > 80) throw new Error('Group names can be up to 80 characters.');
+  if (!next) throw new Error(t('messages:store.error.groupNeedsName'));
+  if (next.length > 80) throw new Error(t('messages:store.error.groupNameTooLong'));
   if (next === state.active?.title) return;
   try {
     upsertConversation(await api.updateConversation(id, { title: next }));
@@ -1667,7 +1685,7 @@ async function deliver(conversationId: number, pending: PendingSend): Promise<vo
     publish({
       online: !offline,
       messages: state.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-      threadError: offline ? 'Message queued. It will retry when you reconnect.' : errorMessage(error, 'Your message wasn’t sent.'),
+      threadError: offline ? t('messages:store.error.queued') : errorMessage(error, t('messages:store.error.send')),
     });
   }
 }
@@ -1701,7 +1719,7 @@ async function deliverToThread(conversationId: number, pending: PendingSend): Pr
         thread: {
           ...thread,
           messages: thread.messages.map((item) => item.clientKey === key ? { ...item, pending: false, failed: true } : item),
-          error: errorMessage(error, 'Your reply wasn’t sent.'),
+          error: errorMessage(error, t('messages:store.error.sendReply')),
         },
       });
     }
@@ -1937,7 +1955,7 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
     if (request !== replyThreadRequest) return;
     const thread = state.thread;
     publish({
-      thread: thread ? { ...thread, loading: false, error: errorMessage(error, 'Couldn’t load this thread.') } : null,
+      thread: thread ? { ...thread, loading: false, error: errorMessage(error, t('messages:store.error.loadReplies')) } : null,
     });
   }
 }
@@ -1962,7 +1980,7 @@ export async function loadOlderReplies(): Promise<void> {
     });
   } catch (error) {
     const now = state.thread;
-    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, 'Couldn’t load earlier replies.') } });
+    if (now) publish({ thread: { ...now, loading: false, error: errorMessage(error, t('messages:store.error.loadEarlierReplies')) } });
   }
 }
 
@@ -2221,23 +2239,25 @@ export function handleEvent(raw: ConversationEvent): void {
       const userId = api.strictId(event.userId ?? event.user_id);
       // The wire event carries no profile data. Resolve the active member
       // locally so a typing event cannot smuggle a stale/unauthorized name.
-      const username = state.active?.id === conversationId
-        ? state.active.members.find((member) => member.id === userId && member.status === 'member')?.username || ''
-        : '';
+      const typist = state.active?.id === conversationId
+        ? state.active.members.find((member) => member.id === userId && member.status === 'member') || null
+        : null;
+      const username = typist?.username || '';
       // B5: the bot types as its name, "Homeroom bot is typing…".
       const botPeer = state.active?.id === conversationId && state.active.peer?.bot && state.active.peer.id === userId
         ? state.active.peer.displayName || '' : '';
       if (!userId || userId === currentUser().id || !username) break;
-      const current = new Set(state.typing[conversationId] || []);
+      const current = state.typing[conversationId] || [];
       const expiryKey = `${conversationId}:${userId}`;
       const existingExpiry = typingExpiry.get(expiryKey);
       if (existingExpiry && typeof window !== 'undefined') window.clearTimeout(existingExpiry);
       typingExpiry.delete(expiryKey);
       heldTyping.delete(expiryKey);
       const shown = botPeer || username;
+      const isShown = current.some((entry) => entry.name === shown);
       // #4220: a stop while the message it typed is still being read keeps
       // the line until that read publishes (releaseHeldTyping), or the cap.
-      if (event.typing === false && landing.get(conversationId) && current.has(shown) && typeof window !== 'undefined') {
+      if (event.typing === false && landing.get(conversationId) && isShown && typeof window !== 'undefined') {
         heldTyping.set(expiryKey, { conversationId, shown });
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
@@ -2246,8 +2266,21 @@ export function handleEvent(raw: ConversationEvent): void {
         }, TYPING_HOLD_MS));
         break;
       }
-      if (event.typing === false) current.delete(shown); else current.add(shown);
-      publish({ typing: { ...state.typing, [conversationId]: [...current] } });
+      const holdersKey = `${conversationId}:${shown}`;
+      let next: Typist[];
+      if (event.typing === false) {
+        // The word leaves the line, and with it everybody typing under it.
+        typingHolders.delete(holdersKey);
+        next = current.filter((entry) => entry.name !== shown);
+      } else {
+        const holders = typingHolders.get(holdersKey) || new Map<number, boolean>();
+        holders.set(userId, !botPeer && !!typist?.unnamed);
+        typingHolders.set(holdersKey, holders);
+        // The stand-in only while every holder is nameless: a real account under the same word is named.
+        const entry: Typist = { name: shown, unnamed: [...holders.values()].every(Boolean) };
+        next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
+      }
+      publish({ typing: { ...state.typing, [conversationId]: next } });
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
@@ -2260,9 +2293,11 @@ export function handleEvent(raw: ConversationEvent): void {
 }
 
 function dropTyping(conversationId: number, shown: string): void {
-  const next = new Set(state.typing[conversationId] || []);
-  if (!next.delete(shown)) return;
-  publish({ typing: { ...state.typing, [conversationId]: [...next] } });
+  const now = state.typing[conversationId] || [];
+  const next = now.filter((entry) => entry.name !== shown);
+  if (next.length === now.length) return;
+  typingHolders.delete(`${conversationId}:${shown}`);
+  publish({ typing: { ...state.typing, [conversationId]: next } });
 }
 
 /** #4220: the message the held names were typing has been drawn. */
@@ -2277,7 +2312,8 @@ function releaseHeldTyping(conversationId: number): void {
   }
 }
 
-export function typingUsers(conversationId: number): string[] {
+/** The names on a conversation's typing line, in the order they came. */
+export function typingUsers(conversationId: number): Typist[] {
   return state.typing[conversationId] || [];
 }
 
@@ -2321,7 +2357,7 @@ export async function share(reference?: SharedObjectReference): Promise<void> {
  * is re-read so the conversation moves to the top.
  */
 export async function shareToConversation(conversationId: number, object: SharedObjectReference, note = ''): Promise<void> {
-  if (!validId(conversationId)) throw new Error('Choose a conversation.');
+  if (!validId(conversationId)) throw new Error(t('messages:store.error.chooseConversation'));
   const message = await api.sendMessage(conversationId, {
     content: note.trim().slice(0, 8000),
     object,
@@ -2418,6 +2454,9 @@ export function initializeMessagesStore(): () => void {
   const onPresence = () => { notePresence(); };
   for (const type of PRESENCE_EVENTS) window.addEventListener(type, onPresence, presence);
   document.addEventListener('visibilitychange', onPresence);
+  // The header's title is written from here: say it again in the language on screen.
+  const onLanguage = () => { if (state.route.open) syncChrome(); };
+  document.addEventListener('homeroom:language-changed', onLanguage);
   // The store is always mounted, but the endpoint is session-gated. Seed the
   // conversation list as soon as an already-resolved user exists, or wait for
   // the shell's one-shot authenticated boot event on an anonymous document.
@@ -2443,6 +2482,7 @@ export function initializeMessagesStore(): () => void {
     window.removeEventListener('offline', onOffline);
     for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
     document.removeEventListener('visibilitychange', onPresence);
+    document.removeEventListener('homeroom:language-changed', onLanguage);
     document.removeEventListener('sv:authed', onAuthed);
   };
 }

@@ -120,6 +120,7 @@ async function openAndroidSheet(initialPermissions) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(nativeChromeSource, sandbox);
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();

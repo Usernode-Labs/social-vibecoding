@@ -10,6 +10,7 @@ process.env.USERNODE_ENV = 'staging';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
@@ -108,6 +109,7 @@ let Notifications = null;
 function loadBell() {
   if (Notifications) return Notifications;
   if (!globalThis.window) globalThis.window = globalThis;
+  globalThis.PlatformI18n = englishPlatformI18n();
   loadTsx('frontend/src/features/notifications/notifications.js');
   Notifications = globalThis.window.Notifications;
   return Notifications;

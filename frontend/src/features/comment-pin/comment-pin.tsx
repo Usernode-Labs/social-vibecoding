@@ -72,6 +72,8 @@ import {
   SparklesIcon, XIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { listText } from '../../lib/i18n/runtime';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { PHONE_QUERY } from '../../lib/keyboard-open';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
@@ -274,7 +276,11 @@ interface Comment {
   text: string;
 }
 
-interface Image { blob: Blob; url: string; name: string }
+/**
+ * An image the person added: its file's own name, or '' for none. `n`
+ * numbers one the form handed over, which is named by its place ("Image 2").
+ */
+interface Image { blob: Blob; url: string; name: string; n: number | null }
 
 type TitleState = 'none' | 'auto' | 'mine';
 
@@ -303,7 +309,10 @@ interface Posted {
   key: number;
   title: string;
   words: string;
-  place: string;
+  /** Where it went: the app's name, or Homeroom. */
+  to: string;
+  /** Its request's number, when the post's link said. */
+  number: number | null;
   href: string | null;
   pictures: number;
   comments: number;
@@ -357,6 +366,7 @@ function markIntroSeen(): void {
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
 function CommentMode({ session, onClose }: { session: Session; onClose: () => void }): ReactNode {
+  const t = useMessages('devchat');
   const { host, app } = session;
   const [draft, setDraft] = useState<Draft | null>(null);
   const [posted, setPosted] = useState<Posted[]>([]);
@@ -578,7 +588,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       .map((blob, i) => {
         const url = URL.createObjectURL(blob);
         urls.current.add(url);
-        return { blob, url, name: `Image ${i + 1}` };
+        return { blob, url, name: '', n: i + 1 };
       });
     const empty: Draft = {
       key: ++keys.current,
@@ -661,18 +671,18 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     const key = draft.key;
     const room = MAX_PICTURES - pictureCount(draft);
     const usable = files.filter((f) => IMAGE_TYPES.includes(f.type));
-    if (usable.length < files.length) update(key, { error: 'Only PNG and JPEG images can be attached.' });
+    if (usable.length < files.length) update(key, { error: t('devchat:commentPin.error.imageType') });
     if (room <= 0) {
-      update(key, { error: `A request can carry ${MAX_PICTURES} images.` });
+      update(key, { error: t('devchat:commentPin.error.imageLimit', { count: MAX_PICTURES }) });
       return;
     }
     const added = usable.slice(0, room).map((f) => {
       const url = URL.createObjectURL(f);
       urls.current.add(url);
-      return { blob: f as Blob, url, name: f.name || 'Pasted image' };
+      return { blob: f as Blob, url, name: f.name || '', n: null };
     });
     if (added.length) update(key, (d) => ({ images: [...d.images, ...added], ...(usable.length === files.length ? { error: '' } : {}) }));
-  }, [draft, update]);
+  }, [draft, update, t]);
 
   const removeImage = (key: number, url: string) => {
     URL.revokeObjectURL(url);
@@ -739,7 +749,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         key: d.key,
         title: outcome.title || post.title || '',
         words: post.text,
-        place: number ? `#${number} · Posted to ${name}` : `Posted to ${name}`,
+        to: name,
+        number: number || null,
         href: number && slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${number}` : null,
         pictures: (post.shots?.length || 0) + (post.images?.length || 0),
         comments: live.length,
@@ -748,15 +759,25 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       setPostedPins((list) => [...list, ...live.map((c, i) => ({ key: c.key, request: d.key, n: many ? i + 1 : null, anchor: c.anchor }))]);
       setDraft(null);
       barRef.current?.focus({ preventScroll: true });
-      const what = many ? `Posted ${live.length} comments to ${name}` : `Posted to ${name}`;
-      let line = outcome.botWillBuild ? `${what}. Homeroom bot is building it.` : `${what}. Thanks!`;
+      // Whole sentences, one after another: where it went, then what came
+      // of the kudos. What joins two of them is a message too.
+      const postedLine = many
+        ? (outcome.botWillBuild
+          ? t('devchat:commentPin.toast.postedManyBuilding', { count: live.length, place: name })
+          : t('devchat:commentPin.toast.postedMany', { count: live.length, place: name }))
+        : (outcome.botWillBuild
+          ? t('devchat:commentPin.toast.postedBuilding', { place: name })
+          : t('devchat:commentPin.toast.posted', { place: name }));
+      let kudosLine = '';
       if (outcome.bounty) {
-        line += outcome.bounty.placed
-          ? ' Your kudos goes to whoever solves it.'
-          : ` The kudos wasn't added: ${outcome.bounty.error || 'it could not be placed'}.`;
+        kudosLine = outcome.bounty.placed
+          ? t('devchat:commentPin.toast.kudosPlaced')
+          : outcome.bounty.error
+            ? t('devchat:commentPin.toast.kudosFailed', { reason: outcome.bounty.error })
+            : t('devchat:commentPin.toast.kudosFailedNoReason');
         void refreshKudosBudget().then(() => setBudget(kudosBudget()));
       }
-      toast(line);
+      toast(kudosLine ? t('devchat:commentPin.toast.sentences', { first: postedLine, second: kudosLine }) : postedLine);
       return;
     }
     if (outcome.handover) {
@@ -765,7 +786,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       return;
     }
     update(d.key, { sending: false, error: outcome.error });
-  }, [draft, update, postFor, app, onClose]);
+  }, [draft, update, postFor, app, onClose, t]);
 
   /** The form instead, with whatever the request holds. */
   const toForm = useCallback(async () => {
@@ -1013,9 +1034,9 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   const postedCount = posted.length;
   const hint = draft
-    ? (viewShot?.state === 'drawing' ? 'Taking a screenshot…'
-      : draft.active == null ? 'Click where the next comment goes' : 'Enter posts it. Esc discards it.')
-    : carry ? 'Click where your words belong' : postedCount ? 'Click to leave another' : 'Tap anywhere to suggest an improvement';
+    ? (viewShot?.state === 'drawing' ? t('devchat:commentPin.hint.taking')
+      : draft.active == null ? t('devchat:commentPin.hint.next') : t('devchat:commentPin.hint.writing'))
+    : carry ? t('devchat:commentPin.hint.carry') : postedCount ? t('devchat:commentPin.hint.another') : t('devchat:commentPin.hint.start');
 
   const first = draft ? draft.comments[0] : null;
   const target: Target | null = draft ? (app ? (draft.chosen ?? (first?.inApp ? 'app' : 'platform')) : 'platform') : null;
@@ -1025,28 +1046,36 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
   const drawing = !!draft && draft.keepShot && draft.pictures.some((p) => p.base === undefined);
   const kudosOut = budget.remaining === 0;
   const kudosLeft = budget.remaining != null && budget.limit != null
-    ? `Costs 1 kudos. ${budget.remaining} of ${budget.limit} left this week.` : 'Costs 1 kudos.';
+    ? t('devchat:commentPin.kudos.costRemaining', { count: budget.remaining, limit: budget.limit })
+    : t('devchat:commentPin.kudos.cost');
   const shotLine = !draft ? '' : !draft.keepShot
-    ? 'No screenshot.'
+    ? t('devchat:commentPin.shot.none')
     : drawing
-      ? 'Taking a screenshot…'
+      ? t('devchat:commentPin.shot.taking')
       : !usedPictures(draft).length && !draft.images.length
-        ? "No screenshot. Your words still go."
-        : count >= MAX_PICTURES ? `${count} of ${MAX_PICTURES} images`
-          : numbered ? 'Screenshot of this page, with your pins' : 'Screenshot of this page, with your pin';
+        ? t('devchat:commentPin.shot.failed')
+        : count >= MAX_PICTURES ? t('devchat:commentPin.shot.full', { used: count, count: MAX_PICTURES })
+          : numbered ? t('devchat:commentPin.shot.attachedMany') : t('devchat:commentPin.shot.attached');
+  // A posted request's place, as its marker and card say it: "#12 · Posted to Run Club".
+  const placeOf = (r: Posted) => (r.number
+    ? t('devchat:commentPin.posted.placeNumbered', { number: r.number, place: r.to })
+    : t('devchat:commentPin.posted.place', { place: r.to }));
+  /** An added image's name: its file's own, else the one its place gives it. */
+  const imageName = (img: Image) => img.name
+    || (img.n != null ? t('devchat:commentPin.image.numbered', { number: img.n }) : t('devchat:commentPin.image.pasted'));
   const quietTool = 'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[13px] font-semibold text-zinc-600 ring-1 ring-inset ring-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-300 dark:ring-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-white';
   // The wait-for-the-next-pin row, as the box shows it and, on a phone, as
   // the whole collapsed sheet while the wait is on.
   const nextPinRow = draft && draft.active == null ? (
     <div className="flex items-center gap-2 rounded-[10px] bg-violet-600/10 px-2 py-1.5 ring-1 ring-inset ring-violet-600/30">
       <span aria-hidden="true" className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-white text-[11px] font-extrabold text-violet-600 ring-2 ring-inset ring-violet-600 dark:bg-zinc-900`}>{draft.comments.length + 1}</span>
-      <span className="min-w-0 flex-1 text-[13px] font-semibold text-violet-700 dark:text-violet-300">Click on the page where it goes</span>
+      <span className="min-w-0 flex-1 text-[13px] font-semibold text-violet-700 dark:text-violet-300">{t('devchat:commentPin.next.where')}</span>
       <button
         type="button"
         onClick={() => openComment(draft.comments[draft.comments.length - 1].key)}
         className="shrink-0 rounded-md px-1.5 py-0.5 text-[13px] font-semibold text-violet-700 hover:underline dark:text-violet-300"
       >
-        Cancel
+        {t('core:common.cancel')}
       </button>
     </div>
   ) : null;
@@ -1099,7 +1128,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             className="pointer-events-none absolute rounded-full bg-zinc-900/80 px-2.5 py-[3px] text-xs font-semibold text-white"
             style={{ left: inset.x + 10, top: inset.y + 10 }}
           >
-            Screenshot
+            {t('devchat:commentPin.view.chip')}
           </span>
         </>
       ) : (
@@ -1126,7 +1155,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             key={p.key}
             type="button"
             data-comment-pin-posted={p.n ?? ''}
-            aria-label={p.n ? `Comment ${p.n}, ${request.place}` : `Comment, ${request.place}`}
+            aria-label={listText([
+              p.n ? t('devchat:commentPin.marker.numbered', { number: p.n }) : t('devchat:commentPin.marker.single'),
+              placeOf(request),
+            ])}
             aria-expanded={open === p.key}
             onClick={() => setOpen((o) => (o === p.key ? null : p.key))}
             className={`absolute grid h-[30px] w-[30px] place-items-center ${PIN_SHAPE} bg-violet-600 text-[13px] font-extrabold text-white shadow-[0_0_0_2.5px_#fff,0_3px_10px_rgba(0,0,0,0.28)] hover:bg-violet-500`}
@@ -1147,7 +1179,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             key={c.key}
             type="button"
             data-comment-pin-dot=""
-            aria-label={`Comment ${i + 1}, not posted yet`}
+            aria-label={listText([t('devchat:commentPin.draftPin.number', { number: i + 1 }), t('devchat:commentPin.draftPin.unposted')])}
             disabled={draft.sending}
             onClick={() => openComment(c.key)}
             className={on
@@ -1165,7 +1197,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           ref={boxRef}
           id="comment-pin-box"
           role="dialog"
-          aria-label="Your request"
+          aria-label={t('devchat:commentPin.box.label')}
           className={phone
             ? /* On a phone the box is a bottom sheet: it slides up from the
                  foot of the screen, clear of the keyboard, instead of a card
@@ -1192,8 +1224,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               ) : null}
               <div className="flex min-h-[30px] items-center gap-1.5">
             {app ? (
-              <div className="flex min-w-0 items-center gap-1 text-[13px]" role="radiogroup" aria-label="Where it goes">
-                <span className="text-zinc-500 dark:text-zinc-400">To</span>
+              <div className="flex min-w-0 items-center gap-1 text-[13px]" role="radiogroup" aria-label={t('devchat:commentPin.target.groupLabel')}>
+                <span className="text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.to')}</span>
                 {([['app', app.name], ['platform', 'Homeroom']] as Array<[Target, string]>).map(([value, label]) => (
                   <button
                     key={value}
@@ -1212,13 +1244,13 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 ))}
               </div>
             ) : (
-              <span className="text-[13px] text-zinc-500 dark:text-zinc-400">To Homeroom</span>
+              <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.toHomeroom')}</span>
             )}
             <span className="min-w-0 flex-1" />
             <button
               type="button"
-              title="Open in the form"
-              aria-label="Open in the form"
+              title={t('devchat:commentPin.box.toForm')}
+              aria-label={t('devchat:commentPin.box.toForm')}
               disabled={draft.sending}
               onClick={() => { void toForm(); }}
               className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
@@ -1227,8 +1259,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             </button>
             <button
               type="button"
-              title="Discard (Esc)"
-              aria-label="Discard this request"
+              title={t('devchat:commentPin.box.discardTitle')}
+              aria-label={t('devchat:commentPin.box.discardLabel')}
               disabled={draft.sending}
               onClick={requestDiscard}
               className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
@@ -1245,7 +1277,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 <textarea
                   ref={textRef}
                   id="comment-pin-text"
-                  aria-label={numbered ? `Comment ${i + 1}` : 'Your comment'}
+                  aria-label={numbered ? t('devchat:commentPin.textLabelNumbered', { number: i + 1 }) : t('devchat:commentPin.textLabel')}
                   rows={numbered ? 2 : 3}
                   value={c.text}
                   readOnly={draft.sending}
@@ -1255,7 +1287,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                   }}
                   onKeyDown={onBoxKeyDown}
                   onPaste={onPaste}
-                  placeholder={i ? 'And what should change here?' : 'What should change here?'}
+                  placeholder={i ? t('devchat:commentPin.placeholderMore') : t('devchat:commentPin.placeholder')}
                   className={`block max-h-[160px] w-full min-w-0 flex-1 resize-none bg-transparent text-[15px] leading-snug text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500 ${numbered ? 'min-h-[44px]' : 'min-h-[62px]'}`}
                 />
               </div>
@@ -1264,17 +1296,17 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 <span aria-hidden="true" className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-zinc-100 text-[11px] font-extrabold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400`}>{i + 1}</span>
                 <button
                   type="button"
-                  title="Change this comment"
+                  title={t('devchat:commentPin.comment.change')}
                   disabled={draft.sending}
                   onClick={() => openComment(c.key)}
                   className="min-w-0 flex-1 truncate rounded-lg px-1.5 py-0.5 text-left text-sm text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
                 >
-                  {c.text.trim() || 'Nothing written yet'}
+                  {c.text.trim() || t('devchat:commentPin.comment.empty')}
                 </button>
                 <button
                   type="button"
-                  aria-label={`Remove comment ${i + 1}`}
-                  title="Remove"
+                  aria-label={t('devchat:commentPin.comment.removeLabel', { number: i + 1 })}
+                  title={t('devchat:commentPin.comment.removeTitle')}
                   disabled={draft.sending}
                   onClick={() => removeComment(c.key)}
                   className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
@@ -1286,14 +1318,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             {nextPinRow}
           </div>
           <div id="comment-pin-title" className="flex min-h-[32px] items-center gap-2 rounded-[10px] bg-zinc-100 py-1 pl-2.5 pr-1 text-[13px] dark:bg-zinc-800">
-            <span className="shrink-0 font-semibold text-zinc-500 dark:text-zinc-400">Title</span>
+            <span className="shrink-0 font-semibold text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.title.label')}</span>
             {draft.editingTitle ? (
               <input
-                aria-label="Title"
+                aria-label={t('devchat:commentPin.title.label')}
                 autoFocus
                 maxLength={200}
                 defaultValue={draft.title}
-                placeholder="Name this request"
+                placeholder={t('devchat:commentPin.title.placeholder')}
                 className="min-w-0 flex-1 rounded-md bg-white px-1.5 py-1 font-semibold text-zinc-900 outline-none ring-[1.5px] ring-violet-600 dark:bg-zinc-900 dark:text-white"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
@@ -1308,12 +1340,12 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 }}
               />
             ) : titleLoading && !draft.title ? (
-              <span className="min-w-0 flex-1 animate-pulse font-semibold text-zinc-400 motion-reduce:animate-none dark:text-zinc-500">Writing a title…</span>
+              <span className="min-w-0 flex-1 animate-pulse font-semibold text-zinc-400 motion-reduce:animate-none dark:text-zinc-500">{t('devchat:commentPin.title.writing')}</span>
             ) : draft.title ? (
               <>
                 <button
                   type="button"
-                  title="Change the title"
+                  title={t('devchat:commentPin.title.change')}
                   disabled={draft.sending}
                   onClick={() => update(draft.key, { editingTitle: true })}
                   className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left font-semibold text-zinc-900 hover:bg-zinc-200 dark:text-white dark:hover:bg-zinc-700"
@@ -1324,7 +1356,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 {draft.titleState === 'auto' ? (
                   <span className="inline-flex shrink-0 items-center gap-1 pr-1 text-xs text-zinc-500 dark:text-zinc-400">
                     <SparklesIcon className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
-                    {titleLoading ? 'Updating…' : 'Suggested'}
+                    {titleLoading ? t('devchat:commentPin.title.updating') : t('devchat:commentPin.title.suggested')}
                   </span>
                 ) : null}
               </>
@@ -1335,7 +1367,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 onClick={() => update(draft.key, { editingTitle: true })}
                 className="min-w-0 flex-1 truncate rounded-md px-1 py-1 text-left text-zinc-400 hover:bg-zinc-200 dark:text-zinc-500 dark:hover:bg-zinc-700"
               >
-                {words.length >= TITLE_MIN ? 'Named from your words when posted' : 'Suggested as you type'}
+                {words.length >= TITLE_MIN ? t('devchat:commentPin.title.namedOnPost') : t('devchat:commentPin.title.asYouType')}
               </button>
             )}
           </div>
@@ -1359,8 +1391,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 {pic.base ? (
                   <button
                     type="button"
-                    aria-label="Remove the screenshots"
-                    title="Remove"
+                    aria-label={t('devchat:commentPin.shot.removeLabel')}
+                    title={t('devchat:commentPin.shot.remove')}
                     disabled={draft.sending}
                     onClick={() => update(draft.key, { keepShot: false })}
                     className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
@@ -1372,11 +1404,15 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             ))}
             {draft.images.map((img) => (
               <span key={img.url} className="relative block h-[42px] w-[64px] shrink-0">
-                <img src={img.url} alt={img.name} className="h-[42px] w-[64px] rounded-lg object-cover ring-1 ring-black/10 dark:ring-white/10" />
+                <img src={img.url} alt={imageName(img)} className="h-[42px] w-[64px] rounded-lg object-cover ring-1 ring-black/10 dark:ring-white/10" />
                 <button
                   type="button"
-                  aria-label={`Remove ${img.name}`}
-                  title="Remove"
+                  aria-label={img.name
+                    ? t('devchat:commentPin.image.remove', { name: img.name })
+                    : img.n != null
+                      ? t('devchat:commentPin.image.removeNumbered', { number: img.n })
+                      : t('devchat:commentPin.image.removePasted')}
+                  title={t('devchat:commentPin.image.removeTitle')}
                   disabled={draft.sending}
                   onClick={() => removeImage(draft.key, img.url)}
                   className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-zinc-900 text-white ring-2 ring-white dark:bg-zinc-100 dark:text-zinc-900 dark:ring-zinc-900"
@@ -1394,7 +1430,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                   onClick={() => update(draft.key, { keepShot: true })}
                   className="ml-1 font-semibold text-violet-700 hover:underline disabled:opacity-50 dark:text-violet-300"
                 >
-                  Add it back
+                  {t('devchat:commentPin.shot.addBack')}
                 </button>
               ) : null}
             </span>
@@ -1425,10 +1461,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               : 'flex h-9 w-full items-center gap-2 rounded-[10px] bg-zinc-100 px-2.5 text-left hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-800 dark:hover:bg-zinc-700'}
           >
             <span aria-hidden="true" className="text-base leading-none">{'\u{1F44F}'}</span>
-            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">Kudos for whoever solves it</span>
+            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">{t('devchat:commentPin.kudos.label')}</span>
             <span id="comment-pin-kudos-cost" className="shrink-0 text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-              {kudosOut ? 'None left this week' : budget.remaining != null ? `${budget.remaining} left` : ''}
-              <span className="sr-only">{kudosOut ? '' : `. ${kudosLeft}`}</span>
+              {kudosOut ? t('devchat:commentPin.kudos.noneLeft') : budget.remaining != null ? t('devchat:commentPin.kudos.left', { count: budget.remaining }) : ''}
+              <span className="sr-only">{kudosOut ? '' : t('devchat:commentPin.kudos.costAfterCount', { cost: kudosLeft })}</span>
             </span>
             <span
               aria-hidden="true"
@@ -1448,8 +1484,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           <div className="flex items-center gap-1.5 border-t border-black/5 pt-2 dark:border-white/10">
             <button
               type="button"
-              title="Attach images, or paste one"
-              aria-label="Attach images"
+              title={t('devchat:commentPin.box.attachTitle')}
+              aria-label={t('devchat:commentPin.box.attachLabel')}
               disabled={draft.sending || count >= MAX_PICTURES}
               onClick={() => fileRef.current?.click()}
               className={`${quietTool} w-8 justify-center px-0`}
@@ -1459,13 +1495,13 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             {draft.comments.length < MAX_COMMENTS ? (
               <button
                 type="button"
-                title="Add another comment to this same request: click where it goes next"
+                title={t('devchat:commentPin.box.addCommentTitle')}
                 disabled={draft.sending || draft.active == null || !activeComment(draft)?.text.trim()}
                 onClick={addComment}
                 className={quietTool}
               >
                 <PlusIcon className="h-4 w-4" />
-                Add a comment
+                {t('devchat:commentPin.box.addComment')}
               </button>
             ) : null}
             <span className="min-w-0 flex-1" />
@@ -1480,7 +1516,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               disabled={draft.sending || !live}
               onClick={() => { void send(); }}
             >
-              {draft.sending ? 'Posting…' : live > 1 ? `Post ${live} comments` : 'Post'}
+              {draft.sending ? t('devchat:commentPin.posting') : live > 1 ? t('devchat:commentPin.postMany', { count: live }) : t('devchat:commentPin.post')}
             </Button>
           </div>
             </>
@@ -1492,16 +1528,16 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         <div
           ref={cardRef}
           role="dialog"
-          aria-label={openRequest.place}
+          aria-label={placeOf(openRequest)}
           className="absolute flex w-[300px] max-w-[calc(100vw-24px)] flex-col gap-1.5 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10"
           style={{ left: cardAt.x, top: cardAt.y }}
         >
           <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
             <span className={`grid h-[22px] w-[22px] shrink-0 place-items-center ${PIN_SHAPE} bg-violet-600 text-[11px] font-extrabold text-white`} aria-hidden="true">{openPin.n ?? ''}</span>
-            <span className="min-w-0 flex-1 truncate">{openRequest.place}</span>
+            <span className="min-w-0 flex-1 truncate">{placeOf(openRequest)}</span>
             <button
               type="button"
-              aria-label="Close"
+              aria-label={t('core:common.close')}
               onClick={() => setOpen(null)}
               className="grid h-7 w-7 shrink-0 place-items-center rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
             >
@@ -1513,10 +1549,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
           <div className="mt-1 flex items-center gap-2 border-t border-black/5 pt-2 text-xs text-zinc-500 dark:border-white/10 dark:text-zinc-400">
             <span className="min-w-0 flex-1 truncate">
               {[
-                openRequest.comments > 1 ? `${openRequest.comments} comments` : '',
-                openRequest.pictures ? (openRequest.pictures === 1 ? '1 image' : `${openRequest.pictures} images`) : '',
-                openRequest.kudos ? 'kudos for whoever solves it' : '',
-              ].filter(Boolean).join(' · ')}
+                openRequest.comments > 1 ? t('devchat:commentPin.card.comments', { count: openRequest.comments }) : '',
+                openRequest.pictures ? t('devchat:commentPin.card.images', { count: openRequest.pictures }) : '',
+                openRequest.kudos ? t('devchat:commentPin.card.kudos') : '',
+              ].filter(Boolean).reduce((first, second) => (first ? t('devchat:commentPin.card.facts', { first, second }) : second), '')}
             </span>
             {openRequest.href ? (
               <a
@@ -1524,7 +1560,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
                 onClick={() => onClose()}
                 className="shrink-0 rounded-full bg-violet-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-violet-500"
               >
-                Open request
+                {t('devchat:commentPin.card.open')}
               </a>
             ) : null}
           </div>
@@ -1537,20 +1573,20 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       {intro && !confirm ? (
         <div
           role="dialog"
-          aria-label="How comment mode works"
+          aria-label={t('devchat:commentPin.intro.title')}
           className={[
             'absolute left-1/2 flex w-[340px] max-w-[calc(100vw-24px)] -translate-x-1/2 flex-col gap-2 rounded-2xl bg-white p-3 shadow-[0_8px_30px_rgba(0,0,0,0.18)] ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10',
             inset ? 'top-[68px]' : 'bottom-[76px]',
           ].join(' ')}
         >
-          <p className="text-[15px] font-[650] leading-snug text-zinc-900 dark:text-white">How comment mode works</p>
+          <p className="text-[15px] font-[650] leading-snug text-zinc-900 dark:text-white">{t('devchat:commentPin.intro.title')}</p>
           <ul className="flex flex-col gap-1 text-[13px] text-zinc-600 dark:text-zinc-300">
-            <li>Tap anything on the page to leave a comment right there, then press Post.</li>
-            {!inset ? <li>Drag the handle on the left to move the bar.</li> : null}
-            <li>Prefer the form? Tap Form to switch back at any time.</li>
+            <li>{t('devchat:commentPin.intro.tap')}</li>
+            {!inset ? <li>{t('devchat:commentPin.intro.drag')}</li> : null}
+            <li>{t('devchat:commentPin.intro.form')}</li>
           </ul>
           <div className="flex justify-end">
-            <Button variant="pillAccent" size="sm" ink="solid" onClick={() => setIntro(false)}>Got it</Button>
+            <Button variant="pillAccent" size="sm" ink="solid" onClick={() => setIntro(false)}>{t('devchat:commentPin.intro.gotIt')}</Button>
           </div>
         </div>
       ) : null}
@@ -1563,7 +1599,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         ref={barRef}
         tabIndex={-1}
         role="toolbar"
-        aria-label="Comment mode"
+        aria-label={t('devchat:commentPin.bar.label')}
         className={[
           'absolute flex max-w-[calc(100vw-24px)] items-center gap-2 whitespace-nowrap rounded-full bg-white py-1.5 pl-1.5 pr-1.5 outline-none ring-1 ring-black/10 dark:bg-zinc-900 dark:ring-white/10 sm:gap-2.5',
           inset
@@ -1582,8 +1618,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         {!inset ? (
           <button
             type="button"
-            aria-label="Move the bar: drag it anywhere, double-click to put it back"
-            title="Drag to move the bar anywhere. Double-click to put it back at the bottom."
+            aria-label={t('devchat:commentPin.bar.move')}
+            title={t('devchat:commentPin.bar.moveTitle')}
             onPointerDown={onGripDown}
             onPointerMove={onGripMove}
             onPointerUp={onGripUp}
@@ -1597,7 +1633,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
         {confirm ? (
           <>
             <span className="min-w-0 truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
-              {confirm === 'discard' ? 'Discard this request? Nothing in it is posted yet.' : "Discard the comments you haven't posted?"}
+              {confirm === 'discard' ? t('devchat:commentPin.bar.confirmDiscard') : t('devchat:commentPin.bar.confirmExit')}
             </span>
             {inset ? <span className="min-w-0 flex-1" /> : null}
             <button
@@ -1605,14 +1641,14 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               onClick={() => { setConfirm(null); textRef.current?.focus(); }}
               className="h-[34px] shrink-0 rounded-full px-3 text-sm font-semibold text-zinc-900 hover:bg-zinc-100 dark:text-white dark:hover:bg-zinc-800"
             >
-              Keep writing
+              {t('devchat:commentPin.bar.keepWriting')}
             </button>
             <button
               type="button"
               onClick={() => { if (confirm === 'discard') discard(); else onClose(); }}
               className="h-[34px] shrink-0 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900"
             >
-              Discard
+              {t('devchat:commentPin.bar.discard')}
             </button>
           </>
         ) : (
@@ -1623,31 +1659,31 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             <span className="hidden min-w-0 truncate text-sm font-bold text-violet-700 sm:inline dark:text-violet-300">{hint}</span>
             {postedCount ? (
               <span className="hidden shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-bold tabular-nums text-zinc-600 md:inline dark:bg-zinc-800 dark:text-zinc-300">
-                {`${postedCount} posted`}
+                {t('devchat:commentPin.bar.posted', { count: postedCount })}
               </span>
             ) : null}
             {inset ? <span className="min-w-0 flex-1" /> : null}
-            <span className="inline-flex shrink-0 gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label="How to suggest it">
+            <span className="inline-flex shrink-0 gap-0.5 rounded-full bg-zinc-100 p-[3px] dark:bg-zinc-800" role="radiogroup" aria-label={t('devchat:commentPin.bar.switchLabel')}>
               <button
                 type="button"
                 role="radio"
                 aria-checked="false"
-                title="Suggest it with the form"
+                title={t('devchat:commentPin.bar.formTitle')}
                 onClick={() => { void toForm(); }}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full pl-2 pr-2.5 text-[13px] font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
               >
                 <DescriptionIcon className="h-4 w-4" />
-                Form
+                {t('devchat:commentPin.bar.form')}
               </button>
               <button
                 type="button"
                 role="radio"
                 aria-checked="true"
-                title="Comment on the page"
+                title={t('devchat:commentPin.bar.commentTitle')}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full bg-white pl-2 pr-2.5 text-[13px] font-semibold text-zinc-900 shadow-sm ring-1 ring-black/5 dark:bg-zinc-700 dark:text-white"
               >
                 <ChatIcon className="h-4 w-4" />
-                Comment
+                {t('devchat:commentPin.bar.comment')}
               </button>
             </span>
             <button
@@ -1655,8 +1691,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               onClick={requestExit}
               className="inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full bg-zinc-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-zinc-900 sm:pr-3"
             >
-              Done
-              <kbd className="hidden rounded-[5px] px-1 font-mono text-[11px] font-semibold opacity-70 ring-1 ring-inset ring-current sm:inline">Esc</kbd>
+              {t('devchat:commentPin.bar.done')}
+              <kbd className="hidden rounded-[5px] px-1 font-mono text-[11px] font-semibold opacity-70 ring-1 ring-inset ring-current sm:inline">{t('devchat:commentPin.bar.doneKey')}</kbd>
             </button>
           </>
         )}

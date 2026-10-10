@@ -25,6 +25,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -65,6 +66,7 @@ function makeAppView({ search = '' } = {}) {
     location: { search, hash: '', href: `http://localhost/${search}` }, URLSearchParams,
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -217,14 +219,16 @@ test('the board unfolds nothing in place: ?cards=open draws the fold’s open sh
   // so there is no mode to pass and no branch to take — one anchor, one
   // label, whichever screen the card was reached from.
   assert.ok(!/OpenMode|expand[?:]/.test(FOLD), 'no open mode left to choose');
-  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>\s*: undefined;/);
+  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{t\('project:card\.fold\.openCard'\)\}<\/a>\s*: undefined;/);
+  assert.equal(message('project:card.fold.openCard'), 'Open card');
   // #1886: no page link under the sheet any more. The one line the sheet
   // still draws is #1887's, on a card about the viewer's OWN session.
   assert.ok(!/>Open on its own page/.test(FOLD), 'no "Open on its own page" line under the sheet');
   assert.ok(!/href=\{href\} className="dev-ws-link"/.test(FOLD), 'the page href rides no link under the sheet');
   assert.equal(count(FOLD, /dev-ws-sheet-actions/g), 1, 'one line under the sheet, and it is the session\u2019s');
-  assert.match(FOLD, /\{session && sessionLink \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
+  assert.match(FOLD, /\{session && sessionLink \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>\{t\('project:card\.fold\.openSession'\)\}<\/a>\s*<\/div>\s*\) : null\}/,
     'the session link, on the Workshop, and nothing beside it');
+  assert.equal(message('project:card.fold.openSession'), 'Open session ›');
   const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
   assert.ok(!/\{'Open page ›'\}|'Close card' : 'Open card'/.test(unfolded),
     'and no second step: the pill is the page link on its first tap');

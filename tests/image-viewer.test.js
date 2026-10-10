@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -44,7 +45,8 @@ test('a plain tap opens the viewer; a modified click keeps the link\'s own meani
 
 test('every way out works: close, around the image, a swipe down, Back and Escape', () => {
   // ✕, clear of the notch.
-  assert.match(SRC, /aria-label="Close"\n\s*data-image-viewer-close=""\n\s*onClick=\{\(\) => onCloseRef\.current\(\)\}/);
+  assert.match(SRC, /aria-label=\{t\('core:common\.close'\)\}\n\s*data-image-viewer-close=""\n\s*onClick=\{\(\) => onCloseRef\.current\(\)\}/);
+  assert.equal(message('core:common.close'), 'Close');
   assert.match(SRC, /pt-\[calc\(env\(safe-area-inset-top\)\+12px\)\]/);
   // A tap on the dark around the picture, and only there.
   assert.match(SRC, /onClick=\{\(event\) => \{ if \(event\.target === event\.currentTarget\) onCloseRef\.current\(\); \}\}/);
@@ -75,7 +77,8 @@ test('it covers the screen, above the message sheet, and only exists after a tap
 test('the channel and a conversation both open their thumbnails in it, and keep the file as the link', () => {
   const transcript = read('frontend/src/features/group-chat/transcript.tsx');
   const image = transcript.slice(transcript.indexOf('function AttachmentImage('), transcript.indexOf('function AttachmentChip('));
-  assert.match(image, /<a\n\s*href=\{att\.url\}\n\s*target="_blank"\n\s*rel="noopener"\n\s*title=\{`\$\{att\.name\}: open full size`\}\n\s*data-image-open=""\n\s*onClick=\{\(event\) => openInViewer\(event, \(\) => setViewing\(true\)\)\}/);
+  assert.match(image, /<a\n\s*href=\{att\.url\}\n\s*target="_blank"\n\s*rel="noopener"\n\s*title=\{att\.unnamed \? t\('chat:group\.attachment\.openFullSizeUnnamed'\) : t\('chat:group\.attachment\.openFullSize', \{ file: att\.name \}\)\}\n\s*data-image-open=""\n\s*onClick=\{\(event\) => openInViewer\(event, \(\) => setViewing\(true\)\)\}/);
+  assert.equal(message('chat:group.attachment.openFullSize', { file: 'cat.png' }), 'cat.png: open full size');
   assert.match(image, /\{viewing \? <ImageViewer src=\{att\.url\} alt=\{att\.name\} onClose=\{\(\) => setViewing\(false\)\} \/> : null\}/);
 
   const row = read('frontend/src/features/messages/message-row.tsx');

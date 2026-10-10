@@ -14,6 +14,8 @@
  * hydration agrees.
  */
 
+import { useMessages } from '../../lib/i18n/react';
+import { t } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { appFrameStore, liveAppSlugs } from './app-frame-store.js';
 
@@ -34,13 +36,17 @@ export function useCurrentAppSlug(): string | null {
   return useStoreState(appFrameStore).slug || null;
 }
 
-/** What the dot means, for a row's or a tile's accessible name. */
-export const LIVE_APP_LABEL = 'still open';
+/** What the dot means, for a row's or a tile's accessible name: one fact
+ *  among others there, joined by listText (lib/i18n). Read when rendering. */
+export function liveAppLabel(): string {
+  return t('core:liveApp.stillOpen');
+}
 
 /**
  * The dot itself. Decorative to assistive tech — the owning control adds
- * LIVE_APP_LABEL to its own name — and `title` for a pointer that hovers it.
+ * liveAppLabel() to its own name — and `title` for a pointer that hovers it.
  */
 export function LiveAppDot({ className }: { className: string }) {
-  return <span className={`app-live-dot ${className}`} title="Still open" aria-hidden="true" />;
+  const translate = useMessages();
+  return <span className={`app-live-dot ${className}`} title={translate('core:liveApp.dotTitle')} aria-hidden="true" />;
 }

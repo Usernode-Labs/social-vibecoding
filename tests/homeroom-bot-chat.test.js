@@ -21,6 +21,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -100,7 +101,8 @@ test('B9: the chip and the card', () => {
   assert.match(filed, /data-bot-request-action="progress"><span>See progress/);
   const row = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(row, /\{msg\.mine && msg\.botCard \? \(\s*<BotRequestCardView/);
-  assert.match(row, /if \(surface === 'main' && msg\.canAskBot\) \{\s*items\.push\(\{ key: 'ask-bot', label: 'Make this a request'/);
+  assert.match(row, /if \(surface === 'main' && msg\.canAskBot\) \{\s*items\.push\(\{ key: 'ask-bot', label: translate\('chat:group\.menu\.makeRequest'\)/);
+  assert.equal(message('chat:group.menu.makeRequest'), 'Make this a request');
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /const insert = `@\$\{username === MentionAutocomplete\.BOT \? MentionAutocomplete\.BOT_NAME : username\} `;/);
   assert.match(gc, /@\(\[A-Za-z0-9_\]\{1,32\}\(\?:\(\?<=homeroom\) bot\\b\)\?\)/, '"@Homeroom bot" is one mention');

@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const {
   SPANISH, browser, catalogFixture, from, runtimeFor, says, until,
@@ -242,6 +243,9 @@ function settingsPage(t, runtime, page) {
 
   const { saveAccountLocale } = loadTsx('frontend/src/lib/i18n/account.ts');
   sandbox.PlatformI18n = {
+    // The status line's own words come from the real English catalog; the
+    // fixture runtime decides which language is chosen and saved.
+    ...englishPlatformI18n(),
     changeLanguage: runtime.changeLanguage, languageName: runtime.languageName, saveAccountLocale,
   };
   const posted = [];
@@ -440,11 +444,11 @@ test('the notice is a React island that says it in the picked language and offer
   assert.match(notice, /useSyncExternalStore\(subscribeNotice, getNotice, \(\) => null\)/,
     'the prerendered document and the hydrating render hold nothing');
   assert.match(notice, /if \(!notice\) return null;/);
-  assert.match(notice, /t\('language\.notice\.showing', \{ language: notice\.name \}\)/);
-  assert.match(notice, /i18n\.getFixedT\('en', 'core'\)\('language\.notice\.switchToEnglish'\)/,
+  assert.match(notice, /t\('core:language\.notice\.showing', \{ language: notice\.name \}\)/);
+  assert.match(notice, /i18n\.getFixedT\('en', 'core'\)\('core:language\.notice\.switchToEnglish'\)/,
     'the way back is readable by someone who cannot read the picked language');
   assert.match(notice, /lang="en"/);
-  assert.match(notice, /aria-label=\{t\('language\.notice\.dismiss'\)\}/);
+  assert.match(notice, /aria-label=\{t\('core:language\.notice\.dismiss'\)\}/);
   const shell = read('frontend/src/Shell.tsx');
   assert.match(shell, /<Island name="LanguageNotice"><LanguageNotice \/><\/Island>/);
   // It stays in view until answered: fixed above the tab bar, where a toast

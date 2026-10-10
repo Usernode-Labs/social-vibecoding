@@ -28,6 +28,8 @@ import { openReport } from '../dialogs/report';
 
 import { useState, type ReactNode } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
+
 import { publicAvatarView, verifiedSocialLinksView } from './profile-store.js';
 import { MessageButton } from './message-button';
 import { FriendButton } from '../friends/friend-button';
@@ -61,7 +63,8 @@ function PublicAvatar({ profile }: { profile: any }): ReactNode {
 }
 
 function ReportForm({ username }: { username: string }): ReactNode {
-  return <div id="public-profile-report" className="mt-4 text-sm"><button type="button" className="min-h-[44px] text-red-700 dark:text-red-400" onClick={() => openReport({ targetType: 'user', target: username, label: `@${username}` })}>Report user</button></div>;
+  const t = useMessages('profile');
+  return <div id="public-profile-report" className="mt-4 text-sm"><button type="button" className="min-h-[44px] text-red-700 dark:text-red-400" onClick={() => openReport({ targetType: 'user', target: username, label: `@${username}` })}>{t('profile:public.report')}</button></div>;
 }
 
 export function PublicProfileCard({
@@ -75,6 +78,8 @@ export function PublicProfileCard({
   allowMessage?: boolean;
   friendship?: { userId: number; state: FriendState } | null;
 }): ReactNode {
+  // Subscribed: the social chips' labels are read by the view helper.
+  useMessages('profile');
   const socialLinks = verifiedSocialLinksView(profile);
   return (
     <>

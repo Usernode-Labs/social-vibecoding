@@ -54,6 +54,8 @@ import {
   BallotIcon, ChatBubbleTailIcon, CheckIcon, EyeIcon, LockIcon, PencilSquareIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import { CategoryChip, ChatCount, ChecksBar, MenuTrigger, VoteButton } from '../card/dev-card';
 import { itemHooks, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
 import type { DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
@@ -86,19 +88,31 @@ export function topicRef(card: DevCardModel): TopicRef | null {
   return change ? { kind: 'proposal', id: change } : null;
 }
 
-/** "#4455", "#4455 and #4452", "#1, #2 and #3". */
+/**
+ * "#4455", "#4455 and #4452", "#1, #2 and #3": request numbers as a list,
+ * the way the language on screen writes one. A number is a reference, not
+ * a word, so only what stands between them is a message.
+ */
 function numbers(list: number[]): string {
   const s = list.map((n) => `#${n}`);
   if (s.length < 2) return s.join('');
-  return `${s.slice(0, -1).join(', ')} and ${s[s.length - 1]}`;
+  const lead = s.slice(0, -1).reduce((first, second) => translate('project:workRow.numbers.pair', { first, second }));
+  return translate('project:workRow.numbers.last', { first: lead, last: s[s.length - 1] });
 }
 
-/** The item's number as the board says it: "#4417", "PR #4456", "Vote #7". */
+/**
+ * The item's number as the board says it: "#4417", "PR #4456", "Vote #7";
+ * alone, what it is ("Change"). Message ids, read when the row renders.
+ */
+const NOUN: Record<RowBrief['noun'], { plain: string; numbered: string }> = {
+  change: { plain: 'project:workRow.name.change', numbered: 'project:workRow.name.changeNumbered' },
+  request: { plain: 'project:workRow.name.request', numbered: 'project:workRow.name.requestNumbered' },
+  vote: { plain: 'project:workRow.name.vote', numbered: 'project:workRow.name.voteNumbered' },
+};
+
 function numberWords(b: RowBrief): string {
-  if (!b.n) return b.noun;
-  if (b.kind === 'request') return `#${b.n}`;
-  if (b.noun === 'Vote') return `Vote #${b.n}`;
-  return `PR #${b.n}`;
+  const noun = NOUN[b.noun] || NOUN.change;
+  return b.n ? translate(noun.numbered, { number: b.n }) : translate(noun.plain);
 }
 
 /**
@@ -114,10 +128,14 @@ function numberWords(b: RowBrief): string {
 export function rowWords(b: RowBrief): string {
   const parts: string[] = [numberWords(b)];
   if (b.by) parts.push(b.by);
-  if (b.linked.length && b.kind !== 'live') parts.push(`for ${numbers(b.linked)}`);
-  if (b.closed.length && b.kind === 'live') parts.push(`closed ${numbers(b.closed)}`);
+  if (b.linked.length && b.kind !== 'live') {
+    parts.push(translate('project:workRow.for', { count: b.linked.length, requests: numbers(b.linked) }));
+  }
+  if (b.closed.length && b.kind === 'live') {
+    parts.push(translate('project:workRow.closed', { count: b.closed.length, requests: numbers(b.closed) }));
+  }
   if (b.ago) parts.push(b.ago);
-  return parts.join(' · ');
+  return parts.reduce((first, second) => translate('project:workRow.facts.pair', { first, second }));
 }
 
 const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
@@ -171,6 +189,8 @@ export function WorkRow({
   /** Draw the card's category chip. By category's lanes pass false: the group is the category. */
   category?: boolean;
 }): ReactNode {
+  // The line in words is read with `translate` (rowWords); subscribe the row.
+  useMessages('project');
   const b = row.brief;
   if (!b) return null;
   const card = row.card;
@@ -180,9 +200,13 @@ export function WorkRow({
   const Tile = TILE[b.kind] || PencilSquareIcon;
   const pill = card.pill?.state || null;
   // Live work leads its tags with the card's own bar at its words' width
-  // ("✓ Live"), in place of the small Live tag the brief carries.
+  // ("✓ Live"), in place of the small Live tag the brief carries. On a live
+  // row that tag is the brief's one `ok` tag (AppView._workshopBrief: a merged
+  // item carries only its settled state, and Live is the settled state that
+  // is done), so it is left out by what it is, never by its words, which are
+  // in the language on screen.
   const live = b.kind === 'live' && !!pill;
-  const tags = live ? b.tags.filter((t) => t.label !== 'Live') : b.tags;
+  const tags = live ? b.tags.filter((t) => t.tone !== 'ok') : b.tags;
   const hasChip = category && (card.badges || []).some((x) => x && x.t === 'attr' && x.field === 'category');
   const hasChat = (card.chatCount || 0) > 0;
   const chip = hasChip ? <CategoryChip card={card} /> : null;

@@ -20,6 +20,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { renderComponent } = require('./lib/render-tsx');
@@ -28,9 +29,10 @@ const CARD = 'frontend/src/features/dev-board/card/dev-card.tsx';
 const SRC = fs.readFileSync(path.join(__dirname, '..', CARD), 'utf8');
 const CSS = fs.readFileSync(path.join(__dirname, '..', 'public/css/app.css'), 'utf8');
 
-const yes = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', title: 'Yes', label: 'Yes (2/3)', act: { fn: 'castVote', args: [7, 'yes', 3] } };
-const no = { key: 'no', cls: 'gc-vote-btn gc-vote-btn-no', title: 'No', label: 'No (0/3)', act: { fn: 'castVote', args: [7, 'no', 3] } };
-const tally = (a) => (/\(([^)]*)\)\s*$/.exec(a.label || '') || [])[1] || '';
+const yes = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', title: 'Yes', label: 'Yes (2/3)', tally: '2/3', act: { fn: 'castVote', args: [7, 'yes', 3] } };
+const no = { key: 'no', cls: 'gc-vote-btn gc-vote-btn-no', title: 'No', label: 'No (0/3)', tally: '0/3', act: { fn: 'castVote', args: [7, 'no', 3] } };
+// The count a spec carries on its own, as dev-card.tsx reads it: never parsed out of the label.
+const tally = (a) => a.tally || '';
 const noop = () => {};
 const picker = (over) => renderComponent(CARD, 'VotePicker', {
   yes, no, prior: null, side: 'yes', line: '', reasonId: 'dev-vote-reason-7', tally, withLine: true,
@@ -128,7 +130,7 @@ test('#2603: a governance vote takes the same panel, and its line lands in castI
   assert.match(SRC, /const VOTE_ARITY: Record<string, number> = \{ castVote: 3, castIssueVote: 2 \};/);
   assert.match(fn, /const positional = VOTE_ARITY\[a\.act\.fn\] \?\? 3;\s*while \(args\.length < positional\) args\.push\(null\);/,
     'the slots are padded per function, so the bag always lands last');
-  const gov = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', title: 'Yes', label: 'Yes (1/2)', act: { fn: 'castIssueVote', args: [11, 'up'] } };
+  const gov = { key: 'yes', cls: 'gc-vote-btn gc-vote-btn-yes', title: 'Yes', label: 'Yes (1/2)', tally: '1/2', act: { fn: 'castIssueVote', args: [11, 'up'] } };
   const html = picker({ yes: gov, reasonId: 'dev-vote-reason-11' });
   assert.match(html, /<textarea id="dev-vote-reason-11" class="dev-vote-reason-box"/,
     'the same box, keyed by the issue id');
@@ -147,7 +149,8 @@ test('VoteButton draws the panel once for both homes, opens on Yes, and sends on
     'touch: the same panel inside the kit sheet\'s content element');
   // #3977: both homes are named by the picker's own header, which is "Your
   // approval" on a solo change whose Yes is the one it needs.
-  assert.match(fn, /const heading = approve \? 'Your approval' : 'Your vote';/);
+  assert.match(fn, /const heading = approve \? t\('project:card\.vote\.dialog\.approval'\) : t\('project:card\.vote\.dialog\.vote'\);/);
+  assert.deepEqual([message('project:card.vote.dialog.approval'), message('project:card.vote.dialog.vote')], ['Your approval', 'Your vote']);
   assert.match(fn, /aria-haspopup="dialog"/, 'the face says what it opens');
   assert.match(fn, /const startSide = \(\): 'yes' \| 'no' => \(mine === 'no' \? 'no' : 'yes'\);/, 'Yes by default; a viewer who voted No starts from No');
   assert.match(fn, /if \(open \|\| sheetRef\.current\) \{ shut\(\); return; \}\s*setSide\(startSide\(\)\);\s*setLine\(''\);/, 'reset on every open');
@@ -218,7 +221,8 @@ test('a test account\'s vote on an app a real person made says, in one line, tha
   assert.match(SRC, /uncounted=\{!!yes\.uncounted\}/);
   const appView = fs.readFileSync(path.join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
   assert.match(appView, /pr\.my_vote_uncounted === true \? \{ uncounted: true \} : \{\}/);
-  assert.match(appView, /Test account: this vote won’t count\./, 'the legacy vote rows carry the same words');
+  assert.match(appView, /data-vote-uncounted="">\$\{PlatformI18n\.htmlText\('changes:vote\.row\.uncounted'\)\}/, 'the legacy vote rows carry the same words');
+  assert.equal(message('changes:vote.row.uncounted'), 'Test account: this vote won’t count.');
   assert.match(CSS, /\.dev-vote-uncounted \{/);
   assert.match(CSS, /\.gc-vote-uncounted \{/);
 });
@@ -264,6 +268,29 @@ test('#3984: castVote and castIssueVote set the mark once the vote is committed 
 test('#3984: a notification\'s "Still yes" reads "Sending…" and its row takes no second press', () => {
   const sheet = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
   assert.match(sheet, /disabled=\{a\.key === 'still_yes' && busy\}/, 'only the vote waits; Accept, Decline and the rest do not');
-  assert.match(sheet, /\{a\.key === 'still_yes' && busy \? 'Sending…' : a\.label\}/);
+  assert.match(sheet, /\{a\.key === 'still_yes' && busy \? t\('notifications:row\.sending'\) : a\.label\}/);
+  assert.equal(message('notifications:row.sending'), 'Sending…');
   assert.match(sheet, /\.then\(\(\) => setBusy\(false\)\)/);
 });
+
+test('the counts come from the spec\'s own tally, whatever the label says and however it is punctuated', () => {
+  // A label is words in the language on screen; nothing reads a count back
+  // out of it. Spanish-style labels with no parentheses at all:
+  const si = { ...yes, label: 'Sí: 2/3' };
+  const nope = { ...no, label: 'No: 0/3' };
+  const html = picker({ yes: si, no: nope });
+  assert.match(html, /<span class="dev-vote-n">2\/3<\/span>/);
+  assert.match(html, /<span class="dev-vote-n">0\/3<\/span>/);
+  // And a label that happens to end in parentheses is not mistaken for a count.
+  const odd = picker({ yes: { ...yes, label: 'Yes (really)', tally: '5' }, no: { ...no, tally: '1' } });
+  assert.match(odd, /<span class="dev-vote-n">5<\/span>/);
+  assert.doesNotMatch(odd, /<span class="dev-vote-n">really<\/span>/);
+  const card = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/card/dev-card.tsx'), 'utf8');
+  const tab = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
+  for (const src of [card, tab]) {
+    assert.doesNotMatch(src, /exec\(a\.label/, 'no count is parsed out of a label');
+    assert.doesNotMatch(src, /\/\^Vote\\b\//, 'and no state is recognised by an English word');
+  }
+  assert.match(tab, /st\.label && !st\.plainVote/);
+});
+

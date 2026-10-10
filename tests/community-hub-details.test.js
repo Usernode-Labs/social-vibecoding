@@ -17,6 +17,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -266,7 +267,9 @@ test('#4457: the approval rule is drawn as three steps: its checks pass, who say
     'You approve it');
   // The drawing: three steps between two joins, the faces in the middle one.
   const src = CARD_SRC.slice(CARD_SRC.indexOf('export function ApprovalRules('));
-  assert.match(src, /<b>Its checks pass<\/b>[\s\S]*?className="dev-ws-rule-join"[\s\S]*?data-ws-rule-people=""[\s\S]*?className="dev-ws-rule-join"[\s\S]*?<b>It goes live<\/b>/);
+  assert.match(src, /<b>\{t\('project:communityCard\.step\.checks\.title'\)\}<\/b>[\s\S]*?className="dev-ws-rule-join"[\s\S]*?data-ws-rule-people=""[\s\S]*?className="dev-ws-rule-join"[\s\S]*?<b>\{t\('project:communityCard\.step\.live\.title'\)\}<\/b>/);
+  assert.deepEqual(['checks.title', 'checks.where', 'live.title', 'live.who'].map((k) => message(`project:communityCard.step.${k}`)),
+    ['Its checks pass', 'on a preview of the change', 'It goes live', 'for everyone, right away']);
   assert.match(src, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/approvers`\)|useApprovers\(slug, invited\)/);
   assert.match(CARD_SRC, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/approvers`\)/, 'the approvers come from their own route');
   assert.equal(typeof ApprovalRules, 'function');
@@ -310,7 +313,8 @@ test('#4527: the Approval rules card carries Edit, for exactly whom the rule let
 test('a person who has not joined sees "Recently" over the same rows', () => {
   assert.match(LANDER, /const outsider = !!community && !community\.is_member;/);
   // A first visit, with no last visit to be since, reads "Recently" too.
-  assert.match(LANDER, /<span className="dev-ws-head-title">\{v\.since && !outsider \? 'Since your last visit' : 'Recently'\}<\/span>/);
+  assert.match(LANDER, /<span className="dev-ws-head-title">\{v\.since && !outsider \? t\('project:since\.title\.sinceVisit'\) : t\('project:since\.title\.recently'\)\}<\/span>/);
+  assert.deepEqual([message('project:since.title.sinceVisit'), message('project:since.title.recently')], ['Since your last visit', 'Recently']);
   // The rows and Clear are the same for everyone (declared checks select on
   // Clear on Homeroom's page); only the heading's words change.
   assert.doesNotMatch(LANDER, /outsider \? null/);
@@ -334,23 +338,32 @@ test('Make it public and Make it private are the ⋯\'s (Make it public stays on
   // Share it card, asking under itself; on a private community's hub it is a
   // row of the ⋯ (#4045, decision D), asking through the platform's confirm.
   const pub = CARD_SRC.slice(CARD_SRC.indexOf('function MakePublic('), CARD_SRC.indexOf('export function canMakePrivate('));
-  assert.match(pub, />\s*Make it public\s*</);
+  assert.match(pub, />\s*\{t\('project:communityCard\.share\.makePublic'\)\}\s*</);
+  assert.equal(message('project:communityCard.share.makePublic'), 'Make it public');
   assert.match(pub, /const proposed = await proposeAudience\(slug, 'public'\);/);
-  assert.match(pub, /<p className="dev-ws-vote-sub">\{MAKE_PUBLIC_LINE\}<\/p>/);
-  assert.equal(MAKE_PUBLIC_LINE, 'Anyone can find it on Discover, join, and propose changes. '
+  assert.match(pub, /<p className="dev-ws-vote-sub">\{t\(MAKE_PUBLIC_LINE\)\}<\/p>/);
+  // The constant is the message's id; the catalog holds the words.
+  assert.equal(MAKE_PUBLIC_LINE, 'project:communityCard.makePublic.explain');
+  assert.equal(message(MAKE_PUBLIC_LINE), 'Anyone can find it on Discover, join, and propose changes. '
     + 'Members vote on this first, and it applies once it merges.', 'it says it is a proposal, not a switch');
   assert.doesNotMatch(CARD_SRC, /Open it up'|>Open it up<|opening it up/i, 'the old words are gone from what is drawn');
   const hero = CARD_SRC.slice(CARD_SRC.indexOf('export function CommunityCard('), CARD_SRC.indexOf('export function shareItLine('));
   assert.doesNotMatch(hero, /<MakePublic /, 'not a button in the hero any more');
   assert.match(CARD_SRC, /\{canOpenUp \? \(\s*<MakePublic /);
-  assert.match(CARD_SRC, /or make it public so anyone can join\./);
+  assert.match(CARD_SRC, /\? translate\('project:communityCard\.share\.lineBuilding'\)\s*: translate\('project:communityCard\.share\.line'\);/);
+  for (const id of ['project:communityCard.share.lineBuilding', 'project:communityCard.share.line']) {
+    assert.match(message(id), /or make it public so anyone can join\.$/);
+  }
   assert.equal(canMakePublic({ audience: 'invited', can_manage: true, audience_change: null }), true);
   assert.equal(canMakePublic({ audience: 'open', can_manage: true, audience_change: null }), false);
   assert.equal(canMakePublic({ audience: 'solo', can_manage: true, audience_change: null }), false, 'Share it has its own');
   assert.equal(canMakePublic({ audience: 'invited', can_manage: false, audience_change: null }), false);
   assert.equal(canMakePublic({ audience: 'invited', can_manage: true, audience_change: { session_id: 4 } }), false);
   const conf = CARD_SRC.slice(CARD_SRC.indexOf('export async function confirmMakePublic('), CARD_SRC.indexOf('export function canMakePublic('));
-  assert.match(conf, /ui\.confirm\(\{\s*title: `Make \$\{name\} a public community\?`,\s*message: MAKE_PUBLIC_LINE,\s*confirmLabel: 'Propose making it public',\s*cancelLabel: 'Not now',/);
+  assert.match(conf, /ui\.confirm\(\{\s*title: translate\('project:communityCard\.makePublic\.question', \{ project: name \}\),\s*message: translate\(MAKE_PUBLIC_LINE\),\s*confirmLabel: translate\('project:communityCard\.makePublic\.propose'\),\s*cancelLabel: translate\('project:communityCard\.makePublic\.notNow'\),/);
+  assert.equal(message('project:communityCard.makePublic.question', { project: 'Recipe Box' }), 'Make Recipe Box a public community?');
+  assert.equal(message('project:communityCard.makePublic.propose'), 'Propose making it public');
+  assert.equal(message('project:communityCard.makePublic.notNow'), 'Not now');
   // #4378: an owner still to verify is asked first; Not now (false) leaves it private.
   assert.match(conf, /if \(!ok\) return;\s*try \{\s*if \(!\(await proposeAudience\(slug, 'public'\)\)\) return;/);
   // LEAVE (#4045): the Joined pill's way out, as a row of the ⋯, for a
@@ -368,22 +381,31 @@ test('Make it public and Make it private are the ⋯\'s (Make it public stays on
   assert.equal(canMakePrivate({ audience: 'open', can_manage: true, audience_change: { session_id: 4 } }), false);
   assert.equal(canMakePrivate(null), false);
   const priv = CARD_SRC.slice(CARD_SRC.indexOf('export async function confirmMakePrivate('), CARD_SRC.indexOf('export async function confirmMakePublic('));
-  assert.match(priv, /ui\.confirm\(\{\s*title: `Make \$\{name\} a private community\?`,\s*message: MAKE_PRIVATE_LINE,\s*confirmLabel: 'Propose making it private',/);
+  assert.match(priv, /ui\.confirm\(\{\s*title: translate\('project:communityCard\.makePrivate\.question', \{ project: name \}\),\s*message: translate\(MAKE_PRIVATE_LINE\),\s*confirmLabel: translate\('project:communityCard\.makePrivate\.propose'\),/);
+  assert.equal(message('project:communityCard.makePrivate.question', { project: 'Recipe Box' }), 'Make Recipe Box a private community?');
+  assert.equal(message('project:communityCard.makePrivate.propose'), 'Propose making it private');
   assert.match(priv, /if \(!ok\) return;\s*try \{\s*await proposeAudience\(slug, 'private'\);/);
   assert.match(priv, /await reloadCommunity\(slug\);/, 'and the hero shows it up for a vote');
   const menu = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(menu, /\{onMakePrivate \? \(\s*<PlusRow\s+data-plus="make-private"[\s\S]{0,120}title="Make it private"[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePrivate\(\); \}\}/);
+  assert.match(menu, /\{onMakePrivate \? \(\s*<PlusRow\s+data-plus="make-private"[\s\S]{0,120}title=\{t\('project:menu\.makePrivate\.title'\)\}[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePrivate\(\); \}\}/);
+  assert.equal(message('project:menu.makePrivate.title'), 'Make it private');
   assert.ok(menu.indexOf('data-plus="make-private"') > menu.indexOf('id="dev-plus-settings"'), 'in the Settings & rules panel');
-  assert.match(menu, /\{onMakePublic \? \(\s*<PlusRow\s+data-plus="make-public"[\s\S]{0,140}title="Make it public"\s+sub="Anyone can find it on Discover and join\."[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePublic\(\); \}\}/);
+  assert.match(menu, /\{onMakePublic \? \(\s*<PlusRow\s+data-plus="make-public"[\s\S]{0,140}title=\{t\('project:menu\.makePublic\.title'\)\}\s+sub=\{t\('project:menu\.makePublic\.sub'\)\}[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePublic\(\); \}\}/);
+  assert.equal(message('project:menu.makePublic.title'), 'Make it public');
+  assert.equal(message('project:menu.makePublic.sub'), 'Anyone can find it on Discover and join.');
   assert.ok(menu.indexOf('data-plus="make-public"') > menu.indexOf('id="dev-plus-settings"')
     && menu.indexOf('data-plus="make-public"') < menu.indexOf('data-plus="make-private"'), 'the first of Settings & rules, beside Make it private');
-  assert.match(menu, /\{onLeave \? \(\s*<PlusRow\s+data-plus="leave"[\s\S]{0,140}title=\{appName \? `Leave \$\{appName\}` : 'Leave'\}[\s\S]{0,200}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onLeave\(\); \}\}/);
+  assert.match(menu, /\{onLeave \? \(\s*<PlusRow\s+data-plus="leave"[\s\S]{0,140}title=\{appName \? t\('project:menu\.leave\.named', \{ project: appName \}\) : t\('project:menu\.leave\.plain'\)\}[\s\S]{0,200}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onLeave\(\); \}\}/);
+  assert.equal(message('project:menu.leave.named', { project: 'Recipe Box' }), 'Leave Recipe Box');
+  assert.equal(message('project:menu.leave.plain'), 'Leave');
   assert.ok(menu.indexOf('data-plus="leave"') > menu.indexOf('data-plus="make-private"'), 'Leave follows them');
   // Private decides who can OPEN it. Every repository is public on GitHub
   // (services/github.js createRepo), so both say the code stays public.
-  assert.equal(MAKE_PRIVATE_LINE, 'Only people who are invited can open it and build it. '
+  assert.equal(MAKE_PRIVATE_LINE, 'project:communityCard.makePrivate.explain');
+  assert.equal(message(MAKE_PRIVATE_LINE), 'Only people who are invited can open it and build it. '
     + 'Its code stays public on GitHub. Members vote on this first, and it applies once it merges.');
-  assert.match(menu, /data-plus="make-private"[\s\S]{0,200}sub="Only invited people can open and build it\. Code stays public on GitHub\."/);
+  assert.match(menu, /data-plus="make-private"[\s\S]{0,200}sub=\{t\('project:menu\.makePrivate\.sub'\)\}/);
+  assert.equal(message('project:menu.makePrivate.sub'), 'Only invited people can open and build it. Code stays public on GitHub.');
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(lander, /onMakePrivate=\{canMakePrivate\(community\)\s*\? \(\) => \{ void confirmMakePrivate\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
   assert.match(lander, /onMakePublic=\{canMakePublic\(community\)\s*\? \(\) => \{ void confirmMakePublic\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
@@ -415,7 +437,9 @@ test('a Mayor card refused for membership offers Join, then asks the Mayor to tr
   const screen = read('frontend/src/features/agent-session/index.tsx');
   const join = screen.slice(screen.indexOf('function JoinToRetry('), screen.indexOf('function Card('));
   assert.match(join, /home\.setMembership\(join\.slug, true, undefined, \{ name: join\.name \}\)/, 'the one join path');
-  assert.match(join, /void sendAgentMessage\(`I joined \$\{join\.name\}\. Please try "\$\{card\.title\}" again\.`\);/);
+  assert.match(join, /void sendAgentMessage\(t\('agent:session\.join\.joinedMessage', \{ community: join\.name, action: card\.title \}\)\);/);
+  assert.equal(message('agent:session.join.joinedMessage', { community: 'Notes', action: 'File a request' }),
+    'I joined Notes. Please try "File a request" again.');
   assert.match(screen, /\{card\.status === 'failed' && card\.join \? \(\s*<JoinToRetry card=\{card\} join=\{card\.join\} \/>/);
   // No prose from the Mayor under the Join button: the card asks.
   const routes = read('src/routes/agent-sessions.js');

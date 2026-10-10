@@ -58,7 +58,10 @@ test('#4053: the build line a first version\'s thumbnail shows, for its creator 
   // (frontend/src/features/first-session/build-line-words.js).
   const words = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/first-session/build-line-words.js'), 'utf8');
   for (const [state, step] of [['building', 4], ['testing', 5], ['ready', 6], ['live', 7]]) {
-    assert.ok(words.includes(`${/-/.test(state) ? `'${state}'` : state}: '${progress.FIRST_VERSION_STEPS[step - 1]}',`), state);
+    // The table holds each line's message id; its English is the step's name.
+    const id = new RegExp(`\\b${state}: '(onboarding:buildLine\\.[A-Za-z]+)',`).exec(words);
+    assert.ok(id, state);
+    assert.equal(require('./lib/platform-i18n').message(id[1]), progress.FIRST_VERSION_STEPS[step - 1], state);
   }
 });
 

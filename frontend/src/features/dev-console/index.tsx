@@ -29,6 +29,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 
 import { XIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { messageStamp } from '../../lib/timestamp';
 import { devConsole, type DevConsoleEntry } from './store';
@@ -53,6 +54,7 @@ function LogRow({ entry }: { entry: DevConsoleEntry }) {
 }
 
 export function DevConsolePanel() {
+  const t = useMessages('devchat');
   const version = useSyncExternalStore(
     devConsole.subscribe,
     devConsole.getSnapshot,
@@ -139,7 +141,7 @@ export function DevConsolePanel() {
     >
       <div className="flex items-center gap-3 px-3 py-2 border-b border-zinc-800 shrink-0 text-sm">
         <span className="font-medium text-zinc-200">
-          Developer console
+          {t('devchat:console.title')}
         </span>
         <span id="dev-console-counts" className="text-xs text-zinc-400">
           {showLive ? devConsole.countsLabel() : null}
@@ -152,22 +154,22 @@ export function DevConsolePanel() {
           onChange={(e) => devConsole.setFilter(e.target.value)}
         >
           <option value="all">
-            All
+            {t('devchat:console.filter.all')}
           </option>
           <option value="error">
-            Errors
+            {t('devchat:console.filter.errors')}
           </option>
           <option value="warn">
-            Warnings
+            {t('devchat:console.filter.warnings')}
           </option>
           <option value="info">
-            Info
+            {t('devchat:console.filter.info')}
           </option>
           <option value="log">
-            Log
+            {t('devchat:console.filter.log')}
           </option>
           <option value="debug">
-            Debug
+            {t('devchat:console.filter.debug')}
           </option>
         </select>
         <button
@@ -175,12 +177,12 @@ export function DevConsolePanel() {
           className="text-xs text-zinc-400 hover:text-zinc-200"
           onClick={() => devConsole.clear()}
         >
-          Clear
+          {t('devchat:console.clear')}
         </button>
         <button
           id="dev-console-close"
           className="text-zinc-400 hover:text-zinc-100"
-          aria-label="Close"
+          aria-label={t('core:common.close')}
           onClick={() => devConsole.hide()}
         >
           <XIcon className="w-4 h-4" />
@@ -201,7 +203,7 @@ export function DevConsolePanel() {
         id="dev-console-empty-hint"
         className="hidden px-3 py-2 text-xs text-zinc-400 border-t border-zinc-800 shrink-0"
       >
-        No messages yet. If this app was created before dev-console support shipped, ask the coding agent in Dev Chat to "add dev-console forwarding to public/index.html".
+        {t('devchat:console.empty')}
       </div>
     </div>
   );

@@ -69,6 +69,7 @@ import {
   TabsTrigger,
 } from '@/components/ui/tabs';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useScrollFade } from '../../lib/use-scroll-fade';
 import { useStoreState } from '../../lib/use-store-state';
 import { MessageButton } from '../profile/message-button';
@@ -92,6 +93,8 @@ type PrRow = {
   rank: number;
   title: string;
   author: string;
+  /** `author` is the stand-in for an author nobody can name. */
+  authorUnknown?: boolean;
   appName: string;
   badge: Badge;
   slug: string;
@@ -227,8 +230,9 @@ function Dot(): ReactNode {
  * board does not watch placeholders evaporate.
  */
 function Loading(): ReactNode {
+  const t = useMessages('leaderboard');
   return (
-    <SkeletonGroup label="Loading the leaderboard" className="space-y-2">
+    <SkeletonGroup label={t('leaderboard:kudos.loading')} className="space-y-2">
       {Array.from({ length: 5 }, (_, i) => (
         <div key={i} className={ROW}>
           <div className="w-7 flex justify-center">
@@ -252,6 +256,7 @@ function Loading(): ReactNode {
  * queue a second fetch behind the first.
  */
 function More({ more }: { more: MoreView }): ReactNode {
+  const t = useMessages('leaderboard');
   if (!more) return null;
   return (
     <div className="mt-3 text-center">
@@ -261,7 +266,7 @@ function More({ more }: { more: MoreView }): ReactNode {
         disabled={more.loading}
         onClick={() => controller()?._loadMore()}
       >
-        {more.loading ? 'Loading…' : 'Load more'}
+        {more.loading ? t('leaderboard:kudos.loadingMore') : t('leaderboard:kudos.loadMore')}
       </button>
     </div>
   );
@@ -280,6 +285,7 @@ function More({ more }: { more: MoreView }): ReactNode {
  * replaced honoured.
  */
 function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }> }): ReactNode {
+  const t = useMessages('leaderboard');
   return (
     <header className="mb-4">
       <a
@@ -298,7 +304,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
           window.location.hash = '#leaderboard/users';
         }}
       >
-        ← Top users
+        {t('leaderboard:kudos.person.back')}
       </a>
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
@@ -309,7 +315,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
             {`@${view.who}`}
           </h2>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            All changes this user has proposed, newest first.
+            {t('leaderboard:kudos.person.intro')}
           </p>
         </div>
         {/*
@@ -399,6 +405,7 @@ function TabChrome({ view }: { view: Extract<ChromeView, { kind: 'tabs' }> }): R
 // ── Body ───────────────────────────────────────────────────────────────
 
 function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
+  const t = useMessages('leaderboard');
   return (
     <div className="space-y-2">
       {rows.map((row) => (
@@ -414,7 +421,7 @@ function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
             <div className={ROW_TITLE}>{row.title}</div>
             <div className={ROW_META}>
               <StatusBadge badge={row.badge} />
-              <span>{`by @${row.author}`}</span>
+              <span>{row.authorUnknown ? t('leaderboard:kudos.row.byUnknown') : t('leaderboard:kudos.row.by', { username: row.author })}</span>
               <Dot />
               <span>{row.appName}</span>
             </div>
@@ -430,6 +437,7 @@ function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
 }
 
 function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
+  const t = useMessages('leaderboard');
   return (
     <div className="space-y-2">
       {rows.map((row) => (
@@ -457,12 +465,12 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           {row.unmergedNote ? (
             <span
               className="shrink-0 text-[11px] text-amber-800 dark:text-amber-400"
-              title="Kudos on changes that aren’t live yet, not counted toward ranking"
+              title={t('leaderboard:kudos.user.notLiveTip')}
             >
               {row.unmergedNote}
             </span>
           ) : null}
-          <div className={KUDOS_PILL} title="Kudos earned on live changes">
+          <div className={KUDOS_PILL} title={t('leaderboard:kudos.user.earnedTip')}>
             <span aria-hidden="true">{CLAP}</span>
             <span>{row.mergedKudos}</span>
           </div>
@@ -479,6 +487,7 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
  * back — and the link stops its own click from also routing the row.
  */
 function ProfileRows({ rows }: { rows: ProfileRow[] }): ReactNode {
+  const t = useMessages('leaderboard');
   return (
     <div className="space-y-2">
       {rows.map((row) => (
@@ -512,12 +521,12 @@ function ProfileRows({ rows }: { rows: ProfileRow[] }): ReactNode {
               target="_blank"
               rel="noopener"
               data-lb-ext=""
-              title="Open on GitHub"
+              title={t('leaderboard:kudos.person.openOnGithub')}
               className="shrink-0 px-1.5 py-0.5 rounded text-sm text-zinc-500 hover:text-violet-600 dark:hover:text-violet-400 dark:text-zinc-400"
               onClick={(e) => e.stopPropagation()}
             >
               <span aria-hidden="true">↗</span>
-              <span className="sr-only">Open on GitHub</span>
+              <span className="sr-only">{t('leaderboard:kudos.person.openOnGithub')}</span>
             </a>
           ) : null}
           <div className={KUDOS_PILL}>
@@ -531,12 +540,13 @@ function ProfileRows({ rows }: { rows: ProfileRow[] }): ReactNode {
 }
 
 function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> }): ReactNode {
+  const t = useMessages('leaderboard');
   return (
     <>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold"
-          title="Kudos earned on live changes: the leaderboard ranking score"
+          title={t('leaderboard:kudos.person.onLiveTip')}
         >
           <span aria-hidden="true">{CLAP}</span>
           <span>{view.stats.kudosMerged}</span>
@@ -553,13 +563,14 @@ function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> })
       </div>
       {view.rows
         ? <ProfileRows rows={view.rows} />
-        : <div className={HINT}>No changes proposed yet.</div>}
+        : <div className={HINT}>{t('leaderboard:kudos.person.none')}</div>}
       <More more={view.more} />
     </>
   );
 }
 
 function Marker({ marker }: { marker: HistoryRow['marker'] }): ReactNode {
+  const t = useMessages('leaderboard');
   if (marker.kind === 'kudos') {
     return <span className="text-base" aria-hidden="true">{CLAP}</span>;
   }
@@ -567,14 +578,14 @@ function Marker({ marker }: { marker: HistoryRow['marker'] }): ReactNode {
     return (
       <span className="inline-flex items-center gap-1">
         <span className="text-base" aria-hidden="true">{CLAP}</span>
-        <StatusBadge badge={{ tone: 'amber', label: 'bounty' }} />
+        <StatusBadge badge={{ tone: 'amber', label: t('leaderboard:kudos.history.bounty') }} />
       </span>
     );
   }
   if (marker.kind === 'pr_vote') {
     return marker.yes
-      ? <StatusBadge badge={{ tone: 'emerald', label: 'yes' }} />
-      : <StatusBadge badge={{ tone: 'red', label: 'no' }} />;
+      ? <StatusBadge badge={{ tone: 'emerald', label: t('leaderboard:kudos.history.yes') }} />
+      : <StatusBadge badge={{ tone: 'red', label: t('leaderboard:kudos.history.no') }} />;
   }
   return marker.up
     ? <span className="text-emerald-700 dark:text-emerald-400 font-bold" aria-hidden="true">▲</span>

@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -47,7 +48,8 @@ test('openBot attaches a complete change directly, and leaves anything less to t
     strictId: (v) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : null),
   }, { get: (t, k) => (k in t ? t[k] : () => { throw new Error(`api.${String(k)} not stubbed`); }) });
   const store = loadTsx('frontend/src/features/messages/store.ts', { stubs: { './api': fakeApi } });
-  assert.equal(store.ASK_FOR_CHANGES_PLACEHOLDER, 'What should change?');
+  assert.equal(message('messages:store.askForChangesPlaceholder'), 'What should change?');
+  assert.equal(store.ASK_FOR_CHANGES_PLACEHOLDER, 'messages:store.askForChangesPlaceholder');
 
   assert.equal(store.stagedComplete({ type: 'proposal', sessionId: 6269, appSlug: 'flat-4b-chores-e98ecd' }), true);
   assert.equal(store.stagedComplete({ type: 'proposal', sessionId: 6269, appId: 12 }), true);
@@ -74,7 +76,9 @@ test('the composer takes the attached change: its chip, its prompt, the caret, a
   assert.match(composer, /window\.addEventListener\('usernode:messages-attach', attachPending\);/);
   assert.match(composer, /const pending = takePendingAttach\(conversationId\);/);
   assert.match(composer, /setObject\(pending\.object\); setPrompt\(pending\.placeholder\); setFocusWanted\(true\);/);
-  assert.match(composer, /placeholder=\{inThread \? 'Reply in thread…' : \(prompt \|\| 'Message…'\)\}/);
+  assert.equal(message('messages:composer.placeholderThread'), 'Reply in thread…');
+  assert.equal(message('messages:composer.placeholder'), 'Message…');
+  assert.match(composer, /placeholder=\{inThread \? t\('messages:composer\.placeholderThread'\) : \(prompt \|\| t\('messages:composer\.placeholder'\)\)\}/);
   assert.match(composer, /\{pendingObjectLabel\(object, stagedCard\)\}/);
   assert.match(composer, /object: object \? referenceOf\(object\) : undefined/, 'the staged title is never sent');
   assert.match(composer, /api\.resolveLinkCards\(\[\{ type, appSlug, issueNumber, sessionId, proposalId \}\]\)/,
@@ -123,7 +127,7 @@ test('the Share item dialog opens on the app it came from, the viewer\'s own pro
   // #3937: the dropdown's two option groups are the list's filter chips now,
   // and the list itself still leads with the viewer's own projects.
   assert.deepEqual(filterAppChoices(apps).map((a) => a.id), [2, 4, 1, 3]);
-  assert.deepEqual(APP_GROUPS.map((g) => g.label), ['All', 'Your projects', 'Other projects']);
+  assert.deepEqual(APP_GROUPS.map((g) => message(g.label)), ['All', 'Your projects', 'Other projects']);
   assert.match(dialog, /setAppId\(prefilledAppId\(apps, reference\)\);/);
   assert.match(dialog, /setAppId\(prefilledAppId\(apps, \{ appSlug: wantedSlug \}\)\);/, 'chosen once the list it is in loads');
   const api = read('frontend/src/features/messages/api.ts');

@@ -927,6 +927,7 @@ function router({ embedded = false, takes = true } = {}) {
   const root = fakeElement();
   if (embedded) root.classList.add('in-side-panel');
   const context = vm.createContext({
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     location: new URL('https://homeroom.test/'),
     history: { pushState() {}, replaceState() {}, state: null },
     URL, URLSearchParams, console, setTimeout, clearTimeout,

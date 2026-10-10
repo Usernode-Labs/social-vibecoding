@@ -25,6 +25,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -128,6 +129,7 @@ function makeAppView(over) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
@@ -905,7 +907,8 @@ test('#3293: the weeks go back, one at a time, to the project’s start', async 
   assert.match(html, /data-ws-weeks-more="">/, 'live while there is more');
   assert.ok(!html.includes('data-ws-week-start'), 'with no floor drawn mid-list');
   // THE BEGINNING, SAID, once the list is walked to its end, and only then.
-  assert.match(WORKSHOP, /\) : firstWeek \? \(\s*<p className="dev-ws-week-note" data-ws-week-start="">\s*\{`This project started the week of \$\{weekDate\(firstWeek\)\}\.`\}/);
+  assert.match(WORKSHOP, /\) : firstWeek \? \(\s*<p className="dev-ws-week-note" data-ws-week-start="">\s*\{t\('project:since\.projectStarted', \{ date: weekDate\(firstWeek\) \}\)\}/);
+  assert.equal(message('project:since.projectStarted', { date: 'Aug 25' }), 'This project started the week of Aug 25.');
 
   // A cache written before the counts existed carries none, and the week
   // draws its line alone rather than a zero.
@@ -1093,7 +1096,8 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   assert.ok(!html.includes('data-ws-since-btn'), 'the disclosure is gone');
   assert.ok(!/\.dev-ws-since-row/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '')), 'the pressable row rule went with it');
   // Nothing new is ONE line. Clear moves the line to now.
-  assert.match(WORKSHOP, /<p className="dev-ws-none" data-ws-since-none="">Nothing new since you were last here\.<\/p>/);
+  assert.match(WORKSHOP, /<p className="dev-ws-none" data-ws-since-none="">\{t\('project:since\.none'\)\}<\/p>/);
+  assert.equal(message('project:since.none'), 'Nothing new since you were last here.');
   assert.match(WORKSHOP, /callAppView\('_workshopClearSince', slug, v\.since\.through\)/);
   // Own ongoing work is not repeated; its merged outcomes are retained.
   // #4538: nor is a bot change built from the viewer's request, while Your
@@ -1904,8 +1908,9 @@ test('Open card goes to the item\u2019s page, from the Workshop as from the Boar
   const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
   assert.match(unfolded, /actionEnd=\{placement \? openBtn : undefined\}/, 'the band seat, on both surfaces');
   assert.match(unfolded, /detail: placement = 'actions',/, 'and it is the default, so the Workshop passes nothing');
-  assert.match(unfolded, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/,
+  assert.match(unfolded, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{t\('project:card\.fold\.openCard'\)\}<\/a>/,
     'one anchor, one label');
+  assert.equal(message('project:card.fold.openCard'), 'Open card');
   assert.ok(!/TopicBodySections|readAppView|useState/.test(unfolded),
     'nothing left that built or held an in-place body');
   assert.equal(AppView._devTopic, null, 'and reading the source navigated nothing');
@@ -2160,7 +2165,11 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   assert.equal(rowWords({ ...b, n: 4456, linked: [4455, 4452], ago: '4m ago' }), 'PR #4456 · evan · for #4455 and #4452 · 4m ago');
   assert.equal(rowWords({ ...plain(claimed.brief), by: 'evan', category: 'Bug', replies: 3, ago: '8h ago' }), '#12 · evan · 8h ago');
   assert.equal(rowWords({ ...b, kind: 'live', linked: [], closed: [4453], n: 4454, ago: '1h ago' }), 'PR #4454 · evan · closed #4453 · 1h ago');
-  assert.equal(rowWords({ ...b, kind: 'vote', noun: 'Vote', linked: [], n: 7 }), 'Vote #7 · evan');
+  assert.equal(rowWords({ ...b, kind: 'vote', noun: 'vote', linked: [], n: 7 }), 'Vote #7 · evan');
+  // `noun` is a key; the words are the row's messages.
+  assert.equal(b.noun, 'change');
+  assert.equal(message('project:workRow.name.changeNumbered', { number: 4456 }), 'PR #4456');
+  assert.equal(message('project:workRow.name.requestNumbered', { number: 12 }), '#12');
   // #4485 took "yours" off Your work; the board's words never say it at all:
   // a row of yours names you as its maker, as every other row names its own.
   assert.equal(b.mine, true);
@@ -2607,7 +2616,8 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   // THE RAIL ON THE END CARD is the move pair alone, so the way back up stays
   // where the thumb learned it is and the stage keeps its width on a wide
   // window; the item rail is drawn only for an item.
-  assert.match(WORKSHOP, /<aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label="The end of the feed">\s*\{moveRow\}/);
+  assert.match(WORKSHOP, /<aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label=\{t\('project:needsYou\.rail\.endLabel'\)\}>\s*\{moveRow\}/);
+  assert.equal(message('project:needsYou.rail.endLabel'), 'The end of the feed');
   assert.match(WORKSHOP, /const row = i < n \? items\[i\] : null;/, 'index n is the end card, with no row');
   assert.match(WORKSHOP, /const idx = key === END_KEY \? items\.length : items\.findIndex/,
     'a reader on the end card stays on it when rows arrive or leave above');
@@ -2637,8 +2647,13 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   assert.match(empty, /dev-ws-needs-done-line">You’re all caught up\.</);
   assert.match(empty, /Every change you can vote on has your answer, and every open request has somebody on it\./);
   // Plain words (#3861 follow-up, 5 Oct 2026 run): the end card says changes, as the cards above it do.
-  assert.match(WORKSHOP, /You voted on \$\{plural\(acted, 'change', 'changes'\)\} this time\./);
-  assert.ok(!/open proposals voted on|Every proposal you can vote on|'proposal', 'proposals'\) this time/.test(WORKSHOP), 'no proposal wording left on the end card');
+  assert.match(WORKSHOP, /if \(acted > 0\) parts\.push\(t\('project:needsYou\.end\.voted', \{ count: acted \}\)\);/);
+  assert.equal(message('project:needsYou.end.voted', { count: 1 }), 'You voted on 1 change this time.');
+  assert.equal(message('project:needsYou.end.voted', { count: 3 }), 'You voted on 3 changes this time.');
+  const endCard = Object.entries(JSON.parse(read('frontend/locales/en/project.json')))
+    .filter(([key]) => key.startsWith('needsYou.end.')).map(([, entry]) => entry.text);
+  assert.ok(endCard.length >= 10, 'the end card\'s entries are found');
+  assert.ok(!endCard.some((text) => /proposal/i.test(text)), 'no proposal wording left on the end card');
   assert.ok(!empty.includes('data-ws-done-back'), 'nothing to go back to');
   assert.ok(!empty.includes('data-ws-rail'), 'and no rail');
 });
@@ -2689,7 +2704,8 @@ test('the footnote says what is actually happening to the grouping', () => {
   assert.match(html, /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Being placed<\/div>/);
   // The row's marker: the pseudo-theme is folded on a plain paint, so the
   // marker is pinned at the source, on the folded row.
-  assert.match(FOLD, /\{row\.placing \? <span className="dev-ws-placing"[^>]*>placing…<\/span> : null\}/);
+  assert.match(FOLD, /\{row\.placing \? <span className="dev-ws-placing"[^>]*>\{t\('project:card\.fold\.placing'\)\}<\/span> : null\}/);
+  assert.equal(message('project:card.fold.placing'), 'placing…');
   assert.match(CSS, /\.dev-ws-placing \{/);
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
@@ -2929,7 +2945,8 @@ test('the Workshop is a menu row, and an anchor at its route (#2761)', () => {
   assert.ok(!/data-context-row="board"|dataContextRow="board"/.test(SHEET_TSX),
     'and the Board segment after it — the Workshop and the kanban are one '
     + 'screen in two layouts, so the layout is not a destination in the menu');
-  assert.match(SHEET_TSX, /label="Go to community"/);
+  assert.match(SHEET_TSX, /label=\{t\('agent:appContext\.row\.community'\)\}/);
+  assert.equal(message('agent:appContext.row.community'), 'Go to community');
 });
 
 test('the declared checks cover the lander, its strips and an unfolded row', () => {
@@ -3749,8 +3766,9 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   // somebody who has had an agent session (first-session run-through, 5 Oct
   // 2026): the ⋯ has it for every writer the note is shown to.
   const ROW = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(ROW, /\{readOnly \? null : \([\s\S]*?data-plus="new-change"[\s\S]*?title="Build it now"/,
+  assert.match(ROW, /\{readOnly \? null : \([\s\S]*?data-plus="new-change"[\s\S]*?title=\{t\('project:menu\.build\.title'\)\}/,
     'the ⋯ carries Build it now for every writer');
+  assert.equal(require('./lib/platform-i18n').message('project:menu.build.title'), 'Build it now');
   const empty = (over) => {
     const AppView = makeAppView();
     seed(AppView);
@@ -3807,7 +3825,11 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   });
   // Both notes are one component, so the two tabs cannot drift apart, and the
   // banner's condition is written once, for the banner and the note alike.
-  assert.equal((WORKSHOP.match(/'Nothing on the board yet\. Press '/g) || []).length, 1);
+  // One component, whose sentence is one whole message picked from one table.
+  assert.equal((WORKSHOP.match(/<RichMessage id=\{press\} /g) || []).length, 1);
+  assert.equal((WORKSHOP.match(/'project:boardEmpty\.press\./g) || []).length, 8, 'where the ⋯ is, what it holds, and whether "make one yourself" is said');
+  assert.equal(message('project:boardEmpty.press.hub.plain.full'),
+    'Nothing on the board yet. Press <0>⋯</0> to suggest an improvement; to make one yourself, use Build it now there.');
   assert.match(WORKSHOP, /\{startHere \? <StartHereBanner \/> : null\}/);
   assert.match(WORKSHOP, /<EmptyNote\s+filtered=\{!!v\.emptyNote\.filtered\}\s+loadFailed=\{v\.emptyNote\.loadFailed\}\s+underStartHere=\{startHere\}\s+onHub\s*\/>/);
 });
@@ -4715,7 +4737,8 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   // sent the first row's click to the wrong descriptor on a desktop.
   assert.match(appView, /_cardMenuItems\(key, own\)/);
   assert.match(appView, /_cardMenuItems\(open\.key, open\.own\)/);
-  assert.match(appView, /label: 'Open card',/);
+  assert.match(appView, /label: PlatformI18n\.t\('changes:card\.menu\.openCard'\),/);
+  assert.equal(message('changes:card.menu.openCard'), 'Open card');
 });
 
 test('the lander fills its scroller without a percentage in the floor', () => {
@@ -4857,24 +4880,30 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   assert.ok(!/data-ws-tint=\{index % 2/.test(WORKSHOP), 'and never from the index of the moment');
   assert.match(WORKSHOP, /el\.style\.scrollBehavior = 'auto';\s*el\.scrollTop = idx \* el\.clientHeight;\s*el\.style\.scrollBehavior = '';/,
     'a position correction is instant, whatever the scroller\'s own behaviour');
-  assert.match(WORKSHOP, /\$\{answeredWords\(row, voted\)\} · \$\{wide \? 'press ↓ or scroll' : 'swipe up'\} for the next/,
+  assert.match(WORKSHOP, /\{factsLine\(\[answeredWords\(row, voted, 'item'\), wide \? t\('project:needsYou\.next\.wide'\) : t\('project:needsYou\.next\.phone'\)\]\)\}/,
     'and the eyebrow becomes the confirmation');
+  assert.equal(message('project:facts.pair', { first: message('project:needsYou.answered.votedYes'), second: message('project:needsYou.next.wide') }),
+    'Voted yes · press ↓ or scroll for the next');
+  assert.equal(message('project:facts.pair', { first: message('project:needsYou.answered.votedNo'), second: message('project:needsYou.next.phone') }),
+    'Voted no · swipe up for the next');
   // "Voted yes", or on a Just-you change "Approved" / "Not approved" (#3977).
-  assert.match(WORKSHOP, /if \(!approves\(row\)\) return `Voted \$\{voted\}`;\s*return voted === 'yes' \? 'Approved' : 'Not approved';/);
+  assert.match(WORKSHOP, /if \(!approves\(row\)\) return yes \? translate\('project:needsYou\.answered\.votedYes'\) : translate\('project:needsYou\.answered\.votedNo'\);\s*return yes \? translate\('project:needsYou\.answered\.approved'\) : translate\('project:needsYou\.answered\.notApproved'\);/);
+  assert.deepEqual([message('project:needsYou.answered.approved'), message('project:needsYou.answered.notApproved')], ['Approved', 'Not approved']);
   // THE ARROWS: icon buttons with a NAME, since a chevron alone has none,
   // disabled at the ends rather than wrapping. Hidden on a phone, where the
   // swipe is the move; on a wide window they do what the wheel does.
   assert.match(WORKSHOP, /<div className="dev-ws-move" data-ws-move-row="">/);
   for (const [dir, guard, name] of [
-    ['prev', /disabled=\{i <= 0\}/, /aria-label="Previous"/],
+    ['prev', /disabled=\{i <= 0\}/, /aria-label=\{t\('project:needsYou\.move\.previous'\)\}/],
     // `n`, not `n - 1`: the end card is the last slot (#2172).
-    ['next', /disabled=\{i >= n\}/, /aria-label="Next"/],
+    ['next', /disabled=\{i >= n\}/, /aria-label=\{t\('project:needsYou\.move\.next'\)\}/],
   ]) {
     const btn = new RegExp(`data-ws-move="${dir}"[\\s\\S]{0,240}?</button>`).exec(WORKSHOP);
     assert.ok(btn, `the ${dir} control exists`);
     assert.match(btn[0], guard, `${dir} is disabled at its end rather than wrapping`);
     assert.match(btn[0], name, `${dir} is named`);
   }
+  assert.deepEqual([message('project:needsYou.move.previous'), message('project:needsYou.move.next')], ['Previous', 'Next']);
   assert.match(CSS, /\.dev-ws-move \{ display: none; \}/, 'no arrows on a phone');
   // The count rides each item's own top line beside its eyebrow: it answers
   // "where am I" for the thing in front of you.
@@ -4887,7 +4916,8 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   // render, and going back by the same `go` the keys and arrows use.
   const prev = /\{onPrev && index > 0 \? \(\s*<button[^>]*data-ws-item-prev=""[^>]*>/.exec(WORKSHOP);
   assert.ok(prev, 'the item draws its Previous from the second item on, when handed one');
-  assert.match(prev[0], /aria-label="Previous item"/, 'a chevron alone has no name');
+  assert.match(prev[0], /aria-label=\{t\('project:needsYou\.previousItem'\)\}/, 'a chevron alone has no name');
+  assert.equal(message('project:needsYou.previousItem'), 'Previous item');
   assert.match(prev[0], /onClick=\{onPrev\}/);
   assert.match(WORKSHOP, /onPrev=\{wide \? undefined : prevItem\}/, 'a phone only: a wide window has the arrows');
   assert.match(WORKSHOP, /const prevItem = useCallback\(\(\) => goRef\.current\(-1\), \[\]\);/);
@@ -5132,7 +5162,8 @@ test('the read-only demo check names the pane its proposal is actually on', () =
   assert.match(p, /[?&]col=inreview(&|$)/, 'the column a promoted proposal buckets into');
   // The bucketing this leans on, pinned here so moving `promoted` to another
   // column fails locally rather than as a red check on somebody's proposal.
-  assert.match(APP_VIEW_SRC, /key: 'inreview', title: 'Waiting for approval'/);
+  assert.match(APP_VIEW_SRC, /key: 'inreview', title: PlatformI18n\.t\('changes:board\.column\.review'\)/);
+  assert.equal(message('changes:board.column.review'), 'Waiting for approval');
   assert.match(APP_VIEW_SRC, /rows: cardRows\(\s*kInReview,\s*\(x\) => \(x\.kind === 'proposal'/);
 });
 
@@ -5523,7 +5554,8 @@ test('the Needs-you card is marked voted only once the server has the vote (QA 2
   assert.match(body, /pinsRef\.current\.delete\(key\)/, 'a cancelled or failed vote drops the pin this press added');
   assert.match(body, /\{ onSend \}/, 'the rail says "Sending…" from the moment the vote is committed');
   assert.match(body, /if \(sendingRef\.current\.has\(key\)\) return;/, 'one vote per card in flight');
-  assert.match(WORKSHOP, /sending\[row\.key\] \? 'Sending…' : \(approves\(row\) \? 'Approve' : 'Vote'\)/);
+  assert.match(WORKSHOP, /sending\[row\.key\] \? t\('project:needsYou\.rail\.sending'\) : \(approves\(row\) \? t\('project:needsYou\.rail\.approve'\) : t\('project:needsYou\.rail\.vote'\)\)/);
+  assert.deepEqual(['sending', 'approve', 'vote'].map((key) => message(`project:needsYou.rail.${key}`)), ['Sending…', 'Approve', 'Vote']);
   // castVote's side of the contract.
   const view = read('public/js/app-view.js');
   const cast = view.slice(view.indexOf('  async castVote(sessionId, vote'));
@@ -5546,7 +5578,9 @@ test('#3977: on a project that is just yours, the Needs-you item reads Approve a
   assert.match(html, /<span class="dev-ws-rail-lab">Approve<\/span>/);
   assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">Approve<\/span>/);
   assert.match(html, /<span class="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">Don’t approve<\/span>/);
-  assert.match(WORKSHOP, /<p className="dev-ws-keys-hint" aria-hidden="true">\{approves\(row\) \? 'Y approve · N don’t approve · Enter send · Esc close' : 'Y yes · N no · Enter vote · Esc close'\}<\/p>/);
+  assert.match(WORKSHOP, /<p className="dev-ws-keys-hint" aria-hidden="true">\{approves\(row\) \? t\('project:needsYou\.voteSheet\.keysApprove'\) : t\('project:needsYou\.voteSheet\.keysVote'\)\}<\/p>/);
+  assert.equal(message('project:needsYou.voteSheet.keysApprove'), 'Y approve · N don’t approve · Enter send · Esc close');
+  assert.equal(message('project:needsYou.voteSheet.keysVote'), 'Y yes · N no · Enter vote · Esc close');
   assert.match(WORKSHOP, /approve=\{approves\(row\)\}/, 'and the sheet\'s form is the card\'s picker, as an approval');
   // A group's row is a vote, word for word.
   const group = makeAppView();

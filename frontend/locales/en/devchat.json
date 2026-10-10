@@ -1,0 +1,2458 @@
+{
+  "commentPin.toast.postedBuilding": {
+    "text": "Posted to {{place}}. Homeroom bot is building it.",
+    "description": "Toast after a request written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted and Homeroom's bot started building it. {{place}} is where it went: the app's name, or Homeroom. 'Homeroom bot' is the name of the platform's coding agent."
+  },
+  "commentPin.toast.posted": {
+    "text": "Posted to {{place}}. Thanks!",
+    "description": "Toast after a request written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted. {{place}} is where it went: the app's name, or Homeroom."
+  },
+  "commentPin.shot.none": {
+    "text": "No screenshot.",
+    "description": "Line beside the pictures in the comment box in comment mode (the box beside a pin where the person writes their request) after the person removed the screenshots: the request will be posted without them."
+  },
+  "commentPin.shot.taking": {
+    "text": "Taking a screenshot…",
+    "description": "Line beside the pictures in the comment box in comment mode (the box beside a pin where the person writes their request) while the picture of the page is still being captured."
+  },
+  "commentPin.shot.attached": {
+    "text": "Screenshot of this page, with your pin",
+    "description": "Line beside the screenshot thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request), when the request has one comment: a screenshot showing where the person placed their pin will be attached."
+  },
+  "commentPin.shot.failed": {
+    "text": "No screenshot. Your words still go.",
+    "description": "Line beside the pictures in the comment box in comment mode (the box beside a pin where the person writes their request) when no picture of the page could be taken and no image was added: the request is still posted, without a picture."
+  },
+  "commentPin.shot.remove": {
+    "text": "Remove",
+    "description": "Tooltip of the small ✕ on the screenshot thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request): posts the request without the screenshots."
+  },
+  "commentPin.shot.addBack": {
+    "text": "Add it back",
+    "description": "Small button after \"No screenshot.\" in the comment box in comment mode (the box beside a pin where the person writes their request), after the screenshots were removed: attaches them again."
+  },
+  "commentPin.textLabel": {
+    "text": "Your comment",
+    "description": "Accessible name of the text box in the comment box in comment mode (the box beside a pin where the person writes their request) where the person writes their comment, when the request has only one."
+  },
+  "commentPin.placeholder": {
+    "text": "What should change here?",
+    "description": "Placeholder in the first comment's text box in the comment box in comment mode (the box beside a pin where the person writes their request): asks what the person wants different at the spot they pinned."
+  },
+  "commentPin.target.groupLabel": {
+    "text": "Where it goes",
+    "description": "Accessible name of the pair of choices in the comment box in comment mode (the box beside a pin where the person writes their request) that decide whether the request is sent to the app the person is in or to Homeroom itself."
+  },
+  "commentPin.target.to": {
+    "text": "To",
+    "description": "Short label before the two destination choices in the comment box in comment mode (the box beside a pin where the person writes their request) (the app's name, and Homeroom): the request is sent to the chosen one. A preposition, as on a letter."
+  },
+  "commentPin.target.toHomeroom": {
+    "text": "To Homeroom",
+    "description": "Line in the comment box in comment mode (the box beside a pin where the person writes their request) when there is no app to choose: the request is sent to Homeroom, the platform. Homeroom is the product name."
+  },
+  "commentPin.posting": {
+    "text": "Posting…",
+    "description": "Label of the post button in the comment box in comment mode (the box beside a pin where the person writes their request) while the request is being sent."
+  },
+  "commentPin.post": {
+    "text": "Post",
+    "description": "Post button in the comment box in comment mode (the box beside a pin where the person writes their request) when the request has one comment. A verb: posts the comment as a request."
+  },
+  "commentPin.postFailed": {
+    "text": "That couldn't be posted.",
+    "description": "Error line in the pinned-comment box when the server refused the comment and gave no reason of its own."
+  },
+  "staging.banner.solo": {
+    "text": "Preview of your change. It goes live when you vote it in. Anything you add here stays in the preview and won't carry over.",
+    "description": "Line under the top bar of the staging preview, on a project that only its creator belongs to. Says the previewed change is not live until they approve it, and that data entered in the preview is not copied to the live app."
+  },
+  "staging.banner.group": {
+    "text": "Preview of this change. Members can try it before they vote. Anything you add here stays in the preview and won't carry over.",
+    "description": "Line under the top bar of the staging preview, on a project with several members. Says the change can be tried before voting, and that data entered in the preview is not copied to the live app."
+  },
+  "staging.clock.showingNow": {
+    "text": "Showing it as it is now.",
+    "description": "Line in the staging preview when the change declared a particular moment to be shown at, and the viewer chose to see the preview at the present time instead."
+  },
+  "staging.clock.showingAt": {
+    "text": "Showing it as on {{moment}}.",
+    "description": "Line in the staging preview saying which moment the preview pretends it is, because the change only shows at certain times. {{moment}} is a date and time already in words, for example 'Thursday 8 Oct, 7 pm'."
+  },
+  "staging.clock.seeAt": {
+    "text": "See it as on {{moment}}",
+    "description": "Button in the staging preview: reloads the preview as if it were the moment the change declared. {{moment}} is a date and time already in words, for example 'Thursday 8 Oct, 7 pm'."
+  },
+  "staging.clock.seeNow": {
+    "text": "See it as now",
+    "description": "Button in the staging preview: reloads the preview at the present time instead of the moment the change declared."
+  },
+  "staging.testThisChange": {
+    "text": "Test this change",
+    "description": "Button in the staging preview's top bar: opens the coding agent's instructions for how to try the previewed change."
+  },
+  "staging.fullScreen": {
+    "text": "Full screen",
+    "description": "Button in the top bar of the staging preview while it is docked beside the dev chat: expands the preview to cover the whole screen."
+  },
+  "staging.openConsole": {
+    "text": "Open developer console",
+    "description": "Accessible name of the terminal-icon button in the staging preview's top bar: opens the panel that lists the previewed app's console messages."
+  },
+  "staging.closePreview": {
+    "text": "Close preview",
+    "description": "Accessible name of the × button on the staging preview while it is docked beside the dev chat: closes the preview panel."
+  },
+  "staging.howToTest": {
+    "text": "How to test",
+    "description": "Heading of the small panel over the staging preview that holds the coding agent's instructions for trying the change."
+  },
+  "staging.dismissTesting": {
+    "text": "Dismiss testing instructions",
+    "description": "Accessible name of the × button on the 'How to test' panel in the staging preview: hides the panel."
+  },
+  "staging.loader.opening": {
+    "text": "Opening preview…",
+    "description": "Title beside the spinner that covers the staging preview while it is being opened."
+  },
+  "staging.loader.retrySignIn": {
+    "text": "Retry sign-in",
+    "description": "Button under the spinner in the staging preview when signing the person in to the previewed app failed: tries the sign-in again."
+  },
+  "staging.compare.dialogLabel": {
+    "text": "Before / after comparison",
+    "description": "Accessible name of the full-screen overlay that shows a screen before and after a change, side by side."
+  },
+  "console.title": {
+    "text": "Developer console",
+    "description": "Title of the panel at the bottom of the screen that lists an app's console messages (errors, warnings and logs) for people building it."
+  },
+  "console.filter.all": {
+    "text": "All",
+    "description": "Option in the developer console filter: show console messages of every level."
+  },
+  "console.filter.errors": {
+    "text": "Errors",
+    "description": "Option in the developer console filter: show only error messages."
+  },
+  "console.filter.warnings": {
+    "text": "Warnings",
+    "description": "Option in the developer console filter: show only warning messages."
+  },
+  "console.filter.info": {
+    "text": "Info",
+    "description": "Option in the developer console filter: show only messages logged at the 'info' level."
+  },
+  "console.filter.log": {
+    "text": "Log",
+    "description": "Option in the developer console filter: show only messages logged at the plain 'log' level. A noun, the console level's name."
+  },
+  "console.filter.debug": {
+    "text": "Debug",
+    "description": "Option in the developer console filter: show only messages logged at the 'debug' level. The console level's name, not an instruction."
+  },
+  "console.clear": {
+    "text": "Clear",
+    "description": "Button in the developer console header: empties the list of console messages."
+  },
+  "console.empty": {
+    "text": "No messages yet. If this app was created before dev-console support shipped, ask the coding agent in Dev Chat to \"add dev-console forwarding to public/index.html\".",
+    "description": "Hint at the bottom of the developer console while it has no messages. The quoted sentence is an instruction the person can give the coding agent, and public/index.html is a file name: keep the file name as it is."
+  },
+  "console.counts": {
+    "text": "{{total}} total · {{errors}} err · {{warnings}} warn",
+    "description": "Summary in the developer console header. {{total}} is the number of console messages, {{errors}} how many are errors and {{warnings}} how many are warnings; 'err' and 'warn' are short for those. Keep it compact."
+  },
+  "banner.sync.busyTitle": {
+    "text": "Claude is busy with a turn. Sync will be available when it finishes",
+    "description": "Tooltip on the disabled 'Sync with main' and 'Try again' buttons in the dev chat's sync banner while the coding agent is working. Claude is the agent's name; a 'turn' is one request the agent is working through."
+  },
+  "banner.sync.syncing": {
+    "text": "Syncing…",
+    "description": "Disabled button in the dev chat's sync banner while the session's branch is being brought up to date with the app's main branch."
+  },
+  "banner.sync.tryAgain": {
+    "text": "Try again",
+    "description": "Button in the dev chat's sync banner after bringing the branch up to date with main failed: runs the sync again."
+  },
+  "banner.sync.behind_one": {
+    "text": "main has moved <0>{{count}}</0> commit ahead of this branch.",
+    "description": "Banner at the top of a dev chat session when the app's main branch has newer commits than this session's branch. 'main' is the branch's name and stays lower case. {{count}} is the number of commits; keep the <0> tags around it."
+  },
+  "banner.sync.behind_other": {
+    "text": "main has moved <0>{{count}}</0> commits ahead of this branch.",
+    "description": "Banner at the top of a dev chat session when the app's main branch has newer commits than this session's branch. 'main' is the branch's name and stays lower case. {{count}} is the number of commits; keep the <0> tags around it."
+  },
+  "banner.sync.syncWithMain": {
+    "text": "Sync with main",
+    "description": "Button in the dev chat's sync banner: merges the app's main branch into this session's branch. 'main' is the branch's name."
+  },
+  "banner.newChange.proposed": {
+    "text": "This change has been proposed to the group (PR #{{number}}). New work in this chat is added to the same PR, so start a new change to keep PRs focused.",
+    "description": "Banner at the top of a dev chat session whose change is already up for the group's vote. {{number}} is the pull request's number; PR is short for pull request."
+  },
+  "banner.newChange.merged": {
+    "text": "This change has been merged (PR #{{number}}). New work in this chat is added to the same PR, so start a new change to keep PRs focused.",
+    "description": "Banner at the top of a dev chat session whose change was already merged into the app. {{number}} is the pull request's number; PR is short for pull request."
+  },
+  "banner.newChange.openCard": {
+    "text": "Open proposal card",
+    "description": "Link in the dev chat banner shown once a change was proposed or merged: goes to the page for this change's proposal, where its vote, checks and discussion are. 'Open' is a verb; 'proposal' is the change put up for a vote."
+  },
+  "banner.newChange.start": {
+    "text": "Start a new change",
+    "description": "Main button in the dev chat banner shown once a change was proposed or merged: starts a fresh session for separate work. 'Change' is a noun, a piece of work on the app."
+  },
+  "banner.credits.hide": {
+    "text": "Hide",
+    "description": "Toggle on the dev chat's AI-credits banner on a phone, while its details are showing: collapses the banner back to one line."
+  },
+  "banner.credits.details": {
+    "text": "Details",
+    "description": "Toggle on the dev chat's AI-credits banner on a phone: shows the rest of the banner (when credits come back and the ways to keep working)."
+  },
+  "banner.agentSession.text": {
+    "text": "This change belongs to one of your agent sessions. Continue there to revise it.",
+    "description": "Banner at the top of a dev chat session whose change was started from one of the person's conversations with the coding agent (an agent session): further edits are made in that conversation."
+  },
+  "banner.agentSession.continue": {
+    "text": "Continue",
+    "description": "Link styled as a button in the dev chat banner about a change that belongs to an agent session: opens that conversation so the person can keep working on the change there."
+  },
+  "banner.classic.text": {
+    "text": "This is an older session. You can read it, but it can no longer be continued. New work happens in agent sessions.",
+    "description": "Banner at the top of an old-style dev chat session, which is now read-only. 'Agent sessions' are the newer conversations with the coding agent."
+  },
+  "banner.classic.start": {
+    "text": "Start an agent session",
+    "description": "Button in the banner on a read-only older dev chat session: starts a new conversation with the coding agent on the same app."
+  },
+  "runner.pastTitle": {
+    "text": "The last turn ran on {{machine}}. That machine has detached, so the next turn runs on Homeroom.",
+    "description": "Tooltip on the 'Last turn' chip above the dev chat message box. {{machine}} is the name of the person's own computer that ran the coding agent's last request and has since disconnected."
+  },
+  "runner.pastTitleUnnamed": {
+    "text": "The last turn ran on your machine. That machine has detached, so the next turn runs on Homeroom.",
+    "description": "Tooltip on the 'Last turn' chip above the dev chat message box. Used when the person's own computer has no name; it is called \"your machine\", as the tooltip has always read. A 'turn' is one request to the coding agent."
+  },
+  "runner.lastTurn": {
+    "text": "Last turn: {{machine}}",
+    "description": "Chip above the dev chat message box: the coding agent's last request ran on the person's own computer. {{machine}} is that computer's name."
+  },
+  "runner.runOn": {
+    "text": "Run on:",
+    "description": "Label before the dropdown above the dev chat message box that chooses where the coding agent runs: the person's own computer, or Homeroom. 'Run' is a verb."
+  },
+  "runner.liveTitle": {
+    "text": "Plan and coding turns in this session run on {{machine}}, using its own Claude subscription. A plan turn is read-only; after a coding turn Homeroom still opens the PR, builds the preview and runs the checks.",
+    "description": "Tooltip on the 'Running on your machine' chip above the dev chat message box. {{machine}} is the name of the person's own computer. A 'turn' is one request to the coding agent; a plan turn writes the plan for a change, a coding turn builds it; PR is short for pull request."
+  },
+  "runner.liveTitleUnnamed": {
+    "text": "Plan and coding turns in this session run on your machine, using its own Claude subscription. A plan turn is read-only; after a coding turn Homeroom still opens the PR, builds the preview and runs the checks.",
+    "description": "Tooltip on the 'Running on your machine' chip above the dev chat message box. Used when the person's own computer has no name; it is called \"your machine\", as the tooltip has always read. A 'turn' is one request to the coding agent; a plan turn writes the plan for a change, a coding turn builds it."
+  },
+  "runner.onYourMachine": {
+    "text": "Running on your machine",
+    "description": "Chip above the dev chat message box while the coding agent for this session runs on the person's own computer rather than on Homeroom."
+  },
+  "composer.attachTitle": {
+    "text": "Attach files: images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message",
+    "description": "Tooltip on the + button in the dev chat message box, listing what can be attached and the size limits."
+  },
+  "composer.attach": {
+    "text": "Attach files",
+    "description": "Accessible name of the + button in the dev chat message box: picks files to send with the message."
+  },
+  "composer.sendTitle": {
+    "text": "Send (Ctrl+Enter)",
+    "description": "Tooltip on the send button in the dev chat message box. Ctrl+Enter is the keyboard shortcut; keep the key names."
+  },
+  "composer.send": {
+    "text": "Send",
+    "description": "Accessible name of the round arrow button in the dev chat message box: sends the message to the coding agent."
+  },
+  "composer.saveDraftTitle": {
+    "text": "Save this text as a draft (Ctrl+Enter). It stays here until you send it",
+    "description": "Tooltip on the save button that replaces Send in the dev chat message box while the coding agent is working. Ctrl+Enter is the keyboard shortcut; keep the key names."
+  },
+  "composer.saveDraft": {
+    "text": "Save as draft",
+    "description": "Accessible name of the button that replaces Send in the dev chat message box while the coding agent is working: keeps the typed text as a saved draft."
+  },
+  "composer.stop": {
+    "text": "Stop",
+    "description": "Accessible name and tooltip of the round button in the dev chat message box while the coding agent is working: stops the agent's current request."
+  },
+  "composer.stoppingLabel": {
+    "text": "Stopping",
+    "description": "Accessible name of the disabled round button in the dev chat message box after Stop was pressed, while the coding agent is being stopped."
+  },
+  "composer.stopping": {
+    "text": "Stopping…",
+    "description": "Tooltip and visible label of the disabled round button in the dev chat message box after Stop was pressed, while the coding agent is being stopped."
+  },
+  "composer.modelLabel": {
+    "text": "Chat model and API key",
+    "description": "Accessible name of the dropdown in the dev chat message box that chooses which AI model answers and whose API key pays for it."
+  },
+  "composer.appliesNextTurn": {
+    "text": "applies next turn",
+    "description": "Small note beside the model dropdown in the dev chat message box after the model was changed while the coding agent is working: the new model is used from the agent's next request. Lower case, it follows the dropdown."
+  },
+  "drafts.sendTitleBusy": {
+    "text": "Claude is still working. You can send this when the turn finishes",
+    "description": "Tooltip on a saved draft's disabled send button in the dev chat while the coding agent (Claude) is working on a request."
+  },
+  "drafts.sendTitle": {
+    "text": "Send this draft now",
+    "description": "Tooltip on a saved draft's send button in the dev chat."
+  },
+  "drafts.heading_one": {
+    "text": "Saved drafts ({{count}}) <0>· on all your devices</0>",
+    "description": "Heading of the list of saved drafts above the dev chat message box. {{count}} is how many drafts are saved. The part inside the <0> tags is a quieter note that the drafts follow the person to every device; keep the tags and the dot."
+  },
+  "drafts.heading_other": {
+    "text": "Saved drafts ({{count}}) <0>· on all your devices</0>",
+    "description": "Heading of the list of saved drafts above the dev chat message box. {{count}} is how many drafts are saved. The part inside the <0> tags is a quieter note that the drafts follow the person to every device; keep the tags and the dot."
+  },
+  "drafts.sendingLocked": {
+    "text": "sending unlocks when Claude finishes",
+    "description": "Note at the end of the saved-drafts heading in the dev chat while the coding agent (Claude) is working: drafts cannot be sent until it is done. Lower case, it follows the heading."
+  },
+  "drafts.send": {
+    "text": "Send this draft",
+    "description": "Accessible name of a saved draft's send button in the dev chat."
+  },
+  "drafts.edit": {
+    "text": "Edit this draft",
+    "description": "Accessible name of a saved draft's pencil button in the dev chat."
+  },
+  "drafts.editTitle": {
+    "text": "Put this draft back in the box to edit",
+    "description": "Tooltip on a saved draft's pencil button in the dev chat: moves the draft's text back into the message box."
+  },
+  "drafts.delete": {
+    "text": "Delete this draft",
+    "description": "Accessible name and tooltip of a saved draft's bin button in the dev chat."
+  },
+  "connector.urlLabel": {
+    "text": "Your MCP server URL",
+    "description": "Label over, and accessible name of, the read-only field in the connector setup card that holds the address the person pastes into Claude or ChatGPT. MCP is a protocol's name."
+  },
+  "connector.copyUrl": {
+    "text": "Copy your MCP server URL",
+    "description": "Accessible name of the Copy button beside the server address in the connector setup card."
+  },
+  "connector.copyFailed": {
+    "text": "Copy failed",
+    "description": "Label the Copy button beside the server address shows for a moment when copying to the clipboard did not work."
+  },
+  "connector.copyFailedToast": {
+    "text": "Couldn’t copy. Select the text and copy it manually",
+    "description": "Toast when copying the connector's server address to the clipboard did not work."
+  },
+  "connector.lead": {
+    "text": "Add the Homeroom connector in {{product}}",
+    "description": "Heading of the connector setup card in the dev chat. {{product}} is the chat product the person will hand the work to: Claude or ChatGPT. A connector is what lets that product act on Homeroom."
+  },
+  "connector.otherAccount": {
+    "text": "You have a connector on another account. A connector belongs to the {{product}} account it was added in, so the one you hand this work to needs its own.",
+    "description": "Text under the heading of the connector setup card when the person already connected a different account. {{product}} is Claude or ChatGPT."
+  },
+  "connector.intro": {
+    "text": "{{product}} reads your apps, mints the work order and opens the proposal through this connector. It takes a few minutes, once per account.",
+    "description": "Text under the heading of the connector setup card. {{product}} is Claude or ChatGPT. A work order is the brief Homeroom hands that agent; the proposal is the change put up for the group's vote."
+  },
+  "connector.startNewChatgpt": {
+    "text": "Then start a NEW ChatGPT chat. A connector you just added is only picked up by a new one, so the chat you were already in will not see it.",
+    "description": "Note under the setup steps in the connector setup card, for ChatGPT. NEW is in capitals for emphasis."
+  },
+  "connector.startNewClaude": {
+    "text": "Then start a NEW Claude conversation. A connector you just added is only picked up by a new one, so the chat you were already in will not see it.",
+    "description": "Note under the setup steps in the connector setup card, for Claude. NEW is in capitals for emphasis."
+  },
+  "connector.done": {
+    "text": "I’ve added it. Check again",
+    "description": "Main button of the connector setup card: the person says they added the connector, and Homeroom checks whether it is connected now."
+  },
+  "connector.moreSettings": {
+    "text": "More connector settings",
+    "description": "Link at the bottom of the connector setup card: goes to the Connectors section of Settings."
+  },
+  "ownTools.promptHelp": {
+    "text": "Copy this prompt into your agent. It includes this app and any work already started; fill in any remaining placeholders.",
+    "description": "Help line beside the ready-made prompt in the dev chat's guide for building with a coding tool on the person's own computer. 'Agent' is that coding tool."
+  },
+  "ownTools.alreadyBuilt": {
+    "text": "Already built a pull request yourself?",
+    "description": "Question under the guide for building with one's own tools in the dev chat, above the button that imports an existing pull request."
+  },
+  "ownTools.import": {
+    "text": "Import Feature from a PR",
+    "description": "Button under the own-tools guide in the dev chat: opens the dialog that turns an existing pull request into a proposal. PR is short for pull request."
+  },
+  "header.venue.busyTitle": {
+    "text": "Wait for the current response to finish before changing where this session is built.",
+    "description": "Tooltip on the disabled venue button at the top of a dev chat session while the coding agent is answering. The venue is where the change is built: on Homeroom, on the person's computer, or in another AI product."
+  },
+  "header.venue.busyLabel": {
+    "text": "{{venue}}. Unavailable while the agent is thinking.",
+    "description": "Accessible name of the disabled venue button at the top of a dev chat session while the coding agent is working. {{venue}} is the current venue's name, for example 'Homeroom · Claude'."
+  },
+  "header.venue.thinking": {
+    "text": "Thinking…",
+    "description": "Small status beside a lock on the venue button at the top of a dev chat session while the coding agent is working."
+  },
+  "header.mode.building": {
+    "text": "Building",
+    "description": "Label in the switch at the top of a dev chat session for the side where the person is working on the change in chat, as opposed to looking at its preview. Also the status chip shown when there is no preview yet."
+  },
+  "header.mode.groupLabel": {
+    "text": "Preview or build this change",
+    "description": "Accessible name of the two-way switch at the top of a dev chat session: one side shows the preview of the change, the other the chat where it is built. Both words are verbs."
+  },
+  "header.mode.previewLabel": {
+    "text": "Preview this change",
+    "description": "Accessible name of the eye button in the switch at the top of a dev chat session, when a staging preview exists: shows it. 'Preview' is a verb."
+  },
+  "header.mode.buildPreviewLabel": {
+    "text": "Build a preview of this change",
+    "description": "Accessible name of the eye button in the switch at the top of a dev chat session, when the preview has to be built first."
+  },
+  "header.mode.previewTitle": {
+    "text": "Preview this change on staging",
+    "description": "Tooltip on the eye button at the top of a dev chat session when a preview exists. 'Staging' is the test copy of the app where a change runs before it is merged."
+  },
+  "header.mode.buildPreviewTitle": {
+    "text": "Build a staging preview of this change (it went to sleep, or was never built)",
+    "description": "Tooltip on the eye button at the top of a dev chat session when the preview is not running: pressing it builds one. 'Went to sleep' means it was shut down after not being used."
+  },
+  "header.mode.preview": {
+    "text": "Preview",
+    "description": "Label on the lit side of the switch at the top of a dev chat session while the person is looking at the change's preview. A noun."
+  },
+  "header.mode.backToBuilding": {
+    "text": "Back to building",
+    "description": "Accessible name of the pencil button in the switch at the top of a dev chat session: leaves the preview and returns to the chat where the change is built."
+  },
+  "header.mode.backToChat": {
+    "text": "Back to the session chat",
+    "description": "Tooltip on the pencil button in the switch at the top of a dev chat session: leaves the preview and returns to the chat."
+  },
+  "header.actions": {
+    "text": "Session actions",
+    "description": "Accessible name and tooltip of the ⋯ button at the top of a dev chat session: opens a menu of things to do with the session, such as archiving it."
+  },
+  "header.openCard": {
+    "text": "Open proposal card",
+    "description": "Link at the top of a dev chat session that has a pull request: goes to the page for this change's proposal. 'Open' is a verb."
+  },
+  "header.newChange": {
+    "text": "New change",
+    "description": "Quiet label at the top of a dev chat session that has no pull request yet: this is a change that has not been built. 'Change' is a noun."
+  },
+  "sessions.row.open": {
+    "text": "Open session: {{title}} ({{status}})",
+    "description": "Accessible name of a row in the list of dev chat sessions; pressing the row opens that session. {{title}} is the session's title and {{status}} its state, a short word such as 'active'."
+  },
+  "sessions.row.working": {
+    "text": "working…",
+    "description": "Small status on a row in the list of dev chat sessions while the coding agent is working in that session. Lower case."
+  },
+  "sessions.row.pr": {
+    "text": "PR#{{number}}",
+    "description": "Link on a row in the list of dev chat sessions to the session's pull request on GitHub. PR is short for pull request; {{number}} is its number."
+  },
+  "sessions.empty.title": {
+    "text": "Want to change this app? Just ask.",
+    "description": "Heading shown where the list of dev chat sessions would be, when the app has none yet."
+  },
+  "sessions.empty.body": {
+    "text": "Describe what you'd like different in plain English. An AI writes the code and opens a real pull request. No coding required. The app’s users then vote it in.",
+    "description": "Explanation under the heading of the empty list of dev chat sessions. 'In plain English' means in everyday words rather than code; translate it as the equivalent idiom."
+  },
+  "sessions.empty.howTo": {
+    "text": "Hit <0>+ New Session</0> above to start, e.g. <1>\"make the header dark blue\"</1>.",
+    "description": "Last line of the empty list of dev chat sessions. <0> wraps the name of the button above the list and <1> an example of what to ask for; keep both pairs of tags."
+  },
+  "sessions.older.loading": {
+    "text": "Loading…",
+    "description": "Label of the last row of the list of dev chat sessions while older, finished sessions are being fetched."
+  },
+  "sessions.older.show_one": {
+    "text": "Show {{number}} older session",
+    "description": "Last row of the list of dev chat sessions: loads the finished sessions that were left out. {{number}} is how many there are, already formatted with digit separators."
+  },
+  "sessions.older.show_other": {
+    "text": "Show {{number}} older sessions",
+    "description": "Last row of the list of dev chat sessions: loads the finished sessions that were left out. {{number}} is how many there are, already formatted with digit separators."
+  },
+  "spec.loading": {
+    "text": "Loading plan…",
+    "description": "Shown in the plan viewer beside the dev chat while the plan is being fetched. A plan is the written description of a change, made before it is built."
+  },
+  "spec.tabs.label": {
+    "text": "Plan sections",
+    "description": "Accessible name of the two tabs in the plan viewer that switch between the plan's user-facing and technical halves."
+  },
+  "spec.tabs.user": {
+    "text": "User-facing",
+    "description": "Tab in the plan viewer: the half of the plan that describes what people using the app will see."
+  },
+  "spec.tabs.technical": {
+    "text": "Technical",
+    "description": "Tab in the plan viewer: the half of the plan that describes how the change will be implemented."
+  },
+  "spec.tabs.empty": {
+    "text": "Nothing in this section.",
+    "description": "Shown in the plan viewer when the selected half of the plan has no content."
+  },
+  "spec.copy.label": {
+    "text": "Copy markdown",
+    "description": "Button in the plan viewer's header: copies the whole plan to the clipboard as markdown text."
+  },
+  "spec.copy.noneTitle": {
+    "text": "No plan to copy yet",
+    "description": "Tooltip on the disabled 'Copy markdown' button in the plan viewer when there is no plan."
+  },
+  "spec.copy.title": {
+    "text": "Copy the whole plan (both sections) as markdown",
+    "description": "Tooltip on the 'Copy markdown' button in the plan viewer."
+  },
+  "spec.copy.copied": {
+    "text": "Copied!",
+    "description": "Label the 'Copy markdown' button in the plan viewer shows for a moment after the plan was copied."
+  },
+  "spec.copy.failed": {
+    "text": "Copy failed",
+    "description": "Label the 'Copy markdown' button in the plan viewer shows for a moment when copying did not work."
+  },
+  "spec.copy.failedToast": {
+    "text": "Couldn’t copy. Select the text and copy it manually",
+    "description": "Toast when copying the plan in the plan viewer to the clipboard did not work."
+  },
+  "spec.share.noneTitle": {
+    "text": "No plan version to share yet",
+    "description": "Tooltip on the disabled share buttons in the plan viewer when no version of the plan exists."
+  },
+  "spec.share.toGroup": {
+    "text": "Share to group",
+    "description": "Button in the plan viewer's header: posts a card linking to this plan in the app's group chat. 'Share' is a verb."
+  },
+  "spec.share.groupSharedTitle": {
+    "text": "Already shared to group chat",
+    "description": "Tooltip on the disabled 'Shared' button in the plan viewer once this plan version was posted to the group chat."
+  },
+  "spec.share.groupTitle": {
+    "text": "Post a card linking to this plan in the group chat",
+    "description": "Tooltip on the 'Share to group' button in the plan viewer. 'Post' is a verb."
+  },
+  "spec.share.shared": {
+    "text": "Shared",
+    "description": "Label of the disabled group-share button in the plan viewer once this plan version was posted to the group chat."
+  },
+  "spec.share.toUser": {
+    "text": "Share to user",
+    "description": "Button in the plan viewer's header: opens a small card for sending this plan version privately to one person. 'Share' is a verb."
+  },
+  "spec.share.userTitle": {
+    "text": "Privately share this plan version with one person",
+    "description": "Tooltip on the 'Share to user' button in the plan viewer."
+  },
+  "spec.share.sentTo": {
+    "text": "Sent to @{{username}}",
+    "description": "Label the 'Share to user' button in the plan viewer shows for a moment after the plan was sent. {{username}} is the recipient's username; keep the @ before it."
+  },
+  "spec.share.enterUsername": {
+    "text": "Enter a username",
+    "description": "Error in the plan viewer's share card when Send was pressed with the username box empty."
+  },
+  "spec.share.failed": {
+    "text": "Failed to share",
+    "description": "Error in the plan viewer's share card when sending the plan to a person failed and the server gave no reason."
+  },
+  "spec.share.dialogLabel": {
+    "text": "Share this plan with one person",
+    "description": "Accessible name of the small card in the plan viewer for sending the plan privately to one person."
+  },
+  "spec.share.usernamePlaceholder": {
+    "text": "Username…",
+    "description": "Placeholder of the box in the plan viewer's share card where the recipient's username is typed."
+  },
+  "spec.share.usernameLabel": {
+    "text": "Username to share with",
+    "description": "Accessible name of the box in the plan viewer's share card where the recipient's username is typed."
+  },
+  "spec.share.sending": {
+    "text": "Sending…",
+    "description": "Label of the Send button in the plan viewer's share card while the plan is being sent."
+  },
+  "spec.share.send": {
+    "text": "Send",
+    "description": "Button in the plan viewer's share card: sends this plan version to the person whose username was typed."
+  },
+  "spec.noVersions": {
+    "text": "No versions yet",
+    "description": "Only option of the disabled version dropdown in the plan viewer when the plan has no saved versions."
+  },
+  "spec.close": {
+    "text": "Close plan viewer",
+    "description": "Accessible name of the × button that closes the plan viewer beside the dev chat."
+  },
+  "spec.buildHint": {
+    "text": "This is a plan, not a built change. Ready? Ask the AI in chat to build it.",
+    "description": "Line at the bottom of the plan viewer while the change has only been planned: nothing was built yet."
+  },
+  "view.checks": {
+    "text": "Proposal checks",
+    "description": "Heading, and accessible name, of the collapsible section in a dev chat session that lists the automated checks run on the proposed change. 'Proposal' is the change put up for a vote."
+  },
+  "view.proposalHint": {
+    "text": "Describe the change you want. When it’s ready, promoting this session's PR is what creates the proposal everyone votes on.",
+    "description": "One-time hint above a dev chat session opened to make a proposal. PR is short for pull request; 'promoting' it means submitting it for the group's vote."
+  },
+  "view.returnHint.label": {
+    "text": "Returning to dev chat",
+    "description": "Accessible name of the hint box in a dev chat session that says the person can leave and come back. 'Dev chat' is the chat with the coding agent."
+  },
+  "view.returnHint.title": {
+    "text": "You can come back later",
+    "description": "Heading of the hint box in a dev chat session that says the work continues while the person is away."
+  },
+  "view.returnHint.body": {
+    "text": "You can leave this page and return anytime. Open <0>Messages</0> to check your change’s status or find this chat again.",
+    "description": "Body of the hint box in a dev chat session. <0> wraps the name of the Messages tab; keep the tags and use the tab's name as it is translated in the tab bar."
+  },
+  "view.returnHint.dismiss": {
+    "text": "Got it",
+    "description": "Button on the hint box in a dev chat session: dismisses the hint."
+  },
+  "view.resizeSpec": {
+    "text": "Resize plan viewer",
+    "description": "Accessible name of the draggable divider between the dev chat and the plan viewer."
+  },
+  "view.resizeStaging": {
+    "text": "Resize staging preview",
+    "description": "Accessible name of the draggable divider between the dev chat and the docked staging preview."
+  },
+  "transcript.forceStop": {
+    "text": "Force stop",
+    "description": "Button on a status line in the dev chat transcript when the coding agent did not stop after Stop was pressed: ends the agent's request immediately."
+  },
+  "transcript.progress.steps_one": {
+    "text": "{{count}} steps",
+    "description": "Chip on the coding agent's progress card in the dev chat: how many steps (tool actions) the agent has taken so far in this request. {{count}} is that number."
+  },
+  "transcript.progress.steps_other": {
+    "text": "{{count}} steps",
+    "description": "Chip on the coding agent's progress card in the dev chat: how many steps (tool actions) the agent has taken so far in this request. {{count}} is that number."
+  },
+  "transcript.progress.guessTitle": {
+    "text": "Experimental: a small AI model's rough guess from the progress log. May be wrong.",
+    "description": "Tooltip on the 'AI guess' line of the coding agent's progress card in the dev chat."
+  },
+  "transcript.progress.guess": {
+    "text": "✦ AI guess: {{estimate}}",
+    "description": "Line on the coding agent's progress card in the dev chat. {{estimate}} is a model's own rough words for how much longer the work will take, for example 'about 3 minutes'. Keep the ✦ first."
+  },
+  "transcript.spec.open": {
+    "text": "Open plan viewer",
+    "description": "Accessible name of the plan preview card in the dev chat transcript; pressing the card opens the full plan beside the chat. 'Open' is a verb."
+  },
+  "transcript.spec.viewFull": {
+    "text": "View full plan →",
+    "description": "Call to action at the top right of the plan preview card in the dev chat transcript. Keep the arrow last."
+  },
+  "transcript.issueDraft.showFull": {
+    "text": "… Show full report",
+    "description": "Cue at the end of the shortened text on the card where the coding agent suggests filing a report; pressing it expands the whole text. Keep the leading ellipsis."
+  },
+  "transcript.issueDraft.dismiss": {
+    "text": "Dismiss",
+    "description": "Button on the card in the dev chat where the coding agent suggests filing an issue or a report: declines the suggestion."
+  },
+  "card.changes.openVote": {
+    "text": "Open this proposal's vote page",
+    "description": "Tooltip on the status badge of the changes card in the dev chat once the change is up for a vote: pressing it goes to the page where the group votes on it."
+  },
+  "card.changes.previewGone": {
+    "text": "Preview removed after merge. This change is now live in the app",
+    "description": "Tooltip on the disabled 'Preview staging' and 'Test this change' buttons of the changes card in the dev chat after the change was merged."
+  },
+  "card.changes.prLink": {
+    "text": "PR #{{number}}",
+    "description": "Link at the top of the changes card in the dev chat to the pull request on GitHub. PR is short for pull request; {{number}} is its number."
+  },
+  "card.changes.ready": {
+    "text": "Changes ready",
+    "description": "Heading of the changes card in the dev chat when it does not show a pull request link: the coding agent finished building the change."
+  },
+  "card.changes.openRequest": {
+    "text": "Open request #{{number}}",
+    "description": "Tooltip on a chip of the changes card in the dev chat that names a request this change answers: pressing it opens that request. 'Open' is a verb; a request is something a member asked for. {{number}} is the request's number."
+  },
+  "card.changes.closes": {
+    "text": "Closes #{{number}}",
+    "description": "Chip on the changes card in the dev chat: merging this change will close the request with that number. {{number}} is the request's number."
+  },
+  "card.changes.closed": {
+    "text": "Closed #{{number}}",
+    "description": "Chip on the changes card in the dev chat after the change was merged: it closed the request with that number. {{number}} is the request's number."
+  },
+  "card.changes.previewStaging": {
+    "text": "Preview staging",
+    "description": "Button on the changes card in the dev chat: opens the staging preview, the test copy of the app running this change. 'Preview' is a verb."
+  },
+  "card.changes.test": {
+    "text": "Test this change",
+    "description": "Button on the changes card in the dev chat: opens the staging preview with the coding agent's instructions for trying the change."
+  },
+  "card.changes.viewOnGithub": {
+    "text": "View on GitHub",
+    "description": "Link on the changes card in the dev chat: opens the change's pull request on GitHub."
+  },
+  "card.changes.proposing": {
+    "text": "Proposing…",
+    "description": "Label beside a spinner on the changes card's main button in the dev chat while the change is being submitted for the group's vote."
+  },
+  "card.changes.alreadyProposed": {
+    "text": "Already proposed",
+    "description": "Label of the disabled main button on the changes card in the dev chat once the change was submitted for the group's vote."
+  },
+  "card.changes.submit": {
+    "text": "Submit for review",
+    "description": "Main button on the changes card in the dev chat: puts the change up for the group's vote."
+  },
+  "card.changes.mergedTitle": {
+    "text": "This change is merged and now live in the app.",
+    "description": "Tooltip on the 'Merged' badge of the changes card in the dev chat."
+  },
+  "card.changes.mergedBadge": {
+    "text": "✓ Merged, now live in the app",
+    "description": "Badge on the changes card in the dev chat once the change was merged. Keep the check mark first."
+  },
+  "card.changes.mergedNote": {
+    "text": "Merged, now live in the app",
+    "description": "Note on a changes card in the dev chat that shows no buttons, once the change was merged."
+  },
+  "card.changes.earlierResult": {
+    "text": "Earlier build result",
+    "description": "Note on an older changes card in the dev chat transcript: a newer build of the change followed it, so this card has no buttons. 'Build' is a noun."
+  },
+  "card.changes.resultNote": {
+    "text": "Build result. Current actions are above.",
+    "description": "Note on a changes card shown inside another page: it reports the result of building the change, and the buttons for it are higher on that page. 'Build' is a noun."
+  },
+  "transcript.who.you": {
+    "text": "You",
+    "description": "Screen-reader label on the person's own messages in the dev chat transcript."
+  },
+  "transcript.who.claudeCode": {
+    "text": "Claude Code",
+    "description": "Label on the coding agent's messages in the dev chat transcript. Claude Code is the agent's product name and is not translated."
+  },
+  "transcript.who.ai": {
+    "text": "AI",
+    "description": "Label on the assistant's messages in the dev chat transcript. Short for artificial intelligence."
+  },
+  "transcript.fullOutput": {
+    "text": "Full output",
+    "description": "Toggle under a message from the coding agent in the dev chat: expands the agent's complete output for that reply."
+  },
+  "transcript.attachment.openFullSize": {
+    "text": "{{name}}: open full size",
+    "description": "Tooltip on an image attached to a dev chat message. {{name}} is the file's name; pressing the image opens it at full size."
+  },
+  "transcript.attachment.openFullSizeUnnamed": {
+    "text": "file: open full size",
+    "description": "Tooltip on an image attached to a dev chat message. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
+  "transcript.attachment.download": {
+    "text": "Download {{name}}",
+    "description": "Tooltip on a file attached to a dev chat message. {{name}} is the file's name."
+  },
+  "transcript.attachment.downloadUnnamed": {
+    "text": "Download file",
+    "description": "Tooltip on a file attached to a dev chat message. Used when the attached file has no name; \"file\" is written as the tooltip has always shown it."
+  },
+  "transcript.reasoning": {
+    "text": "Agent reasoning (raw)",
+    "description": "Toggle under a message in the dev chat: expands the coding agent's unedited reasoning text for that reply."
+  },
+  "transcript.qa.less": {
+    "text": "Less",
+    "description": "Accessible name of the − button beside a number the coding agent asked for in the dev chat: lowers the number."
+  },
+  "transcript.qa.more": {
+    "text": "More",
+    "description": "Accessible name of the + button beside a number the coding agent asked for in the dev chat: raises the number."
+  },
+  "transcript.qa.value": {
+    "text": "Value",
+    "description": "Accessible name of the number box in a question from the coding agent in the dev chat, when the question has no label of its own."
+  },
+  "transcript.qa.suggested": {
+    "text": "suggested",
+    "description": "Small hint inside an answer chip under a question from the coding agent: this answer is the one the agent recommends. Lower case, it follows the answer's text."
+  },
+  "transcript.qa.send": {
+    "text": "Send answers",
+    "description": "Button under a set of questions from the coding agent in the dev chat: sends the answers the person picked."
+  },
+  "transcript.qa.useDefaults": {
+    "text": "Use the suggested defaults",
+    "description": "Button under a set of questions from the coding agent in the dev chat: answers every question with the agent's recommended choice."
+  },
+  "transcript.emptyTitle": {
+    "text": "What should this session change?",
+    "description": "Heading in the middle of a new, empty dev chat session, where the conversation will appear."
+  },
+  "transcript.qa.suggestedNumber": {
+    "text": "suggested {{number}}",
+    "description": "Hint beside the number box in a question from the coding agent: the value the agent recommends. {{number}} is that value. Lower case."
+  },
+  "list.dot": {
+    "text": "{{first}} · {{second}}",
+    "description": "How two independent facts are shown side by side in the dev chat's compact labels, for example a model's name and its cost: 'Opus 5.5 · about $1.55 for a typical change'. {{first}} and {{second}} are the two facts, each already a whole label. Change only the separator if the language needs another."
+  },
+  "composer.placeholder": {
+    "text": "Describe a change in plain English, e.g. \"add a dark mode toggle\". No coding needed.",
+    "description": "Placeholder in the dev chat message box. 'In plain English' means in everyday words rather than code; translate it as the equivalent idiom. The quoted text is an example request."
+  },
+  "composer.placeholderBusy": {
+    "text": "{{agent}} is working. Type your next note and tap 💾 to save it for later.",
+    "description": "Placeholder in the dev chat message box while the coding agent is working on a request. {{agent}} is the agent's name, Claude or OpenRouter. Keep the 💾, which stands for the save-draft button."
+  },
+  "model.cost.perChange": {
+    "text": "about {{amount}} for a typical change",
+    "description": "Cost note beside a model's name in the dev chat's model dropdown. {{amount}} is an estimated price with its currency sign, for example $1.55. Lower case: it follows the model's name after a dot."
+  },
+  "model.cost.perChangeEstimate": {
+    "text": "about {{amount}} for a typical change (estimate)",
+    "description": "Longer form of a model's cost note in the dev chat, which says outright that the figure is an estimate. {{amount}} is a price with its currency sign, for example $1.55. Lower case: it follows the model's name."
+  },
+  "model.option.openRouterKeyTitle": {
+    "text": "Runs on your OpenRouter key",
+    "description": "Tooltip on a model in the dev chat's model dropdown: using this model is billed to the person's own OpenRouter API key. 'Runs' is a verb."
+  },
+  "model.option.claudeKeyTitle": {
+    "text": "Runs on the platform Claude allowance, or your own Anthropic key",
+    "description": "Tooltip on a Claude model in the dev chat's model dropdown: it is paid from Homeroom's included allowance or from the person's own Anthropic API key. 'Runs' is a verb."
+  },
+  "model.option.addMore": {
+    "text": "Add more OpenRouter models…",
+    "description": "Last row of the dev chat's model dropdown: opens a dialog for choosing from every model on OpenRouter."
+  },
+  "model.option.addMoreTitle": {
+    "text": "Browse every model your OpenRouter key can reach",
+    "description": "Tooltip on the 'Add more OpenRouter models…' row of the dev chat's model dropdown."
+  },
+  "model.option.loading": {
+    "text": "Loading model",
+    "description": "Disabled row in the dev chat's model dropdown shown while the session's chosen model is still being looked up."
+  },
+  "model.option.label": {
+    "text": "{{model}}: {{facts}}",
+    "description": "A row in the list of OpenRouter models in the dialog that chooses where a session is built. {{model}} is the model's name with its badges, and {{facts}} its price and how well it is verified. Change only the punctuation between them if needed."
+  },
+  "model.unknown": {
+    "text": "Unknown model",
+    "description": "Shown in place of a model's name in the list of OpenRouter models when the model has no name."
+  },
+  "model.badge.recommended": {
+    "text": "Recommended",
+    "description": "Badge after a model's name in the list of OpenRouter models: Homeroom recommends this model."
+  },
+  "model.badge.new": {
+    "text": "New",
+    "description": "Badge after a model's name in the list of OpenRouter models: the model was released in the last 30 days."
+  },
+  "model.compatibility.verified": {
+    "text": "verified",
+    "description": "Short tag at the end of a row in the list of OpenRouter models: the model has been checked to work for coding in a repository. Lower case."
+  },
+  "model.compatibility.limited": {
+    "text": "limited",
+    "description": "Short tag at the end of a row in the list of OpenRouter models: the model may lack what coding in a repository needs. Lower case."
+  },
+  "model.compatibility.unverified": {
+    "text": "unverified",
+    "description": "Short tag at the end of a row in the list of OpenRouter models: the model has not been checked for coding in a repository. Lower case."
+  },
+  "model.compatibility.verifiedNote": {
+    "text": "Verified for repository coding.",
+    "description": "Sentence under the model list in the dialog that chooses where a session is built: the selected model has been checked to work for coding in a repository."
+  },
+  "model.compatibility.unverifiedNote": {
+    "text": "OpenRouter advertises coding-tool support and enough context, but this model is not yet verified for repository coding.",
+    "description": "Sentence under the model list in the dialog that chooses where a session is built, for a model that should work but has not been checked. 'Context' is how much text the model can take in at once."
+  },
+  "model.compatibility.limitedNote": {
+    "text": "OpenRouter exposes this model, but it may lack repository tools or enough context; the turn may fail.",
+    "description": "Sentence under the model list in the dialog that chooses where a session is built, for a model that may not be able to do the work. A 'turn' is one request to the coding agent."
+  },
+  "model.tier.free": {
+    "text": "Free",
+    "description": "Price level of an OpenRouter model in the dialog that chooses where a session is built: the model costs nothing."
+  },
+  "model.tier.low": {
+    "text": "Low cost",
+    "description": "Price level of an OpenRouter model in the dialog that chooses where a session is built."
+  },
+  "model.tier.medium": {
+    "text": "Medium cost",
+    "description": "Price level of an OpenRouter model in the dialog that chooses where a session is built."
+  },
+  "model.tier.high": {
+    "text": "High cost",
+    "description": "Price level of an OpenRouter model in the dialog that chooses where a session is built."
+  },
+  "model.tier.unknown": {
+    "text": "Price unavailable",
+    "description": "Shown in place of a price level for an OpenRouter model whose price is not known."
+  },
+  "model.cost.summary": {
+    "text": "{{tier}} · {{inputPrice}} /M input · {{outputPrice}} /M output",
+    "description": "Price summary of an OpenRouter model in the dialog that chooses where a session is built. {{tier}} is the price level, for example 'Low cost'. {{inputPrice}} and {{outputPrice}} are prices with their currency sign per million tokens ('/M') of text sent to the model and written by it, or a question mark when unknown."
+  },
+  "model.catalog.updatedNow": {
+    "text": "Updated just now",
+    "description": "Note under the list of OpenRouter models: the list was refreshed less than a minute ago."
+  },
+  "model.catalog.updatedMinutes_one": {
+    "text": "Updated {{count}}m ago",
+    "description": "Note under the list of OpenRouter models: how long ago the list was refreshed. {{count}} is a number of minutes; 'm' is short for minutes."
+  },
+  "model.catalog.updatedMinutes_other": {
+    "text": "Updated {{count}}m ago",
+    "description": "Note under the list of OpenRouter models: how long ago the list was refreshed. {{count}} is a number of minutes; 'm' is short for minutes."
+  },
+  "model.catalog.updatedHours_one": {
+    "text": "Updated {{count}}h ago",
+    "description": "Note under the list of OpenRouter models: how long ago the list was refreshed. {{count}} is a number of hours; 'h' is short for hours."
+  },
+  "model.catalog.updatedHours_other": {
+    "text": "Updated {{count}}h ago",
+    "description": "Note under the list of OpenRouter models: how long ago the list was refreshed. {{count}} is a number of hours; 'h' is short for hours."
+  },
+  "transcript.agentRunning": {
+    "text": "Coding agent is running{{tail}}",
+    "description": "Status line in the dev chat transcript while the coding agent works. {{tail}} is whatever punctuation followed the server's own sentence, usually three dots or nothing; keep it directly after the last word."
+  },
+  "agentChoice.error.favorite": {
+    "text": "Could not update that favorite.",
+    "description": "Error under the model list in the dialog that chooses where a session is built, when starring or unstarring a model failed and the server gave no reason."
+  },
+  "agentChoice.error.loadSettings": {
+    "text": "Could not load your coding-agent settings.",
+    "description": "Error in the dialog that chooses where a session is built, when the person's saved choice of coding agent could not be fetched."
+  },
+  "agentChoice.error.loadSettingsShort": {
+    "text": "Could not load coding-agent settings.",
+    "description": "Error in the dialog that chooses where a session is built, when the saved coding-agent settings could not be fetched and no other reason is known."
+  },
+  "agentChoice.error.checkCredential": {
+    "text": "Could not check your OpenRouter credential.",
+    "description": "Error when Homeroom could not find out whether the person has a working OpenRouter API key, and the server gave no reason."
+  },
+  "agentChoice.error.provision": {
+    "text": "OpenRouter could not be set up automatically (HTTP {{status}}).",
+    "description": "Error when Homeroom tried to create an OpenRouter key for the person and failed. {{status}} is the numeric HTTP status code of the failed request."
+  },
+  "agentChoice.error.notDefault": {
+    "text": "OpenRouter was created, but it was not saved as your default. Contact an administrator.",
+    "description": "Error when an OpenRouter key was created for the person but could not be made their default coding agent."
+  },
+  "agentChoice.error.checkKey": {
+    "text": "Could not check your OpenRouter key.",
+    "description": "Error in the dialog that chooses where a session is built, when Homeroom could not find out whether the person's OpenRouter API key works."
+  },
+  "agentChoice.error.loadModels": {
+    "text": "Could not load OpenRouter models.",
+    "description": "Error in the dialog that chooses where a session is built, when the list of OpenRouter models could not be fetched and the server gave no reason."
+  },
+  "agentChoice.error.noModels": {
+    "text": "No OpenRouter models are available right now. Try Refresh.",
+    "description": "Message in the dialog that chooses where a session is built, when the list of OpenRouter models came back empty. Refresh is the name of the button beside the list."
+  },
+  "agentChoice.title.model": {
+    "text": "Choose an OpenRouter model",
+    "description": "Title of the dialog that picks which OpenRouter model a dev chat session uses."
+  },
+  "agentChoice.title.switch": {
+    "text": "Where should this session build?",
+    "description": "Title of the dialog that changes which coding agent an existing dev chat session uses. 'Build' is a verb: where the change gets built."
+  },
+  "agentChoice.title.create": {
+    "text": "Where should this build?",
+    "description": "Title of the dialog that chooses which coding agent a new dev chat session uses. 'Build' is a verb: where the change gets built."
+  },
+  "agentChoice.intro.model": {
+    "text": "Changing the model keeps this branch and conversation, but starts fresh OpenRouter context on the next turn.",
+    "description": "Text under the title of the dialog that picks an OpenRouter model. 'Context' is what the model remembers of the session; a 'turn' is one request to the coding agent."
+  },
+  "agentChoice.intro.switch": {
+    "text": "Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.",
+    "description": "Text under the title of the dialog that changes a session's coding agent. 'Context' is what the agent remembers of the session; a 'turn' is one request to it."
+  },
+  "agentChoice.intro.create": {
+    "text": "Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.",
+    "description": "Text under the title of the dialog that chooses the coding agent for a new dev chat session."
+  },
+  "agentChoice.groupLabel": {
+    "text": "Session AI",
+    "description": "Accessible name of the two choices in the coding-agent dialog (Homeroom · OpenRouter and Homeroom · Claude): which AI builds in this session."
+  },
+  "agentChoice.openRouterBlurb": {
+    "text": "Preferred. Use your included credits or personal key, with any available model.",
+    "description": "Description under the 'Homeroom · OpenRouter' choice in the coding-agent dialog."
+  },
+  "agentChoice.claudeBlurb": {
+    "text": "Use the platform Claude allowance instead.",
+    "description": "Description under the 'Homeroom · Claude' choice in the coding-agent dialog."
+  },
+  "agentChoice.savedDefault": {
+    "text": "Saved default",
+    "description": "Small badge on the choice in the coding-agent dialog that the person saved as their default."
+  },
+  "agentChoice.modelLabel": {
+    "text": "OpenRouter model",
+    "description": "Label over the model search box and list in the coding-agent dialog."
+  },
+  "agentChoice.filterPlaceholder": {
+    "text": "Filter by model or provider…",
+    "description": "Placeholder of the search box over the list of OpenRouter models in the coding-agent dialog."
+  },
+  "agentChoice.favoritesOff": {
+    "text": "☆ Favorites",
+    "description": "Toggle button beside the model search box in the coding-agent dialog while every model is listed: pressing it lists only starred models. Keep the hollow star first."
+  },
+  "agentChoice.favoritesOn": {
+    "text": "★ Favorites",
+    "description": "Toggle button beside the model search box in the coding-agent dialog while only starred models are listed. Keep the filled star first."
+  },
+  "agentChoice.refresh": {
+    "text": "Refresh",
+    "description": "Button beside the model search box in the coding-agent dialog: fetches the list of OpenRouter models again."
+  },
+  "agentChoice.refreshing": {
+    "text": "Refreshing…",
+    "description": "Label of the Refresh button in the coding-agent dialog while the list of OpenRouter models is being fetched."
+  },
+  "agentChoice.star.add": {
+    "text": "Add selected model to favorites",
+    "description": "Accessible name and tooltip of the ☆ button beside the model list in the coding-agent dialog."
+  },
+  "agentChoice.star.remove": {
+    "text": "Remove selected model from favorites",
+    "description": "Accessible name and tooltip of the ★ button beside the model list in the coding-agent dialog, when the selected model is already a favorite."
+  },
+  "agentChoice.catalogNote": {
+    "text": "Platform recommendations start in Favorites. Clear the Favorites filter to browse the complete key-visible catalog. Rates are per 1M tokens; actual spend depends on usage.",
+    "description": "Small print under the model list in the coding-agent dialog. Favorites is the name of the filter button. 'Key-visible catalog' means every model the person's OpenRouter key can use; '1M tokens' is one million tokens."
+  },
+  "agentChoice.effort.label": {
+    "text": "Reasoning effort",
+    "description": "Label of the dropdown in the coding-agent dialog that sets how much thinking the model does before it answers."
+  },
+  "agentChoice.effort.default": {
+    "text": "Default",
+    "description": "Option in the 'Reasoning effort' dropdown of the coding-agent dialog: leave it to the model's own setting."
+  },
+  "agentChoice.effort.minimal": {
+    "text": "Minimal",
+    "description": "Option in the 'Reasoning effort' dropdown of the coding-agent dialog: the least thinking."
+  },
+  "agentChoice.effort.low": {
+    "text": "Low",
+    "description": "Option in the 'Reasoning effort' dropdown of the coding-agent dialog."
+  },
+  "agentChoice.effort.medium": {
+    "text": "Medium",
+    "description": "Option in the 'Reasoning effort' dropdown of the coding-agent dialog."
+  },
+  "agentChoice.effort.high": {
+    "text": "High",
+    "description": "Option in the 'Reasoning effort' dropdown of the coding-agent dialog."
+  },
+  "agentChoice.effort.xhigh": {
+    "text": "Extra high",
+    "description": "Option in the 'Reasoning effort' dropdown of the coding-agent dialog: the most thinking."
+  },
+  "agentChoice.openSettings": {
+    "text": "Open OpenRouter settings",
+    "description": "Button at the bottom of the coding-agent dialog: goes to the OpenRouter section of Settings. 'Open' is a verb."
+  },
+  "agentChoice.catalog.count_one": {
+    "text": "{{shown}} of {{count}} models",
+    "description": "Note under the model list in the coding-agent dialog: how many models the search shows out of all of them. {{shown}} is the number listed and {{count}} the total."
+  },
+  "agentChoice.catalog.count_other": {
+    "text": "{{shown}} of {{count}} models",
+    "description": "Note under the model list in the coding-agent dialog: how many models the search shows out of all of them. {{shown}} is the number listed and {{count}} the total."
+  },
+  "agentChoice.catalog.noMatch": {
+    "text": "No models match. Clear the search or show all models",
+    "description": "Note under the model list in the coding-agent dialog when the search finds nothing. It has no full stop because the time the list was refreshed may follow it after a dot."
+  },
+  "agentChoice.apply.model": {
+    "text": "Use this OpenRouter model",
+    "description": "Main button of the dialog that picks an OpenRouter model for a dev chat session."
+  },
+  "agentChoice.apply.switch": {
+    "text": "Switch to {{venue}}",
+    "description": "Main button of the dialog that changes a session's coding agent. {{venue}} is the chosen one's name, 'Homeroom · OpenRouter' or 'Homeroom · Claude'."
+  },
+  "agentChoice.apply.build": {
+    "text": "Build on {{venue}}",
+    "description": "Main button of the dialog that chooses the coding agent for a new session. 'Build' is a verb. {{venue}} is the chosen one's name, 'Homeroom · OpenRouter' or 'Homeroom · Claude'."
+  },
+  "agentChoice.apply.setUp": {
+    "text": "Set up OpenRouter",
+    "description": "Main button of the coding-agent dialog when OpenRouter is chosen but the person has no OpenRouter API key yet: goes to where one is added."
+  },
+  "agentChoice.status.claudeAfterError": {
+    "text": "{{error}} Homeroom · Claude is still available.",
+    "description": "Status line in the coding-agent dialog when the settings failed to load and 'Homeroom · Claude' is selected. {{error}} is a whole sentence saying what went wrong. 'Homeroom · Claude' is a name and is not translated."
+  },
+  "agentChoice.status.claude": {
+    "text": "Homeroom · Claude builds in this chat on your daily Homeroom credits.",
+    "description": "Status line in the coding-agent dialog while 'Homeroom · Claude' is selected. 'Homeroom · Claude' is a name and is not translated; 'builds' is a verb."
+  },
+  "agentChoice.status.openRouterDisabled": {
+    "text": "Homeroom · OpenRouter is not enabled for this account or deployment.",
+    "description": "Status line in the coding-agent dialog when OpenRouter cannot be chosen. 'Homeroom · OpenRouter' is a name and is not translated."
+  },
+  "agentChoice.status.addKey": {
+    "text": "Add your OpenRouter API key before choosing OpenRouter.",
+    "description": "Status line in the coding-agent dialog when OpenRouter is selected and the person has no OpenRouter API key."
+  },
+  "agentChoice.status.noMatch": {
+    "text": "No models match. Clear the search or show all models.",
+    "description": "Status line in the coding-agent dialog when the search over OpenRouter models finds nothing."
+  },
+  "agentChoice.status.model": {
+    "text": "{{cost}}. {{compatibility}} This session bills directly to your OpenRouter key.",
+    "description": "Status line in the coding-agent dialog describing the selected OpenRouter model. {{cost}} is its price summary, without a full stop, for example 'Low cost · $1 /M input · $5 /M output'. {{compatibility}} is a whole sentence about how well the model is verified."
+  },
+  "agentChoice.status.modelNoEffort": {
+    "text": "{{cost}}. {{compatibility}} This model does not expose reasoning-effort controls. This session bills directly to your OpenRouter key.",
+    "description": "Status line in the coding-agent dialog describing a selected OpenRouter model whose reasoning effort cannot be set. {{cost}} is its price summary, without a full stop. {{compatibility}} is a whole sentence about how well the model is verified."
+  },
+  "agentChoice.error.refresh": {
+    "text": "Could not refresh OpenRouter models.",
+    "description": "Error in the coding-agent dialog when fetching the list of OpenRouter models again failed with no other reason."
+  },
+  "agentSwitch.alreadySelected": {
+    "text": "{{venue}} is already selected for this session.",
+    "description": "Toast when the person picks the coding agent the session already uses. {{venue}} is its name, 'Homeroom · OpenRouter' or 'Homeroom · Claude'."
+  },
+  "agentSwitch.failed": {
+    "text": "Could not switch coding agents.",
+    "description": "Toast when changing a session's coding agent failed and the server gave no reason."
+  },
+  "agentSwitch.nowUses": {
+    "text": "This session now uses {{venue}}.",
+    "description": "Toast after a session's coding agent was changed. {{venue}} is the new one's name, 'Homeroom · OpenRouter' or 'Homeroom · Claude'."
+  },
+  "agentSwitch.networkError": {
+    "text": "Network error while switching coding agents.",
+    "description": "Toast when changing a session's coding agent failed because the server could not be reached."
+  },
+  "agentSwitch.platformFailed": {
+    "text": "Could not switch to the platform agent.",
+    "description": "Toast when moving a session back to Homeroom's own coding agent failed and the server gave no reason."
+  },
+  "runner.yourMachine": {
+    "text": "your machine",
+    "description": "Stands where the name of the person's own computer is shown on its own above the dev chat message box, when the computer has no name: in the 'Last turn: …' chip and as the option in the 'Run on:' dropdown. Shown alone, as a label; lower case in English. The tooltips have unnamed wordings of their own."
+  },
+  "runner.handBack.confirm": {
+    "text": "Hand coding turns back to Homeroom?\n\n{{machine}} stops receiving turns for this session. Anything it already committed stays on the branch.",
+    "description": "Confirmation before a dev chat session stops running the coding agent on the person's own computer. {{machine}} is that computer's name. A 'turn' is one request to the coding agent. Keep the blank line after the question."
+  },
+  "runner.handBack.confirmUnnamed": {
+    "text": "Hand coding turns back to Homeroom?\n\nyour machine stops receiving turns for this session. Anything it already committed stays on the branch.",
+    "description": "Confirmation before a dev chat session stops running the coding agent on the person's own computer, when that computer has no name. A 'turn' is one request to the coding agent. Keep the blank line after the question."
+  },
+  "runner.handBack.failed": {
+    "text": "Could not hand the session back. Try again in a moment.",
+    "description": "Alert when stopping the coding agent on the person's own computer and returning the session to Homeroom failed."
+  },
+  "model.guidanceTooltip": {
+    "text": "A suggestion, not a rule. Any model can attempt any change. Opus is the general coding pick; reach for Fable when design judgment matters or the coding is genuinely difficult. Both cost more per change than Sonnet.",
+    "description": "Tooltip explaining the guidance shown beside the models. Opus, Fable and Sonnet are model names and are not translated."
+  },
+  "model.option.withHint": {
+    "text": "{{model}}: {{hint}}",
+    "description": "A model's row in a model list: {{model}} is the model's name and {{hint}} a short phrase from the server saying what size of change it suits. Change only the punctuation between them if needed."
+  },
+  "model.option.bestFor": {
+    "text": "{{model}}: best for {{guidance}}",
+    "description": "A sentence about a model. {{model}} is the model's name and {{guidance}} a phrase from the server, starting in lower case, saying what kind of change it suits."
+  },
+  "budget.reset.daily": {
+    "text": "Resets at {{time}}.",
+    "description": "Sentence at the end of the tooltip on the dev chat's AI-credits meter: when the daily allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
+  },
+  "budget.reset.weekly": {
+    "text": "Resets {{day}} at {{time}}.",
+    "description": "Sentence at the end of the tooltip on the dev chat's AI-credits meter: when the weekly allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
+  },
+  "budget.reset.weeklyUtc": {
+    "text": "Resets Monday 00:00 UTC.",
+    "description": "Sentence at the end of the tooltip on the dev chat's AI-credits meter when the weekly allowance starts again at midnight UTC on Monday. UTC is the time zone."
+  },
+  "budget.reset.dailyUtc": {
+    "text": "Resets at midnight UTC.",
+    "description": "Sentence at the end of the tooltip on the dev chat's AI-credits meter when the daily allowance starts again at midnight UTC. UTC is the time zone."
+  },
+  "budget.window.thisWeek": {
+    "text": "This week",
+    "description": "Label that starts the tooltip on the dev chat's AI-credits meter when the allowance is counted per week, as in 'This week: $3.20 of your $50.00 …'."
+  },
+  "budget.window.today": {
+    "text": "Today",
+    "description": "Label that starts the tooltip on the dev chat's AI-credits meter when the allowance is counted per day, as in 'Today: $3.20 of your $10.00 …'."
+  },
+  "budget.pill.thisTurn": {
+    "text": "this turn ${{amount}}",
+    "description": "Part of the meter in the dev chat message box: what the coding agent's current request has cost so far. {{amount}} is a number with two decimals; the dollar sign is in the text. Lower case."
+  },
+  "budget.pill.thisTurnEstimated": {
+    "text": "this turn ~${{amount}}",
+    "description": "Part of the meter in the dev chat message box: an estimate of what the coding agent's current request has cost so far. {{amount}} is a number with two decimals; keep the ~ and the dollar sign. Lower case."
+  },
+  "budget.pill.thisTurnTitle.openRouter": {
+    "text": "Estimated from the model’s OpenRouter list price and the tokens this turn used. OpenRouter’s own usage records determine billing.",
+    "description": "Tooltip on the 'this turn' figure of the dev chat meter in a session that runs on OpenRouter. A 'turn' is one request to the coding agent."
+  },
+  "budget.pill.thisTurnTitle.estimated": {
+    "text": "Estimated token spend so far. Updates while Claude Code works; final usage determines billing.",
+    "description": "Tooltip on the 'this turn' figure of the dev chat meter while the coding agent, Claude Code, is still working."
+  },
+  "budget.pill.thisTurnTitle.reported": {
+    "text": "Token spend reported by Claude Code for this turn.",
+    "description": "Tooltip on the 'this turn' figure of the dev chat meter once the coding agent, Claude Code, has reported what the request cost."
+  },
+  "budget.pill.lockedWithKeyTitle": {
+    "text": "Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available.",
+    "description": "Tooltip on the dev chat meter when Homeroom's free AI credits are locked until the person verifies their account, and they have saved their own Anthropic API key. X is the social network."
+  },
+  "budget.pill.lockedWithKey": {
+    "text": "<0>platform credits locked</0><1> · </1><2>your key · {{last4}}</2>",
+    "description": "The dev chat meter when Homeroom's free AI credits are locked and the person has their own API key. <0> is a link to where the account is verified, <1> the separator and <2> the key; {{last4}} is the key's last four characters. Keep all three pairs of tags. Lower case."
+  },
+  "budget.pill.verify": {
+    "text": "verify account · unlock $10/day",
+    "description": "The dev chat meter when Homeroom's free AI credits are locked: a link to where the account is verified, which unlocks ten dollars of credits a day. Lower case."
+  },
+  "budget.pill.verifyTitle": {
+    "text": "Connect GitHub or X to unlock $10/day",
+    "description": "Tooltip on the 'verify account' link of the dev chat meter. X is the social network."
+  },
+  "budget.pill.keyAvailable": {
+    "text": "your key available",
+    "description": "The dev chat meter when Homeroom cannot tell whether the person may use free credits, and they have saved their own API key. Lower case."
+  },
+  "budget.pill.keyAvailableTitle": {
+    "text": "Platform credit eligibility is temporarily unavailable; your own key remains available.",
+    "description": "Tooltip on 'your key available' in the dev chat meter."
+  },
+  "budget.pill.unavailable": {
+    "text": "credits temporarily unavailable",
+    "description": "The dev chat meter when Homeroom cannot tell whether the person may use free credits and they have no API key of their own. Lower case."
+  },
+  "budget.pill.unavailableTitle": {
+    "text": "Platform credit eligibility could not be verified. Try again shortly.",
+    "description": "Tooltip on 'credits temporarily unavailable' in the dev chat meter."
+  },
+  "budget.pill.key": {
+    "text": "your key · {{last4}}",
+    "description": "The dev chat meter when requests are billed to the person's own Anthropic API key. {{last4}} is the key's last four characters. Lower case."
+  },
+  "budget.pill.keyTitle": {
+    "text": "Using your Anthropic API key",
+    "description": "Tooltip on 'your key · …' in the dev chat meter."
+  },
+  "budget.pill.limit": {
+    "text": "limit <0>${{spent}}</0><1>/${{limit}}</1>",
+    "description": "The dev chat meter for a person with their own API key: how much of Homeroom's allowance is used. {{spent}} and {{limit}} are amounts with two decimals; keep the dollar signs, the slash and both pairs of tags. Lower case."
+  },
+  "budget.pill.limitWithKey": {
+    "text": "limit <0>${{spent}}</0><1>/${{limit}}</1><2> · </2><3>your key ${{keySpend}}</3>",
+    "description": "The dev chat meter for a person with their own API key, once some spending was billed to that key. {{spent}} and {{limit}} are Homeroom's allowance used and its size, {{keySpend}} what the key was billed, all with two decimals. Keep the dollar signs and all four pairs of tags. Lower case."
+  },
+  "budget.title.key.weekly": {
+    "text": "{{window}}: ${{spent}} of your ${{limit}} platform weekly limit. The weekly limit is used first; your key (…{{last4}}) takes over once it runs out. {{reset}}",
+    "description": "Tooltip on the dev chat meter for a person with their own API key, with a weekly allowance. {{window}} is the period's label, for example 'This week'. {{spent}} and {{limit}} are amounts with two decimals; the dollar signs are in the text. {{reset}} is a whole sentence saying when the limit starts again. {{last4}} is the key's last four characters."
+  },
+  "budget.title.key.weeklyWithKeySpend": {
+    "text": "{{window}}: ${{spent}} of your ${{limit}} platform weekly limit + ${{keySpend}} billed to your Anthropic key (…{{last4}}). The weekly limit is used first; your key (…{{last4}}) takes over once it runs out. {{reset}}",
+    "description": "Tooltip on the dev chat meter for a person with their own API key, with a weekly allowance, once the key was billed. {{window}} is the period's label, for example 'This week'. {{spent}} and {{limit}} are amounts with two decimals; the dollar signs are in the text. {{reset}} is a whole sentence saying when the limit starts again. {{keySpend}} is the amount billed to the key and {{last4}} the key's last four characters."
+  },
+  "budget.title.key.daily": {
+    "text": "{{window}}: ${{spent}} of your ${{limit}} platform daily limit. The daily limit is used first; your key (…{{last4}}) takes over once it runs out. {{reset}}",
+    "description": "Tooltip on the dev chat meter for a person with their own API key, with a daily allowance. {{window}} is the period's label, for example 'This week'. {{spent}} and {{limit}} are amounts with two decimals; the dollar signs are in the text. {{reset}} is a whole sentence saying when the limit starts again. {{last4}} is the key's last four characters."
+  },
+  "budget.title.key.dailyWithKeySpend": {
+    "text": "{{window}}: ${{spent}} of your ${{limit}} platform daily limit + ${{keySpend}} billed to your Anthropic key (…{{last4}}). The daily limit is used first; your key (…{{last4}}) takes over once it runs out. {{reset}}",
+    "description": "Tooltip on the dev chat meter for a person with their own API key, with a daily allowance, once the key was billed. {{window}} is the period's label, for example 'This week'. {{spent}} and {{limit}} are amounts with two decimals; the dollar signs are in the text. {{reset}} is a whole sentence saying when the limit starts again. {{keySpend}} is the amount billed to the key and {{last4}} the key's last four characters."
+  },
+  "budget.title.usedUp.weekly": {
+    "text": "Your free weekly AI credits are used up. {{reset}} Or add your own Anthropic API key in Settings to keep working now.",
+    "description": "Tooltip on the dev chat meter when the week's free AI credits are spent. {{reset}} is a whole sentence saying when they come back."
+  },
+  "budget.title.usedUp.daily": {
+    "text": "Your free daily AI credits are used up. {{reset}} Or add your own Anthropic API key in Settings to keep working now.",
+    "description": "Tooltip on the dev chat meter when the day's free AI credits are spent. {{reset}} is a whole sentence saying when they come back."
+  },
+  "budget.title.credits.weekly": {
+    "text": "{{window}}: ${{spent}} of your ${{limit}} free weekly AI credits. {{reset}}",
+    "description": "Tooltip on the dev chat meter showing free AI credits counted per week. {{window}} is the period's label, for example 'This week'. {{spent}} and {{limit}} are amounts with two decimals; the dollar signs are in the text. {{reset}} is a whole sentence saying when the limit starts again."
+  },
+  "budget.title.credits.daily": {
+    "text": "{{window}}: ${{spent}} of your ${{limit}} free daily AI credits. {{reset}}",
+    "description": "Tooltip on the dev chat meter showing free AI credits counted per day. {{window}} is the period's label, for example 'This week'. {{spent}} and {{limit}} are amounts with two decimals; the dollar signs are in the text. {{reset}} is a whole sentence saying when the limit starts again."
+  },
+  "budget.pill.openRouter.left": {
+    "text": "OpenRouter <0>${{remaining}} left</0>",
+    "description": "The dev chat meter in a session that runs on an OpenRouter key: the money left on that key. {{remaining}} is an amount with two decimals; keep the dollar sign and the tags. OpenRouter is a name."
+  },
+  "budget.pill.openRouter.leftToday": {
+    "text": "OpenRouter <0>${{remaining}} left today</0>",
+    "description": "The dev chat meter in a session that runs on an OpenRouter key whose limit is per day: the money left today. {{remaining}} is an amount with two decimals; keep the dollar sign and the tags. OpenRouter is a name."
+  },
+  "budget.pill.openRouter.leftThisWeek": {
+    "text": "OpenRouter <0>${{remaining}} left this week</0>",
+    "description": "The dev chat meter in a session that runs on an OpenRouter key whose limit is per week: the money left this week. {{remaining}} is an amount with two decimals; keep the dollar sign and the tags. OpenRouter is a name."
+  },
+  "budget.pill.openRouter.leftThisMonth": {
+    "text": "OpenRouter <0>${{remaining}} left this month</0>",
+    "description": "The dev chat meter in a session that runs on an OpenRouter key whose limit is per month: the money left this month. {{remaining}} is an amount with two decimals; keep the dollar sign and the tags. OpenRouter is a name."
+  },
+  "budget.openRouter.title.included.left": {
+    "text": "Your included OpenRouter key has ${{remaining}} left.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the OpenRouter key Homeroom included with the account. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text."
+  },
+  "budget.openRouter.title.included.leftDaily": {
+    "text": "Your included OpenRouter key has ${{remaining}} left. OpenRouter resets it daily.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the OpenRouter key Homeroom included with the account. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.included.leftWeekly": {
+    "text": "Your included OpenRouter key has ${{remaining}} left. OpenRouter resets it weekly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the OpenRouter key Homeroom included with the account. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.included.leftMonthly": {
+    "text": "Your included OpenRouter key has ${{remaining}} left. OpenRouter resets it monthly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the OpenRouter key Homeroom included with the account. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.included.allowance": {
+    "text": "Your included OpenRouter key has ${{remaining}} of its ${{limit}} allowance left.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the OpenRouter key Homeroom included with the account. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text."
+  },
+  "budget.openRouter.title.included.allowanceDaily": {
+    "text": "Your included OpenRouter key has ${{remaining}} of its ${{limit}} daily allowance left. OpenRouter resets it daily.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the OpenRouter key Homeroom included with the account. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.included.allowanceWeekly": {
+    "text": "Your included OpenRouter key has ${{remaining}} of its ${{limit}} weekly allowance left. OpenRouter resets it weekly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the OpenRouter key Homeroom included with the account. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.included.allowanceMonthly": {
+    "text": "Your included OpenRouter key has ${{remaining}} of its ${{limit}} monthly allowance left. OpenRouter resets it monthly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the OpenRouter key Homeroom included with the account. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.own.left": {
+    "text": "Your OpenRouter key has ${{remaining}} left.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text."
+  },
+  "budget.openRouter.title.own.leftDaily": {
+    "text": "Your OpenRouter key has ${{remaining}} left. OpenRouter resets it daily.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.own.leftWeekly": {
+    "text": "Your OpenRouter key has ${{remaining}} left. OpenRouter resets it weekly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.own.leftMonthly": {
+    "text": "Your OpenRouter key has ${{remaining}} left. OpenRouter resets it monthly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.own.allowance": {
+    "text": "Your OpenRouter key has ${{remaining}} of its ${{limit}} allowance left.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text."
+  },
+  "budget.openRouter.title.own.allowanceDaily": {
+    "text": "Your OpenRouter key has ${{remaining}} of its ${{limit}} daily allowance left. OpenRouter resets it daily.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.own.allowanceWeekly": {
+    "text": "Your OpenRouter key has ${{remaining}} of its ${{limit}} weekly allowance left. OpenRouter resets it weekly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.own.allowanceMonthly": {
+    "text": "Your OpenRouter key has ${{remaining}} of its ${{limit}} monthly allowance left. OpenRouter resets it monthly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.ownLast4.left": {
+    "text": "Your OpenRouter key (…{{last4}}) has ${{remaining}} left.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key; {{last4}} is the key's last four characters. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text."
+  },
+  "budget.openRouter.title.ownLast4.leftDaily": {
+    "text": "Your OpenRouter key (…{{last4}}) has ${{remaining}} left. OpenRouter resets it daily.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key; {{last4}} is the key's last four characters. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.ownLast4.leftWeekly": {
+    "text": "Your OpenRouter key (…{{last4}}) has ${{remaining}} left. OpenRouter resets it weekly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key; {{last4}} is the key's last four characters. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.ownLast4.leftMonthly": {
+    "text": "Your OpenRouter key (…{{last4}}) has ${{remaining}} left. OpenRouter resets it monthly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key; {{last4}} is the key's last four characters. {{remaining}} is the money left on the key, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.ownLast4.allowance": {
+    "text": "Your OpenRouter key (…{{last4}}) has ${{remaining}} of its ${{limit}} allowance left.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key; {{last4}} is the key's last four characters. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text."
+  },
+  "budget.openRouter.title.ownLast4.allowanceDaily": {
+    "text": "Your OpenRouter key (…{{last4}}) has ${{remaining}} of its ${{limit}} daily allowance left. OpenRouter resets it daily.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key; {{last4}} is the key's last four characters. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.ownLast4.allowanceWeekly": {
+    "text": "Your OpenRouter key (…{{last4}}) has ${{remaining}} of its ${{limit}} weekly allowance left. OpenRouter resets it weekly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key; {{last4}} is the key's last four characters. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "budget.openRouter.title.ownLast4.allowanceMonthly": {
+    "text": "Your OpenRouter key (…{{last4}}) has ${{remaining}} of its ${{limit}} monthly allowance left. OpenRouter resets it monthly.",
+    "description": "Tooltip on the amount in the dev chat's OpenRouter meter, about the person's own OpenRouter API key; {{last4}} is the key's last four characters. {{remaining}} is the money left on the key and {{limit}} the key's spending limit, as numbers with two decimals; the dollar sign is in the text. The last sentence says how often OpenRouter restores the limit."
+  },
+  "banner.credits.locked.lead": {
+    "text": "You’re out of this week’s free AI credits.",
+    "description": "First sentence, in bold, of the banner at the top of a dev chat session when the free AI credits are spent and more are locked until the account is verified."
+  },
+  "banner.credits.locked.tail": {
+    "text": "Verify your account to get more: add your phone number, or link GitHub and X.",
+    "description": "Second sentence of the dev chat banner shown when free AI credits are spent and more are locked. X is the social network."
+  },
+  "banner.credits.unavailable.lead": {
+    "text": "Credit eligibility could not be verified.",
+    "description": "First sentence, in bold, of the banner at the top of a dev chat session when Homeroom could not tell whether the person may use free AI credits."
+  },
+  "banner.credits.unavailable.tail": {
+    "text": "Try again shortly, or use your own API key or another build venue.",
+    "description": "Second sentence of the dev chat banner shown when credit eligibility could not be checked. A 'build venue' is where the change is built: on Homeroom, on the person's computer, or in another AI product."
+  },
+  "banner.credits.out.leadWeekly": {
+    "text": "You’ve used up this week’s free AI credits.",
+    "description": "First sentence, in bold, of the red banner at the top of a dev chat session when the person's weekly free AI credits are spent."
+  },
+  "banner.credits.out.leadDaily": {
+    "text": "You’ve used up today’s free AI credits.",
+    "description": "First sentence, in bold, of the red banner at the top of a dev chat session when the person's daily free AI credits are spent."
+  },
+  "banner.credits.out.leadPlatform": {
+    "text": "The platform’s shared daily AI budget is used up.",
+    "description": "First sentence, in bold, of the red banner at the top of a dev chat session when the AI budget shared by everyone on Homeroom is spent for the day."
+  },
+  "banner.credits.out.resetDaily": {
+    "text": "Free credits reset at {{time}}.",
+    "description": "Second sentence of the red out-of-credits banner in the dev chat, for a daily allowance. 'Reset' is a verb: the credits are restored. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
+  },
+  "banner.credits.out.resetWeekly": {
+    "text": "Free credits reset {{day}} at {{time}}.",
+    "description": "Second sentence of the red out-of-credits banner in the dev chat, for a weekly allowance. 'Reset' is a verb: the credits are restored. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
+  },
+  "banner.credits.out.resetWeeklyUtc": {
+    "text": "Free credits reset Monday 00:00 UTC.",
+    "description": "Second sentence of the red out-of-credits banner in the dev chat when weekly credits are restored at midnight UTC on Monday. 'Reset' is a verb."
+  },
+  "banner.credits.out.resetDailyUtc": {
+    "text": "Free credits reset at midnight UTC.",
+    "description": "Second sentence of the red out-of-credits banner in the dev chat when daily credits are restored at midnight UTC. 'Reset' is a verb."
+  },
+  "banner.credits.out.tailPlans": {
+    "text": "Or keep working right now on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.",
+    "description": "Last sentence of the red out-of-credits banner in the dev chat, when handing the work to the person's own Claude or ChatGPT subscription is offered."
+  },
+  "banner.credits.out.tailKey": {
+    "text": "Or keep working right now with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.",
+    "description": "Last sentence of the red out-of-credits banner in the dev chat."
+  },
+  "banner.credits.low.tail": {
+    "text": "Set up another way to keep building before it runs out mid-change.",
+    "description": "Last sentence of the amber banner in the dev chat warning that free AI credits are nearly spent. 'It' is the credit; 'mid-change' means while a change is being built."
+  },
+  "venue.refusal.verify": {
+    "text": "Verify your account to get more: add your phone number, or link GitHub and X.",
+    "description": "Reason shown under the 'build on Homeroom' row of the sheet that chooses where a session is built, when free AI credits are locked until the account is verified. X is the social network."
+  },
+  "venue.refusal.platformOut": {
+    "text": "The platform’s shared daily AI budget is used up.",
+    "description": "Reason shown under the 'build on Homeroom' row of the sheet that chooses where a session is built, when the AI budget shared by everyone on Homeroom is spent for the day."
+  },
+  "venue.refusal.outWeekly": {
+    "text": "You’ve used up this week’s free AI credits.",
+    "description": "Reason shown under the 'build on Homeroom' row of the sheet that chooses where a session is built, when the person's weekly free AI credits are spent."
+  },
+  "venue.refusal.outDaily": {
+    "text": "You’ve used up today’s free AI credits.",
+    "description": "Reason shown under the 'build on Homeroom' row of the sheet that chooses where a session is built, when the person's daily free AI credits are spent."
+  },
+  "flow.linkGithub.tab": {
+    "text": "Finish linking GitHub in the tab that just opened, then come back here.",
+    "description": "Notice in the dev chat's hand-off steps after the person pressed the button that links their GitHub account in a new browser tab."
+  },
+  "flow.linkGithub.browser": {
+    "text": "Finish linking GitHub in your browser, then come back to the app. Sign in with the same Homeroom account if asked.",
+    "description": "Notice in the dev chat's hand-off steps, in the phone app, after the person pressed the button that links their GitHub account in the browser."
+  },
+  "flow.instructions.none": {
+    "text": "No instructions to copy yet.",
+    "description": "Error in the dev chat's hand-off steps when 'copy instructions' was pressed before any instructions for the coding agent exist."
+  },
+  "flow.instructions.copied": {
+    "text": "Instructions copied. Paste them into your agent, which will ask what you want to build.",
+    "description": "Notice in the dev chat's hand-off steps after the instructions for the person's own coding agent were copied to the clipboard."
+  },
+  "flow.instructions.copyFailed": {
+    "text": "Could not reach the clipboard. Open the instructions below and copy them by hand.",
+    "description": "Error in the dev chat's hand-off steps when copying the coding agent's instructions to the clipboard failed."
+  },
+  "flow.prepare.needBrief": {
+    "text": "Say what to build first. The work order needs something to hand your agent.",
+    "description": "Error in the dev chat's hand-off steps when a work order was asked for with the description box empty. A work order is the brief Homeroom hands the person's own coding agent."
+  },
+  "flow.prepare.needBriefBelow": {
+    "text": "Describe the change in the message box below first. The work order needs something to hand your agent.",
+    "description": "Error in the dev chat's hand-off steps when a work order was asked for with nothing typed in the chat's message box. A work order is the brief Homeroom hands the person's own coding agent."
+  },
+  "flow.prepare.failed": {
+    "text": "Could not prepare the work order.",
+    "description": "Error in the dev chat's hand-off steps when creating the work order failed and the server gave no reason."
+  },
+  "flow.prepare.reused": {
+    "text": "You already had a work order for this app, so this reuses it.",
+    "description": "Notice in the dev chat's hand-off steps when an existing work order for the app was used instead of a new one."
+  },
+  "flow.prepare.ready": {
+    "text": "Work order ready.",
+    "description": "Notice in the dev chat's hand-off steps after a work order was created."
+  },
+  "flow.networkError": {
+    "text": "Network error: {{detail}}",
+    "description": "Error in the dev chat's hand-off steps when a request could not reach the server. {{detail}} is the browser's own short message about the failure."
+  },
+  "flow.discard.none": {
+    "text": "No work order to put away.",
+    "description": "Error in the dev chat's hand-off steps when 'put away' was pressed and there is no work order."
+  },
+  "flow.discard.done": {
+    "text": "Work order put away. Say what you want to build instead.",
+    "description": "Notice in the dev chat's hand-off steps after the work order was discarded."
+  },
+  "flow.discard.failed": {
+    "text": "Could not put that work order away.",
+    "description": "Error in the dev chat's hand-off steps when discarding the work order failed and the server gave no reason."
+  },
+  "flow.submit.none": {
+    "text": "No work order to submit yet.",
+    "description": "Error in the dev chat's hand-off steps when 'submit' was pressed and there is no work order."
+  },
+  "flow.submit.failed": {
+    "text": "Could not submit the branch.",
+    "description": "Error in the dev chat's hand-off steps when submitting the branch the person's coding agent pushed failed and the server gave no reason."
+  },
+  "flow.submit.opened": {
+    "text": "Proposal opened from PR #{{number}}",
+    "description": "Toast after the branch from the person's own coding agent was turned into a proposal. PR is short for pull request; {{number}} is its number. 'Proposal' is the change put up for the group's vote."
+  },
+  "flow.submit.openedUnnumbered": {
+    "text": "Proposal opened from PR #",
+    "description": "Toast after the branch from the person's own coding agent was turned into a proposal, in the rare case the pull request's number is not known. PR is short for pull request."
+  },
+  "flow.update.none": {
+    "text": "No proposal to update yet.",
+    "description": "Error in the dev chat's hand-off steps when 'submit update' was pressed and there is no proposal to update."
+  },
+  "flow.update.failed": {
+    "text": "Could not submit the update.",
+    "description": "Error in the dev chat's hand-off steps when submitting new commits to an existing proposal failed and the server gave no reason."
+  },
+  "flow.update.nothingNew": {
+    "text": "Nothing new to submit. This session is already on that commit.",
+    "description": "Notice in the dev chat's hand-off steps when an update was submitted but the branch has no new commits."
+  },
+  "flow.update.landed": {
+    "text": "Update landed. Reopen this session to rebuild its preview and re-run its checks.",
+    "description": "Toast after new commits were added to a proposal whose session is asleep."
+  },
+  "flow.update.submittedVotesCleared_one": {
+    "text": "Update submitted: {{count}} vote cleared",
+    "description": "Toast after new commits were added to a proposal, which removed the votes already cast on it. {{count}} is how many votes were removed."
+  },
+  "flow.update.submittedVotesCleared_other": {
+    "text": "Update submitted: {{count}} votes cleared",
+    "description": "Toast after new commits were added to a proposal, which removed the votes already cast on it. {{count}} is how many votes were removed."
+  },
+  "flow.update.submitted": {
+    "text": "Update submitted",
+    "description": "Toast after new commits were added to a proposal."
+  },
+  "session.resumeFailed": {
+    "text": "Could not resume this session right now. Try again in a moment.",
+    "description": "Toast when waking a paused dev chat session failed and the server gave no reason."
+  },
+  "send.openRouterFailed": {
+    "text": "**OpenRouter turn could not start.** {{detail}}",
+    "description": "Message shown in the dev chat transcript, as if from the assistant, when a request to an OpenRouter model could not begin. The ** marks make the first sentence bold: keep them. {{detail}} is a whole sentence saying why, or what to do."
+  },
+  "send.pleaseTryAgain": {
+    "text": "Please try again.",
+    "description": "Sentence after 'OpenRouter turn could not start.' in the dev chat transcript when the server gave no reason."
+  },
+  "send.creditsResetFallback": {
+    "text": "They reset Monday 00:00 UTC.",
+    "description": "Sentence on the out-of-credits card in the dev chat transcript when the server did not say when the credits come back. 'They' are the free AI credits; UTC is the time zone."
+  },
+  "send.rateLimited": {
+    "text": "**Rate limit reached.** {{detail}}",
+    "description": "Message shown in the dev chat transcript, as if from the assistant, when the person sent too many requests. The ** marks make the first sentence bold: keep them. {{detail}} is a whole sentence saying why, or what to do."
+  },
+  "send.tryAgainLater": {
+    "text": "Try again later.",
+    "description": "Sentence after 'Rate limit reached.' in the dev chat transcript when the server gave no reason."
+  },
+  "send.failed": {
+    "text": "**Couldn't send message:** {{detail}}",
+    "description": "Message shown in the dev chat transcript, as if from the assistant, when the person's message could not be sent. The ** marks make the lead bold: keep them. {{detail}} is the server's reason, or 'HTTP' and a status code."
+  },
+  "send.streamError": {
+    "text": "> **Error:** {{error}}",
+    "description": "Line added to the assistant's reply in the dev chat transcript when the reply broke off with an error. Keep the leading > and the ** marks, which format it as a bold quoted line. {{error}} is the server's error text."
+  },
+  "title.thinking": {
+    "text": "⏳ Thinking… · {{title}}",
+    "description": "Browser tab title while the coding agent is working in the open dev chat session. {{title}} is the page's own title, for example the app's name. Keep the emoji first so it shows in a narrow tab."
+  },
+  "title.sessionDone": {
+    "text": "✅ Session done · {{title}}",
+    "description": "Browser tab title after the coding agent finished while the person was away. {{title}} is the page's own title, for example the app's name. Keep the emoji first so it shows in a narrow tab."
+  },
+  "title.sessionStopped": {
+    "text": "⏸️ Session stopped · {{title}}",
+    "description": "Browser tab title after the coding agent's work stopped before finishing while the person was away. {{title}} is the page's own title, for example the app's name. Keep the emoji first so it shows in a narrow tab."
+  },
+  "title.proposalReady": {
+    "text": "🤖 Proposal ready · {{title}}",
+    "description": "Browser tab title after Homeroom's bot finished building a proposal while the person was away. {{title}} is the page's own title, for example the app's name. Keep the emoji first so it shows in a narrow tab."
+  },
+  "title.proposalFailed": {
+    "text": "⚠️ Proposal failed · {{title}}",
+    "description": "Browser tab title after Homeroom's bot failed to build a proposal while the person was away. {{title}} is the page's own title, for example the app's name. Keep the emoji first so it shows in a narrow tab."
+  },
+  "stop.stopping": {
+    "text": "Stopping the agent…",
+    "description": "Status line in the dev chat transcript after the person pressed Stop, while the coding agent is being stopped."
+  },
+  "stop.stoppingSlow": {
+    "text": "Stopping the agent… (taking longer than usual)",
+    "description": "Status line in the dev chat transcript after the person pressed Stop, once stopping the coding agent has taken unusually long."
+  },
+  "stop.otherStopping": {
+    "text": "@{{username}} is stopping the agent…",
+    "description": "Status line in the dev chat transcript when another member pressed Stop. {{username}} is that member's username; keep the @ before it."
+  },
+  "stop.otherStoppingSlow": {
+    "text": "@{{username}} is stopping the agent… (taking longer than usual)",
+    "description": "Status line in the dev chat transcript when another member pressed Stop and stopping the coding agent has taken unusually long. {{username}} is that member's username; keep the @ before it."
+  },
+  "stop.stuck": {
+    "text": "Still stopping. The agent isn’t responding.",
+    "description": "Status line in the dev chat transcript when the coding agent has not stopped after a long wait; a 'Force stop' button appears beside it."
+  },
+  "stop.forcing": {
+    "text": "Forcing…",
+    "description": "Label of the 'Force stop' button in the dev chat transcript after it was pressed, while the coding agent is being ended."
+  },
+  "stop.wrapUp": {
+    "text": "Almost done. The wrap-up can’t be interrupted.",
+    "description": "Status line in the dev chat transcript when Stop was pressed while the coding agent was in its final step, which cannot be stopped."
+  },
+  "stop.failed": {
+    "text": "Couldn’t stop the agent. Please try again.",
+    "description": "Status line in the dev chat transcript when stopping the coding agent failed."
+  },
+  "transcript.agentLog": {
+    "text": "{{agent}} log",
+    "description": "Toggle in the dev chat transcript that expands the coding agent's raw log. {{agent}} is the agent's name, Claude Code or OpenRouter. 'Log' is a noun."
+  },
+  "transcript.agentOutput": {
+    "text": "{{agent}} output",
+    "description": "Heading of a card in the dev chat transcript holding what the coding agent reported at the end of its work. {{agent}} is the agent's name, Claude Code or OpenRouter."
+  },
+  "transcript.changesReady": {
+    "text": "Changes ready.",
+    "description": "Status line above the changes card in the dev chat transcript: the coding agent finished building the change."
+  },
+  "transcript.changesReadyChecks": {
+    "text": "Changes ready. Checks need attention.",
+    "description": "Status line above the changes card in the dev chat transcript when the change was built but its automated checks failed."
+  },
+  "transcript.replyCost": {
+    "text": "reply ${{amount}}",
+    "description": "Small note after the model's name over an assistant reply in the dev chat: what that reply cost. {{amount}} is a number with three decimals; the dollar sign is in the text. Lower case."
+  },
+  "transcript.replyCostEstimated": {
+    "text": "reply ~${{amount}}",
+    "description": "Small note after the model's name over an assistant reply in the dev chat: an estimate of what that reply cost. {{amount}} is a number with three decimals; keep the ~ and the dollar sign. Lower case."
+  },
+  "transcript.took": {
+    "text": "(took {{duration}})",
+    "description": "Note at the end of a finished status line in the dev chat transcript: how long that step took. {{duration}} is a length of time already in words, for example '2m 5s'. Keep the brackets."
+  },
+  "transcript.qa.typeNumber": {
+    "text": "Let me type a number",
+    "description": "Last chip under a question from the coding agent whose answers are numbers: opens a box to type a different number. Also the placeholder and accessible name of that box."
+  },
+  "transcript.qa.somethingElse": {
+    "text": "Something else",
+    "description": "Last chip under a question from the coding agent: opens a box to type an answer that is not among the chips. Also the placeholder and accessible name of that box."
+  },
+  "transcript.spec.versionHeader_one": {
+    "text": "Plan v{{version}} · {{count}} lines",
+    "description": "Title of the plan preview card in the dev chat transcript. {{version}} is the plan's version number ('v' stands for version) and {{count}} its length in lines. A plan is the written description of a change, made before it is built."
+  },
+  "transcript.spec.versionHeader_other": {
+    "text": "Plan v{{version}} · {{count}} lines",
+    "description": "Title of the plan preview card in the dev chat transcript. {{version}} is the plan's version number ('v' stands for version) and {{count}} its length in lines. A plan is the written description of a change, made before it is built."
+  },
+  "transcript.spec.draftedHeader_one": {
+    "text": "Plan drafted · {{count}} lines",
+    "description": "Title of the plan preview card in the dev chat transcript when the plan has no version number yet. {{count}} is its length in lines."
+  },
+  "transcript.spec.draftedHeader_other": {
+    "text": "Plan drafted · {{count}} lines",
+    "description": "Title of the plan preview card in the dev chat transcript when the plan has no version number yet. {{count}} is its length in lines."
+  },
+  "transcript.noVisibleReply": {
+    "text": "(no visible reply, see reasoning below)",
+    "description": "Shown in italics in place of an assistant reply in the dev chat that had no text; the raw reasoning can be expanded under it."
+  },
+  "transcript.stopLanding.nothingCommitted": {
+    "text": "nothing committed",
+    "description": "Chip on the line in the dev chat transcript that reports where things stood when the coding agent was stopped: it had saved no work. Lower case."
+  },
+  "transcript.stopLanding.changesCommitted": {
+    "text": "changes committed",
+    "description": "Chip on the stopped-agent line in the dev chat transcript: the agent's work was saved to the branch, how many commits is not known. Lower case."
+  },
+  "transcript.stopLanding.countCommitted_one": {
+    "text": "{{count}} change committed",
+    "description": "Chip on the stopped-agent line in the dev chat transcript: how many commits the agent saved to the branch before it was stopped. {{count}} is that number. Lower case."
+  },
+  "transcript.stopLanding.countCommitted_other": {
+    "text": "{{count}} changes committed",
+    "description": "Chip on the stopped-agent line in the dev chat transcript: how many commits the agent saved to the branch before it was stopped. {{count}} is that number. Lower case."
+  },
+  "transcript.stopLanding.pushed": {
+    "text": "pushed",
+    "description": "Chip on the stopped-agent line in the dev chat transcript: the saved work was uploaded to the repository. Lower case."
+  },
+  "transcript.stopLanding.notPushed": {
+    "text": "not pushed",
+    "description": "Chip on the stopped-agent line in the dev chat transcript: the saved work was not uploaded to the repository. Lower case."
+  },
+  "issueDraft.suggestion": {
+    "text": "The AI suggests reporting this to the platform",
+    "description": "Status line above the card in the dev chat where the coding agent proposes reporting a problem to Homeroom, when the server sent no line of its own."
+  },
+  "issueDraft.failed": {
+    "text": "Failed. Try again",
+    "description": "Toast when filing or dismissing the report the coding agent suggested failed and the server gave no reason."
+  },
+  "issueDraft.networkError": {
+    "text": "Network error",
+    "description": "Toast when filing or dismissing the report the coding agent suggested could not reach the server."
+  },
+  "issueDraft.reportedLink": {
+    "text": "Reported: issue #{{number}}",
+    "description": "Link on the suggested-report card in the dev chat once the report was filed: opens the issue. {{number}} is the issue's number."
+  },
+  "issueDraft.filedOnApp": {
+    "text": "Filed on this app's repo",
+    "description": "Note on the suggested-issue card in the dev chat once the issue was filed in the app's own code repository."
+  },
+  "issueDraft.reportedToPlatform": {
+    "text": "Reported to the platform",
+    "description": "Note on the suggested-report card in the dev chat once the report was sent to Homeroom."
+  },
+  "issueDraft.dismissed": {
+    "text": "Dismissed",
+    "description": "Note on the suggested-report card in the dev chat once the person declined the suggestion."
+  },
+  "issueDraft.fileIssue": {
+    "text": "File issue",
+    "description": "Main button on the card in the dev chat where the coding agent suggests an issue for this app: files it. 'File' is a verb."
+  },
+  "issueDraft.reportToPlatform": {
+    "text": "Report to platform",
+    "description": "Main button on the card in the dev chat where the coding agent suggests reporting a problem to Homeroom: sends the report. 'Report' is a verb."
+  },
+  "issueDraft.destApp": {
+    "text": "Issue draft: {{app}}",
+    "description": "Small heading of the suggested-issue card in the dev chat: the draft is for the named app. {{app}} is the app's name."
+  },
+  "issueDraft.destThisApp": {
+    "text": "Issue draft: this app",
+    "description": "Small heading of the suggested-issue card in the dev chat when the app's name is not known."
+  },
+  "issueDraft.destPlatform": {
+    "text": "Suggested platform report",
+    "description": "Small heading of the card in the dev chat where the coding agent suggests reporting a problem to Homeroom."
+  },
+  "markdown.fallbackNotice": {
+    "text": "Rich text formatting is unavailable right now, so this is the raw markdown.",
+    "description": "Notice over a message in the dev chat when the formatter could not load and the message is shown as plain markdown text."
+  },
+  "markdown.viewImage": {
+    "text": "View image full size",
+    "description": "Accessible name of an image inside a dev chat message; pressing it opens the image at full size."
+  },
+  "sessions.row.untitled": {
+    "text": "Session",
+    "description": "Stands in for a session's title in the list of dev chat sessions when the session has no title, pull request or branch yet. A noun: one working session with the coding agent."
+  },
+  "header.untitled": {
+    "text": "Session",
+    "description": "Stands in for the title at the top of an open dev chat session that has no title, pull request or branch yet. A noun: one working session with the coding agent."
+  },
+  "sessions.action.free": {
+    "text": "Free worker",
+    "description": "Action on a dev chat session whose change is up for a vote: shuts down the AI worker that is still running for it. 'Free' is a verb."
+  },
+  "sessions.action.freeing": {
+    "text": "Freeing…",
+    "description": "Label of the 'Free worker' action on a dev chat session while the worker is being shut down."
+  },
+  "sessions.action.freeTitle": {
+    "text": "Frees the AI worker. The PR stays up for voting.",
+    "description": "Tooltip on the 'Free worker' action of a dev chat session. PR is short for pull request."
+  },
+  "sessions.action.unarchive": {
+    "text": "Unarchive",
+    "description": "Action on an archived dev chat session: restores it. A verb."
+  },
+  "sessions.action.unarchiveTitle": {
+    "text": "Restore this session (reopens the PR)",
+    "description": "Tooltip on the Unarchive action of a dev chat session. PR is short for pull request."
+  },
+  "sessions.action.archive": {
+    "text": "Archive",
+    "description": "Action on a dev chat session: puts the session away and closes its pull request. A verb."
+  },
+  "sessions.action.archiveTitle": {
+    "text": "Archive (frees the slot; restorable for a while)",
+    "description": "Tooltip on the Archive action of a dev chat session. A 'slot' is one of the limited number of sessions a person may have open."
+  },
+  "sessions.toast.pauseFailed": {
+    "text": "Failed to pause session",
+    "description": "Toast when pausing a dev chat session, or freeing its worker, failed and the server gave no reason."
+  },
+  "sessions.toast.resumeFailed": {
+    "text": "Failed to resume session",
+    "description": "Toast when resuming a paused dev chat session failed and the server gave no reason."
+  },
+  "sessions.toast.workerFreed": {
+    "text": "Worker freed",
+    "description": "Toast after the AI worker of a dev chat session was shut down."
+  },
+  "sessions.archive.confirmTitle": {
+    "text": "Archive \"{{title}}\"?",
+    "description": "Title of the confirmation before a dev chat session is archived. {{title}} is the session's title; keep the quotation marks around it. 'Archive' is a verb."
+  },
+  "sessions.archive.confirmTitleUnnamed": {
+    "text": "Archive \"this session\"?",
+    "description": "Title of the confirmation before a dev chat session is archived, when the session has no title. 'Archive' is a verb."
+  },
+  "sessions.archive.confirmBody": {
+    "text": "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+    "description": "Body of the confirmation before a dev chat session is archived. Unarchive is the name of the action that restores it. PR is short for pull request; a 'slot' is one of the limited number of open sessions."
+  },
+  "sessions.archive.confirm": {
+    "text": "Archive",
+    "description": "Confirm button of the dialog that archives a dev chat session. A verb."
+  },
+  "sessions.toast.archiveFailed": {
+    "text": "Failed to archive session",
+    "description": "Toast when archiving a dev chat session failed and the server gave no reason."
+  },
+  "sessions.toast.unarchiveFailed": {
+    "text": "Failed to unarchive session",
+    "description": "Toast when restoring an archived dev chat session failed and the server gave no reason."
+  },
+  "sessions.restored.title": {
+    "text": "Session restored",
+    "description": "Title of the notice after an archived dev chat session was restored but the coding agent's memory of it was gone."
+  },
+  "sessions.restored.body": {
+    "text": "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.",
+    "description": "Body of the notice after an archived dev chat session was restored without the coding agent's memory. Claude is the agent's name."
+  },
+  "banner.sync.phase.resolving": {
+    "text": "Resolving merge conflicts with Claude…",
+    "description": "Text of the dev chat's sync banner while the coding agent, Claude, resolves conflicts between the session's branch and main."
+  },
+  "banner.sync.phase.pushing": {
+    "text": "Pushing the merged branch…",
+    "description": "Text of the dev chat's sync banner while the merged branch is uploaded to the repository."
+  },
+  "banner.sync.phase.syncing": {
+    "text": "Syncing with main…",
+    "description": "Text of the dev chat's sync banner while the session's branch is being brought up to date with the app's main branch. 'main' is the branch's name."
+  },
+  "banner.sync.done": {
+    "text": "Synced with main.",
+    "description": "Text of the dev chat's sync banner after the session's branch was brought up to date. 'main' is the branch's name."
+  },
+  "banner.sync.failed": {
+    "text": "Sync with main failed.",
+    "description": "Text of the dev chat's sync banner when bringing the session's branch up to date failed and no reason is known. 'main' is the branch's name."
+  },
+  "banner.sync.failedHttp": {
+    "text": "Sync failed (HTTP {{status}}).",
+    "description": "Text of the dev chat's sync banner when the sync request failed and the server gave no reason. {{status}} is the numeric HTTP status code."
+  },
+  "banner.sync.failedDetail": {
+    "text": "Sync failed: {{detail}}",
+    "description": "Text of the dev chat's sync banner when the sync request could not reach the server. {{detail}} is the browser's own short message about the failure."
+  },
+  "header.venue.title": {
+    "text": "Building in {{venue}}. {{blurb}} Pick a different venue: on Homeroom, on your computer, or handed to Claude Code or Codex on the web.",
+    "description": "Tooltip on the venue button at the top of a dev chat session. {{venue}} is the name of where the change is being built, and {{blurb}} a whole sentence describing that venue. Claude Code and Codex are product names."
+  },
+  "header.openCardTitle": {
+    "text": "Open this change's proposal card (PR #{{number}}). Every change in this chat goes to PR #{{number}}. Use “Start a new change” for separate work.",
+    "description": "Tooltip on the 'Open proposal card' link at the top of a dev chat session. {{number}} is the pull request's number, used twice. “Start a new change” is the name of a button: translate it as that button is translated."
+  },
+  "header.newChangeTitle": {
+    "text": "This chat is one change → one pull request. A PR opens after the first build.",
+    "description": "Tooltip on the 'New change' label at the top of a dev chat session that has no pull request yet. PR is short for pull request; 'build' is a noun."
+  },
+  "composer.busy.working": {
+    "text": "Working",
+    "description": "Accessible name of the spinning round button in the dev chat message box while the coding agent's request is running and cannot be stopped from this screen."
+  },
+  "composer.busy.finishing": {
+    "text": "Finishing up",
+    "description": "Accessible name of the spinning round button in the dev chat message box while the coding agent's request is in its last step."
+  },
+  "composer.busy.workingTitle": {
+    "text": "This turn is still running but can’t be stopped from here",
+    "description": "Tooltip on the spinning round button in the dev chat message box. A 'turn' is one request to the coding agent."
+  },
+  "composer.busy.finishingTitle": {
+    "text": "Finishing up…",
+    "description": "Tooltip on the spinning round button in the dev chat message box while the coding agent's request is in its last step."
+  },
+  "attach.stillUploading": {
+    "text": "Still uploading, one moment…",
+    "description": "Error line under the dev chat message box when Send was pressed while an attached file is still uploading."
+  },
+  "attach.tooBig.image": {
+    "text": "\"{{name}}\" is too big. Images max {{megabytes}} MB.",
+    "description": "Error under the dev chat message box when an attached image is over the size limit. {{name}} is the file's name, kept in quotation marks, and {{megabytes}} the limit in megabytes."
+  },
+  "attach.tooBig.zip": {
+    "text": "\"{{name}}\" is too big. Zip archives max {{megabytes}} MB.",
+    "description": "Error under the dev chat message box when an attached zip archive is over the size limit. {{name}} is the file's name, kept in quotation marks, and {{megabytes}} the limit in megabytes."
+  },
+  "attach.tooBig.file": {
+    "text": "\"{{name}}\" is too big. Files max {{megabytes}} MB.",
+    "description": "Error under the dev chat message box when an attached file is over the size limit. {{name}} is the file's name, kept in quotation marks, and {{megabytes}} the limit in megabytes."
+  },
+  "attach.tooMany_one": {
+    "text": "Up to {{count}} files per message.",
+    "description": "Error under the dev chat message box when more files were attached than one message may carry. {{count}} is the limit."
+  },
+  "attach.tooMany_other": {
+    "text": "Up to {{count}} files per message.",
+    "description": "Error under the dev chat message box when more files were attached than one message may carry. {{count}} is the limit."
+  },
+  "attach.uploadFailedHttp": {
+    "text": "Upload failed (HTTP {{status}})",
+    "description": "Error under the dev chat message box when uploading an attached file failed and the server gave no reason. {{status}} is the numeric HTTP status code."
+  },
+  "attach.uploadFailed": {
+    "text": "Upload failed",
+    "description": "Error under the dev chat message box when uploading an attached file failed and nothing more is known."
+  },
+  "attach.zipBadge_one": {
+    "text": "ZIP · {{files}} files",
+    "description": "Small badge on a zip archive attached to a dev chat message. {{files}} is how many files the archive holds. ZIP is the file type and stays in capitals."
+  },
+  "attach.zipBadge_other": {
+    "text": "ZIP · {{files}} files",
+    "description": "Small badge on a zip archive attached to a dev chat message. {{files}} is how many files the archive holds. ZIP is the file type and stays in capitals."
+  },
+  "attach.unnamedFile": {
+    "text": "file",
+    "description": "Stands where a file's name would be on an attachment that has none, in the dev chat's message box and transcript. Shown alone. A noun, lower case."
+  },
+  "drafts.toast.dropped_one": {
+    "text": "That's {{limit}} saved drafts. {{count}} newer draft was dropped. Send or delete one first.",
+    "description": "Toast when drafts saved on another device could not all be kept because the list is full. {{limit}} is the most drafts a session may hold and {{count}} how many were left out."
+  },
+  "drafts.toast.dropped_other": {
+    "text": "That's {{limit}} saved drafts. {{count}} newer drafts were dropped. Send or delete one first.",
+    "description": "Toast when drafts saved on another device could not all be kept because the list is full. {{limit}} is the most drafts a session may hold and {{count}} how many were left out."
+  },
+  "drafts.toast.full": {
+    "text": "That's {{limit}} saved drafts. Send or delete one first",
+    "description": "Toast when the person tries to save another draft in the dev chat and the list is full. {{limit}} is the most drafts a session may hold."
+  },
+  "drafts.toast.saved": {
+    "text": "Draft saved. Send it whenever you're ready",
+    "description": "Toast after the text in the dev chat message box was saved as a draft."
+  },
+  "drafts.toast.busy": {
+    "text": "Claude is still working. This will send once the turn finishes",
+    "description": "Toast when the person tries to send a saved draft while the coding agent, Claude, is working. A 'turn' is one request to the agent."
+  },
+  "drafts.toast.uploading": {
+    "text": "Still uploading a file, one moment…",
+    "description": "Toast when the person tries to send a saved draft while an attached file is still uploading."
+  },
+  "drafts.toast.keptTyped": {
+    "text": "Kept what you had typed as another draft",
+    "description": "Toast when a saved draft was sent or put back into the message box while the box held other text: that text was saved as a draft of its own."
+  },
+  "drafts.toast.deleted": {
+    "text": "Draft deleted",
+    "description": "Toast after a saved draft in the dev chat was deleted."
+  },
+  "spec.version.label": {
+    "text": "v{{version}}",
+    "description": "An option in the plan viewer's version dropdown. 'v' stands for version; {{version}} is the version number."
+  },
+  "spec.version.latest": {
+    "text": "v{{version}} (latest)",
+    "description": "The option for the newest version in the plan viewer's version dropdown. 'v' stands for version; {{version}} is the version number."
+  },
+  "spec.version.pr": {
+    "text": "PR #{{number}}",
+    "description": "Part of an option in the plan viewer's version dropdown: the pull request that version was built into. PR is short for pull request; {{number}} is its number."
+  },
+  "spec.empty.owner": {
+    "text": "No plan yet. Ask the AI to draft one.",
+    "description": "Shown in the plan viewer to the session's owner when no plan, the written description of the change, exists yet. 'The AI' is the coding agent in the dev chat."
+  },
+  "spec.empty.viewer": {
+    "text": "No plan has been shared for this session yet.",
+    "description": "Shown in the plan viewer to someone other than the session's owner when no plan exists yet."
+  },
+  "spec.share.noSession": {
+    "text": "No session",
+    "description": "Error in the plan viewer's share card when there is no open session to share a plan from."
+  },
+  "spec.share.networkError": {
+    "text": "Network error",
+    "description": "Error in the plan viewer's share card when the share request could not reach the server."
+  },
+  "launchpad.resume.continueTitle": {
+    "text": "Continuing this session’s branch",
+    "description": "Title of the note above the hand-off instructions in the dev chat when the session already has work on a branch: the person's own coding agent will continue it."
+  },
+  "launchpad.resume.continueDetail": {
+    "text": "There is work on <0>{{branch}}</0> already. The instructions below tell your agent to start from its current commit, so nothing done here is lost. Copy them as they are: an agent that starts from the app’s default branch instead would rebuild this from scratch.",
+    "description": "Body of the note above the hand-off instructions in the dev chat when the session already has work. {{branch}} is the git branch's name, shown as code: keep the <0> tags around it. 'Agent' is the person's own coding tool."
+  },
+  "launchpad.resume.newTitle": {
+    "text": "Starting new work",
+    "description": "Title of the note above the hand-off instructions in the dev chat when nothing has been built in the session yet."
+  },
+  "launchpad.resume.newDetail": {
+    "text": "Nothing has been built in this session yet, so there is nothing to resume. Your agent starts from the app’s current code, implements and tests the change locally, then submits the result to Homeroom.",
+    "description": "Body of the note above the hand-off instructions in the dev chat when nothing has been built in the session yet. 'Agent' is the person's own coding tool."
+  },
+  "commentPin.error.imageType": {
+    "text": "Only PNG and JPEG images can be attached.",
+    "description": "Error in the comment box in comment mode (the box beside a pin where the person writes their request) when the person added a file that is not a PNG or JPEG image. PNG and JPEG are image formats; keep them."
+  },
+  "commentPin.error.imageLimit_one": {
+    "text": "A request can carry {{count}} image.",
+    "description": "Error in the comment box in comment mode (the box beside a pin where the person writes their request) when the person tried to add an image but the request already holds as many pictures as it can. {{count}} is that limit."
+  },
+  "commentPin.error.imageLimit_other": {
+    "text": "A request can carry {{count}} images.",
+    "description": "Error in the comment box in comment mode (the box beside a pin where the person writes their request) when the person tried to add an image but the request already holds as many pictures as it can. {{count}} is that limit."
+  },
+  "commentPin.toast.postedMany_one": {
+    "text": "Posted {{count}} comment to {{place}}. Thanks!",
+    "description": "Toast after a request of several comments written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted. {{count}} is how many comments it held (always more than one in English); {{place}} is where it went: the app's name, or Homeroom."
+  },
+  "commentPin.toast.postedMany_other": {
+    "text": "Posted {{count}} comments to {{place}}. Thanks!",
+    "description": "Toast after a request of several comments written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted. {{count}} is how many comments it held; {{place}} is where it went: the app's name, or Homeroom."
+  },
+  "commentPin.toast.postedManyBuilding_one": {
+    "text": "Posted {{count}} comment to {{place}}. Homeroom bot is building it.",
+    "description": "Toast after a request of several comments written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted and Homeroom's bot started building it. {{count}} is how many comments it held (always more than one in English); {{place}} is where it went: the app's name, or Homeroom. 'Homeroom bot' is the name of the platform's coding agent."
+  },
+  "commentPin.toast.postedManyBuilding_other": {
+    "text": "Posted {{count}} comments to {{place}}. Homeroom bot is building it.",
+    "description": "Toast after a request of several comments written in comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot, posted as a request to improve the app or Homeroom) was posted and Homeroom's bot started building it. {{count}} is how many comments it held; {{place}} is where it went: the app's name, or Homeroom. 'Homeroom bot' is the name of the platform's coding agent."
+  },
+  "commentPin.toast.kudosPlaced": {
+    "text": "Your kudos goes to whoever solves it.",
+    "description": "Sentence said after the toast that a request from comment mode was posted, when the person put a kudos on it: the kudos will reward whoever solves the request."
+  },
+  "commentPin.toast.kudosFailed": {
+    "text": "The kudos wasn't added: {{reason}}.",
+    "description": "Sentence said after the toast that a request from comment mode was posted, when the kudos the person put on it was refused. {{reason}} is the server's own explanation, a clause without a final full stop."
+  },
+  "commentPin.toast.kudosFailedNoReason": {
+    "text": "The kudos wasn't added: it could not be placed.",
+    "description": "Sentence said after the toast that a request from comment mode was posted, when the kudos the person put on it was refused without an explanation."
+  },
+  "commentPin.toast.sentences": {
+    "text": "{{first}} {{second}}",
+    "description": "How two whole sentences are joined in the toast after a request from comment mode was posted, for example \"Posted to Run Club. Thanks! Your kudos goes to whoever solves it.\" {{first}} is the sentence about where it was posted and {{second}} the one about the kudos. Only what goes between them is translated."
+  },
+  "commentPin.posted.place": {
+    "text": "Posted to {{place}}",
+    "description": "Header of the card of a request already posted from comment mode, opened from its marker on the page; also part of that marker's accessible name. {{place}} is where it went: the app's name, or Homeroom."
+  },
+  "commentPin.posted.placeNumbered": {
+    "text": "#{{number}} · Posted to {{place}}",
+    "description": "Header of the card of a request already posted from comment mode, opened from its marker on the page; also part of that marker's accessible name. {{number}} is the request's number (keep the # before it); {{place}} is where it went: the app's name, or Homeroom. Keep the middle dot."
+  },
+  "commentPin.hint.taking": {
+    "text": "Taking a screenshot…",
+    "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) while a new picture of the page is being taken; taps wait until it is ready."
+  },
+  "commentPin.hint.next": {
+    "text": "Click where the next comment goes",
+    "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) after the person chose to add another comment to the same request: their next click places it."
+  },
+  "commentPin.hint.writing": {
+    "text": "Enter posts it. Esc discards it.",
+    "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) while a comment is being written. Enter and Esc are keyboard keys; \"it\" is the request."
+  },
+  "commentPin.hint.carry": {
+    "text": "Click where your words belong",
+    "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) when the person switched from the form with words already written: their first click places those words on the page."
+  },
+  "commentPin.hint.another": {
+    "text": "Click to leave another",
+    "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) after at least one request was posted: a click leaves another comment."
+  },
+  "commentPin.hint.start": {
+    "text": "Tap anywhere to suggest an improvement",
+    "description": "Hint on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) when it opens: tapping or clicking anywhere on the page starts a suggestion there."
+  },
+  "commentPin.kudos.cost": {
+    "text": "Costs 1 kudos.",
+    "description": "Tooltip of the kudos switch in the comment box in comment mode (the box beside a pin where the person writes their request), and said to screen readers after it, when the person's remaining weekly kudos are not known. A kudos is a reward the person gives; \"kudos\" is both singular and plural in English."
+  },
+  "commentPin.kudos.costRemaining_one": {
+    "text": "Costs 1 kudos. {{count}} of {{limit}} left this week.",
+    "description": "Tooltip of the kudos switch in the comment box in comment mode (the box beside a pin where the person writes their request), and said to screen readers after it. {{count}} is how many kudos the person can still give this week and {{limit}} their weekly allowance."
+  },
+  "commentPin.kudos.costRemaining_other": {
+    "text": "Costs 1 kudos. {{count}} of {{limit}} left this week.",
+    "description": "Tooltip of the kudos switch in the comment box in comment mode (the box beside a pin where the person writes their request), and said to screen readers after it. {{count}} is how many kudos the person can still give this week and {{limit}} their weekly allowance."
+  },
+  "commentPin.kudos.label": {
+    "text": "Kudos for whoever solves it",
+    "description": "Label of a switch in the comment box in comment mode (the box beside a pin where the person writes their request): puts one of the person's weekly kudos on the request, as a reward for whoever solves it."
+  },
+  "commentPin.kudos.noneLeft": {
+    "text": "None left this week",
+    "description": "Shown at the end of the kudos switch in the comment box in comment mode (the box beside a pin where the person writes their request) when the person has no kudos left to give this week; the switch is then off and disabled."
+  },
+  "commentPin.kudos.left_one": {
+    "text": "{{count}} left",
+    "description": "Short count at the end of the kudos switch in the comment box in comment mode (the box beside a pin where the person writes their request): how many kudos the person can still give this week."
+  },
+  "commentPin.kudos.left_other": {
+    "text": "{{count}} left",
+    "description": "Short count at the end of the kudos switch in the comment box in comment mode (the box beside a pin where the person writes their request): how many kudos the person can still give this week."
+  },
+  "commentPin.kudos.costAfterCount": {
+    "text": ". {{cost}}",
+    "description": "Hidden text read only by screen readers right after the kudos count at the end of the kudos switch in the comment box in comment mode (the box beside a pin where the person writes their request) (for example \"3 left\"): the full stop ends that count, then {{cost}} is the sentence about what a kudos costs, for example \"Costs 1 kudos. 3 of 10 left this week.\" Keep the punctuation that ends the count before {{cost}}."
+  },
+  "commentPin.shot.attachedMany": {
+    "text": "Screenshot of this page, with your pins",
+    "description": "Line beside the screenshot thumbnails in the comment box in comment mode (the box beside a pin where the person writes their request), when the request has several comments: screenshots showing where the person placed each pin will be attached."
+  },
+  "commentPin.shot.full_one": {
+    "text": "{{used}} of {{count}} image",
+    "description": "Line beside the pictures in the comment box in comment mode (the box beside a pin where the person writes their request) when the request holds as many pictures as it can. {{used}} is how many it holds and {{count}} the most it can carry."
+  },
+  "commentPin.shot.full_other": {
+    "text": "{{used}} of {{count}} images",
+    "description": "Line beside the pictures in the comment box in comment mode (the box beside a pin where the person writes their request) when the request holds as many pictures as it can. {{used}} is how many it holds and {{count}} the most it can carry."
+  },
+  "commentPin.shot.removeLabel": {
+    "text": "Remove the screenshots",
+    "description": "Accessible name of the small ✕ on the screenshot thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request): posts the request without the screenshots."
+  },
+  "commentPin.image.numbered": {
+    "text": "Image {{number}}",
+    "description": "Name of an image in the comment box in comment mode (the box beside a pin where the person writes their request) that the form handed over and that has no file name of its own: its place among them. Its thumbnail's description for screen readers."
+  },
+  "commentPin.image.pasted": {
+    "text": "Pasted image",
+    "description": "Name of an image the person pasted or attached in the comment box in comment mode (the box beside a pin where the person writes their request) that has no file name of its own. Its thumbnail's description for screen readers."
+  },
+  "commentPin.image.remove": {
+    "text": "Remove {{name}}",
+    "description": "Accessible name of the small ✕ on an image's thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request): takes that image off the request. {{name}} is the image's file name."
+  },
+  "commentPin.image.removeNumbered": {
+    "text": "Remove Image {{number}}",
+    "description": "Accessible name of the small ✕ on an image's thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request), for an image the form handed over without a file name: takes it off the request. {{number}} is its place among those images."
+  },
+  "commentPin.image.removePasted": {
+    "text": "Remove Pasted image",
+    "description": "Accessible name of the small ✕ on an image's thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request), for an image without a file name of its own: takes it off the request."
+  },
+  "commentPin.image.removeTitle": {
+    "text": "Remove",
+    "description": "Tooltip of the small ✕ on an image's thumbnail in the comment box in comment mode (the box beside a pin where the person writes their request): takes that image off the request."
+  },
+  "commentPin.next.where": {
+    "text": "Click on the page where it goes",
+    "description": "Row in the comment box in comment mode (the box beside a pin where the person writes their request) after the person chose to add another comment to the same request: their next click on the page places it. Beside it, a Cancel button."
+  },
+  "commentPin.view.chip": {
+    "text": "Screenshot",
+    "description": "Small label on the picture of the page shown while comment mode is on: says the page behind is a picture of the page, not the live page."
+  },
+  "commentPin.marker.numbered": {
+    "text": "Comment {{number}}",
+    "description": "First part of the accessible name of the numbered marker a posted comment leaves on the page in comment mode; the request's place follows it. {{number}} is the comment's number within its request."
+  },
+  "commentPin.marker.single": {
+    "text": "Comment",
+    "description": "First part of the accessible name of the marker a posted comment leaves on the page in comment mode, when its request had only one comment; the request's place follows it. A noun."
+  },
+  "commentPin.draftPin.number": {
+    "text": "Comment {{number}}",
+    "description": "First part of the accessible name of the pin of a comment not posted yet, on the page in comment mode. {{number}} is the comment's number within the request."
+  },
+  "commentPin.draftPin.unposted": {
+    "text": "not posted yet",
+    "description": "Second part of the accessible name of the pin of a comment on the page in comment mode, after \"Comment 2\": the comment has not been posted yet. Lower case; it follows the first part."
+  },
+  "commentPin.box.label": {
+    "text": "Your request",
+    "description": "Accessible name of the comment box in comment mode (the box beside a pin where the person writes their request), where the person writes the request their pins belong to."
+  },
+  "commentPin.box.toForm": {
+    "text": "Open in the form",
+    "description": "Tooltip and accessible name of an expand button in the comment box in comment mode (the box beside a pin where the person writes their request): moves everything written so far into the \"Suggest an improvement\" form instead."
+  },
+  "commentPin.box.discardTitle": {
+    "text": "Discard (Esc)",
+    "description": "Tooltip of the ✕ button in the comment box in comment mode (the box beside a pin where the person writes their request): throws the request away. Esc is the keyboard key that does the same; keep it."
+  },
+  "commentPin.box.discardLabel": {
+    "text": "Discard this request",
+    "description": "Accessible name of the ✕ button in the comment box in comment mode (the box beside a pin where the person writes their request): throws the request away without posting it."
+  },
+  "commentPin.textLabelNumbered": {
+    "text": "Comment {{number}}",
+    "description": "Accessible name of a comment's text box in the comment box in comment mode (the box beside a pin where the person writes their request) when the request has several comments. {{number}} is the comment's number within the request."
+  },
+  "commentPin.placeholderMore": {
+    "text": "And what should change here?",
+    "description": "Placeholder in the text box of a second or later comment in the comment box in comment mode (the box beside a pin where the person writes their request): asks what else the person wants different at the spot they pinned."
+  },
+  "commentPin.comment.change": {
+    "text": "Change this comment",
+    "description": "Tooltip of a folded comment in the comment box in comment mode (the box beside a pin where the person writes their request): opens it to change its words."
+  },
+  "commentPin.comment.empty": {
+    "text": "Nothing written yet",
+    "description": "Shown for a folded comment in the comment box in comment mode (the box beside a pin where the person writes their request) that has no words yet."
+  },
+  "commentPin.comment.removeLabel": {
+    "text": "Remove comment {{number}}",
+    "description": "Accessible name of the small ✕ beside a folded comment in the comment box in comment mode (the box beside a pin where the person writes their request): takes that comment and its pin off the request. {{number}} is the comment's number."
+  },
+  "commentPin.comment.removeTitle": {
+    "text": "Remove",
+    "description": "Tooltip of the small ✕ beside a folded comment in the comment box in comment mode (the box beside a pin where the person writes their request): takes that comment and its pin off the request."
+  },
+  "commentPin.title.label": {
+    "text": "Title",
+    "description": "Label of the title row in the comment box in comment mode (the box beside a pin where the person writes their request), and the accessible name of its field: the title the request is posted with."
+  },
+  "commentPin.title.placeholder": {
+    "text": "Name this request",
+    "description": "Placeholder of the title field in the comment box in comment mode (the box beside a pin where the person writes their request)."
+  },
+  "commentPin.title.writing": {
+    "text": "Writing a title…",
+    "description": "Shown in the title row of the comment box in comment mode (the box beside a pin where the person writes their request) while a title is being suggested from the person's words."
+  },
+  "commentPin.title.change": {
+    "text": "Change the title",
+    "description": "Tooltip of the title in the comment box in comment mode (the box beside a pin where the person writes their request): opens it to be changed."
+  },
+  "commentPin.title.updating": {
+    "text": "Updating…",
+    "description": "Small note beside a suggested title in the comment box in comment mode (the box beside a pin where the person writes their request) while a new suggestion is being made from the latest words."
+  },
+  "commentPin.title.suggested": {
+    "text": "Suggested",
+    "description": "Small note beside the title in the comment box in comment mode (the box beside a pin where the person writes their request): the title was suggested from the person's words, not typed by them."
+  },
+  "commentPin.title.namedOnPost": {
+    "text": "Named from your words when posted",
+    "description": "Shown in the empty title row of the comment box in comment mode (the box beside a pin where the person writes their request) once enough is written: a title will be made from the request's words when it is posted."
+  },
+  "commentPin.title.asYouType": {
+    "text": "Suggested as you type",
+    "description": "Shown in the empty title row of the comment box in comment mode (the box beside a pin where the person writes their request) before enough is written: a title will be suggested as the person writes."
+  },
+  "commentPin.box.attachTitle": {
+    "text": "Attach images, or paste one",
+    "description": "Tooltip of the paperclip button in the comment box in comment mode (the box beside a pin where the person writes their request): attaches images to the request; pasting an image into the comment works too."
+  },
+  "commentPin.box.attachLabel": {
+    "text": "Attach images",
+    "description": "Accessible name of the paperclip button in the comment box in comment mode (the box beside a pin where the person writes their request): attaches images to the request."
+  },
+  "commentPin.box.addCommentTitle": {
+    "text": "Add another comment to this same request: click where it goes next",
+    "description": "Tooltip of the \"Add a comment\" button in the comment box in comment mode (the box beside a pin where the person writes their request): the next click on the page places another comment of the same request."
+  },
+  "commentPin.box.addComment": {
+    "text": "Add a comment",
+    "description": "Button in the comment box in comment mode (the box beside a pin where the person writes their request): adds another comment to the same request, placed by the next click on the page."
+  },
+  "commentPin.postMany_one": {
+    "text": "Post {{count}} comment",
+    "description": "Post button in the comment box in comment mode (the box beside a pin where the person writes their request) when the request has several comments. A verb. {{count}} is how many comments will be posted (always more than one in English)."
+  },
+  "commentPin.postMany_other": {
+    "text": "Post {{count}} comments",
+    "description": "Post button in the comment box in comment mode (the box beside a pin where the person writes their request) when the request has several comments. A verb. {{count}} is how many comments will be posted together, as one request."
+  },
+  "commentPin.card.comments_one": {
+    "text": "{{count}} comment",
+    "description": "One fact on the card of a request already posted from comment mode: how many comments it held (shown only when more than one in English). Facts are joined by a middle dot."
+  },
+  "commentPin.card.comments_other": {
+    "text": "{{count}} comments",
+    "description": "One fact on the card of a request already posted from comment mode: how many comments it held. Facts are joined by a middle dot."
+  },
+  "commentPin.card.images_one": {
+    "text": "1 image",
+    "description": "One fact on the card of a request already posted from comment mode: it carried one picture. English spells the one out; a translation may use {{count}}. Facts are joined by a middle dot."
+  },
+  "commentPin.card.images_other": {
+    "text": "{{count}} images",
+    "description": "One fact on the card of a request already posted from comment mode: how many pictures it carried. Facts are joined by a middle dot."
+  },
+  "commentPin.card.kudos": {
+    "text": "kudos for whoever solves it",
+    "description": "One fact on the card of a request already posted from comment mode: the person put a kudos on it, as a reward for whoever solves it. Lower case; it may follow other facts."
+  },
+  "commentPin.card.facts": {
+    "text": "{{first}} · {{second}}",
+    "description": "How the facts on the card of a request already posted from comment mode are joined, for example \"3 comments · 2 images · kudos for whoever solves it\". {{first}} is everything said so far and {{second}} the next fact. Keep the middle dot unless your language separates them otherwise."
+  },
+  "commentPin.card.open": {
+    "text": "Open request",
+    "description": "Button on the card of a request already posted from comment mode: leaves comment mode and opens that request's page."
+  },
+  "commentPin.intro.title": {
+    "text": "How comment mode works",
+    "description": "Heading, and accessible name, of the note shown the first time comment mode opens on a device. Comment mode is the layer where a click or tap leaves a comment pinned to that spot."
+  },
+  "commentPin.intro.tap": {
+    "text": "Tap anything on the page to leave a comment right there, then press Post.",
+    "description": "First point of the note shown the first time comment mode opens on a device. Post is the name of the button that sends the comment; translate it as that button is translated."
+  },
+  "commentPin.intro.drag": {
+    "text": "Drag the handle on the left to move the bar.",
+    "description": "Point of the note shown the first time comment mode opens on a device, when the bar floats over the page: its handle on the left moves it."
+  },
+  "commentPin.intro.form": {
+    "text": "Prefer the form? Tap Form to switch back at any time.",
+    "description": "Last point of the note shown the first time comment mode opens on a device. Form is the name of a switch on the bar; translate it as that switch is translated."
+  },
+  "commentPin.intro.gotIt": {
+    "text": "Got it",
+    "description": "Button that closes the note shown the first time comment mode opens on a device."
+  },
+  "commentPin.bar.label": {
+    "text": "Comment mode",
+    "description": "Accessible name of the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot). Comment mode is the name of the feature."
+  },
+  "commentPin.bar.move": {
+    "text": "Move the bar: drag it anywhere, double-click to put it back",
+    "description": "Accessible name of the handle at the left of the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot), when it floats over the page: dragging it moves the bar, a double-click puts it back at the bottom."
+  },
+  "commentPin.bar.moveTitle": {
+    "text": "Drag to move the bar anywhere. Double-click to put it back at the bottom.",
+    "description": "Tooltip of the handle at the left of the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot), when it floats over the page."
+  },
+  "commentPin.bar.confirmDiscard": {
+    "text": "Discard this request? Nothing in it is posted yet.",
+    "description": "Question on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) after the person asked to throw away a request they have written words in. Answered by Keep writing or Discard."
+  },
+  "commentPin.bar.confirmExit": {
+    "text": "Discard the comments you haven't posted?",
+    "description": "Question on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) when the person pressed Done with comments not posted yet. Answered by Keep writing or Discard (which leaves comment mode)."
+  },
+  "commentPin.bar.keepWriting": {
+    "text": "Keep writing",
+    "description": "Button on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) that answers \"Discard…?\": keeps the unposted comments and goes back to writing."
+  },
+  "commentPin.bar.discard": {
+    "text": "Discard",
+    "description": "Button on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) that answers \"Discard…?\": throws the unposted comments away."
+  },
+  "commentPin.bar.posted_one": {
+    "text": "{{count}} posted",
+    "description": "Small count on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot): how many requests were posted since comment mode opened."
+  },
+  "commentPin.bar.posted_other": {
+    "text": "{{count}} posted",
+    "description": "Small count on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot): how many requests were posted since comment mode opened."
+  },
+  "commentPin.bar.switchLabel": {
+    "text": "How to suggest it",
+    "description": "Accessible name of the Form / Comment switch on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot): the two ways to suggest an improvement."
+  },
+  "commentPin.bar.formTitle": {
+    "text": "Suggest it with the form",
+    "description": "Tooltip of the Form side of the switch on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot): leaves comment mode for the \"Suggest an improvement\" form."
+  },
+  "commentPin.bar.form": {
+    "text": "Form",
+    "description": "Form side of the Form / Comment switch on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot): the written form for suggesting an improvement. A noun."
+  },
+  "commentPin.bar.commentTitle": {
+    "text": "Comment on the page",
+    "description": "Tooltip of the Comment side of the switch on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot), the side that is on: leaving comments pinned to the page."
+  },
+  "commentPin.bar.comment": {
+    "text": "Comment",
+    "description": "Comment side of the Form / Comment switch on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot), the side that is on: leaving comments pinned to the page. A noun or a verb, as fits a switch."
+  },
+  "commentPin.bar.done": {
+    "text": "Done",
+    "description": "Button on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot): leaves comment mode (asking first when comments are not posted yet)."
+  },
+  "commentPin.bar.doneKey": {
+    "text": "Esc",
+    "description": "Key cap shown inside the Done button on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) on a computer: the Escape key does the same. Use the label this key has on keyboards in your language."
+  }
+}

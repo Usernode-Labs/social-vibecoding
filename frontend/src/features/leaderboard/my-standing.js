@@ -16,6 +16,7 @@
 'use strict';
 
 import { createStore } from '../../lib/plain-store.js';
+import { t } from '../../lib/i18n/runtime';
 import { breakdownRows, tokenView } from '../profile/profile-store.js';
 
 export const REVEAL_KEY = 'sv:profile_tokens_revealed';
@@ -25,8 +26,7 @@ export const REVEAL_KEY = 'sv:profile_tokens_revealed';
 // default), while a challenge credits its points the moment it is done. The
 // interval is server config the client never sees, hence "every few hours".
 // The standings pane's empty hint says the same sentence.
-export const STANDINGS_UPDATE_NOTE =
-  'Standings update every few hours; points from challenges you just finished appear at the next update.';
+export const STANDINGS_UPDATE_NOTE = 'leaderboard:standing.updateNote';
 
 export const myStandingStore = createStore({
   /** 'idle' | 'loading' | 'ready' | 'none' — `none` is signed out or no season. */
@@ -90,18 +90,21 @@ export function standingView(state) {
   const pending = standingIsEmpty(r) ? Number(state.pending || 0) : 0;
   if (standingIsEmpty(r) && pending <= 0) return null;
   return {
-    season: r.season_name || 'This season',
+    season: r.season_name || t('leaderboard:standing.thisSeason'),
     sub: r.total_participants
-      ? `${Number(r.total_participants).toLocaleString()} taking part`
-      : 'Your standing',
+      ? t('leaderboard:standing.takingPart',
+        { count: Number(r.total_participants), number: Number(r.total_participants).toLocaleString() })
+      : t('leaderboard:standing.yourStanding'),
     rank: r.rank ? `#${Number(r.rank)}` : '–',
-    detail: `${points.toLocaleString()} pts · you`,
-    pending: pending > 0 ? `${pending.toLocaleString()} pts earned, not in the standings yet` : null,
-    note: STANDINGS_UPDATE_NOTE,
+    detail: t('leaderboard:standing.pointsYou', { count: points, points: points.toLocaleString() }),
+    pending: pending > 0
+      ? t('leaderboard:standing.pending', { count: pending, points: pending.toLocaleString() }) : null,
+    note: t(STANDINGS_UPDATE_NOTE),
     breakdown: breakdownRows(state.breakdown).map((row, i) => ({
       key: `${row.label}:${i}`,
       label: row.label,
-      points: `${Number(row.points || 0).toLocaleString()} pts`,
+      points: t('leaderboard:standing.eventPoints',
+        { count: Number(row.points || 0), points: Number(row.points || 0).toLocaleString() }),
     })),
     token: tokenView(r, state.revealed),
   };

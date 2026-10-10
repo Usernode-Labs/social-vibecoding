@@ -1,0 +1,306 @@
+{
+  "sections.open.label": {
+    "text": "Public communities",
+    "description": "Section heading in the list of the person's communities, on the Communities screen and in the Your communities switcher: the communities anyone can find and join."
+  },
+  "sections.invited.label": {
+    "text": "Private communities",
+    "description": "Section heading in the list of the person's communities, on the Communities screen and in the Your communities switcher: the communities only invited people can open."
+  },
+  "sections.solo.label": {
+    "text": "Just you",
+    "description": "Section heading in the list of the person's communities, on the Communities screen and in the Your communities switcher: the projects that have no member but this person."
+  },
+  "sections.open.noun": {
+    "text": "Public community",
+    "description": "What one community anyone can find and join is called, as a singular noun naming its audience."
+  },
+  "sections.invited.noun": {
+    "text": "Private community",
+    "description": "What one community only invited people can open is called, as a singular noun naming its audience."
+  },
+  "sections.solo.noun": {
+    "text": "Just you",
+    "description": "What a project with no member but this person is called, naming its audience. It stands where \"Public community\" or \"Private community\" would."
+  },
+  "sections.open.count_one": {
+    "text": "{{count}} in Public communities",
+    "description": "Accessible name of the number beside the Public communities section heading. {{count}} is how many of the person's communities are in that section."
+  },
+  "sections.open.count_other": {
+    "text": "{{count}} in Public communities",
+    "description": "Accessible name of the number beside the Public communities section heading. {{count}} is how many of the person's communities are in that section."
+  },
+  "sections.invited.count_one": {
+    "text": "{{count}} in Private communities",
+    "description": "Accessible name of the number beside the Private communities section heading. {{count}} is how many of the person's communities are in that section."
+  },
+  "sections.invited.count_other": {
+    "text": "{{count}} in Private communities",
+    "description": "Accessible name of the number beside the Private communities section heading. {{count}} is how many of the person's communities are in that section."
+  },
+  "sections.solo.count_one": {
+    "text": "{{count}} in Just you",
+    "description": "Accessible name of the number beside the Just you section heading. {{count}} is how many of the person's projects have no other member. \"Just you\" is the section's name."
+  },
+  "sections.solo.count_other": {
+    "text": "{{count}} in Just you",
+    "description": "Accessible name of the number beside the Just you section heading. {{count}} is how many of the person's projects have no other member. \"Just you\" is the section's name."
+  },
+  "sections.showFewer": {
+    "text": "Show fewer",
+    "description": "Last row of a section in the list of the person's communities, once every community in it is showing: folds the section back to its first few rows."
+  },
+  "sections.showMore_one": {
+    "text": "Show {{count}} more",
+    "description": "Last row of a section in the list of the person's communities: reveals the next communities in that section. {{count}} is how many this press reveals."
+  },
+  "sections.showMore_other": {
+    "text": "Show {{count}} more",
+    "description": "Last row of a section in the list of the person's communities: reveals the next communities in that section. {{count}} is how many this press reveals."
+  },
+  "list.loading": {
+    "text": "Loading your apps",
+    "description": "Accessible name of the placeholder rows on the Communities screen while the person's list of communities is loading."
+  },
+  "list.loadError": {
+    "text": "Couldn't load your communities",
+    "description": "Title of the error card on the Communities screen when the list of the person's communities could not be loaded. A retry button follows it."
+  },
+  "list.empty.title": {
+    "text": "You haven’t joined anything yet",
+    "description": "Title of the card on the Communities screen when the person belongs to no community. The card is a link to Discover."
+  },
+  "list.empty.subtitle": {
+    "text": "Browse the directory to find a project to join.",
+    "description": "Second line of the card on the Communities screen when the person belongs to no community. The directory is the Discover screen; a project is what a community builds."
+  },
+  "list.join.title": {
+    "text": "Join a community",
+    "description": "Row under the list on the Communities screen: opens Discover, where the person can find a community to join."
+  },
+  "list.join.subtitle": {
+    "text": "Find one to join in Discover.",
+    "description": "Second line of the Join a community row on the Communities screen. \"One\" is a community; Discover is the name of the screen and of its tab."
+  },
+  "list.start.title": {
+    "text": "Start a community",
+    "description": "Row under the list on the Communities screen: opens the dialog that creates a new project and its community."
+  },
+  "list.start.subtitle": {
+    "text": "Make a project for you, a group or everyone.",
+    "description": "Second line of the Start a community row on the Communities screen. The three audiences a new project can be made for: only this person, an invited group, or the public."
+  },
+  "row.members_one": {
+    "text": "{{count}} member",
+    "description": "Quiet fact on a community's row on the Communities screen: how many people belong to that community."
+  },
+  "row.members_other": {
+    "text": "{{count}} members",
+    "description": "Quiet fact on a community's row on the Communities screen: how many people belong to that community."
+  },
+  "row.active.justNow": {
+    "text": "just now",
+    "description": "The whole quiet fact on the row of a project that is just the person's own, on the Communities screen: it was last active less than a minute ago. Drawn in its own element, in lower case."
+  },
+  "row.active.minutes_one": {
+    "text": "{{count}}m ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many minutes ago it was last active. \"m\" abbreviates minutes; keep it short."
+  },
+  "row.active.minutes_other": {
+    "text": "{{count}}m ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many minutes ago it was last active. \"m\" abbreviates minutes; keep it short."
+  },
+  "row.active.hours_one": {
+    "text": "{{count}}h ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many hours ago it was last active. \"h\" abbreviates hours; keep it short."
+  },
+  "row.active.hours_other": {
+    "text": "{{count}}h ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many hours ago it was last active. \"h\" abbreviates hours; keep it short."
+  },
+  "row.active.days_one": {
+    "text": "{{count}}d ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many days ago it was last active. \"d\" abbreviates days; keep it short."
+  },
+  "row.active.days_other": {
+    "text": "{{count}}d ago",
+    "description": "Quiet fact on the row of a project that is just the person's own, on the Communities screen: how many days ago it was last active. \"d\" abbreviates days; keep it short."
+  },
+  "row.inProgress_one": {
+    "text": "{{count}} in progress",
+    "description": "Status on a community's row on the Communities screen: how many changes people are working on in its project right now."
+  },
+  "row.inProgress_other": {
+    "text": "{{count}} in progress",
+    "description": "Status on a community's row on the Communities screen: how many changes people are working on in its project right now."
+  },
+  "row.toVote_one": {
+    "text": "{{count}} to vote",
+    "description": "Status on a community's row on the Communities screen: how many proposals and group decisions in it are waiting for this person's vote. \"To vote\" means still to be voted on by you."
+  },
+  "row.toVote_other": {
+    "text": "{{count}} to vote",
+    "description": "Status on a community's row on the Communities screen: how many proposals and group decisions in it are waiting for this person's vote. \"To vote\" means still to be voted on by you."
+  },
+  "row.unread_one": {
+    "text": "{{count}} unread in the channel",
+    "description": "Accessible name of the number badge on a community's row on the Communities screen: how many unread messages its chat channel has."
+  },
+  "row.unread_other": {
+    "text": "{{count}} unread in the channel",
+    "description": "Accessible name of the number badge on a community's row on the Communities screen: how many unread messages its chat channel has."
+  },
+  "needsYou.heading": {
+    "text": "Needs you",
+    "description": "Section heading at the top of the Communities screen, over the row that opens the feed of votes waiting for this person across all their projects."
+  },
+  "needsYou.waiting_one": {
+    "text": "{{count}} vote waiting on you",
+    "description": "Title of the Needs you row on the Communities screen: how many votes across the person's projects they have not yet seen or cast."
+  },
+  "needsYou.waiting_other": {
+    "text": "{{count}} votes waiting on you",
+    "description": "Title of the Needs you row on the Communities screen: how many votes across the person's projects they have not yet seen or cast."
+  },
+  "needsYou.skipped_one": {
+    "text": "{{count}} vote you skipped",
+    "description": "Title of the Needs you row on the Communities screen when nothing new waits: how many votes the person looked at and passed over without voting, which they can still cast."
+  },
+  "needsYou.skipped_other": {
+    "text": "{{count}} votes you skipped",
+    "description": "Title of the Needs you row on the Communities screen when nothing new waits: how many votes the person looked at and passed over without voting, which they can still cast."
+  },
+  "needsYou.projectsMore_one": {
+    "text": "{{projects}} and {{count}} more",
+    "description": "Second line of the Needs you row on the Communities screen: which projects the votes are owed on. {{projects}} is the first three project names, already joined as a list; {{count}} is how many further projects there are."
+  },
+  "needsYou.projectsMore_other": {
+    "text": "{{projects}} and {{count}} more",
+    "description": "Second line of the Needs you row on the Communities screen: which projects the votes are owed on. {{projects}} is the first three project names, already joined as a list; {{count}} is how many further projects there are."
+  },
+  "needsYou.review": {
+    "text": "Review",
+    "description": "Verb, at the end of the Needs you row on the Communities screen: says that pressing the row opens the votes waiting for the person so they can go through them."
+  },
+  "needsYou.back": {
+    "text": "Back to Communities",
+    "description": "Accessible name and tooltip of the back arrow over the Needs you feed on the Communities screen: returns to the list of the person's communities. Communities is the screen's name."
+  },
+  "needsYou.over": {
+    "text": "Communities",
+    "description": "Small line above the title of the Needs you feed on the Communities screen: names the screen the feed belongs to."
+  },
+  "needsYou.title": {
+    "text": "Needs you",
+    "description": "Title of the page of the Communities screen that shows, one at a time, every vote waiting for this person across their projects."
+  },
+  "reel.fallbackTitle.change": {
+    "text": "A change",
+    "description": "Stands in for the title of a proposal (a change to a project put up for a vote) in the Needs you feed when the proposal has no title."
+  },
+  "reel.fallbackTitle.decision": {
+    "text": "A group decision",
+    "description": "Stands in for the title of a group decision (a vote on a project's settings, such as a rename, rather than on a code change) in the Needs you feed when it has no title."
+  },
+  "reel.ask.change": {
+    "text": "Should this change go in?",
+    "description": "Question over the Yes and No buttons of a proposal in the Needs you feed: asks whether the proposed change should be merged into the project."
+  },
+  "reel.ask.decision": {
+    "text": "Should this go ahead?",
+    "description": "Question over a group decision in the Needs you feed: asks whether the decision (for example a rename of the project) should be carried out."
+  },
+  "reel.yes": {
+    "text": "Yes",
+    "description": "Vote button on a proposal in the Needs you feed of the Communities screen: votes for the change going in."
+  },
+  "reel.no": {
+    "text": "No",
+    "description": "Vote button on a proposal in the Needs you feed of the Communities screen: votes against the change going in."
+  },
+  "reel.error": {
+    "text": "Couldn't load what is waiting on you. Each project's own Needs you page still has it.",
+    "description": "Shown in place of the Needs you feed on the Communities screen when it could not be loaded. Needs you is also the name of a tab on every project's page, which lists the same votes for that project."
+  },
+  "reel.loading": {
+    "text": "Loading what needs you",
+    "description": "Accessible name of the empty placeholder shown while the Needs you feed on the Communities screen is loading."
+  },
+  "reel.empty": {
+    "text": "Nothing is waiting on your vote in any of your projects.",
+    "description": "Shown in place of the Needs you feed on the Communities screen when no proposal or group decision is waiting for this person's vote."
+  },
+  "reel.done": {
+    "text": "Back to your communities",
+    "description": "Button on the card at the end of the Needs you feed on the Communities screen: returns to the list of the person's communities."
+  },
+  "reel.capped_one": {
+    "text": "Showing the newest {{count}}. Each project's own Needs you page has the rest.",
+    "description": "Note under the Needs you feed on the Communities screen when there are more votes than it loads. {{count}} is how many it shows. Needs you is also the name of a tab on every project's page."
+  },
+  "reel.capped_other": {
+    "text": "Showing the newest {{count}}. Each project's own Needs you page has the rest.",
+    "description": "Note under the Needs you feed on the Communities screen when there are more votes than it loads. {{count}} is how many it shows. Needs you is also the name of a tab on every project's page."
+  },
+  "switcher.title": {
+    "text": "Your communities",
+    "description": "Title of the switcher that lists every community the person belongs to, opened from the header's name or the Communities tab, for moving from one community to another."
+  },
+  "switcher.all.name": {
+    "text": "All communities",
+    "description": "First row of the Your communities switcher: leaves the single community being shown and opens the list of all of the person's communities."
+  },
+  "switcher.all.count_one": {
+    "text": "{{count}} community",
+    "description": "Second line of the All communities row in the Your communities switcher: how many communities the person belongs to."
+  },
+  "switcher.all.count_other": {
+    "text": "{{count}} communities",
+    "description": "Second line of the All communities row in the Your communities switcher: how many communities the person belongs to."
+  },
+  "switcher.all.every": {
+    "text": "Every community you are in",
+    "description": "Second line of the All communities row in the Your communities switcher while the list is still loading, so there is no count to show yet."
+  },
+  "switcher.loading": {
+    "text": "Loading your communities…",
+    "description": "Note in the Your communities switcher while the list of the person's communities is loading."
+  },
+  "switcher.row.solo": {
+    "text": "Just you",
+    "description": "Second line of a row in the Your communities switcher, for a project that has no member but this person."
+  },
+  "switcher.row.invited_one": {
+    "text": "Private · {{count}} member",
+    "description": "Second line of a row in the Your communities switcher, for a community only invited people can open. {{count}} is how many people belong to it. Keep the middle dot between the two facts."
+  },
+  "switcher.row.invited_other": {
+    "text": "Private · {{count}} members",
+    "description": "Second line of a row in the Your communities switcher, for a community only invited people can open. {{count}} is how many people belong to it. Keep the middle dot between the two facts."
+  },
+  "switcher.row.open_one": {
+    "text": "Public · {{count}} member",
+    "description": "Second line of a row in the Your communities switcher, for a community anyone can find and join. {{count}} is how many people belong to it. Keep the middle dot between the two facts."
+  },
+  "switcher.row.open_other": {
+    "text": "Public · {{count}} members",
+    "description": "Second line of a row in the Your communities switcher, for a community anyone can find and join. {{count}} is how many people belong to it. Keep the middle dot between the two facts."
+  },
+  "switcher.toVote_one": {
+    "text": "{{count}} to vote",
+    "description": "Badge on a row of the Your communities switcher: how many proposals and group decisions in that community (or, on the All communities row, in all of them) are waiting for this person's vote."
+  },
+  "switcher.toVote_other": {
+    "text": "{{count}} to vote",
+    "description": "Badge on a row of the Your communities switcher: how many proposals and group decisions in that community (or, on the All communities row, in all of them) are waiting for this person's vote."
+  },
+  "switcher.join": {
+    "text": "Join a community",
+    "description": "Row at the end of the Your communities switcher: closes it and opens Discover, where the person can find a community to join."
+  },
+  "switcher.start": {
+    "text": "Start a community",
+    "description": "Row at the end of the Your communities switcher: closes it and opens the dialog that creates a new project and its community."
+  }
+}

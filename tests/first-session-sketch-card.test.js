@@ -33,6 +33,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -67,7 +68,8 @@ test('the card in an answer is read strictly, and it stands as sketching while t
 });
 
 test('the build line: the same words everywhere, a spinner that turns, one blue line, a check when done', () => {
-  assert.deepEqual({ ...lineMod.BUILD_LINE_WORDS }, {
+  // The table holds message ids; the words are the catalog's.
+  assert.deepEqual(Object.fromEntries(Object.entries(lineMod.BUILD_LINE_WORDS).map(([state, id]) => [state, message(id)])), {
     planning: 'Homeroom bot is planning it',
     plan: 'Your plan is ready to review',
     'plan-member': 'Planning it',

@@ -27,6 +27,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -56,7 +57,8 @@ test('the verify answer says what happened, additively, and suggests a name from
 });
 
 test('the password step says the account is new, and asks for its handle with the suggestion in the field', () => {
-  assert.match(LOGIN, /"Code verified\. No account uses this email yet, so we'll create one\. Choose a username and a password\."/);
+  assert.match(LOGIN, /const OTP_PASSWORD_INTRO_NEW =\n\s*'auth:login\.signup\.introNew';/);
+  assert.equal(message('auth:login.signup.introNew'), "Code verified. No account uses this email yet, so we'll create one. Choose a username and a password.");
   assert.match(LOGIN, /otpSignup\?\.created\s+\? OTP_PASSWORD_INTRO_NEW/);
   const field = LOGIN.slice(LOGIN.indexOf('id="otp-username"'), LOGIN.indexOf('id="otp-username-hint"'));
   assert.match(field, /\{\.\.\.HANDLE_FIELD\}/, 'no auto-capitalising a handle');
@@ -67,18 +69,22 @@ test('the password step says the account is new, and asks for its handle with th
   assert.doesNotMatch(field, /data-username-suggested|readOnly/);
   // Beside it, who will see it; then the rule, or the server's refusal.
   assert.match(field, /aria-describedby="otp-username-public otp-username-hint"/);
-  assert.match(field, /<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>/);
-  assert.match(LOGIN, /\{otpUsernameError \|\| USERNAME_RULE\}/);
+  assert.match(field, /<p id="otp-username-public" className=\{FIELD_HINT\}>\s*\{t\('auth:login\.signup\.usernamePublic'\)\}\s*<\/p>/);
+  assert.equal(message('auth:login.signup.usernamePublic'), 'Your username will be public to other users on Homeroom.');
+  assert.match(LOGIN, /\{otpUsernameError \|\| t\('auth:login\.signup\.usernameRule'\)\}/);
+  assert.equal(message('auth:login.signup.usernameRule'), 'Letters, numbers and underscores, 3 to 32 characters.');
   assert.match(LOGIN, /\{otpSignup\?\.needsUsername \? \(/, 'only when the account still owes a choice');
   // The handle rides with the password, an empty field is caught before the
   // round trip, and a refusal lands under the field.
-  assert.match(LOGIN, /if \(handle === ''\) \{\s+setOtpUsernameError\('Enter a username\.'\);/);
+  assert.match(LOGIN, /if \(handle === ''\) \{\s+setOtpUsernameError\(translate\('auth:login\.signup\.usernameMissing'\)\);/);
+  assert.equal(message('auth:login.signup.usernameMissing'), 'Enter a username.');
   assert.match(LOGIN, /\.\.\.\(handle \? \{ username: handle \} : \{\}\)/);
   assert.match(LOGIN, /if \(data\.field === 'username' && data\.error\) \{\s+setOtpUsernameError\(data\.error\);/);
 });
 
 test('the waitlist is named before the waiting room, not by it', () => {
-  assert.match(LOGIN, /'New accounts get a spot on the waitlist\. We\\u2019re letting people in a few at a time\.'/);
+  assert.match(LOGIN, /const OTP_WAITLIST_NOTE =\n\s*'auth:login\.signup\.waitlistNote';/);
+  assert.equal(message('auth:login.signup.waitlistNote'), 'New accounts get a spot on the waitlist. We\u2019re letting people in a few at a time.');
   assert.doesNotMatch(LOGIN, /in the queue|your turn/);
   assert.match(LOGIN, /\{otpSignup\?\.waitlisted \? \(\s+<p id="otp-waitlist-note"/);
 });

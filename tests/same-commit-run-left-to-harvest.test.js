@@ -197,5 +197,6 @@ test('the manual button and recheck_change say a run was left to finish rather t
 
   const client = read('public/js/app-view.js');
   const cast = client.slice(client.indexOf('async castRecheck(sessionId, btn) {'));
-  assert.match(cast.slice(0, 3000), /if \(data\.collecting\) PlatformUI\.toast\('These checks are still running, so they were not started again\./);
+  assert.match(cast.slice(0, 3000), /if \(data\.collecting\) PlatformUI\.toast\(PlatformI18n\.t\('changes:checks\.recheck\.stillRunning'\)\);/);
+  assert.match(require('./lib/platform-i18n').message('changes:checks.recheck.stillRunning'), /^These checks are still running, so they were not started again\./);
 });

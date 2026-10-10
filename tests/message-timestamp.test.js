@@ -44,6 +44,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -89,7 +90,7 @@ function legacyRelStamp() {
     if (src[i] === '{') depth += 1;
     else if (src[i] === '}') { depth -= 1; if (depth === 0) break; }
   }
-  return vm.runInNewContext(`${floor[0]}\n${src.slice(start, i + 1)}\nrelStamp;`);
+  return vm.runInNewContext(`${floor[0]}\n${src.slice(start, i + 1)}\nrelStamp;`, { PlatformI18n: englishPlatformI18n() });
 }
 
 const relStampLegacy = legacyRelStamp();

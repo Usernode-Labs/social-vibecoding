@@ -13,6 +13,7 @@
  * hub, in Messages and here.
  */
 
+import { useMessages } from '../../lib/i18n/react';
 import { swatchFor } from '../messages/format';
 
 /** How many faces the row shows before "+N" says the rest. */
@@ -50,11 +51,12 @@ export function PeopleRow({ people, count = null, size = 'lg', className = '' }:
   size?: 'sm' | 'lg';
   className?: string;
 }) {
+  const t = useMessages('onboarding');
   const faces = people.slice(0, PEOPLE_FACES);
   if (!faces.length) return null;
   const more = moreThan(faces.length, count);
   const total = faces.length + more;
-  const label = count != null ? `${total} ${total === 1 ? 'person' : 'people'}` : null;
+  const label = count != null ? t('onboarding:firstSession.people.count', { count: total }) : null;
   return (
     <span data-people-row={size} className={className ? `inline-flex items-center ${className}` : 'inline-flex items-center'}>
       {faces.map((p, i) => (

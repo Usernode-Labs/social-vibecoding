@@ -14,6 +14,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTsx, renderToHtml, createElement, FRONTEND } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const RealReact = require(require.resolve('react', { paths: [FRONTEND] }));
 const ENTRY = 'frontend/src/features/settings/agent-files-list.tsx';
@@ -33,6 +34,9 @@ function load({ open = false } = {}) {
   };
   if (open) {
     let n = 0;
+    // The counting useState below is the row's own three hooks; the language
+    // hook must not take a turn in it, so it is the English text directly.
+    stubs['../../lib/i18n/react'] = { useMessages: () => englishPlatformI18n().t };
     stubs.react = {
       ...RealReact,
       // Row hooks, in order: open, content, failed.

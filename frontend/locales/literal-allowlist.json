@@ -1,0 +1,714 @@
+{
+  "_about": "Text the remaining-literals report (node scripts/language-inventory.js --literals) leaves out, each with the reason it is not a catalog entry. `everywhere` holds patterns for a whole literal; `files` names a file and either `all: true` or the exact texts in it.",
+  "everywhere": [
+    {
+      "pattern": "^Homeroom$",
+      "why": "The product's name. It is never translated."
+    }
+  ],
+  "files": {
+    "frontend/@/components/ui/icons.tsx": {
+      "all": true,
+      "why": "Every literal is an icon component's displayName, an identifier for React DevTools. The file has no <title> or aria-label."
+    },
+    "frontend/src/features/agent-session/composer-parts.tsx": {
+      "texts": [
+        "Claude Code",
+        "Codex"
+      ],
+      "why": "Product names: the Build with sheet's tab labels (BUILD_TABS), beside the bare name Homeroom."
+    },
+    "frontend/src/features/agent-session/handoff.tsx": {
+      "texts": [
+        "Claude Code",
+        "Codex",
+        "Claude",
+        "ChatGPT"
+      ],
+      "why": "Product names in AGENT_LABELS / AGENT_PRODUCT; passed as {{agent}} / {{product}} parameters to whole messages."
+    },
+    "frontend/src/features/agent-session/model-choice.ts": {
+      "texts": [
+        "Claude"
+      ],
+      "why": "Product name standing in for a model with no name."
+    },
+    "frontend/src/features/agent-session/transcript.ts": {
+      "texts": [
+        "Codex",
+        "Claude Code"
+      ],
+      "why": "Product names of the coding tool on a run's row."
+    },
+    "frontend/src/features/improve/improve-controller.js": {
+      "texts": [
+        "Claude Code",
+        "Codex"
+      ],
+      "why": "Product names of the tool holding a work order, mapped from the server's normalized value."
+    },
+    "public/js/app-view.js": {
+      "texts": [
+        "Staging demo app",
+        "Staging demo dark app",
+        "Staging demo light app",
+        "Plant Pal",
+        "Keep your plants alive: see which ones need water today.",
+        "First look",
+        "Screen 1",
+        "Screen 2",
+        "Screen 3",
+        "A list of your plants, each with a photo",
+        "Which ones need water today, at the top",
+        "Tap a plant to mark it watered",
+        "A reminder when one has gone dry",
+        "How should it remind you?",
+        "In the app",
+        "Adding the watering reminders",
+        "Help me pick which plants we track first!",
+        "Sample image for screenshots",
+        "· locked: also needs an admin yes",
+        "ArrowDown",
+        "ArrowUp",
+        "Home",
+        "End",
+        "Claude Code",
+        "Codex",
+        "No file bytes received.",
+        "lookupUser expects a username.",
+        "desktop",
+        "you"
+      ],
+      "why": "Made-up sample apps for the ?shot= screenshot fixtures (showLaunchShot, showAppToneShot, showOfflineShot, showFirstVersionShot): their names and description, the sample plan, build caption and maker's note, and the labels drawn into the sample pictures (_firstVersionSampleScreen). They stand in for an app's own data, not interface text. _proposalsCtx.lockedHint is an HTML fragment that nothing reads any more; dead data, left untouched. ArrowDown, ArrowUp, Home and End are keyboard key names compared with event.key. Claude Code and Codex are product names (EXTERNAL_AGENT_NAMES), passed to messages as {{agent}}. The last two are error replies to an embedded app that only its developer can cause (a file save with no bytes, lookupUser called without a username). 'desktop' is the default viewport key of a shots claim, looked up and mapped to a size word by _shotsSizeWord. 'you' is a key that picks a message id in _workStateNote ('you' | 'named' | 'someone')."
+    },
+    "frontend/src/features/auth/native-login-details.tsx": {
+      "texts": [
+        "Unknown",
+        "Homeroom secure sign-in diagnostics",
+        "Stage: ${…}",
+        "Bridge state: ${…}",
+        "Native code: ${…}",
+        "Bridge kind: ${…}",
+        "Native message: ${…}",
+        "Page origin: ${…}",
+        "App version: ${…}",
+        "Build number: ${…}",
+        "Bridge version: ${…}"
+      ],
+      "why": "nativeLoginDetailsText builds the diagnostic report a person copies and sends to support. It is read by support staff, mixes in machine codes, and stays in English like a log; the dialog around it (title, explanation, buttons) is translated."
+    },
+    "frontend/src/features/auth/session-confirmation.tsx": {
+      "texts": [
+        "Chrome iOS",
+        "Firefox iOS",
+        "Edge iOS",
+        "Edge",
+        "Chrome",
+        "Firefox",
+        "Safari ${…}",
+        "Unknown",
+        "Android ${…}",
+        "Windows",
+        "Homeroom sign-in session diagnostics",
+        "Time: ${…}",
+        "Step: ${…}",
+        "Result: ${…}",
+        "No response",
+        "Platform build: ${…}",
+        "Surface: ${…}",
+        "Browser: ${…}",
+        "Operating system: ${…}",
+        "App version: ${…}",
+        "App build: ${…}",
+        "HTTP status: ${…}"
+      ],
+      "why": "sessionConfirmationText and browserVersions build the same kind of support report (browser and OS product names, build ids). Kept in English for support; the notice around it is translated. One more line of the same support diagnostics a person copies for a maintainer."
+    },
+    "frontend/src/features/auth/recaptcha.ts": {
+      "texts": [
+        "This is protected by reCAPTCHA, and Google’s",
+        "Privacy Policy",
+        "Terms of Service"
+      ],
+      "why": "RECAPTCHA_NOTICE is read only by frontend/src/features/admin/admin-sms.tsx. The admin console is out of scope, so the constant is left exactly as it was. (The sign-in line, RECAPTCHA_LINE, is converted: auth:recaptcha.line.)"
+    },
+    "frontend/src/features/auth/more.tsx": {
+      "texts": [
+        "GitHub",
+        "LinkedIn",
+        "Instagram",
+        "https://"
+      ],
+      "why": "Product names passed as the {{provider}} / {{network}} parameter, and a URL prefix shown as a placeholder."
+    },
+    "frontend/src/features/auth/sign-in-sheet.tsx": {
+      "texts": [
+        "Apple",
+        "Google",
+        "Retry-After"
+      ],
+      "why": "Provider names passed as {{provider}}; an HTTP header name."
+    },
+    "frontend/src/features/auth/login.tsx": {
+      "texts": [
+        "Retry-After"
+      ],
+      "why": "HTTP header name."
+    },
+    "frontend/src/features/auth/landing.tsx": {
+      "texts": [
+        "${…}=; Max-Age=0; path=/"
+      ],
+      "why": "A cookie string."
+    },
+    "frontend/src/features/auth/shared.ts": {
+      "texts": [
+        "NativeLoginPreparationError"
+      ],
+      "why": "An Error subclass's name."
+    },
+    "frontend/src/features/auth/waiting.tsx": {
+      "texts": [
+        "Sunday Run Club"
+      ],
+      "why": "A community name in the ?shot=waiting-invite screenshot fixture: data, not interface text."
+    },
+    "public/js/group-chat.js": {
+      "texts": [
+        "Homeroom bot",
+        "PR #${…}: ${…}",
+        "ArrowUp",
+        "ArrowDown",
+        "Enter",
+        "Tab",
+        "Escape"
+      ],
+      "why": "MentionAutocomplete.BOT_NAME: the assistant's name used as data (matched against what is typed after @, inserted into the message as the mention). A product name, never translated. `PR #n: title` is matched against the start of a server-composed line to cut it off, never drawn. The key names are KeyboardEvent.key values."
+    },
+    "frontend/src/features/global-chat/development-settings-editor.tsx": {
+      "texts": [
+        "OpenRouter",
+        "Claude Code"
+      ],
+      "why": "Product names of the two AI services, shown as the options of the Development AI select."
+    },
+    "frontend/src/features/global-chat/store.ts": {
+      "texts": [
+        "New chat",
+        "More suggestions"
+      ],
+      "why": "Sentinel: the server's default thread title, compared (`selected.title === 'New chat'`) and written back as the same placeholder so the next message can replace it. The toolbar's visible \"New chat\" is chat:global.toolbar.newChat. requestMoreSuggestions sends this as the `text` of a `more: true` turn; it is protocol for the server and the model (services/global-chat uses the same literal). What the person sees is chat:global.turn.moreSuggestions and chat:global.suggestions.more."
+    },
+    "frontend/src/features/global-chat/renderers.tsx": {
+      "texts": [
+        "In the \"${…}\" settings group (key: ${…}), ${…}.",
+        "Preserve every value I did not ask to change, use only capabilities for this settings group,",
+        "and show the exact confirmation before saving."
+      ],
+      "why": "SettingInstruction builds a prompt for the assistant around what the person typed; its wording is an instruction to the model (and pinned by tests/global-chat-ui.test.js), not interface copy. See borderline."
+    },
+    "frontend/src/features/dev-chat/dev-chat.js": {
+      "texts": [
+        "Homeroom · OpenRouter",
+        "Homeroom · Claude",
+        "OpenRouter",
+        "Claude Code",
+        "Claude",
+        "ChatGPT",
+        "Sonnet 5.5",
+        "Opus 5.5",
+        "Fable 5.1",
+        "One small thing at a time: a text tweak, a colour, a single file.",
+        "Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.",
+        "Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.",
+        "Staging deployed!",
+        "Staging build failed: ${…}",
+        "Claude Code progress",
+        "Error",
+        "Weekly limit reached ($50.00). Resets Monday 00:00 UTC.",
+        "This week",
+        "Monday 00:00 UTC",
+        "Staging demo draft: also make the header sticky when scrolling.",
+        "Staging demo draft: rename the \"Submit\" button to \"Publish\".",
+        "Also widen the meter a little",
+        "Daily",
+        "Weekly",
+        "Monthly",
+        "What issues are open right now?",
+        "Change the colors",
+        "Add a new feature",
+        "Fix something that's broken",
+        "What does issue #",
+        "ask for?",
+        "Propose it to the group",
+        "Make a tweak",
+        "What did it change?",
+        "Build the plan",
+        "Revise the plan",
+        "What will this change?",
+        "Make a change",
+        "What's the current state?",
+        "included"
+      ],
+      "why": "Product, venue and model names. They are passed to messages as {{venue}}, {{agent}}, {{product}} and never translated. DevChat.MODELS default table: a copy of the server's /api/models answer (label and changeSize), replaced wholesale by loadModels(). Server-worded data; the 'short' hints beside them are the same. System-row `content` in the server's own vocabulary: the server persists the same sentences (src/routes/sessions.js) and the client's live echo must equal the reloaded row; code also keys off them. stagingErrorName 'Error' is an error class name. Fixtures for ?shot= / demo states: they stand in for server sentences and for text a person typed. Key suffixes that pick an id from _OPENROUTER_TITLE_IDS, not text. Quick-reply pills (STARTER_QUICK_REPLIES, _starterQuickReplies and FALLBACK_QUICK_REPLIES): the server holds the same literals (RECOVERY_PILLS / BANNED_GENERIC_PILLS in src/services/recovery-pills.js, pinned equal by tests/quick-reply-fallback.test.js) and compares against them, and a pressed pill is sent as the person's message. They need a server-side decision before they can be worded per language. 'included' is a key into the _OPENROUTER_TITLE_IDS table of message ids, never shown."
+    },
+    "frontend/src/features/dev-chat/launchpad.js": {
+      "texts": [
+        "Continue work already started on the Homeroom app `",
+        "Create a proposal for the Homeroom app `",
+        "What to build:",
+        "Read the issue and its discussion before starting, and link the proposal to issue #",
+        "Continue",
+        "Read its saved plan and conversation, and start from the current head of that branch.",
+        "Preserve the existing work. Do not start over or open a second proposal.",
+        "Updating the existing proposal clears its votes and asks reviewers to re-review."
+      ],
+      "why": "prefillText() builds the prompt handed to the person's coding agent (model input), not interface text."
+    },
+    "frontend/src/features/comment-pin/post.ts": {
+      "texts": [
+        "Pinned with C ${…}${…}."
+      ],
+      "why": "whereLine() is stored in the request's description for whoever (or whichever agent) picks it up; it is content posted, not UI."
+    },
+    "frontend/src/features/comment-pin/picture.ts": {
+      "texts": [
+        "The app's picture wasn't available"
+      ],
+      "why": "Drawn into the screenshot that is uploaded with the request; part of the stored picture."
+    },
+    "frontend/src/features/staging/staging-overlay.tsx": {
+      "texts": [
+        "&times;"
+      ],
+      "why": "A glyph; the buttons have catalog aria-labels."
+    },
+    "frontend/src/features/dialogs/members.tsx": {
+      "texts": [
+        "Set in",
+        "dapp.json",
+        ". To change them, open a pull request that edits the",
+        "admins",
+        "list. That proposal needs real Yes votes and won&rsquo;t merge on a timer."
+      ],
+      "why": "Placeholder markup of #members-appadmins-note that nobody reads: its section is hidden until members-controller._renderAppAdmins has rewritten the note from the catalog (dialogs:members.appAdmins.note.editable / .readOnly). The JSX drops the spaces around its <code> tags, so its text is not the sentence the controller shows; moving it to an entry would either add a second, never-seen entry with a spacing fault or change the prerendered document. A comment in the file says so."
+    },
+    "frontend/src/features/dialogs/app-secrets-controller.js": {
+      "texts": [
+        "GitHub Actions secrets (platform repo)",
+        "General",
+        "MY_NEW_TOKEN"
+      ],
+      "why": "Data, not interface text. GITHUB_GROUP is compared with the group name the server sends (GITHUB_ACTIONS_GROUP in src/routes/apps.js). \"General\" is the default group name: it keys the grouping, is sent to the server and is written into dapp.json. MY_NEW_TOKEN is an example of an environment variable name."
+    },
+    "frontend/src/features/dialogs/feedback-controller.js": {
+      "texts": [
+        "usernode.feedbackDraft.",
+        "Content-Type"
+      ],
+      "why": "A localStorage key prefix and an HTTP header name."
+    },
+    "frontend/src/features/dialogs/screenshot-select.js": {
+      "texts": [
+        "No video frame available"
+      ],
+      "why": "Developer reason on a thrown/returned capture error. The feedback dialog words every capture failure itself from the error code (dialogs:feedback.capture.*) and never shows these messages; the same holds for the other fail(code, message) strings in this file."
+    },
+    "frontend/src/features/dialogs/feedback.tsx": {
+      "texts": [
+        "Homeroom"
+      ],
+      "why": "The product name as the label of the Homeroom destination (already covered by the allowlist pattern ^Homeroom$)."
+    },
+    "frontend/src/features/dialogs/import-pr.tsx": {
+      "texts": [
+        "#{num} · {title}",
+        "{head} → {base}"
+      ],
+      "why": "Number, title and branch names laid out with punctuation only; no words."
+    },
+    "frontend/src/features/dialogs/wallet-recovery.tsx": {
+      "texts": [
+        "123456"
+      ],
+      "why": "Example of a six-digit code in a placeholder; digits only."
+    },
+    "frontend/src/features/home/getting-started.tsx": {
+      "texts": [
+        "City garden",
+        "Take the 1-minute tour",
+        "See how Homeroom works.",
+        "Join a community",
+        "Find people to build with.",
+        "Try an app",
+        "Open an app and try it.",
+        "Vote on an app",
+        "Help decide what goes live next.",
+        "Send feedback",
+        "Tell a community what would make it better.",
+        "Make your first change",
+        "Get a change live",
+        "Invite a friend",
+        "Start a community"
+      ],
+      "why": "The screenshot fixtures (FIXTURE_STEPS, FIXTURE_UNLOCKS, CITY_GARDEN behind ?shot=getting-started*). They stand in for the server's payload: a step's title and detail, a challenge's name and an app's name are the server's and the organisers' words (src/services TOUR_STEP holds the same tour title), which the client never translates."
+    },
+    "frontend/src/features/apps/browse-list.tsx": {
+      "texts": [
+        "Not yet reviewed",
+        "Reviewed working"
+      ],
+      "why": "Not displayed. They are the server's directory.label vocabulary (src/services/discovery-curation.js), kept as constants that a row's server label is compared with to decide whether the tier heading already says it. What is displayed reads discover:list.label.notYetReviewed and discover:list.heading.*."
+    },
+    "frontend/src/features/apps/browse-screen.tsx": {
+      "texts": [
+        "&times;"
+      ],
+      "why": "The × glyph of the clear-search button, not a word. Its name is discover:search.clear."
+    },
+    "frontend/src/features/home/index.tsx": {
+      "texts": [
+        "&times;"
+      ],
+      "why": "The × glyph of the clear-search button, not a word. Its name is home:search.clear."
+    },
+    "frontend/src/features/friends/api.ts": {
+      "texts": [
+        "FriendsApiError"
+      ],
+      "why": "An Error subclass's name, for developers."
+    },
+    "frontend/src/features/messages/api.ts": {
+      "texts": [
+        "MessagesApiError",
+        "Content-Type",
+        "Accept"
+      ],
+      "why": "An Error subclass's name and HTTP header names."
+    },
+    "frontend/src/features/messages/format.tsx": {
+      "texts": [
+        "Conversation"
+      ],
+      "why": "UserAvatar's seed for the initials and the tile colour when a row has neither a title nor a username. Only its first letter can reach the screen, inside an aria-hidden tile. Left in code; a reviewer may prefer an entry."
+    },
+    "frontend/src/features/auth/communities-first-run.js": {
+      "texts": [
+        "Contribute to the Homeroom platform",
+        "Book club",
+        "Invited by @grace",
+        "City garden",
+        "Swap seeds and plan the shared plots.",
+        "Pickup soccer"
+      ],
+      "why": "SHOT_LIST, the fixture for the ?shot=join-communities screenshot state. It stands in for what GET /api/me/join-suggestions returns: community names and the server's own `detail` line. Not interface text."
+    },
+    "frontend/src/features/first-session/index.tsx": {
+      "texts": [
+        "Sam",
+        "Jordan",
+        "Ada",
+        "Noor",
+        "Tom",
+        "Lena",
+        "Maya",
+        "Sunday Run Club",
+        "Track your club's weekly miles and see who keeps up",
+        "A tracker for my run club, so we can see who keeps up with their weekly miles"
+      ],
+      "why": "shotWelcome(), the fixture for the ?shot=youre-in screenshot states: people's names, a community's name and its own description, standing in for server data. MAKE_SHOTS['make-waitlist'], the fixture for a person's own waitlist answer in the ?shot=make-waitlist screenshot state (not listed by --literals today, named here for completeness)."
+    },
+    "frontend/src/features/profile/profile-edit-sheet.tsx": {
+      "texts": [
+        "GitHub"
+      ],
+      "why": "A company's name, used as the row label for that account (as is the bare \"X\" on the next row)."
+    },
+    "frontend/src/features/profile/profile.js": {
+      "texts": [
+        "Staging demo bio: https://example.com/app/",
+        "and ThisIsOneUnbrokenWordThatIsFarWiderThanTheProfileCardCouldEverBe."
+      ],
+      "why": "LONG_BIO_SHOT: fixture content for the ?shot=profile-long-bio screenshot state, standing in for a bio a person wrote. Not interface text."
+    },
+    "frontend/src/features/workshop/community-switcher.tsx": {
+      "texts": [
+        "ArrowDown",
+        "ArrowUp",
+        "Home",
+        "End"
+      ],
+      "why": "Keyboard key names compared with event.key in roveRows, never shown."
+    },
+    "frontend/src/features/dev-board/workshop/hub-shot.ts": {
+      "texts": [
+        "Everyone’s miles this week",
+        "Log a run for any day",
+        "Each runner’s miles against their goal",
+        "Past weeks, to see who keeps up",
+        "What counts as keeping up?",
+        "Each runner picks their own goal",
+        "Sunday Run Club",
+        "Track your club’s weekly miles and see who keeps up",
+        "Just you",
+        "Private community",
+        "Hi, in for Sundays",
+        "imrichl"
+      ],
+      "why": "Made-up server payload for the ?shot=hub-first-week before/after captures: a project's name and description, a plan the bot would have written, a member's chat message, and the server's own audience_label field. It stands in for data (names, model output, a person's message, a server string), not interface text; hubShotPayload is pure and pinned by tests as a fixture. A made-up username in the same screenshot fixture."
+    },
+    "frontend/src/features/dev-board/topic/topic-back.tsx": {
+      "texts": [
+        "Workshop"
+      ],
+      "why": "`label=\"Workshop\"` is the destination key that `topicBackLabel` (improve-store.js) also answers ('Messages' | 'Workshop'). It indexes the CHIP_TEXT table of message ids and is never shown."
+    },
+    "frontend/src/features/dev-board/topic/topic-head.tsx": {
+      "texts": [
+        "npm test"
+      ],
+      "why": "The literal shell command, shown as the caption of the unit-suite bar. A command name is not translated."
+    },
+    "frontend/src/features/dev-board/card/skeleton.tsx": {
+      "texts": [
+        "bg-white dark:bg-zinc-900 p-0.5\" aria-hidden=\"true\">"
+      ],
+      "why": "A fragment of class names and attributes inside an HTML string, not text."
+    },
+    "frontend/src/features/dev-board/discussion-store.ts": {
+      "texts": [
+        "Talk with everyone building this app"
+      ],
+      "why": "The store's initial `preview`. It is never drawn: DiscussionCard renders nothing while `href` is null, and public/js/app-view.js `_discussionView()` always publishes `href` and its own `preview` together (the same sentence, written in app-view.js, a later unit). Converting it belongs with app-view.js, which is the text's real source."
+    },
+    "public/js/app.js": {
+      "texts": [
+        "Sunday Run Club",
+        "Routes, pace groups and who brings the coffee.",
+        "Private community",
+        "Maya",
+        "Come and vote on what we make next.",
+        "Staging demo app",
+        "Microphone",
+        "Records your voice notes",
+        "Staging Demo Terms of Service",
+        "Dragging a card scrolls the board back to the top.",
+        "The board scrolls back to the top when I drag a card.",
+        "Example App",
+        "Staging deployed!",
+        "Staging build failed: ${…}",
+        "Error",
+        "Codex log",
+        "Claude Code log",
+        "Homeroom",
+        "staging",
+        "dev"
+      ],
+      "why": "Fixtures of the ?shot= screenshot-state links: made-up names, a made-up community and text 'a person wrote', standing in for user and server data. One of them (\"Example App\") is also compared by the pose loop. Live copies of server-composed system rows pushed into the dev chat transcript from WebSocket events. The server persists and compares the same literals (src/routes/sessions.js 'Staging deployed!', 'Staging build failed', 'Claude Code log'; src/db/migrate.js seeds them), and a reload shows the server's row. 'Error' is the default error class name. Left as the task's out-of-scope rule says; the dev chat's own row painters decide how they read. \"Homeroom\" as the bare product name in the header title; 'staging' and 'dev' are environment identifiers shown as the version label when no commit SHA exists."
+    },
+    "public/js/build-venues.js": {
+      "texts": [
+        "Codex",
+        "Claude Code"
+      ],
+      "why": "Product names."
+    },
+    "public/js/dev-flow-select.js": {
+      "texts": [
+        "Claude Code",
+        "Codex",
+        "ChatGPT",
+        "Claude"
+      ],
+      "why": "Product names (agent names, connector products and the two vendor buttons)."
+    },
+    "public/js/credit-options.js": {
+      "texts": [
+        "Today",
+        "midnight UTC",
+        "<button type=\"button\" class=\"dc-pr-btn dc-credits-go\" data-credits-verify=\"1\""
+      ],
+      "why": "Fallbacks for fields of the server's budget payload (windowLabel, resetLabel) in creditState(). Nothing renders windowLabel from this state; resetLabel is the server's own name for the boundary and only reaches a sentence where window.ResetTime is absent (a bare unit sandbox), as the {{boundary}}/{{when}} parameter. Markup only; the inventory's html heuristic. Its label is session:credits.verify.cta."
+    },
+    "public/js/build-log.js": {
+      "texts": [
+        "Build failure for ${…}",
+        "Stage: ${…}",
+        "At: ${…}",
+        "Commit: ${…}",
+        "Reason: ${…}"
+      ],
+      "why": "The plain-text report 'Copy log' puts on the clipboard for pasting into an issue: log output, not interface. (The stage name inside it is the translated label; say if the copied report should stay fully English.)"
+    },
+    "public/js/native-chrome.js": {
+      "texts": [
+        "Native session handoff request failed",
+        "Native session handoff was stale or mismatched",
+        "This Homeroom app version must be updated for secure sign-in",
+        "Native session result did not match the current participant",
+        "Sign out before signing in again.",
+        "Native session recovery is unavailable",
+        "Native web session recovery was superseded",
+        "Invalid native web session recovery",
+        "Native sign-out is unavailable",
+        "This Homeroom app version must be updated for secure sign-out",
+        "all `reason:` strings of the permission verdicts"
+      ],
+      "why": "Thrown developer errors and diagnostic verdicts. They are recorded by lastSessionFailure() and printed only in the Settings diagnostics block next to raw fields (\"last session failure: <stage>, <message>\"), or returned as machine-read reasons."
+    },
+    "public/js/feedback-queue.js": {
+      "texts": [
+        "indexedDB open failed",
+        "indexedDB blocked",
+        "indexedDB transaction failed",
+        "indexedDB transaction aborted",
+        "flush failed"
+      ],
+      "why": "Developer errors: rejected promises and a result.error nothing shows."
+    },
+    "public/js/social-push.js": {
+      "texts": [
+        "Native bridge capability probe was inconclusive"
+      ],
+      "why": "Thrown inside the capability probe and caught by it; never shown."
+    },
+    "public/js/session-options.js": {
+      "texts": [
+        "git clone …",
+        "node ./tools/social-vibecoding login",
+        "node ./tools/social-vibecoding agent run --session …",
+        "<session-id>"
+      ],
+      "why": "Shell commands."
+    },
+    "public/js/merge-status.js": {
+      "texts": [
+        "who runs this app",
+        "how changes are approved",
+        "who can see this app",
+        "this app’s platform settings",
+        "this app’s keys"
+      ],
+      "why": "EXPLICIT_PHRASES: the server holds the same phrases (src/services/explicit-approval.js reasonPhrase) and tests/explicit-approval-vote-panel.test.js pins the two equal. They are not shown: explicitApprovalCopy() returns `reason`, `sentence` and `line`, and public/js/app-view.js picks a whole catalog message by the reason (changes:explicit.lead.* and changes:explicit.adminMerge.*)."
+    },
+    "frontend/src/features/settings/sections/connectors.tsx": {
+      "texts": [
+        "Claude.ai",
+        "Claude",
+        "ChatGPT",
+        "Codex",
+        "~/.claude/settings.json",
+        ".claude/settings.json",
+        "~/.codex/config.toml",
+        "homeroom"
+      ],
+      "why": "Product names: row titles and the {{product}} parameter of connectors.guided.*. File paths shown as captions over code blocks, and the literal connector name used as a field placeholder; identifiers, not prose."
+    },
+    "frontend/src/features/settings/cli-setup-guide.tsx": {
+      "texts": [
+        "Codex",
+        "Claude Code"
+      ],
+      "why": "Product names over their start commands."
+    },
+    "frontend/src/features/settings/sections/api-key.tsx": {
+      "texts": [
+        "sk-ant-…",
+        "sk-ant-..."
+      ],
+      "why": "API key prefix, a format sample."
+    },
+    "frontend/src/features/settings/sections/openrouter.tsx": {
+      "texts": [
+        "OpenRouter",
+        "sk-or-&hellip;",
+        "sk-or-..."
+      ],
+      "why": "Product name as the section heading (settings.js writes the same literal), and the API key prefix."
+    },
+    "frontend/src/features/settings/settings.js": {
+      "texts": [
+        "GitHub",
+        "OpenRouter",
+        "Claude Code",
+        "Staging demo: privileged bridge is unavailable for this main frame",
+        "Staging demo: no seeded wallet is available for this account",
+        "Staging demo: the capability probe did not answer",
+        "Weather",
+        "Ledger",
+        "Notes",
+        "Homeroom bridge diagnostics",
+        "Staging demo: there is no session to recover here.",
+        "Wallet recovery is not available on this screen.",
+        "Sign in before connecting a wallet."
+      ],
+      "why": "Product names: the provider name passed as {{provider}}, the OpenRouter heading, a badge in the model list. Read-only demo fixtures standing in for the phone app's own messages and app names (?bridgediag=, ?widgeticons=demo). _bridgeDiagnosticsText: the copyable technical report meant to be pasted into an issue for the maintainers; key: value lines, kept in English. The three thrown by _openWalletRecovery are for the console: the button's catch (usernode-ui.tsx useAction) shows settings:usernode.actionFailed or the not-accepting message, never err.message."
+    },
+    "frontend/@/components/ui/tabs.tsx": {
+      "texts": [
+        "TabsTrigger"
+      ],
+      "why": "Component name handed to useTabsContext for a thrown developer error."
+    },
+    "frontend/src/lib/overlay-scrim.js": {
+      "texts": [
+        "TopLeft",
+        "TopRight",
+        "BottomRight",
+        "BottomLeft"
+      ],
+      "why": "Pieces of CSS property names (border<Corner>Radius) read from computed style."
+    },
+    "frontend/src/lib/challenge-illustrations.ts": {
+      "texts": [
+        "Try three apps",
+        "Make a proposal on an app",
+        "Take part in block production",
+        "Spend ten minutes a week in apps",
+        "Get a proposal accepted",
+        "Send useful feedback",
+        "Turn on network participation",
+        "Prove who you are: level one",
+        "Prove who you are: level two",
+        "Connect with other participants",
+        "Invite someone to the network"
+      ],
+      "why": "Labels of the built-in artworks, read only by the admin console's illustration gallery (features/admin/topochain/illustration-gallery.tsx), which is out of scope. The two user-facing consumers (challenge-card.tsx, challenges-pane.tsx) draw the image with alt=\"\" and never read the label."
+    },
+    "frontend/src/features/dev-board/topic/request-model.ts": {
+      "texts": [
+        "Homeroom bot"
+      ],
+      "why": "BOT_NAME: the assistant's name, shown in place of the GitHub account it files through (displayName). A product name used as data, as in public/js/group-chat.js; never translated."
+    },
+    "frontend/src/features/app-frame/live-band.tsx": {
+      "texts": [
+        "Sample row one",
+        "Sample row two",
+        "Sample row three",
+        "Sample live stream",
+        "Not a real app",
+        "Just added: a new row"
+      ],
+      "why": "sampleRecording(): the made-up page played for the ?shot=first-version-live screenshot state. It stands in for an app's own content, which Homeroom never translates."
+    },
+    "frontend/src/features/dialogs/app-domain.tsx": {
+      "texts": [
+        "app.example.com"
+      ],
+      "why": "The address box's placeholder: a sample hostname on the reserved example.com domain, the same in every language."
+    },
+    "frontend/src/features/apps/browse.js": {
+      "texts": [
+        "unknown"
+      ],
+      "why": "'unknown' is the key of a contributor row with no username (data-username, openContributor). It is never drawn: the row shows discover:detail.contributor.unknownHandle and its tooltip has an unnamed wording."
+    },
+    "frontend/src/features/dev-board/release-stall-store.ts": {
+      "texts": [
+        "commit"
+      ],
+      "why": "A key into the STALL_TEXT table of message ids ('pr' | 'prCommit' | 'commit'), never shown."
+    }
+  }
+}

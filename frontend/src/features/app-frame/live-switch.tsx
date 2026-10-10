@@ -9,6 +9,9 @@
 
 import { useCallback, useState, type ReactNode } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
+
 export type LiveChoice = 'preview' | 'live';
 
 /** What the App tab is told (AppView._firstVersionLive). */
@@ -52,24 +55,26 @@ export type LivePhase = 'starting' | 'live' | 'failed';
  * showing the last good screen" while the newest restart did not load. Pure.
  */
 export function livePill(phase: LivePhase, ageSeconds: number | null): string {
-  if (phase === 'starting') return 'Starting the app…';
-  if (phase === 'failed') return 'A restart failed · showing the last good screen';
+  if (phase === 'starting') return translate('agent:appFrame.live.pill.starting');
+  if (phase === 'failed') return translate('agent:appFrame.live.pill.failed');
   const age = ageSeconds == null || !Number.isFinite(ageSeconds) ? 0 : Math.max(0, Math.floor(ageSeconds));
-  if (age < 5) return 'Live · just updated';
-  if (age < 60) return `Live · updated ${age} s ago`;
-  return `Live · updated ${Math.floor(age / 60)} min ago`;
+  if (age < 5) return translate('agent:appFrame.live.pill.justUpdated');
+  if (age < 60) return translate('agent:appFrame.live.pill.updatedSeconds', { count: age });
+  return translate('agent:appFrame.live.pill.updatedMinutes', { count: Math.floor(age / 60) });
 }
 
+/** The two segments, each with its label's message id. */
 const SEGMENTS: Array<{ value: LiveChoice; label: string }> = [
-  { value: 'preview', label: 'Preview' },
-  { value: 'live', label: 'Live' },
+  { value: 'preview', label: 'agent:appFrame.live.switch.preview' },
+  { value: 'live', label: 'agent:appFrame.live.switch.live' },
 ];
 
 export function LiveSwitch({ value, onChange }: { value: LiveChoice; onChange: (c: LiveChoice) => void }): ReactNode {
+  const t = useMessages('agent');
   return (
     <div
       role="group"
-      aria-label="What the picture shows"
+      aria-label={t('agent:appFrame.live.switch.label')}
       data-first-version-live-switch={value}
       className="flex rounded-full bg-black/55 p-0.5 text-[12px] font-semibold leading-4"
     >
@@ -82,7 +87,7 @@ export function LiveSwitch({ value, onChange }: { value: LiveChoice; onChange: (
           onClick={() => onChange(s.value)}
           className={`min-h-[24px] rounded-full px-2.5 py-1 ${value === s.value ? 'bg-white text-zinc-900' : 'text-white'}`}
         >
-          {s.label}
+          {t(s.label)}
         </button>
       ))}
     </div>

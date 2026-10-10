@@ -89,6 +89,7 @@ import type { RefObject } from 'react';
 import { ChevronDownIcon, Squares2X2Icon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
 import { improveStore } from '../improve/improve-store.js';
@@ -106,6 +107,7 @@ import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope
 const PLATFORM_NAME = 'Homeroom';
 
 export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
+  const t = useMessages();
   const { text, subtitle } = useStoreState(headerTitleStore);
   const { slug, tab, subTab, name, iconUrl, iconEmoji, selfHosted } = useStoreState(improveStore);
   const { screen } = useStoreState(navStore);
@@ -182,11 +184,11 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             aria-haspopup="dialog"
             aria-expanded={switcherOpen ? 'true' : 'false'}
             aria-controls="community-switcher"
-            aria-label="Communities: all of yours, or open one"
+            aria-label={t('core:header.communitiesSwitch')}
             onClick={(e) => toggleSwitcher('header', e.currentTarget)}
           >
             <Squares2X2Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-            <span id="header-title-name" className="min-w-0 truncate">Communities</span>
+            <span id="header-title-name" className="min-w-0 truncate">{t('core:header.communities')}</span>
             <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
           </button>
         ) : appSwitch ? (
@@ -203,7 +205,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             aria-haspopup="dialog"
             aria-expanded={switcherOpen ? 'true' : 'false'}
             aria-controls="community-switcher"
-            aria-label={`${name || text}, switch community`}
+            aria-label={t('core:header.switchCommunity', { community: name || text })}
             onClick={(e) => toggleSwitcher('header', e.currentTarget)}
           >
             {tile}

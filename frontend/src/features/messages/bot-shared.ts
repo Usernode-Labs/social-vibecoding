@@ -1,3 +1,4 @@
+import { t } from '../../lib/i18n/runtime';
 import type { ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotJob } from './types';
 
 /*
@@ -6,8 +7,8 @@ import type { ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotJob } 
  * blocks (#4564, ./index.tsx) all need: how a piece of work is named, the
  * window event that says the bot's work moved on, and the request a bot
  * message is about. A module of its own so they can share it without
- * importing each other. It imports types only, and reads a message's
- * metadata inline — the other modules' own rule.
+ * importing each other. It imports types and the message runtime only, and
+ * reads a message's metadata inline — the other modules' own rule.
  */
 
 /** public/js/app.js dispatches this on `homeroom_bot_work_changed` and on a socket reconnect. */
@@ -20,18 +21,44 @@ export const WORK_CHANGED_EVENT = 'homeroom-bot-work-changed';
  */
 export const SPINNING_OUTCOMES: ReadonlySet<HomeroomBotActivityOutcome> = new Set(['checking', 'going_live']);
 
-type Named = Pick<HomeroomBotJob, 'appName' | 'issueNumber' | 'title' | 'firstVersion'>;
+/**
+ * `appUnnamed`: `appName` is the stand-in for a project nobody can name. The
+ * names below then use their unnamed wording, and never take the stand-in as
+ * a project's name.
+ */
+type Named = Pick<HomeroomBotJob, 'appName' | 'appUnnamed' | 'issueNumber' | 'title' | 'firstVersion'>;
 
 /** "Ear Trainer first version", "Ear Trainer #12": what the header's status line names. */
 export function jobName(job: Named): string {
-  if (job.firstVersion) return `${job.appName} first version`;
-  return job.issueNumber ? `${job.appName} #${job.issueNumber}` : job.appName;
+  if (job.appUnnamed) {
+    if (job.firstVersion) return t('messages:bot.job.firstVersionUnnamed');
+    return job.issueNumber ? t('messages:bot.job.requestUnnamed', { number: job.issueNumber }) : job.appName;
+  }
+  if (job.firstVersion) return t('messages:bot.job.firstVersion', { project: job.appName });
+  return job.issueNumber ? t('messages:bot.job.request', { project: job.appName, number: job.issueNumber }) : job.appName;
+}
+
+/**
+ * Short independent facts on one status line ("Building · 5m so far"). Each
+ * part is a whole message already; what joins two of them is a message too.
+ */
+export function dotText(parts: readonly (string | null | undefined | false)[]): string {
+  const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
+  if (!said.length) return '';
+  return said.reduce((first, second) => t('messages:list.dot', { first, second }));
 }
 
 /** A tile's or a card's title: the name, and the request's own title when it has one. */
 export function jobTitle(job: Named): string {
-  const name = jobName(job);
-  return !job.firstVersion && job.title ? `${name}: ${job.title}` : name;
+  if (job.firstVersion || !job.title) return jobName(job);
+  if (job.appUnnamed) {
+    return job.issueNumber
+      ? t('messages:bot.job.requestTitledUnnamed', { number: job.issueNumber, title: job.title })
+      : t('messages:bot.job.titledUnnamed', { title: job.title });
+  }
+  return job.issueNumber
+    ? t('messages:bot.job.requestTitled', { project: job.appName, number: job.issueNumber, title: job.title })
+    : t('messages:bot.job.titled', { project: job.appName, title: job.title });
 }
 
 /**

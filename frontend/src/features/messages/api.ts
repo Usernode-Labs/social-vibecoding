@@ -25,6 +25,7 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import { t } from '../../lib/i18n/runtime';
 import { countOf } from './approval-words';
 import { releaseOf } from '../../lib/release-eta';
 import type { HomeroomLink } from './homeroom-links';
@@ -92,9 +93,12 @@ function pick(source: JsonRecord, ...keys: string[]): unknown {
 
 export function normalizeUser(input: unknown): ConversationUser {
   const row = record(input);
+  const username = pick(row, 'username', 'name');
   return {
     id: strictId(pick(row, 'id', 'userId', 'user_id')) || 0,
-    username: text(pick(row, 'username', 'name'), 'unknown'),
+    username: typeof username === 'string' ? username : t('messages:api.unknownUser'),
+    // No username came with the row: `username` is a stand-in, never a name in a sentence.
+    ...(typeof username === 'string' ? {} : { unnamed: true }),
     avatarUrl: text(pick(row, 'avatarUrl', 'avatar_url')) || null,
     // #3624: a platform account (the Homeroom bot). Named here, or dropped.
     ...(pick(row, 'bot') === true ? { bot: true } : {}),
@@ -358,7 +362,7 @@ export function normalizeThreadRoot(input: unknown): ThreadRootRef | null {
   if (!id) return null;
   return {
     id,
-    senderUsername: text(pick(row, 'senderUsername', 'sender_username', 'username')) || 'Deleted user',
+    senderUsername: text(pick(row, 'senderUsername', 'sender_username', 'username')) || t('messages:api.deletedUser'),
     content: text(pick(row, 'content')),
     deleted: pick(row, 'deleted') === true,
   };
@@ -417,9 +421,13 @@ export function normalizeConversation(input: unknown): ConversationDetail {
   const membershipStatus = text(pick(row, 'membershipStatus', 'membership_status', 'myStatus', 'my_status', 'status'));
   const latestRaw = pick(row, 'latestMessage', 'latest_message', 'lastMessage', 'last_message');
   const latestMessage = latestRaw ? normalizeMessage(latestRaw, id) : null;
-  const title = text(pick(row, 'title', 'name'))
+  // What it is called: its own title, or in a direct conversation the other
+  // person. With neither, `title` is a stand-in to show where a name would be,
+  // and `untitled` tells a sentence to use its own wording, not that word.
+  const named = text(pick(row, 'title', 'name'))
     || (kind === 'direct' ? peer?.username || members.find((member) => member.status === 'member')?.username : '')
-    || 'Conversation';
+    || '';
+  const title = named || t('messages:api.conversationTitle');
   const canSendValue = pick(row, 'canSend', 'can_send');
   const homeroomBot = kind === 'direct' && pick(row, 'homeroomBot') === true;
   const summary = plainText(text(pick(row, 'latestSummary', 'latest_summary', 'preview')) || latestMessage?.content || '');
@@ -427,6 +435,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     id,
     kind,
     title,
+    untitled: !named,
     avatarUrl: text(pick(row, 'avatarUrl', 'avatar_url')) || peer?.avatarUrl || null,
     members,
     memberCount: Number(pick(row, 'memberCount', 'member_count')) || members.filter((member) => member.status === 'member').length,
@@ -500,7 +509,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try { data = await response.json(); } catch { data = null; }
   if (!response.ok) {
     const body = record(data);
-    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), `Request failed (${response.status})`));
+    throw new MessagesApiError(response.status, text(pick(body, 'error', 'message'), t('messages:api.requestFailed', { status: response.status })));
   }
   return data as T;
 }
@@ -673,7 +682,7 @@ export async function uploadAttachment(conversationId: number, file: File): Prom
   });
   let data: unknown = null;
   try { data = await response.json(); } catch { data = null; }
-  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), `Upload failed (${response.status})`));
+  if (!response.ok) throw new MessagesApiError(response.status, text(pick(record(data), 'error', 'message'), t('messages:api.uploadFailed', { status: response.status })));
   return normalizeAttachment(pick(record(data), 'attachment') ?? data, conversationId);
 }
 
@@ -708,7 +717,7 @@ export async function listAppItems(slug: string, type: 'issue' | 'proposal' | 'g
     const row = record(item);
     return {
       id: strictId(pick(row, 'number', 'id')) || 0,
-      title: text(pick(row, 'title', 'pr_title', 'session_title'), 'Untitled'),
+      title: text(pick(row, 'title', 'pr_title', 'session_title'), t('messages:api.untitledItem')),
       status: text(pick(row, 'status')) || undefined,
     };
   }).filter((item) => item.id);
@@ -796,13 +805,13 @@ export async function approveChange(sessionId: number, epoch: number | null): Pr
       body: JSON.stringify(epoch === null ? { vote: 'yes' } : { vote: 'yes', expectedEpoch: epoch }),
     });
   } catch {
-    return { ok: false, stale: false, epoch: null, error: 'Couldn’t reach Homeroom. Try again.' };
+    return { ok: false, stale: false, epoch: null, error: t('messages:api.approve.unreachable') };
   }
   const data = record(await response.json().catch(() => ({})));
   if (response.ok) return { ok: true, stale: false, epoch, error: null, goesLive: normalizeGoesLive(pick(data, 'goesLive')) };
   const stale = response.status === 409 && pick(data, 'headChanged') === true;
   const next = Number.isInteger(pick(data, 'approvalEpoch')) ? Number(pick(data, 'approvalEpoch')) : null;
-  return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || 'Couldn’t approve it just now.') };
+  return { ok: false, stale, epoch: next, error: stale ? null : (text(pick(data, 'message')) || text(pick(data, 'error')) || t('messages:api.approve.failed')) };
 }
 
 export async function decideBotAction(actionId: number, choice: string, answers?: string[]): Promise<{ label: string | null }> {
@@ -865,10 +874,13 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
   const appSlug = text(pick(row, 'appSlug')) || null;
   const issueNumber = strictId(pick(row, 'issueNumber'));
   const firstVersion = pick(row, 'firstVersion') === true;
+  const named = text(pick(row, 'appName')) || appSlug;
   return {
     key: text(pick(row, 'key')) || `${appSlug || ''}#${issueNumber || 'first'}`,
     appSlug,
-    appName: text(pick(row, 'appName')) || appSlug || 'A project',
+    appName: named || t('messages:bot.job.unnamedProject'),
+    // A slug is the project's own address and names it; only the stand-in is unnamed.
+    appUnnamed: !named,
     iconUrl: appIconUrl(pick(row, 'iconUrl')),
     iconEmoji: text(pick(row, 'iconEmoji')) || null,
     issueNumber,

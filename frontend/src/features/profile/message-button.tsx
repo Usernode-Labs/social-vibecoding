@@ -11,9 +11,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { useMessages } from '../../lib/i18n/react';
 import { messagePerson } from './message-person';
 
 export function MessageButton({ username }: { username: string }): ReactNode {
+  const t = useMessages('profile');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const alive = useRef(true);
@@ -46,13 +48,13 @@ export function MessageButton({ username }: { username: string }): ReactNode {
         type="button"
         size="sm"
         data-message-person={username}
-        aria-label={`Message @${username}`}
+        aria-label={t('profile:message.buttonLabel', { username })}
         disabled={pending}
         aria-busy={pending}
         className="disabled:opacity-60"
         onClick={() => { void start(); }}
       >
-        Message
+        {t('profile:message.button')}
       </Button>
       {/*
           Out of the flow, under the button, so the card's name and bio keep

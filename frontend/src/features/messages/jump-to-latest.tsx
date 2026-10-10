@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 
 import { JumpToLatestButton, TranscriptOverlay } from '@/components/ui/chat';
+import { useMessages } from '../../lib/i18n/react';
 import { jumpLabel, useUnreadAffordances, type UnreadRow } from './unread-anchor';
 
 /*
@@ -36,11 +37,12 @@ export function JumpToLatest({ scroller, slack, rows = NO_ROWS, docked = false }
   /** Dock into a shrink-0 strip below the scroller instead of floating over its foot. */
   docked?: boolean;
 }) {
+  const t = useMessages('messages');
   const { view, toLatest } = useUnreadAffordances(scroller, NO_LINE, {
     conversation: null, markKey: '', lineAt: null, rows, slack, watchContent: true,
   });
   const button = (
-    <JumpToLatestButton shown={view.jump} dot={view.arrived > 0} aria-label={jumpLabel(view.arrived)} title="Jump to latest" onClick={toLatest} />
+    <JumpToLatestButton shown={view.jump} dot={view.arrived > 0} aria-label={jumpLabel(view.arrived)} title={t('messages:thread.jumpToLatest')} onClick={toLatest} />
   );
   if (docked) {
     // One class string or the other, never both on the node: `hidden` beside

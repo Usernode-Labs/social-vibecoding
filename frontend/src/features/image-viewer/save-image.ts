@@ -26,6 +26,7 @@
 
 import { useEffect, useState } from 'react';
 
+import { t } from '../../lib/i18n/runtime';
 import { toast } from '../message-actions/clipboard';
 
 /**
@@ -258,7 +259,7 @@ export async function saveImages(images: SaveableImage[]): Promise<SaveOutcome> 
         for (const file of files) {
           await bridge()!.saveImage!({ base64: await toBase64(file), contentType: file.type, filename: file.name });
         }
-        toast(files.length === 1 ? 'Image downloaded' : `${files.length} images downloaded`);
+        toast(t('messages:imageSave.saved', { count: files.length }));
         return 'saved';
       }
     }
@@ -269,14 +270,14 @@ export async function saveImages(images: SaveableImage[]): Promise<SaveOutcome> 
     return 'downloaded';
   } catch {
     pending = null;
-    toast('Couldn’t download this image.');
+    toast(t('messages:imageSave.failed'));
     return 'failed';
   }
 }
 
 /** The message menu's line for its pictures: "Download image", "Download 3 images". */
 export function downloadLabel(count: number): string {
-  return count === 1 ? 'Download image' : `Download ${count} images`;
+  return t('messages:imageSave.menuDownload', { count });
 }
 
 /**

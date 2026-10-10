@@ -18,6 +18,7 @@
 import { type ReactNode } from 'react';
 
 import { ArrowPathIcon, SpinnerArcIcon } from '@/components/ui/icons';
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -78,6 +79,7 @@ function QuickAction({ id, label, onClick }: {
  * self-hosted row (#1367), and so can this: on Home it asks Homeroom itself.
  */
 export function ImproveQuickActions(): ReactNode {
+  const t = useMessages('agent');
   return (
     <div
       id="improve-quick-actions"
@@ -85,7 +87,7 @@ export function ImproveQuickActions(): ReactNode {
     >
       <QuickAction
         id="improve-row-feedback"
-        label="Suggest an improvement"
+        label={t('agent:menu.suggestImprovement')}
         onClick={() => Improve.giveFeedback()}
       />
     </div>
@@ -124,6 +126,7 @@ export function ImproveQuickActions(): ReactNode {
  * the wording.
  */
 function UpdateStatus(): ReactNode {
+  const t = useMessages('agent');
   const { versionState, deploying, appUpdateReady } = useStoreState(improveStore);
   const platformBusy = versionState === 'deploying' || versionState === 'downloading';
   const ready = versionState === 'ready' || versionState === 'failed';
@@ -140,7 +143,7 @@ function UpdateStatus(): ReactNode {
       >
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
-          There is a new version available. Click here to get the new version.
+          {t('agent:menu.update.platformReady')}
         </span>
       </button>
     );
@@ -158,7 +161,7 @@ function UpdateStatus(): ReactNode {
       >
         <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
-          This app has a new version. Click here to reload it.
+          {t('agent:menu.update.appReady')}
         </span>
       </button>
     );
@@ -169,9 +172,9 @@ function UpdateStatus(): ReactNode {
     // says the more surprising of the two.
     const line = platformBusy
       ? (versionState === 'downloading'
-        ? 'A new version of the platform is downloading. The reload appears once it is ready.'
-        : 'A new version of the platform is being built.')
-      : 'A new version of this app is being built.';
+        ? t('agent:menu.update.platformDownloading')
+        : t('agent:menu.update.platformBuilding'))
+      : t('agent:menu.update.appBuilding');
     return (
       <div
         id="improve-update-note"

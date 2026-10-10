@@ -54,15 +54,18 @@ import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ArrowPathIcon, CheckIcon, TrophyIcon, XIcon } from '@/components/ui/icons';
 
-export const INTRO_TITLE = 'How challenges work';
+import { useMessages } from '../../lib/i18n/react';
+
+// Message ids (frontend/locales/en/leaderboard.json), read when the card renders.
+export const INTRO_TITLE = 'leaderboard:challenges.intro.title';
 
 export const INTRO_ROWS = [
-  { key: 'counts', title: 'Do it, and it counts', subtitle: 'Complete challenges.' },
-  { key: 'points', title: 'Earn points', subtitle: 'Each card shows what it earns. Points add up in standings.' },
+  { key: 'counts', title: 'leaderboard:challenges.intro.counts.title', subtitle: 'leaderboard:challenges.intro.counts.text' },
+  { key: 'points', title: 'leaderboard:challenges.intro.points.title', subtitle: 'leaderboard:challenges.intro.points.text' },
   {
     key: 'weekly',
-    title: 'New ones each week',
-    subtitle: 'This week starts again on Monday. Always open has no deadline.',
+    title: 'leaderboard:challenges.intro.weekly.title',
+    subtitle: 'leaderboard:challenges.intro.weekly.text',
   },
 ] as const;
 
@@ -119,24 +122,25 @@ export interface ChallengesIntroViewProps {
 }
 
 export function ChallengesIntroView({ closed, onClose, onOpen, closeRef, linkRef }: ChallengesIntroViewProps): ReactNode {
+  const t = useMessages('leaderboard');
   if (closed) {
     return (
       <button ref={linkRef} type="button" className={LINK} data-challenges-intro="closed" onClick={onOpen}>
-        {INTRO_TITLE}
+        {t(INTRO_TITLE)}
       </button>
     );
   }
   return (
-    <section aria-label={INTRO_TITLE} className="mb-4" data-challenges-intro="open">
+    <section aria-label={t(INTRO_TITLE)} className="mb-4" data-challenges-intro="open">
       <GroupedList tone="plane" className="mx-0">
         <div className={HEAD}>
-          <div className={TITLE}>{INTRO_TITLE}</div>
+          <div className={TITLE}>{t(INTRO_TITLE)}</div>
           <button
             ref={closeRef}
             type="button"
             className={CLOSE}
-            aria-label={`Close ${INTRO_TITLE}`}
-            title="Close"
+            aria-label={t('leaderboard:challenges.intro.close')}
+            title={t('core:common.close')}
             data-challenges-intro-close=""
             onClick={onClose}
           >
@@ -151,8 +155,8 @@ export function ChallengesIntroView({ closed, onClose, onOpen, closeRef, linkRef
               as="div"
               chevron={false}
               leading={<IconTile size="sm"><Icon aria-hidden="true" /></IconTile>}
-              title={row.title}
-              subtitle={row.subtitle}
+              title={t(row.title)}
+              subtitle={t(row.subtitle)}
               titleClassName="whitespace-normal"
               subtitleClassName="whitespace-normal"
             />

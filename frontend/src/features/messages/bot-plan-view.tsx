@@ -3,6 +3,7 @@ import { useId, useState, type ReactNode } from 'react';
 import { CheckIcon, InfoCircleIcon } from '@/components/ui/icons';
 import { ProgressRing } from '@/components/ui/progress-ring';
 
+import { useMessages } from '../../lib/i18n/react';
 import type { HomeroomBotPlan } from './types';
 
 /*
@@ -64,10 +65,10 @@ export type PlanCardState = 'open' | 'built' | 'replaced' | 'stopped' | 'changin
 
 /** What the line under a card that is no longer open says. */
 export const PLAN_STATE_LINES: Record<Exclude<PlanCardState, 'open' | 'replaced'>, string> = {
-  built: 'Building it',
-  stopped: 'I stopped waiting on this plan. Reply to pick it up again.',
-  changing: 'You asked for changes. A new plan is on its way.',
-  closed: 'No longer needed.',
+  built: 'messages:bot.plan.state.built',
+  stopped: 'messages:bot.plan.state.stopped',
+  changing: 'messages:bot.plan.state.changing',
+  closed: 'messages:bot.plan.state.closed',
 };
 
 /**
@@ -129,10 +130,11 @@ export function AnsweredChoices({ items, className = '' }: { items: AnsweredChoi
 
 /** #4197: the line under a plan once Build it is pressed: a check, or the spinner while it builds, then its words. */
 export function DoneLine({ children, spinning = false }: { children: ReactNode; spinning?: boolean }) {
+  const t = useMessages('messages');
   return (
     <p className="messages-bot-answered messages-bot-done" role="status" data-bot-plan-building={spinning ? '' : undefined}>
       {spinning ? (
-        <ProgressRing pct={0} title="Building" spinning className="h-4 w-4" trackClassName="dark:stroke-zinc-700" aria-hidden="true" />
+        <ProgressRing pct={0} title={t('messages:bot.plan.building')} spinning className="h-4 w-4" trackClassName="dark:stroke-zinc-700" aria-hidden="true" />
       ) : (
         <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
       )}
@@ -167,6 +169,7 @@ const ANSWER_ROW = {
 export function PlanCardView({
   appName, plan, state, choices = [], busy = false, building, onBuild, onChange, surface = 'messages', progress = null, footer = null,
 }: PlanCardViewProps) {
+  const t = useMessages('messages');
   const [picked, setPicked] = useState<Array<string | null>>(() => plan.questions.map(() => null));
   // Build it pressed on this card: its picks stand in until `choices` land.
   const [builtHere, setBuiltHere] = useState(false);
@@ -179,14 +182,17 @@ export function PlanCardView({
     ? plan.questions.flatMap((q, i) => (went[i] ? [{ question: q.question, answer: went[i] }] : []))
     : [];
   // The App tab's card keeps its words until it goes (#4053).
-  const title = surface === 'app' ? `Here’s my plan for ${appName}:` : `My plan for ${appName}`;
+  // An empty `appName` is a project whose name is not known: its own messages.
+  const title = surface === 'app'
+    ? (appName ? t('messages:bot.plan.titleInApp', { project: appName }) : t('messages:bot.plan.titleInAppUnnamed'))
+    : (appName ? t('messages:bot.plan.title', { project: appName }) : t('messages:bot.plan.titleUnnamed'));
 
   function choose(index: number, answer: string) {
     setPicked((current) => current.map((value, i) => (i === index ? answer : value)));
   }
 
   return (
-    <div className={SURFACES[surface]} role="group" aria-label={`Plan for ${appName}`} data-bot-plan={shown}>
+    <div className={SURFACES[surface]} role="group" aria-label={appName ? t('messages:bot.plan.name', { project: appName }) : t('messages:bot.plan.nameUnnamed')} data-bot-plan={shown}>
       <div className={`text-[1.0625rem] font-bold leading-[1.375rem] ${shown === 'replaced' ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-900 dark:text-zinc-100'}`}>
         {title}
       </div>
@@ -198,7 +204,7 @@ export function PlanCardView({
         </div>
       ) : null}
       {shown === 'replaced' ? (
-        <p className="messages-bot-answered">Replaced by a newer plan</p>
+        <p className="messages-bot-answered">{t('messages:bot.plan.replaced')}</p>
       ) : shown === 'built' ? (
         <AnsweredChoices items={answered} className="mt-2" />
       ) : surface === 'messages' ? (
@@ -260,17 +266,17 @@ export function PlanCardView({
             className="mt-3 h-[50px] w-full rounded-full bg-[color:var(--accent)] text-[1.0625rem] font-semibold text-[color:var(--accent-ink)] hover:bg-[color:var(--accent-light)]"
             data-bot-plan-build=""
             onClick={() => { setBuiltHere(true); onBuild?.(picked); }}
-          >Build it</button>
+          >{t('messages:bot.plan.build')}</button>
           <button
             type="button"
             className="mt-0.5 h-9 w-full text-[0.9375rem] font-medium text-violet-700 hover:underline dark:text-violet-300"
             data-bot-plan-change=""
             onClick={() => onChange?.()}
-          >Change something</button>
+          >{t('messages:bot.plan.change')}</button>
         </>
       ) : null}
-      {shown === 'built' ? (progress ? null : <DoneLine spinning={building ?? busy}>{PLAN_STATE_LINES.built}</DoneLine>)
-        : shown !== 'open' && shown !== 'replaced' ? <p className="messages-bot-answered" role="status">{PLAN_STATE_LINES[shown]}</p> : null}
+      {shown === 'built' ? (progress ? null : <DoneLine spinning={building ?? busy}>{t(PLAN_STATE_LINES.built)}</DoneLine>)
+        : shown !== 'open' && shown !== 'replaced' ? <p className="messages-bot-answered" role="status">{t(PLAN_STATE_LINES[shown])}</p> : null}
       {footer}
     </div>
   );

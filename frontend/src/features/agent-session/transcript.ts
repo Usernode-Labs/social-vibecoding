@@ -19,6 +19,7 @@
 // draws as the dev chat's run card, captioned with the agent that actually
 // ran (its `agentBackend`). A drafted spec is its own item after it.
 
+import { listText, t } from '../../lib/i18n/runtime';
 import { releaseSentence, releaseShort } from '../../lib/release-eta';
 import type { AgentAction, AgentActionStatus, AgentAttachment, AgentCard, AgentMessage } from './api';
 
@@ -47,7 +48,7 @@ export type TranscriptItem =
     wrapUp: boolean;
     /** The turn was stopped or failed after this much was said. */
     ended: 'stopped' | 'failed' | null;
-    /** What this reply cost, "reply $0.012", or '' when nothing was recorded. */
+    /** What this reply cost, "$0.012" ("~$0.012" for an estimate), or '' when nothing was recorded. */
     cost: string;
   }
   | { kind: 'divider'; key: string; text: string; event: string }
@@ -118,14 +119,15 @@ export interface RunItem {
 const DIVIDER_EVENTS = new Set(['change_started', 'change_switched', 'change_closed']);
 const MAX_VALUE_CHARS = 140;
 
+// Message ids, read with `t` as a card's rows are built.
 const FIELD_LABELS: Record<string, string> = {
-  slug: 'App',
-  title: 'Change',
-  changeId: 'Change',
-  proposalId: 'Change',
-  number: 'Request',
-  linkedIssues: 'Links',
-  body: 'Details',
+  slug: 'agent:session.card.field.app',
+  title: 'agent:session.card.field.changeTitle',
+  changeId: 'agent:session.card.field.change',
+  proposalId: 'agent:session.card.field.proposal',
+  number: 'agent:session.card.field.request',
+  linkedIssues: 'agent:session.card.field.links',
+  body: 'agent:session.card.field.details',
 };
 
 function clip(text: string, max = MAX_VALUE_CHARS) {
@@ -136,9 +138,9 @@ function clip(text: string, max = MAX_VALUE_CHARS) {
 function valueText(key: string, value: unknown): string | null {
   if (value == null || value === '') return null;
   if (key === 'changeId' || key === 'proposalId') return `#${value}`;
-  if (key === 'number') return `Request #${value}`;
+  if (key === 'number') return t('agent:session.card.value.request', { number: String(value) });
   if (key === 'linkedIssues' && Array.isArray(value)) {
-    return value.length ? value.map((n) => `Request #${n}`).join(', ') : null;
+    return value.length ? listText(value.map((n) => t('agent:session.card.value.linkedRequest', { number: String(n) }))) : null;
   }
   if (typeof value === 'string') return clip(value);
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
@@ -146,7 +148,7 @@ function valueText(key: string, value: unknown): string | null {
 }
 
 function humanKey(key: string) {
-  if (FIELD_LABELS[key]) return FIELD_LABELS[key];
+  if (FIELD_LABELS[key]) return t(FIELD_LABELS[key]);
   const spaced = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
@@ -243,7 +245,7 @@ export function prettyModel(id: unknown): string {
  * user's own machine.
  */
 export function agentLabel(meta: Record<string, unknown>): string {
-  if (typeof meta.localAgentLabel === 'string' && meta.localAgentLabel) return `${meta.localAgentLabel} · your machine`;
+  if (typeof meta.localAgentLabel === 'string' && meta.localAgentLabel) return t('agent:session.run.agentOnYourMachine', { agent: meta.localAgentLabel });
   if (typeof meta.agentBackend !== 'string' && typeof meta.agentModel !== 'string') return '';
   const agent = meta.agentBackend === 'codex_openrouter' && meta.agentHarness !== 'claude' ? 'Codex' : 'Claude Code';
   const model = prettyModel(meta.agentModel);
@@ -324,7 +326,7 @@ export function buildTranscript(
         quickReplies: stringList(meta.quickReplies),
         wrapUp: meta.wrapUp === true,
         ended: meta.stopped === true ? 'stopped' : meta.failed === true ? 'failed' : null,
-        cost: replyCostLabel(row),
+        cost: replyCostAmount(row),
       });
       continue;
     }
@@ -480,7 +482,9 @@ export function buildTranscript(
  */
 export function skippedChecksReason(detail: string | null | undefined): string {
   const reason = typeof detail === 'string' ? detail.trim().slice(0, 280).replace(/[\s.]+$/, '') : '';
-  return `Checks were skipped: ${reason || 'there was nothing to test'}. It can still go live.`;
+  return reason
+    ? t('agent:session.checks.skippedReason', { reason })
+    : t('agent:session.checks.skippedNothingToTest');
 }
 
 /**
@@ -495,14 +499,14 @@ export function checksSummary(
   skipReason?: string | null,
 ): { key: 'passing' | 'failing' | 'running' | 'error' | 'skipped'; text: string; reason?: string } | null {
   if (!checkState) return null;
-  if (checkState === 'passing') return { key: 'passing', text: 'Checks passing' };
-  if (checkState === 'skipped') return { key: 'skipped', text: 'Checks skipped', reason: skippedChecksReason(skipReason) };
+  if (checkState === 'passing') return { key: 'passing', text: t('agent:session.checks.passing') };
+  if (checkState === 'skipped') return { key: 'skipped', text: t('agent:session.checks.skipped'), reason: skippedChecksReason(skipReason) };
   if (checkState === 'failing') {
     const n = Number(checkFailing) || 0;
-    return { key: 'failing', text: n > 0 ? `${n} check${n === 1 ? '' : 's'} failing` : 'Checks failing' };
+    return { key: 'failing', text: n > 0 ? t('agent:session.checks.countFailing', { count: n }) : t('agent:session.checks.failing') };
   }
-  if (checkState === 'pending' || checkState === 'running') return { key: 'running', text: 'Checks running' };
-  return { key: 'error', text: 'Checks couldn\u2019t run' };
+  if (checkState === 'pending' || checkState === 'running') return { key: 'running', text: t('agent:session.checks.running') };
+  return { key: 'error', text: t('agent:session.checks.couldNotRun') };
 }
 
 /** A run's heading, in words. */
@@ -510,12 +514,12 @@ export function runHeading(run: Pick<RunItem, 'mode' | 'status'>): string {
   const scout = run.mode === 'scout';
   const sync = run.mode === 'sync';
   switch (run.status) {
-    case 'running': return scout ? 'Writing the plan…' : sync ? 'Syncing with main…' : 'Building the change…';
-    case 'done': return scout ? 'Wrote the plan' : sync ? 'Synced with main' : 'Built the change';
-    case 'no_changes': return 'Made no changes';
-    case 'failed': return scout ? 'The plan was not written' : sync ? 'Could not sync with main' : 'The build did not finish';
-    case 'stopped': return scout ? 'Stopped writing the plan' : 'Stopped the build';
-    default: return scout ? 'Plan run ended' : sync ? 'Sync ended' : 'Build ended';
+    case 'running': return scout ? t('agent:session.run.spec.running') : sync ? t('agent:session.run.sync.running') : t('agent:session.run.build.running');
+    case 'done': return scout ? t('agent:session.run.spec.done') : sync ? t('agent:session.run.sync.done') : t('agent:session.run.build.done');
+    case 'no_changes': return t('agent:session.run.noChanges');
+    case 'failed': return scout ? t('agent:session.run.spec.failed') : sync ? t('agent:session.run.sync.failed') : t('agent:session.run.build.failed');
+    case 'stopped': return scout ? t('agent:session.run.spec.stopped') : t('agent:session.run.build.stopped');
+    default: return scout ? t('agent:session.run.spec.ended') : sync ? t('agent:session.run.sync.ended') : t('agent:session.run.build.ended');
   }
 }
 
@@ -523,16 +527,21 @@ export function runHeading(run: Pick<RunItem, 'mode' | 'status'>): string {
 export function durationLabel(ms: number | null): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return '';
   const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return t('agent:session.run.duration.seconds', { seconds });
   const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${seconds % 60}s`;
+  return t('agent:session.run.duration.minutes', { minutes, seconds: seconds % 60 });
 }
 
 /**
  * What a turn that did not finish offers, the dev chat's own pair for a failed
  * or stopped turn (services/recovery-pills.js `turn_failed`).
  */
-export const TURN_FAILED_REPLIES = ['Try that again', 'What went wrong?'];
+export const TURN_FAILED_REPLIES = ['agent:session.replies.tryAgain', 'agent:session.replies.whatWentWrong'];
+
+/** The pair in words, read when the suggestions are drawn. */
+function turnFailedReplies(): string[] {
+  return TURN_FAILED_REPLIES.map((id) => t(id));
+}
 
 /**
  * Reply suggestions belong to the last thing said, and only while it is last.
@@ -542,43 +551,44 @@ export const TURN_FAILED_REPLIES = ['Try that again', 'What went wrong?'];
 export function latestReplies(items: TranscriptItem[]): string[] {
   const last = items[items.length - 1];
   if (!last) return [];
-  if (last.kind === 'mayor') return last.quickReplies.length ? last.quickReplies : (last.ended ? TURN_FAILED_REPLIES : []);
-  if (last.kind === 'note' && last.turnFailed) return TURN_FAILED_REPLIES;
+  if (last.kind === 'mayor') return last.quickReplies.length ? last.quickReplies : (last.ended ? turnFailedReplies() : []);
+  if (last.kind === 'note' && last.turnFailed) return turnFailedReplies();
   return [];
 }
 
 /**
- * What one Mayor reply cost, as the dev chat labels it (#2118): "reply
- * $0.012", with "~" before a list-price estimate. Empty with no cost recorded.
+ * What one Mayor reply cost, as the dev chat labels it (#2118): "$0.012",
+ * with "~" before a list-price estimate; the reply's label words it ("reply
+ * $0.012", agent:session.reply.agentWithCost). Empty with no cost recorded.
  */
-export function replyCostLabel(row: Pick<AgentMessage, 'costCents' | 'metadata'>): string {
+export function replyCostAmount(row: Pick<AgentMessage, 'costCents' | 'metadata'>): string {
   const cents = Number(row.costCents);
   if (row.costCents == null || !Number.isFinite(cents) || cents <= 0) return '';
   const approx = row.metadata && row.metadata.costEstimated === true ? '~' : '';
-  return `reply ${approx}$${(cents / 100).toFixed(3)}`;
+  return `${approx}$${(cents / 100).toFixed(3)}`;
 }
 
 const TOOL_ACTIVITY: Record<string, string> = {
-  list_apps: 'Looking at apps',
-  get_app: 'Reading the app',
-  list_requests: 'Reading requests',
-  get_request: 'Reading a request',
-  get_discussion: 'Reading a discussion',
-  get_proposal: 'Reading a change',
-  list_my_proposals: 'Checking your proposals',
-  get_change: 'Checking the change',
-  get_platform_conventions: 'Reading the platform rules',
-  web_fetch: 'Reading a web page',
-  recheck_change: 'Re-running the checks',
-  switch_active_change: 'Switching changes',
-  set_focus_app: 'Changing the focus',
-  get_prod_status: 'Reading production status',
-  dispatch_scout: 'The coding agent is writing the plan',
-  dispatch_coding_agent: 'The coding agent is building',
+  list_apps: 'agent:session.activity.listApps',
+  get_app: 'agent:session.activity.getApp',
+  list_requests: 'agent:session.activity.listRequests',
+  get_request: 'agent:session.activity.getRequest',
+  get_discussion: 'agent:session.activity.getDiscussion',
+  get_proposal: 'agent:session.activity.getProposal',
+  list_my_proposals: 'agent:session.activity.listMyProposals',
+  get_change: 'agent:session.activity.getChange',
+  get_platform_conventions: 'agent:session.activity.getConventions',
+  web_fetch: 'agent:session.activity.webFetch',
+  recheck_change: 'agent:session.activity.recheckChange',
+  switch_active_change: 'agent:session.activity.switchChange',
+  set_focus_app: 'agent:session.activity.setFocusApp',
+  get_prod_status: 'agent:session.activity.getProdStatus',
+  dispatch_scout: 'agent:session.activity.dispatchScout',
+  dispatch_coding_agent: 'agent:session.activity.dispatchCodingAgent',
 };
 
 export function toolActivity(name: string): string {
-  return TOOL_ACTIVITY[name] || 'Preparing a confirmation';
+  return TOOL_ACTIVITY[name] ? t(TOOL_ACTIVITY[name]) : t('agent:session.activity.preparingConfirmation');
 }
 
 /**
@@ -595,7 +605,7 @@ export function changeReleaseLine(
 ): string | null {
   if (!change || change.status !== 'merging' || !change.release) return null;
   const words = releaseSentence(change.release, now);
-  return words ? `${words}.` : null;
+  return words ? t('agent:session.release.line', { release: words }) : null;
 }
 
 /**
@@ -609,24 +619,24 @@ export function changeRowWords(
   change: { status?: string | null; release?: unknown },
   now: number = Date.now(),
 ): string {
-  if (change.status === 'promoted') return 'Waiting for approval';
-  if (change.status === 'merging') return (change.release ? releaseShort(change.release, now) : null) || 'Going live';
-  if (change.status === 'merged') return 'Live';
-  return 'In progress';
+  if (change.status === 'promoted') return t('agent:session.changeRow.waitingForApproval');
+  if (change.status === 'merging') return (change.release ? releaseShort(change.release, now) : null) || t('agent:session.changeRow.goingLive');
+  if (change.status === 'merged') return t('agent:session.changeRow.live');
+  return t('agent:session.changeRow.inProgress');
 }
 
 /** The active change's state, in the words the header pill uses. */
 export function changeStatusLabel(status: string | null | undefined, busy = false): string {
-  if (busy) return 'Building';
+  if (busy) return t('agent:session.changeStatus.building');
   switch (status) {
     // "paused" is the platform's bookkeeping, never a state of the work: it
     // pauses by itself when idle and resumes by itself when used.
     case 'active':
-    case 'paused': return 'In progress';
-    case 'promoted': return 'Waiting for approval';
-    case 'merging': return 'Going live';
-    case 'merged': return 'Live';
-    case 'archived': return 'Closed';
-    default: return 'No active change';
+    case 'paused': return t('agent:session.changeStatus.inProgress');
+    case 'promoted': return t('agent:session.changeStatus.waitingForApproval');
+    case 'merging': return t('agent:session.changeStatus.goingLive');
+    case 'merged': return t('agent:session.changeStatus.live');
+    case 'archived': return t('agent:session.changeStatus.closed');
+    default: return t('agent:session.changeStatus.none');
   }
 }

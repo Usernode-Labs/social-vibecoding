@@ -21,6 +21,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -41,7 +42,7 @@ function appView() {
     setTimeout, clearTimeout, setInterval, clearInterval,
     location: { search: '', hash: '' }, URLSearchParams,
     // What main.tsx publishes for the classic scripts.
-    ReleaseEta: words };
+    ReleaseEta: words, PlatformI18n: englishPlatformI18n() };
   c.window = c;
   vm.createContext(c);
   for (const p of ['public/js/merge-status.js', 'public/js/app-view.js']) vm.runInContext(read(p), c);
@@ -168,7 +169,8 @@ test('an agent session\'s change: the drawer says when, the rows say it short', 
   // Messages' agent rows and the Homeroom menu's Agent chats read the same words.
   const messages = read('frontend/src/features/messages/index.tsx');
   const row = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));
-  assert.match(row, /\$\{changeRowWords\(change\)\}/);
+  // The change's name, then where it stands, as two facts on one line (bot-shared dotText).
+  assert.match(row, /dotText\(\[\s*change\.title \|\|[^\n]*\n\s*changeRowWords\(change\),\s*\]\)/);
   const model = loadTsx('frontend/src/features/app-context/continue-model.ts');
   const listed = (activeChange) => ({
     id: 7, title: 'Say when', status: 'open', lastActivityAt: new Date(now).toISOString(), focusApp: null, activeChange,
@@ -281,7 +283,11 @@ test('the request card in a project\'s chat: approved and merged into Homeroom s
 // ── The leaderboard's badge ─────────────────────────────────────────────
 
 test('the leaderboard\'s "going live" badge says when on hover, for a Homeroom merge only', () => {
-  const ctx = { console, document: { getElementById: () => null }, location: { hash: '' }, ReleaseEta: words };
+  // The module reads its words through the language runtime's global, as the
+  // shell publishes it; the release sentence is closed by its own entry.
+  const { englishPlatformI18n: lbI18n } = require('./lib/platform-i18n');
+  const ctx = { console, document: { getElementById: () => null }, location: { hash: '' }, ReleaseEta: words,
+    PlatformI18n: lbI18n() };
   ctx.window = ctx;
   vm.createContext(ctx);
   vm.runInContext(`${read('frontend/src/features/leaderboard/leaderboard.js').replace(/^export .*$/gm, '')}\n;globalThis.__lb = Leaderboard;`, ctx);
@@ -298,5 +304,6 @@ test('the leaderboard\'s "going live" badge says when on hover, for a Homeroom m
 // ── What is left as it was, on purpose ─────────────────────────────────
 
 test('a child app\'s first version keeps its "Going live" step; the creation dialog is not a platform release', () => {
-  assert.match(read('frontend/src/features/dialogs/creation-progress-store.js'), /\{ key: 'deploy', label: 'Going live' \}/);
+  assert.match(read('frontend/src/features/dialogs/creation-progress-store.js'), /\{ key: 'deploy', label: 'dialogs:createProgress\.step\.deploy' \}/);
+  assert.equal(englishPlatformI18n().t('dialogs:createProgress.step.deploy'), 'Going live');
 });

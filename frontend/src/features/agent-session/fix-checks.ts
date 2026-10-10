@@ -18,6 +18,7 @@
 // running, which hides it; the next failing verdict is a new run and a new
 // offer. Pure, so the rule is read in one place a test can read.
 
+import { t } from '../../lib/i18n/runtime';
 import type { AgentChange, AgentMessage } from './api';
 
 /** A change still open to more work: a fix to one in a vote revises it, as any push does. */
@@ -76,15 +77,11 @@ function oneLine(text: string, max = REASON_CHARS) {
   return clean.length > max ? `${clean.slice(0, max - 1).trimEnd()}…` : clean;
 }
 
-/** "PR #88", or the change, before it has a pull request. */
-export function fixChecksWhere(offer: Pick<FixChecksOffer, 'prNumber'>): string {
-  return offer.prNumber ? `PR #${offer.prNumber}` : 'this change';
-}
-
 /** The offer's heading: "1 check failed on PR #88". */
 export function fixChecksHeading(offer: Pick<FixChecksOffer, 'prNumber' | 'total'>): string {
-  const n = offer.total;
-  return `${n} check${n === 1 ? '' : 's'} failed on ${fixChecksWhere(offer)}`;
+  return offer.prNumber
+    ? t('agent:session.fixChecks.headingPr', { count: offer.total, number: offer.prNumber })
+    : t('agent:session.fixChecks.headingChange', { count: offer.total });
 }
 
 /**
@@ -93,15 +90,16 @@ export function fixChecksHeading(offer: Pick<FixChecksOffer, 'prNumber' | 'total
  * the coding agent, as it does when the person types the same ask.
  */
 export function fixChecksMessage(offer: FixChecksOffer): string {
-  const where = fixChecksWhere(offer);
-  const head = offer.total === 1
-    ? `Please fix the failing check on ${where}.`
-    : `Please fix the ${offer.total} failing checks on ${where}.`;
+  const head = offer.prNumber
+    ? t('agent:session.fixChecks.askPr', { count: offer.total, number: offer.prNumber })
+    : t('agent:session.fixChecks.askChange', { count: offer.total });
   const lines = offer.checks.map((check) => {
     const reason = check.reason ? oneLine(check.reason) : '';
-    return `- "${oneLine(check.name, 200)}"${reason ? `, which reported: ${reason}` : ''}`;
+    return reason
+      ? t('agent:session.fixChecks.askLineReason', { check: oneLine(check.name, 200), reason })
+      : t('agent:session.fixChecks.askLine', { check: oneLine(check.name, 200) });
   });
   const more = offer.total - offer.checks.length;
-  if (more > 0) lines.push(`- and ${more} more`);
+  if (more > 0) lines.push(t('agent:session.fixChecks.askMore', { count: more }));
   return [head, '', ...lines].join('\n');
 }

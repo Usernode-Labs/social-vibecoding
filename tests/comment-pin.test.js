@@ -31,6 +31,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -122,10 +123,11 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   assert.match(src, /INSET_MARGIN, HEADER_BAND\)/);
   assert.doesNotMatch(src, /inset\.y \+ window\.innerHeight \* inset\.scale - barSize\.height/);
   // The handle that drags the bar belongs to the live-page fallback alone.
-  assert.match(src, /"Move the bar: drag it anywhere, double-click to put it back"/);
-  assert.match(src, /\{!inset \? \(\s*<button\s+type="button"\s+aria-label="Move the bar/);
+  assert.equal(message('devchat:commentPin.bar.move'), 'Move the bar: drag it anywhere, double-click to put it back');
+  assert.match(src, /\{!inset \? \(\s*<button\s+type="button"\s+aria-label=\{t\('devchat:commentPin\.bar\.move'\)\}/);
   // Taking a new picture says so in the bar, and taps wait while it draws.
-  assert.match(src, /viewShot\?\.state === 'drawing' \? 'Taking a screenshot…'/);
+  assert.match(src, /viewShot\?\.state === 'drawing' \? t\('devchat:commentPin\.hint\.taking'\)/);
+  assert.equal(message('devchat:commentPin.hint.taking'), 'Taking a screenshot…');
   assert.match(src, /if \(viewShot\?\.state === 'drawing'\) return;/);
   // On a phone the box is a bottom sheet, riding the keyboard, and while the
   // wait for the next pin is on it holds just that row.
@@ -570,7 +572,8 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /const same = d\.pictures\.find\(\(pic\) => pic\.view === view\.current && pic\.screen === routeOf\(\) && pic\.base !== null\);/);
   assert.match(src, /if \(inUse \+ d\.images\.length >= MAX_PICTURES\) return \{ pictures: d\.pictures, picture: null \};/);
   // Kudos is one line that says who it is for.
-  assert.match(src, />Kudos for whoever solves it</);
+  assert.match(src, />\{t\('devchat:commentPin\.kudos\.label'\)\}</);
+  assert.equal(message('devchat:commentPin.kudos.label'), 'Kudos for whoever solves it');
   // The bar: moved by its handle (four arrows, a move cursor); it starts at
   // the foot every time (#4541, the device no longer keeps where it was left)
   // and never hides on its own.
@@ -581,20 +584,29 @@ test('comment mode opens on demand into a host of its own, once, and C asks it t
   assert.match(src, /onDoubleClick=\{\(\) => \{ setBarAt\(null\); \}\}/);
   assert.doesNotMatch(src, /DUCK_AFTER_MS|ducked|onBarEnter/, 'resting the pointer on the bar never hides it');
   // One label that says what to do (#4541): not the mode's name plus a second hint.
-  assert.match(src, /'Tap anywhere to suggest an improvement'/);
+  assert.match(src, /: t\('devchat:commentPin\.hint\.start'\);/);
+  assert.equal(message('devchat:commentPin.hint.start'), 'Tap anywhere to suggest an improvement');
   assert.doesNotMatch(src, />Comment mode</);
+  assert.doesNotMatch(src, />\{t\('devchat:commentPin\.bar\.label'\)\}</);
   assert.doesNotMatch(src, /Click anything to comment on it/);
-  assert.match(src, /aria-label="Comment mode"/, 'the bar keeps its screen-reader name');
+  assert.doesNotMatch(read('frontend/locales/en/devchat.json'), /Click anything to comment on it/);
+  assert.match(src, /aria-label=\{t\('devchat:commentPin\.bar\.label'\)\}/, 'the bar keeps its screen-reader name');
+  assert.equal(message('devchat:commentPin.bar.label'), 'Comment mode');
   // A first-use note, once per device, that says how it works and that the
   // Form switch goes back to the form (#4541).
   assert.match(src, /const INTRO_KEY = 'usernode:comment-intro-seen';/);
-  assert.match(src, /How comment mode works/);
-  assert.match(src, />Got it</);
-  assert.match(src, /Prefer the form\? Tap Form to switch back at any time\./);
+  assert.match(src, />\{t\('devchat:commentPin\.intro\.title'\)\}</);
+  assert.equal(message('devchat:commentPin.intro.title'), 'How comment mode works');
+  assert.match(src, />\{t\('devchat:commentPin\.intro\.gotIt'\)\}</);
+  assert.equal(message('devchat:commentPin.intro.gotIt'), 'Got it');
+  assert.match(src, /<li>\{t\('devchat:commentPin\.intro\.form'\)\}<\/li>/);
+  assert.equal(message('devchat:commentPin.intro.form'), 'Prefer the form? Tap Form to switch back at any time.');
   // A finger: a tap is a comment, a drag scrolls.
   assert.match(src, /if \(!t\.moved\) place\(\{ x: e\.clientX, y: e\.clientY \}\);/);
   // The form is called the form.
   assert.doesNotMatch(src, /Detailed/);
+  assert.doesNotMatch(JSON.stringify(Object.entries(JSON.parse(read('frontend/locales/en/devchat.json')))
+    .filter(([key]) => key.startsWith('commentPin.')).map(([, entry]) => entry.text)), /Detailed/);
   assert.doesNotMatch(read('frontend/src/features/dialogs/feedback.tsx'), />\s*Detailed\s*</);
   // The dialog's rule for when a request can go to the app, read the same way.
   assert.match(src, /!\/github\\\.com\\\/\[\^\/\]\+\\\/\[\^\/\]\+\/\.test\(data\.repo_url \|\| ''\) \|\| data\.self_hosted/);

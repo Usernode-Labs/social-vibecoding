@@ -564,6 +564,7 @@ test('a cost only ever reaches a person as "about $X for a typical change"', () 
   sandbox.addEventListener = () => {};
   sandbox.navigator = {};
   sandbox.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     `${read('frontend/src/features/dev-chat/dev-chat.js')}\n;globalThis.__DevChat = DevChat;`,

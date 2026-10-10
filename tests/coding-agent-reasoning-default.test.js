@@ -252,6 +252,8 @@ function settingsHarness(codingAgentPayload) {
         : { configured: false, managedProvisioning: {} }),
     }),
     setTimeout, clearTimeout, setInterval, clearInterval, console,
+    // settings.js reads its text through this global; the real English catalog.
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
   });
   context.window.window = context.window;
   context.window.document = context.document;

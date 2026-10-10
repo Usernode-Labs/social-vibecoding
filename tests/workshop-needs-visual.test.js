@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const AppView = require('../public/js/app-view.js');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -147,16 +148,18 @@ test('the picture is the reader\'s own screen size, cropped to the run\'s outlin
 });
 
 test('Description is on the rail, second, with its key and its sheet', () => {
-  const rail = body(WORKSHOP, '<aside className="dev-ws-rail" data-ws-rail="" aria-label="This item" ref={railRef}>', '</aside>');
+  const rail = body(WORKSHOP, '<aside className="dev-ws-rail" data-ws-rail="" aria-label={t(\'project:needsYou.rail.label\')} ref={railRef}>', '</aside>');
   const at = ['data-ws-rail-btn="vote"', 'data-ws-rail-btn="description"', 'data-ws-rail-btn="comments"'].map((s) => rail.indexOf(s));
   assert.ok(at[0] < at[1] && at[1] < at[2], 'after Vote, before Comments');
   assert.match(rail, /onClick=\{\(\) => toggleSheet\('description'\)\}/);
   assert.match(rail, /<DescriptionIcon aria-hidden="true" \/>/);
   assert.match(WORKSHOP, /if \(k === 'd' \|\| k === 'D'\) \{ toggleSheet\('description'\); return; \}/);
-  assert.match(WORKSHOP, /keys\.push\(\[\['D'\], 'description'\]/);
+  assert.match(WORKSHOP, /keys\.push\(\s*\{ id: 'project:needsYou\.keys\.description', keys: 1 \},/);
+  assert.equal(message('project:needsYou.keys.description'), '<0>D</0> description');
   const sheet = body(WORKSHOP, '<div className="dev-ws-sheet-modal dev-ws-sheet-description"', '\n      ) : null}');
   assert.match(sheet, /<Html className="dev-ws-desc-body" html=\{row\.descriptionHtml\} \/>/);
-  assert.match(sheet, /<h4 className="dev-ws-desc-head">What changes<\/h4>/);
+  assert.match(sheet, /<h4 className="dev-ws-desc-head">\{t\('project:needsYou\.description\.whatChanges'\)\}<\/h4>/);
+  assert.equal(message('project:needsYou.description.whatChanges'), 'What changes');
   assert.match(sheet, /<ItemBy row=\{row\} \/>/);
   assert.match(sheet, /className=\{chipTone\(f\.tone\)\}/, 'the facts in full, as chips');
   // A panel beside the rail on a wide window, like Ask and the comments.
