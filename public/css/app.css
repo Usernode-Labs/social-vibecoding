@@ -3714,6 +3714,20 @@ html[data-browser-scroller^="auth-"] body :is(
 html.un-ios[data-browser-scroller="auth-landing-scroll"] [data-landing-story] {
   padding-bottom: max(0px, calc(100lvh - 100svh));
 }
+/* THE STORY'S FOOT STAYS ON SCREEN (Evan, 10 Oct 2026, iPhone Safari): the
+   story ran taller than the screen under Safari's toolbar, so Get started
+   was below the fold. The foot is sticky to the bottom of whatever scrolls
+   the page (frontend/src/features/auth/story.tsx); this is its ground, the
+   page's own colour fading up into the wallpaper, so the story stays
+   legible as it passes under the button. Drawn only while the story is
+   under the foot (`over`, set by the story itself): at rest, at the end of
+   the page or on a screen it fits, the foot sits on the wallpaper as it
+   always did, and nothing reads as a bar. */
+[data-landing-story-foot="over"] {
+  background: linear-gradient(to top,
+    color-mix(in srgb, var(--home-ground, #f4f2e4) 92%, transparent) 70%,
+    color-mix(in srgb, var(--home-ground, #f4f2e4) 0%, transparent));
+}
 /* The same toolbar under the sign-in screen's foot (#4593): with the story
    switched off, the release mail's "Create my account" lands on #signup,
    and its steps (the account step's button, the line pinned at the foot)
