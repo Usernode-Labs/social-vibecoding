@@ -110,7 +110,7 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(await communities.appNeedsJoin(pool, 'nowhere', sam), null, 'a missing app is the route\'s own 404');
   });
 
-  await t.test('on a project the bot builds on, it goes to the bot first, in her words, with its card', async () => {
+  await t.test('on a project the bot builds on, it goes to the bot first, in her words, followed in her tray', async () => {
     const out = await dm.noteRequestFiled(pool, {
       app: plantPal, user: maya, issueNumber: 12, title: 'Weekly reminder', askedText: 'Remind me to water on Sundays',
     });
@@ -128,9 +128,12 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
         WHERE d.user_id = $1 AND d.app_id = $2 AND d.issue_number = 12 AND d.kind = 'activity'`,
       [maya.id, plantPal.id],
     );
-    assert.equal(cards.length, 1);
-    assert.match(cards[0].content, /Filed\. This card follows it from here\./);
-    assert.equal(cards[0].metadata.homeroomBot.askedText, 'Remind me to water on Sundays');
+    // Filed through the form, not in her DM: no card there (9 Oct 2026: one
+    // person's DM got 45 of them in an afternoon). The tray above the DM
+    // follows it, and the DM speaks when it needs her.
+    assert.equal(cards.length, 0);
+    const work = await require('../src/services/homeroom-bot-progress').botWorkByIssue(pool, plantPal.id);
+    assert.equal(work.get(12).what, 'queued', 'the bot has it, waiting for a builder');
   });
 
   await t.test('elsewhere it goes to the group; and nothing for somebody the bot does not talk to', async () => {

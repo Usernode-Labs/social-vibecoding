@@ -270,6 +270,11 @@ const BUS_KIND = 'homeroom_bot';
 const SETTLE_MS = 20 * 1000;
 // What wakes the loop for a person's words, and so waits to settle.
 const SETTLE_REASONS = new Set(['thread', 'proposal_thread']);
+// What a person asked for in their DM with the bot queues with one of these
+// (homeroom-bot-mayor.js, homeroom-bot-dm.js): that work gets a card in the
+// DM (homeroom-bot-activity.js startCard `inDm`); anything else is followed
+// in the tray until it needs them.
+const DM_REASONS = new Set(['dm_request', 'dm_start', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change']);
 
 // Eligibility windows. A human claim counts while it is younger than the
 // board's own claim TTL; a paused human session counts while it is inside
@@ -2905,7 +2910,9 @@ async function runTriage(pool, config, {
     // not twice for a restart or a read started over, and not for a backlog
     // pass. Never throws.
     if (item.reason !== RESTART_REASON && item.reason !== APP_AGAIN_REASON && item.reason !== READ_AGAIN_REASON) {
-      await activity().startCard(pool, { app, issueNumber, requester, bot, jobKey: item.id, settings, deps: { dm: deps.dm } });
+      await activity().startCard(pool, {
+        app, issueNumber, requester, bot, jobKey: item.id, settings, inDm: DM_REASONS.has(item.reason), deps: { dm: deps.dm },
+      });
       // B9: the chat message it was asked in, if it was, says it is read.
       await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber, status: 'reading' });
     }
@@ -6181,7 +6188,11 @@ async function runChecksFix(pool, config, {
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
       // Said where the group votes too: the checks are the proposal's.
       proposalSessionId: session.id,
-      dm: { reason: failing.length ? `its checks are failing: ${why}` : `part of it does not work yet: ${why}` },
+      // A change's checks are its discussion's news, not a DM message
+      // (homeroom-bot-dm.js cardOnly); what does not work yet is theirs.
+      dm: failing.length
+        ? { reason: `its checks are failing: ${why}`, checks: true }
+        : { reason: `part of it does not work yet: ${why}` },
     }).catch((err) => {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
       return null;

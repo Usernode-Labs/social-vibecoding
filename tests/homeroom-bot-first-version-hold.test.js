@@ -99,7 +99,7 @@ const sam = { userId: 8, username: 'sam', hasPlatformAccess: true, issueTitle: '
 
 test('a queued or filed card asks whether the project\'s first version holds the request', async () => {
   const held = startDeps({ holds: new Map([[11, 1]]) });
-  await activity.startCard(held.pool, {
+  await activity.startCard(held.pool, { inDm: true,
     app, issueNumber: 2, requester: sam, bot: homeroomBot, jobKey: 41, settings: held.settings, queued: true,
     deps: { dm: held.dm, botSvc: held.botSvc },
   });
@@ -108,21 +108,21 @@ test('a queued or filed card asks whether the project\'s first version holds the
   assert.equal(held.sent[0].idempotencyKey, 'hrbot-activity-41', 'the same key its look will start from');
 
   const filed = startDeps({ holds: new Map([[11, 1]]) });
-  await activity.startCard(filed.pool, {
+  await activity.startCard(filed.pool, { inDm: true,
     app, issueNumber: 5, requester: sam, bot: homeroomBot, jobKey: 42, settings: filed.settings, filed: true,
     deps: { dm: filed.dm, botSvc: filed.botSvc },
   });
   assert.match(filed.sent[0].content, /\n\nFiled\. Waiting for the first version to go live\./);
 
   const free = startDeps();
-  await activity.startCard(free.pool, {
+  await activity.startCard(free.pool, { inDm: true,
     app, issueNumber: 2, requester: sam, bot: homeroomBot, jobKey: 43, settings: free.settings, queued: true,
     deps: { dm: free.dm, botSvc: free.botSvc },
   });
   assert.match(free.sent[0].content, /Waiting for a free builder/, 'nothing pending: as before');
 
   const broken = startDeps({ holdsThrow: true });
-  await activity.startCard(broken.pool, {
+  await activity.startCard(broken.pool, { inDm: true,
     app, issueNumber: 2, requester: sam, bot: homeroomBot, jobKey: 44, settings: broken.settings, queued: true,
     deps: { dm: broken.dm, botSvc: broken.botSvc },
   });
@@ -130,12 +130,12 @@ test('a queued or filed card asks whether the project\'s first version holds the
 
   // The first version's own card, and a look that started, never ask.
   const own = startDeps({ holds: new Map([[11, 1]]) });
-  await activity.startCard(own.pool, {
+  await activity.startCard(own.pool, { inDm: true,
     app, issueNumber: 1, requester: { ...sam, firstVersion: true }, bot: homeroomBot, jobKey: 45, settings: own.settings, queued: true,
     deps: { dm: own.dm, botSvc: own.botSvc },
   });
   const started = startDeps({ holds: new Map([[11, 1]]) });
-  await activity.startCard(started.pool, {
+  await activity.startCard(started.pool, { inDm: true,
     app, issueNumber: 2, requester: sam, bot: homeroomBot, jobKey: 46, settings: started.settings,
     deps: { dm: started.dm, botSvc: started.botSvc },
   });

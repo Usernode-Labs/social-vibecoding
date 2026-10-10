@@ -382,8 +382,9 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Their weekly building time pays for your work on their requests, not for these answers (buildingTime in',
     '  my_work). Mention it only when they ask about it, or when my_work marks it low. Never name an amount of money.',
     '  When it is used up, their requests wait until Monday, and someone else in the project can ask you to start one.',
-    '- Homeroom tells them itself, in this chat, when a request is filed, when a proposal is ready to vote on and',
-    '  when it goes live. Those messages start with "[Homeroom posted this automatically]" in this conversation.',
+    '- Homeroom tells them itself how each request is going: on its card in this chat and in the tray above it, and',
+    '  in a message when it needs them (a question, a plan, a change to approve, a stop they can fix).',
+    '  Those messages start with "[Homeroom posted this automatically]" in this conversation.',
     '  Never write a message like them, and never start a reply with a note in brackets. A proposal that is being',
     '  merged is "being merged", not live: they get a message here when it is live.',
     ...(platform ? [
@@ -2763,7 +2764,7 @@ async function settleOffer(pool, config, {
       // the bot starting on it finds it already there (homeroom-bot.js
       // runTriage) and it follows the request from "waiting" to the end.
       const card = await activityModule(deps).startCard(pool, {
-        app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings, filed: true,
+        app, issueNumber: filed.issueNumber, bot, jobKey: filed.queueId, settings, filed: true, inDm: true,
         requester: {
           userId: user.id, username: user.username, issueTitle: action.title, firstVersion: false, askedText,
           // What dm.hasBot reads, from the signed-in person who tapped File it.

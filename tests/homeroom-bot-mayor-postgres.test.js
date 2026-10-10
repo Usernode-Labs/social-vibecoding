@@ -672,8 +672,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // this now" is the card's to show, and is not sent again; the post is
     // told it reached her, so it does not tag her instead.
     const building = await dm.relayIssuePost({ pool, app: notes, issueNumber: n, kind: 'spec', postId: 37071, bot, dm: { building: true } });
-    assert.equal(building.card, true);
-    assert.equal(building.messageId, ack.id);
+    assert.equal(building.quiet, true, 'the card says it, never a message');
+    assert.equal(building.messageId, null);
     assert.equal(await dm.untaggedRequester(pool, { appId: notes.id, issueNumber: n, bot, told: building }), ada.username);
     const held = await dm.noteOverAllowance(pool, {
       settings: { ...settings, userWeeklyCents: 100 }, requester: { userId: ada.id, username: ada.username, hasPlatformAccess: true }, app: notes, issueNumber: n, bot,
@@ -700,25 +700,16 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       },
       sleep: async () => {},
     };
+    // A change going live is said on its cards (the request's card reads
+    // "Built it. It's live"), never as a message of its own: the app is
+    // still asked whether it answers, for the chat's chip.
     const live = await dm.noteProposalMerged(pool, { id: built.id }, { config: {}, sha: 'a'.repeat(40), deps: healthy });
-    const liveMessage = await read(live);
-    // B7: a change to a project is "your change".
-    assert.equal(liveMessage.content, `**Note board** · request #${n}: Tags\n\nYour change is live now. Open Note board below to try it.`);
+    assert.equal(live, null);
     assert.deepEqual(probed, ['app-note-board']);
-    assert.equal(liveMessage.reply.id, ask.id);
-    assert.equal(liveMessage.metadata.homeroomBot.link, '#app/note-board');
-    const { rows: liveCards } = await pool.query(
-      'SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1 ORDER BY position', [live.messageId],
-    );
-    assert.deepEqual(liveCards.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${built.id}`],
-      'its proposal; the app opens from the button');
-    assert.deepEqual(liveMessage.metadata.homeroomBot.actions, [
-      { id: 'open_app', label: 'Open Note board', style: 'primary', type: 'open', target: '#app/note-board/app' },
-    ]);
 
     // A request filed anywhere else started nowhere here; one whose start
     // she deleted is still told, without the quote.
-    const elsewhere = await dm.relayIssuePost({ pool, app: seeds, issueNumber: 3, kind: 'spec', postId: 37072, bot, dm: { building: true } });
+    const elsewhere = await dm.relayIssuePost({ pool, app: seeds, issueNumber: 3, kind: 'empty', postId: 37072, bot, dm: { reason: 'Nothing named.' } });
     assert.equal((await read(elsewhere)).reply, null);
     await conversations.deleteMessage(pool, ada, opened.conversationId, ask.id);
     // B4: "it's built" is said once it is ready to try.

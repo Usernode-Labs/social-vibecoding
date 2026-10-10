@@ -788,28 +788,15 @@ const RESTARTED_TEXT = 'My build was interrupted, so I\'ve started it again. Not
 /**
  * WP1 (#9): a build of one of their requests was interrupted (a restart
  * took its worker, or cut its plan short) and the request was sent back to
- * be built again: its requester hears it once per run, so the card going
- * back a step is never a mystery. Resolves what sendDm did, or null.
+ * be built again. Says nothing now; resolves null.
  */
-async function noteBuildRestarted(pool, { app, issueNumber, runId }) {
-  if (!app?.id || !runId) return null;
-  const settings = await settingsModule().readSettings(pool);
-  const requester = await requesterOf(pool, app.id, issueNumber);
-  if (!requester || !hasBot(settings, requester)) return null;
-  const bot = await botAccount(pool);
-  if (!bot) return null;
-  const context = {
-    appName: app.name || app.slug, issueNumber,
-    issueTitle: requester.issueTitle, firstVersion: requester.firstVersion,
-  };
-  return sendDm(pool, {
-    bot,
-    userId: requester.userId,
-    replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
-    idempotencyKey: `hrbot-restart-${Number(runId)}`,
-    content: `${requestLine(context)}\n\n${RESTARTED_TEXT}`,
-    metadata: { kind: 'restarted', appSlug: app.slug, appName: context.appName, issueNumber },
-  });
+async function noteBuildRestarted() {
+  // A build that carries on after a restart needs nothing from anybody: the
+  // request's card and the tray say it is building, as they did before. It
+  // used to be a message of its own (RESTARTED_TEXT, "Nothing you need to
+  // do."), which is the case for saying nothing. The caller stays, so a
+  // restart that does need the person can be said here again.
+  return null;
 }
 
 // ── The request's news, in the DM ────────────────────────────────────────
@@ -1093,7 +1080,7 @@ async function untaggedRequester(pool, { appId, issueNumber, bot, told = null })
   // WP1 (#6): news that was stale by the time it was relayed reached
   // nobody's DM on purpose, and the post does not ring them about it either.
   // B4: nor does "it's built" while the requester waits to hear it is ready.
-  if ((told?.messageId || told?.stale || told?.deferred) && told.username) return told.username;
+  if ((told?.messageId || told?.stale || told?.deferred || told?.quiet) && told.username) return told.username;
   if (!bot?.id) return null;
   const recipient = await dmRecipient(pool, appId, issueNumber);
   if (!recipient) return null;
@@ -1120,6 +1107,24 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
 // #3767: the news an activity card that is still the newest message about
 // its request already says, so it is not sent again.
 const CARD_SAYS = new Set(['spec']);
+
+// News the request's card and the tray above the DM show, and that the
+// person can do nothing about, is never a message of its own: "I'm building
+// it now", a build held because the project already has changes waiting, an
+// update made where they asked for it (said there), a change's checks that
+// need a person. The DM says something when it answers them or needs them:
+// a question, a plan, a change to approve, a stop they can unstick. On 9
+// October 2026 one person's DM got 123 messages in an afternoon, 53 of which
+// rang; by these rules it would have been 23, every one of them for them.
+const CARD_ONLY = new Set(['spec', 'held_proposals_per_app', 'held_proposals_total', 'followup_revise']);
+
+/** Pure: whether a post's news stays on the card rather than being a DM message (CARD_ONLY). */
+function cardOnly(kind, dm = null) {
+  if (CARD_ONLY.has(kind)) return true;
+  // A change's red checks handed to a person: the change's own discussion
+  // says so, where the group votes on it (homeroom-bot.js runChecksFix).
+  return kind === 'followup_person' && !!dm?.checks;
+}
 
 // WP1 (#6): the news of one build, which can be overtaken before it is told.
 const BUILD_NEWS = new Set(['spec', 'proposal', 'build_failed']);
@@ -1217,6 +1222,16 @@ async function relayIssuePost({
       log.info('homeroom-bot-dm', 'Stale news not sent', { app: app.slug, issueNumber, kind, runId, why: stale });
       return { conversationId: null, messageId: null, stale: true, userId: requester.userId, username: requester.username };
     }
+  }
+  if (cardOnly(kind, dm)) {
+    // Their card and tray read it from the records; the post does not tag
+    // them for it either (untaggedRequester). It is still the request's
+    // newest news: a question about it is not waiting for an answer now.
+    await closeOpenQuestions(pool, { userId: requester.userId, appId: app.id, issueNumber, ws })
+      .catch((err) => log.warn('homeroom-bot-dm', 'Could not close an older question', { app: app.slug, issueNumber, err: err.message }));
+    require('./homeroom-bot-tray').noteWorkChanged(requester.userId);
+    log.info('homeroom-bot-dm', 'On the card, not a message', { app: app.slug, issueNumber, kind });
+    return { conversationId: null, messageId: null, quiet: true, userId: requester.userId, username: requester.username };
   }
   // B4: "it's built" waits until it is ready to try: its preview is up and
   // its checks passed or were skipped (noteChangeReady, from every place a
@@ -1640,7 +1655,7 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
   const requester = await requesterOf(pool, app.id, issueNumber);
   if (queued?.id && requester) {
     await require('./homeroom-bot-activity').startCard(pool, {
-      app, issueNumber, bot, jobKey: Number(queued.id), queued: true, requester,
+      app, issueNumber, bot, jobKey: Number(queued.id), queued: true, inDm: true, requester,
     });
   }
   log.info('homeroom-bot-dm', 'A first version\'s plan is planned again with its creator\'s words', {
@@ -2684,6 +2699,15 @@ async function noteProposalMerged(pool, session, { config = null, sha = null, li
   const bot = await botAccount(pool);
   if (!bot) return null;
   await closeOpenQuestions(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number });
+  // A change going live is the request's card's and the ready card's to say
+  // ("Built it. It's live", homeroom-bot-activity.js; readyStates), which the
+  // tray's push above makes them read again. A first version is the one that
+  // is said as a message: it is a new project's moment, and it offers its
+  // community and inviting people to it.
+  if (!requester.firstVersion) {
+    log.info('homeroom-bot-dm', 'Live, on its cards', { app: run.slug, issueNumber: run.issue_number, sessionId: session.id });
+    return null;
+  }
   const context = {
     appName: run.name || run.slug, issueNumber: run.issue_number,
     issueTitle: requester.issueTitle, firstVersion: requester.firstVersion,
@@ -4096,6 +4120,8 @@ module.exports = {
   staleBuildNews,
   noteBuildRestarted,
   RESTARTED_TEXT,
+  CARD_ONLY,
+  cardOnly,
   cardsFor,
   quotedTarget,
   quotable,

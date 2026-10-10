@@ -695,7 +695,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const activity = require('../src/services/homeroom-bot-activity');
     const requester = await dm.requesterOf(pool, app.id, 1);
     // Its card, from when it was queued (or the one an earlier Build it moved).
-    await activity.startCard(pool, { app, issueNumber: 1, requester, bot: homeroomBot, jobKey: 'plan-under', queued: true });
+    await activity.startCard(pool, { inDm: true, app, issueNumber: 1, requester, bot: homeroomBot, jobKey: 'plan-under', queued: true });
     const run = await readyRun();
     assert.equal(await bot.awaitGo(pool, { runId: run, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'waiting');
     const plan = await planMessage(run);
