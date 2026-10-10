@@ -123,7 +123,7 @@ test('B4: their words and the credit, against the full PostgreSQL schema', { tim
     const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, bot.id, maya.id);
     assert.ok(opened);
     const settings = { mode: 'live' };
-    const sent = await require('../src/services/homeroom-bot-activity').startCard(pool, {
+    const sent = await require('../src/services/homeroom-bot-activity').startCard(pool, { inDm: true,
       app, issueNumber: 4, requester: await dm.requesterOf(pool, app.id, 4), bot, jobKey: 'words-1', settings,
     });
     const { rows: [msg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);

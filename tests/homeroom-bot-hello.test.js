@@ -230,7 +230,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
          ($1, 4, $2, 'Sunday host reminder', 'Remind the host on Sunday'), ($1, 5, $2, 'Menu', 'A menu page')`,
       [supper.id, ben.id],
     );
-    const card = await activity.startCard(pool, {
+    const card = await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 4, requester: await dm.requesterOf(pool, supper.id, 4), bot, jobKey: 'hello-1', settings, queued: true,
     });
     const { rows: [msg] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [card.messageId]);
@@ -239,7 +239,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.equal(meta.kind, 'activity');
     assert.equal(meta.hello, 'Hi, I\'m Homeroom bot. I build the changes people in Supper Club ask for. Here\'s yours:');
     assert.deepEqual(meta.actions.map((a) => a.label), ['What else can I ask for?', 'How long will this take?']);
-    const next = await activity.startCard(pool, {
+    const next = await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 5, requester: await dm.requesterOf(pool, supper.id, 5), bot, jobKey: 'hello-2', settings, queued: true,
     });
     const { rows: [plain] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [next.messageId]);
@@ -251,7 +251,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 6, $2, 'Sides')`,
       [supper.id, maya.id],
     );
-    const own = await activity.startCard(pool, {
+    const own = await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 6, requester: await dm.requesterOf(pool, supper.id, 6), bot, jobKey: 'hello-3', settings, queued: true,
     });
     const { rows: [ownMsg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [own.messageId]);

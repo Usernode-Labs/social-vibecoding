@@ -765,6 +765,11 @@ const GroupChat = {
         GroupChat._applyBotRequestStatus(msg);
         break;
       }
+      case 'chat_message_updated': {
+        // An offer of Homeroom bot's in a thread was decided.
+        GroupChat._applyMessageUpdate(msg);
+        break;
+      }
       case 'moderation_changed':
       // #4177: the relay could not deliver an event to this room (it was too
       // big for NOTIFY, or this server's listener was down). Both mean the
@@ -1214,7 +1219,53 @@ const GroupChat = {
       // channel carries its Open button (ws.sendFirstVersionMessage). Only
       // that metadata, which a person's post cannot set.
       openApp: GroupChat._openAppView(kind === 'message' && !deleted && !threadType ? meta : null),
+      // 10 October: Homeroom bot's offer in a thread (homeroom-bot-voice.js),
+      // with its buttons for the person it was offered to. Only that
+      // metadata, which a person's post cannot set.
+      botOffer: GroupChat._botOfferView(kind === 'message' && !deleted ? meta : null),
     };
+  },
+
+  // The buttons under Homeroom bot's offer, from its message's metadata
+  // (homeroom-bot-voice.js say): open until the person it was offered to
+  // taps one, for everybody else only a record that it was offered.
+  _botOfferView(meta) {
+    const bot = meta && meta.homeroomBot;
+    if (!bot || bot.kind !== 'voice' || !bot.offer || typeof bot.offer !== 'object') return null;
+    const status = ['open', 'deciding', 'done', 'declined', 'failed'].includes(bot.offer.status) ? bot.offer.status : null;
+    if (!status) return null;
+    const me = window.App && App.user ? Number(App.user.id) : null;
+    const actions = (Array.isArray(bot.actions) ? bot.actions : [])
+      .filter((a) => a && (a.id === 'yes' || a.id === 'no') && typeof a.label === 'string' && a.label)
+      .map((a) => ({ id: a.id, label: a.label.slice(0, 40), primary: a.style === 'primary' }));
+    return { status, forMe: me != null && Number(bot.offer.forUserId) === me, actions };
+  },
+
+  // Yes or No under one of Homeroom bot's offers. The buttons go when the
+  // room hears it was decided (`chat_message_updated`); a refusal is said.
+  async decideBotOffer(messageId, choice) {
+    const slug = GroupChat.appSlug;
+    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no')) return;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(messageId)}/bot-offer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ choice }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && !data.said && window.PlatformUI) PlatformUI.toast(data.error || 'That didn’t work just now.');
+    } catch {
+      if (window.PlatformUI) PlatformUI.toast('That didn’t work just now.');
+    }
+  },
+
+  // A message's metadata changed for everybody (`chat_message_updated`): an
+  // offer of Homeroom bot's was decided. Every copy, and its row.
+  _applyMessageUpdate(frame) {
+    if (!frame || frame.id == null || !frame.metadata || typeof frame.metadata !== 'object') return;
+    GroupChat._applyLive({ kind: 'metadata', id: frame.id, metadata: frame.metadata });
+    let msg = null;
+    GroupChat._eachCopy(frame.id, (m) => { if (!msg) msg = m; });
+    if (!msg) return;
+    GroupChat._react()?.patchTranscriptMessage(Number(frame.id), { botOffer: GroupChat._messageView(msg).botOffer });
   },
 
   _openAppView(meta) {
@@ -1811,6 +1862,9 @@ const GroupChat = {
         break;
       case 'summary':
         m.thread = event.thread || null;
+        break;
+      case 'metadata':
+        m.metadata = event.metadata;
         break;
       case 'delete': {
         m.deleted = true;

@@ -16,6 +16,7 @@ const express = require('express');
 
 const bot = require('../src/services/homeroom-bot');
 const live = require('../src/services/homeroom-bot-live');
+const { firstPerson } = require('../src/services/homeroom-bot-words');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -362,9 +363,11 @@ test('live.post puts the card in the thread and the full spec on GitHub', async 
   assert.equal(out.githubCreatedAt, '2026-09-28T10:00:00Z', 'so the bot does not read its own comment as a change');
   assert.equal(comments[0].body, live.specCommentText(SPEC));
   assert.deepEqual(sent, [{
-    appId: 9, user: BOT, content: card.content, metadata: card.metadata,
+    // In Homeroom the card is the bot's own words (homeroom-bot-words.js).
+    appId: 9, user: BOT, content: firstPerson(card.content), metadata: card.metadata,
     thread: { type: 'issue', ref: 12 }, msgType: 'spec_share',
   }]);
+  assert.match(sent[0].content, /^📋 My plan for this request: "Hourly feed refresh"\. I'm building it now\.$/);
   assert.equal(live.tagsPoster('spec'), true, 'whoever filed it and took part are tagged on the spec');
 });
 

@@ -592,6 +592,79 @@ test('a proposal that is merging is left alone', async (t) => {
   assert.equal(h.calls.exec.length, 0);
 });
 
+// ── With the bot's voice on (homeroom-bot-voice.js) ──────────────────────
+
+function voiceStub(asks, { gaveUp = [] } = {}) {
+  const calls = { reports: [], finished: [], released: [] };
+  return {
+    calls,
+    voiceOn: () => true,
+    async takeAsks() { return asks; },
+    async asksOf() { return []; },
+    async releaseAsks(p, args) { calls.released.push(args); return gaveUp; },
+    async finishAsks(p, args) { calls.finished.push(args); },
+    async asksWaiting() { return false; },
+    async dropAsks() {},
+    async reportFollowUp(p, c, args) { calls.reports.push(args); return 1; },
+  };
+}
+const ASK = {
+  id: 4, asker: 'evan', asker_id: 3, instruction: 'Make the header blue on every page', source: 'thread',
+  place_type: 'session', place_ref: 5001, message_id: 77, created_at: '2026-09-26T11:25:00Z',
+};
+
+test('voice on: the turn takes what was asked as asks, and the voice tells who asked; nothing is said twice', async (t) => {
+  const h = harness({
+    proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }],
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"The header is blue on every page."}\n```', pushOk: true, sha: NEW_HEAD },
+  });
+  h.deps.voice = voiceStub([ASK]);
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  assert.match(h.calls.exec[0].opts.prompt, /evan, asked you for a change in the proposal's discussion/);
+  assert.match(h.calls.exec[0].opts.prompt, /Make the header blue on every page/);
+  assert.doesNotMatch(h.calls.exec[0].opts.prompt, /- sam, in the proposal's discussion/,
+    'a question there was the voice\'s to answer: it is context, not a reply to act on');
+  assert.equal(h.calls.posts.length, 1, 'recorded, and relayed to the requester\'s card');
+  assert.equal(h.calls.posts[0].skipIssueThread, true, 'not said again in the request\'s thread');
+  assert.equal(h.calls.posts[0].skipGithub, false, 'an update is a milestone GitHub hears');
+  assert.equal(h.calls.posts[0].proposalSessionId, null, 'nothing in the change\'s discussion from here');
+  const { reports, finished } = h.deps.voice.calls;
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome.action, 'revise');
+  assert.equal(reports[0].outcome.moved, true);
+  assert.equal(reports[0].outcome.summary, 'The header is blue on every page.');
+  assert.deepEqual(reports[0].asks, [ASK]);
+  assert.equal(finished.length, 1);
+  assert.equal(finished[0].runId, 901);
+});
+
+test('voice on: an answer to an ask goes nowhere but where it was asked, and no "working on it" note', async (t) => {
+  const h = harness({});
+  h.deps.voice = voiceStub([ASK]);
+  const notes = [];
+  h.deps.ws = { async sendBotMessage(p, appId, m) { notes.push(m); return { id: 1 }; } };
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'answer');
+  assert.equal(h.calls.posts[0].skipGithub, true, 'GitHub hears no conversation');
+  assert.equal(h.calls.posts[0].skipIssueThread, true);
+  assert.equal(notes.length, 0, 'the voice said it was queued; the turn says nothing of its own');
+  assert.equal(h.deps.voice.calls.reports[0].outcome.action, 'answer');
+  assert.equal(h.deps.voice.calls.reports[0].outcome.reply, 'Because the platform uses it.');
+});
+
+test('voice on: a failed turn puts its asks back, and the ones that gave up hear so from the voice', async (t) => {
+  const h = harness({ result: { lastResultText: '```json\n{"action":"revise","reply":"Done."}\n```', pushOk: true, sha: OLD_HEAD } });
+  h.deps.voice = voiceStub([ASK], { gaveUp: [ASK] });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.posts.length, 0, 'no fixed note: the voice tells them');
+  assert.deepEqual(h.deps.voice.calls.released.map((r) => r.refund), [false], 'a real try');
+  const report = h.deps.voice.calls.reports[0];
+  assert.equal(report.outcome.action, 'failed');
+  assert.equal(report.outcome.why, 'something went wrong while it worked on it');
+});
+
 // ── Getting it queued ────────────────────────────────────────────────────
 
 test('on a live app, a person\'s message in the bot proposal\'s thread is activity on its issue', async () => {
@@ -635,7 +708,7 @@ test('the bot\'s replies in a proposal thread come from its own user, and are ne
   // #3288: its posts are ordinary messages now, so the guard is who wrote
   // them, not what kind of row they are.
   const src = read('src/services/homeroom-bot-live.js');
-  assert.match(src, /inThread\(text, \{ type: 'session', ref: Number\(proposalSessionId\) \}, null, 'system'\)/);
+  assert.match(src, /inThread\(own, \{ type: 'session', ref: Number\(proposalSessionId\) \}, null, 'system'\)/);
   assert.match(src, /ws\.sendBotMessage\(pool, app\.id, \{ user: sender, content, metadata: meta, thread \}\)/);
   const q = read('src/services/homeroom-bot.js');
   const activity = q.slice(q.indexOf('async function proposalThreadActivityByIssue'), q.indexOf('function latestOf'));

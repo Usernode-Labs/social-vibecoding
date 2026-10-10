@@ -114,6 +114,19 @@ export interface BotRequestChip {
 }
 
 /**
+ * 10 October: what Homeroom bot offered to do in its reply in a thread
+ * (homeroom-bot-voice.js): file a request, withdraw one of its changes, or
+ * open a vote on closing a request. Nothing happens until the person it was
+ * offered to (`forMe`) taps Yes; once decided, `status` is no longer
+ * 'open' and the buttons go, for everybody.
+ */
+export interface BotOfferView {
+  status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
+  forMe: boolean;
+  actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
+}
+
+/**
  * Where a card's request (or fix) stands now, read from the platform's
  * records whenever the card is (homeroom-bot-chat.js cardsOf, CARD_STAGES).
  * `waitingOn` and `youApprove` say who still has to approve a built change,
@@ -367,6 +380,8 @@ export interface TranscriptMessage {
    * version" message in a project's channel. Absent or null on every other row.
    */
   openApp?: { label: string; target: string } | null;
+  /** 10 October: the buttons under Homeroom bot's offer in a thread. Absent or null on every other row. */
+  botOffer?: BotOfferView | null;
   /**
    * #4455: a system row that announces the preview build, from its metadata:
    * `started` (a change's page leaves it out: its Testing card says so) or

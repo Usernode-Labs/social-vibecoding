@@ -231,7 +231,7 @@ const ada = { userId: 7, username: 'ada', hasPlatformAccess: true, issueTitle: '
 
 test('starting work sends the requester ONE card, keyed by the queue row it was claimed from, and records it', async () => {
   const { pool, dm, sent, queries, settings } = startDeps();
-  const out = await activity.startCard(pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, settings, deps: { dm } });
+  const out = await activity.startCard(pool, { inDm: true, app, issueNumber: 12, requester: ada, bot, jobKey: 345, settings, deps: { dm } });
   assert.deepEqual(out, { conversationId: 5, messageId: 900, duplicate: false });
   assert.equal(sent.length, 1);
   const [card] = sent;
@@ -247,9 +247,23 @@ test('starting work sends the requester ONE card, keyed by the queue row it was 
   assert.deepEqual(insert[1], [900, 7, 5, 11, 12, 'activity']);
 });
 
+test('a card is for work started in the DM, or a first version: anything filed elsewhere is followed in the tray', async () => {
+  // 9 Oct 2026: one person's DM got 45 cards in an afternoon for requests
+  // they had filed through the Suggest form.
+  const elsewhere = startDeps();
+  assert.equal(await activity.startCard(elsewhere.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 345, settings: elsewhere.settings, deps: { dm: elsewhere.dm } }), null);
+  assert.equal(elsewhere.sent.length, 0, 'no card in the DM');
+  const first = startDeps();
+  await activity.startCard(first.pool, { app, issueNumber: 1, requester: { ...ada, firstVersion: true }, bot, jobKey: 9, settings: first.settings, deps: { dm: first.dm } });
+  assert.equal(first.sent.length, 1, 'a project\'s first version always has one');
+  const here = startDeps();
+  await activity.startCard(here.pool, { inDm: true, app, issueNumber: 12, requester: ada, bot, jobKey: 345, settings: here.settings, deps: { dm: here.dm } });
+  assert.equal(here.sent.length, 1, 'asked for in the DM: its card');
+});
+
 test('a first version\'s card says so', async () => {
   const { pool, dm, sent, settings } = startDeps();
-  await activity.startCard(pool, {
+  await activity.startCard(pool, { inDm: true,
     app, issueNumber: 1, requester: { ...ada, issueTitle: null, firstVersion: true }, bot, jobKey: 9, settings, deps: { dm },
   });
   assert.equal(sent[0].metadata.firstVersion, true);
@@ -259,24 +273,24 @@ test('a first version\'s card says so', async () => {
 test('no card for somebody the bot does not talk to in a DM, nor without a requester or a job', async () => {
   const off = startDeps();
   for (const requester of [{ ...ada, hasPlatformAccess: false }, { ...ada, isSynthetic: true }]) {
-    assert.equal(await activity.startCard(off.pool, { app, issueNumber: 12, requester, bot, jobKey: 1, settings: off.settings, deps: { dm: off.dm } }), null);
+    assert.equal(await activity.startCard(off.pool, { inDm: true, app, issueNumber: 12, requester, bot, jobKey: 1, settings: off.settings, deps: { dm: off.dm } }), null);
   }
   assert.equal(off.sent.length, 0);
   const on = startDeps();
-  assert.equal(await activity.startCard(on.pool, { app, issueNumber: 12, requester: null, bot, jobKey: 1, settings: on.settings, deps: { dm: on.dm } }), null);
-  assert.equal(await activity.startCard(on.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: null, settings: on.settings, deps: { dm: on.dm } }), null);
-  assert.equal(await activity.startCard(on.pool, { app, issueNumber: 0, requester: ada, bot, jobKey: 1, settings: on.settings, deps: { dm: on.dm } }), null);
+  assert.equal(await activity.startCard(on.pool, { inDm: true, app, issueNumber: 12, requester: null, bot, jobKey: 1, settings: on.settings, deps: { dm: on.dm } }), null);
+  assert.equal(await activity.startCard(on.pool, { inDm: true, app, issueNumber: 12, requester: ada, bot, jobKey: null, settings: on.settings, deps: { dm: on.dm } }), null);
+  assert.equal(await activity.startCard(on.pool, { inDm: true, app, issueNumber: 0, requester: ada, bot, jobKey: 1, settings: on.settings, deps: { dm: on.dm } }), null);
   assert.equal(on.sent.length, 0);
 });
 
 test('the same piece of work sent again is not recorded twice, and a card that cannot be sent never costs the work', async () => {
   const dup = startDeps({ sendResult: { conversationId: 5, messageId: 900, duplicate: true } });
-  await activity.startCard(dup.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 3, settings: dup.settings, deps: { dm: dup.dm } });
+  await activity.startCard(dup.pool, { inDm: true, app, issueNumber: 12, requester: ada, bot, jobKey: 3, settings: dup.settings, deps: { dm: dup.dm } });
   assert.ok(!dup.queries.some(([sql]) => /INSERT INTO homeroom_bot_dm_messages/.test(sql)));
   const refused = startDeps({ sendResult: null });
-  assert.equal(await activity.startCard(refused.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 3, settings: refused.settings, deps: { dm: refused.dm } }), null);
+  assert.equal(await activity.startCard(refused.pool, { inDm: true, app, issueNumber: 12, requester: ada, bot, jobKey: 3, settings: refused.settings, deps: { dm: refused.dm } }), null);
   const broken = startDeps({ sendThrows: true });
-  assert.equal(await activity.startCard(broken.pool, { app, issueNumber: 12, requester: ada, bot, jobKey: 3, settings: broken.settings, deps: { dm: broken.dm } }), null);
+  assert.equal(await activity.startCard(broken.pool, { inDm: true, app, issueNumber: 12, requester: ada, bot, jobKey: 3, settings: broken.settings, deps: { dm: broken.dm } }), null);
 });
 
 test('the live loop starts a card where it tells the request it is looking: never for a follow-up, a restart or a backlog pass', () => {
@@ -290,7 +304,9 @@ test('the live loop starts a card where it tells the request it is looking: neve
   assert.ok(followUp < looking && looking < start && start < reading,
     'after a follow-up has returned and the looking post is made, before the request is read');
   assert.match(body.slice(looking, reading),
-    /if \(item\.reason !== RESTART_REASON && item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\) \{\s*await activity\(\)\.startCard\(pool, \{ app, issueNumber, requester, bot, jobKey: item\.id, settings, deps: \{ dm: deps\.dm \} \}\);/);
+    /if \(item\.reason !== RESTART_REASON && item\.reason !== APP_AGAIN_REASON && item\.reason !== READ_AGAIN_REASON\) \{\s*await activity\(\)\.startCard\(pool, \{\s*app, issueNumber, requester, bot, jobKey: item\.id, settings, inDm: DM_REASONS\.has\(item\.reason\), deps: \{ dm: deps\.dm \},\s*\}\);/);
+  // A card in the DM is for work asked for there; anything else is followed in the tray.
+  assert.match(source, /const DM_REASONS = new Set\(\['dm_request', 'dm_start', 'dm_answer', 'dm_comment', 'dm_revise', 'plan_change'\]\);/);
   // Inside the live branch: shadow triage has no card.
   const live = body.lastIndexOf('if (liveMode) {', looking);
   assert.ok(live > -1 && body.indexOf('const open = await live.openBotProposal', live) < looking);

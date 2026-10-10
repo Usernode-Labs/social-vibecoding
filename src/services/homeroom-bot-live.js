@@ -60,6 +60,7 @@
 // constructs nothing but routes, and dispatches the request into it. There
 // stays exactly one implementation of "put a change up for a vote".
 
+const { firstPerson } = require('./homeroom-bot-words');
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure, finalAnswerText } = require('./agent-result-text');
@@ -1322,8 +1323,21 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
-  proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null,
+  proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
+  skipIssueThread = false, skipGithub = false,
 }) {
+  // Answered where it was asked: a reply to people who wrote only in the
+  // change's own discussion is said there alone, with no GitHub comment and
+  // no copy in the request's thread (9 Oct 2026: every answer on PR #4584
+  // was posted twice, the request's copy with "@evan" in front).
+  const proposalOnly = !!(onlyProposal && proposalSessionId);
+  // 10 October: what the bot's voice tells people itself, where they asked
+  // (homeroom-bot-voice.js reportFollowUp), is not said again here: the
+  // request's thread (`skipIssueThread`) and GitHub (`skipGithub`, which
+  // then hears only milestones) are left out, and the post is recorded,
+  // and relayed to the requester's DM when it carries `dm`, as before.
+  const noComment = proposalOnly || !!skipGithub;
+  const noIssueThread = proposalOnly || !!skipIssueThread;
   // Everybody this post tags (mentionTargets); `mention` is the one-person
   // form the older callers pass. #4488: `untag` is somebody already told in
   // their DM with the bot, as untaggedRequester leaves them out below.
@@ -1347,10 +1361,12 @@ async function post({
   const postId = rows[0].id;
   let comment = null;
   let message = null;
-  try {
-    comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
-  } catch (err) {
-    log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  if (!noComment) {
+    try {
+      comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
+    } catch (err) {
+      log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
   }
   // #3624: the same news, in the requester's DM with the bot, when they
   // are somebody it talks to there. A post that carries `dm` is one worth
@@ -1383,19 +1399,24 @@ async function post({
   // platform username is never written as an @mention (#723: it would
   // notify whoever owns that handle there), and GitHub already notifies the
   // author of an issue opened there about comments on it.
-  const threadText = handles ? `${handles} ${text}` : text;
-  try {
-    // A spec is a card in the thread (its full text is on GitHub, and one
-    // click away from the card), not a wall of markdown in a chat bubble.
-    message = threadMessage && sender
-      ? await ws.sendBotMessage(pool, app.id, {
-        user: sender, content: handles ? `${handles} ${threadMessage.content}` : threadMessage.content,
-        metadata: threadMessage.metadata,
-        thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
-      })
-      : await inThread(threadText, { type: 'issue', ref: issueNumber });
-  } catch (err) {
-    log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  // In Homeroom the note is the bot's own bubble, so it says it in the first
+  // person (homeroom-bot-words.js); GitHub keeps it as written.
+  const own = firstPerson(text);
+  const threadText = handles ? `${handles} ${own}` : own;
+  if (!noIssueThread) {
+    try {
+      // A spec is a card in the thread (its full text is on GitHub, and one
+      // click away from the card), not a wall of markdown in a chat bubble.
+      message = threadMessage && sender
+        ? await ws.sendBotMessage(pool, app.id, {
+          user: sender, content: handles ? `${handles} ${firstPerson(threadMessage.content)}` : firstPerson(threadMessage.content),
+          metadata: threadMessage.metadata,
+          thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
+        })
+        : await inThread(threadText, { type: 'issue', ref: issueNumber });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
   }
   // A system message fires no mention notifications of its own, so the
   // mention row is written here, as the "needs a conversation" prompt does
@@ -1421,7 +1442,7 @@ async function post({
   let proposalMessage = null;
   if (proposalSessionId) {
     try {
-      proposalMessage = await inThread(text, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
+      proposalMessage = await inThread(own, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
     } catch (err) {
       log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
     }
@@ -1429,14 +1450,14 @@ async function post({
   await pool.query(
     `UPDATE homeroom_bot_posts SET github_comment_id = $2, thread_message_id = $3
       WHERE id = $1`,
-    [postId, comment?.id ?? null, message?.id ?? null],
+    [postId, comment?.id ?? null, (message || (proposalOnly ? proposalMessage : null))?.id ?? null],
   ).catch(() => {});
   log.info('homeroom-bot', 'Posted on issue', {
     app: app.slug, issueNumber, kind, github: !!comment, thread: !!message,
     ...(tagged.length ? { mentioned: tagged, notified } : {}),
     ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
-  return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
+  return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!(message || proposalMessage) };
 }
 
 /**
@@ -1457,7 +1478,7 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
   let message = null;
   try {
     message = await ws.sendBotMessage(pool, app.id, {
-      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+      user: bot, content: firstPerson(text), thread: { type: 'session', ref: Number(sessionId) },
     });
   } catch (err) {
     log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
