@@ -9399,11 +9399,16 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.label_verdict, r.build_model,
             r.bot_config_version_id, bc.key AS bot_config_key, bc.label AS bot_config_label,
             bc.version AS bot_config_version, r.review_rounds, r.review_stop, r.read_reason,
+            r.charged, r.payer_user_id, pu.username AS payer_username,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
        LEFT JOIN users u ON u.id = r.rating_by
        LEFT JOIN bot_config_versions bc ON bc.id = r.bot_config_version_id
+       -- Whose weekly building time it counts toward when it is charged
+       -- (homeroom-bot-dm.js weeklySpentCents): its payer, else the requester.
+       LEFT JOIN homeroom_bot_requesters rq ON rq.app_id = r.app_id AND rq.issue_number = r.issue_number
+       LEFT JOIN users pu ON pu.id = COALESCE(r.payer_user_id, rq.user_id)
        -- #3624: whether this run's news reached the requester's DM, and when
        -- they answered its question there (homeroom-bot-dm.js records each
        -- DM it sends, with its run).
