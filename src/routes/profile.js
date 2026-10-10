@@ -674,8 +674,8 @@ async function fetchProfileSeason(pool, preferredSeasonId = null) {
 // The viewer's done rule for one season, as Home's Challenges block counts
 // it: DONE_EXPR, with the First challenges' own answer over it where the
 // season has them (home-panels.js onboardingDoneExpr). A First challenge is
-// done from every credit on its TEMPLATE, an earlier season's included, which
-// is also how the Getting started card and the gate read it (2026-10-01), so
+// done from every credit on its TEMPLATE, an earlier season's included
+// (services/topochain/challenge-onboarding.js), so
 // Me's "N of M done" and Home's "N/M done in Season 2" cannot disagree about
 // one of them. `sql(n)` places the rule's two parameters at $n and $n+1 of
 // the statement it is spliced into; with no First challenges it is DONE_EXPR

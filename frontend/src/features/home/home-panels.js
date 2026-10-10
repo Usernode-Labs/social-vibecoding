@@ -159,8 +159,9 @@ const HomePanels = {
   // order: `display_order`, then `id`. A payload whose rows do not all carry a
   // `display_order` (the staging demo, or a cache written before the field)
   // keeps the server's sequence for that last key instead. Stable, and the
-  // input is not mutated. `onboarding` is the payload's gate summary, which
-  // decides whether the First challenges group is finished (setupFinished).
+  // input is not mutated. `onboarding` is the payload's old gate summary,
+  // which a server before #4635 sent and none sends now; without it the rows
+  // decide whether the First challenges group is finished (setupFinished).
   orderRows(rows, onboarding) {
     const list = (rows || []).slice();
     const finished = HomePanels.setupFinished(list, onboarding);
@@ -259,7 +260,7 @@ const HomePanels = {
   //
   // A FORCED read is a refresh, not a boot. Its caller knows the copy is
   // behind something that just happened (a join the server has counted, the
-  // block expanded, Getting started finished), so two things that suit a
+  // block expanded, a First challenge ticked), so two things that suit a
   // boot are wrong for it:
   //   * sharing a read already in flight, which may have left before that
   //     thing happened. It waits for that read and then reads again, once,
@@ -427,8 +428,8 @@ const HomePanels = {
   // A NEW ACCOUNT SEES CHALLENGES (first-session run-through, 2026-10-05).
   // #3847 hid this block for an account's first seven days (the first
   // chapter, without points). Evan reversed that: a brand-new account found
-  // Challenges missing from Home and expected it there, with its Getting
-  // started challenges. So nothing about an account's age hides it, and GET
+  // Challenges missing from Home and expected it there, with its First
+  // challenges. So nothing about an account's age hides it, and GET
   // /api/auth/me no longer reports `firstWeek`.
 
   // `_stampState` and `STATE_ATTRS` lived here. They mirrored a block's own
@@ -509,42 +510,13 @@ const HomePanels = {
   // four-row budget is now simply THE budget.
   challengesView(panel) {
     const total = Number(panel.total) || 0;
-    // WHILE GETTING STARTED IS LOCKED, ONE LOCKED CARD (2026-10-01). A new
-    // account's season waits on its Getting started list, and that list IS
-    // the First challenges, drawn in full by the card on top of Home
-    // (./getting-started.tsx). So the block does not draw them a second time:
-    // it draws one dashed card saying how many challenges unlock after
-    // Getting started and naming a few, and nothing else, no season progress
-    // over it (the card counts the list) and no footer under it. The rows the
-    // server still sends are the gate's own, and wait for it to open. With
-    // nothing hidden to count (a season of First challenges only) there is no
-    // card to draw, and the block falls back to drawing them, as it always has.
-    //
-    // Only while that card IS on Home (`App.user.showGettingStarted`). An
-    // account its first session brought in has no card (first-session.js:
-    // communities_onboarded_at stays unset), and a locked card pointing at a
-    // list it cannot see said nothing; the block draws the First challenges
-    // itself instead, done or not, with the unlock note under them.
-    const locked = HomePanels.gettingStartedOnHome() ? HomePanels.lockedOnboarding(panel) : null;
-    if (locked) {
-      if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
-      return {
-        key: panel.key,
-        title: panel.title || message('home:challenges.fallbackTitle'),
-        summary: HomePanels.summaryLine(panel),
-        season: null,
-        onboardingNote: null,
-        lockedCount: locked.count,
-        lockedNames: locked.names,
-        locked: true,
-        total,
-        allTotal: total,
-        expandable: false,
-        expanded: false,
-        rows: [],
-        groups: [],
-      };
-    }
+    // A NEW ACCOUNT'S FIRST CHALLENGES ARE ORDINARY CARDS (#4635). Until then
+    // a new account's season waited on a Getting started card on top of Home,
+    // and this block drew one dashed "N challenges unlock after Getting
+    // started" card in its place. Every new account gets a tour now, so
+    // the card and the gate are gone: the First challenges are rows like any
+    // other, under their own "First challenges" header, listed first while
+    // any of them is unfinished (groupRankOf) and last once all are done.
     const expanded = !!HomePanels._expanded[panel.key];
     const empty = !total
       || !Array.isArray(panel.challenges)
@@ -592,17 +564,6 @@ const HomePanels = {
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
       season,
-      // The unlock note, only while Getting started gates the season, in the
-      // Challenges tab's words (its grid `notice`). A closed gate with a count
-      // took the locked branch above, whose card says it, so this is the gate
-      // with nothing to count (an older server, or a season of First
-      // challenges only), drawn as before: the cards, then the note. Once
-      // unlocked there is nothing to say: no note.
-      onboardingNote: panel.onboarding && !panel.onboarding.unlocked
-        ? message('home:challenges.onboardingNote')
-        : null,
-      // Always 0 here: a count above 0 is the locked branch above.
-      lockedCount: 0,
       total,
       allTotal,
       expandable,
@@ -614,28 +575,6 @@ const HomePanels = {
       rows: views,
       groups,
     };
-  },
-
-  // The closed gate's locked card, or null: how many challenges Getting
-  // started still hides from this viewer and the first few of their names
-  // (the server's additive `hidden_count` and `hidden_names`). Null once
-  // unlocked, for a viewer the gate does not apply to (whose payload has no
-  // `onboarding` at all), and when there is nothing hidden to count.
-  // Whether Home draws the Getting started card (./getting-started.tsx reads
-  // the same flag).
-  gettingStartedOnHome() {
-    return !!(typeof window !== 'undefined' && window.App && App.user && App.user.showGettingStarted === true);
-  },
-
-  lockedOnboarding(panel) {
-    const o = panel && panel.onboarding;
-    if (!o || o.unlocked) return null;
-    const count = Math.floor(Number(o.hidden_count) || 0);
-    if (count < 1) return null;
-    const names = (Array.isArray(o.hidden_names) ? o.hidden_names : [])
-      .map((n) => String(n == null ? '' : n).trim())
-      .filter(Boolean);
-    return { count, names };
   },
 
   // ── The groups ─────────────────────────────────────────────────────
@@ -688,9 +627,10 @@ const HomePanels = {
   },
 
   // Whether setup is behind the viewer, which decides where the First challenges group sits.
-  // The tab's rule (TopochainChallenges._setupFinished): with an onboarding
-  // summary the server's gate says so (`unlocked === true`); without one, the
-  // rows must hold at least one setup card and every one of them must be done.
+  // The tab's rule (TopochainChallenges._setupFinished): the rows must hold at
+  // least one setup card and every one of them must be done. A server before
+  // #4635 sent a gate summary that decided instead (`unlocked === true`); none
+  // does now, and the branch stays for the parity the tab is held to.
   setupFinished(rows, onboarding) {
     if (onboarding) return onboarding.unlocked === true;
     const setup = (Array.isArray(rows) ? rows : [])
@@ -996,10 +936,9 @@ const HomePanels = {
   // both. It replaced a ring with a points lead and a count under it, which
   // took three lines to say what the segments say in one.
   //
-  // The scope is the season, except while setup gates the rest: the block
-  // then holds only the setup challenges, so the progress is setup's ("done
-  // in First challenges", the tab's words and its group heading), the
-  // board's "progress has a scope" rule. Deadlines stay on the cards or their
+  // The scope is the season, for everyone: a new account's First challenges
+  // are part of it like any other (#4635), so there is no "done in First
+  // challenges" scope on Home any more. Deadlines stay on the cards or their
   // group headers, and points on the cards.
   //
   // THE SEASON IS EVERY CHALLENGE IN IT (QA 2026-09-24 Q17): `all_done` of
@@ -1015,10 +954,8 @@ const HomePanels = {
       && Number(panel.all_total) > 0;
     const total = hasAll ? Number(panel.all_total) : open;
     if (!total) return null;
-    // The points line (#4565), carried into the summary on both branches: the
-    // server's pair already covers the scope the branch names (the gate's
-    // First challenges while it is closed, the season's whole set after).
-    // Absent (an older payload) or nothing on offer, no line.
+    // The points line (#4565): the server's pair covers the season's whole
+    // set. Absent (an older payload) or nothing on offer, no line.
     const pointsTotal = Number(panel && panel.points_total);
     const points = Number.isFinite(pointsTotal) && pointsTotal > 0
       ? {
@@ -1026,16 +963,6 @@ const HomePanels = {
         total: pointsTotal,
       }
       : null;
-    const gate = panel.onboarding;
-    if (gate && !gate.unlocked && Number(gate.total) > 0) {
-      const t = Number(gate.total);
-      return {
-        done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
-        total: t,
-        scope: 'first',
-        ...(points ? { points } : {}),
-      };
-    }
     const name = panel.season && typeof panel.season.name === 'string'
       ? panel.season.name.trim() : '';
     return {
@@ -1148,18 +1075,11 @@ const HomePanels = {
 // publication for the shell's server-side prerender, where window is absent.
 if (typeof window !== 'undefined') window.HomePanels = HomePanels;
 
-// A boot paints from the device's snapshot of the session and verifies it
-// afterwards (App._reconcileSession). Repaint once the verified user lands,
-// so `showGettingStarted` (HomePanels.gettingStartedOnHome) is the server's
-// current answer rather than the snapshot's: the card can have been closed
-// between two visits. Only once there is something to paint; before the
-// first read, render() would mark the sections settled with nothing in them.
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-  document.addEventListener('sv:session', () => {
-    if (HomePanels._data) HomePanels.render();
-  });
   // The views pushed to the store hold text, so a language change rebuilds
-  // them from the same payload.
+  // them from the same payload. Only once there is something to paint;
+  // before the first read, render() would mark the sections settled with
+  // nothing in them.
   document.addEventListener('homeroom:language-changed', () => {
     if (HomePanels._data) HomePanels.render();
   });

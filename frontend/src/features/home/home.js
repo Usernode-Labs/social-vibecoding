@@ -2149,8 +2149,8 @@ const Home = {
       PlatformUI.toast(desired ? message('home:myApps.added') : message('home:myApps.removed'));
       // #4600: a pin that JOINED (the server says so: `joined`, after it has
       // counted "Join a community") is a join, and says so as setMembership
-      // does, so Home's Challenges block and the Getting started card read
-      // again now rather than on their next refresh.
+      // does, so Home's Challenges block reads again now rather than on its
+      // next refresh.
       if (desired && data && data.joined === true) Home._announceMembership(slug, true);
       if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {

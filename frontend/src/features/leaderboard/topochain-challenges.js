@@ -750,9 +750,10 @@ const TopochainChallenges = {
       // opens them, so the pane draws the note only without one; a payload
       // without the field (an older server) is 0, which draws no placeholder.
       // Unlocked, nothing hides and there is nothing to say: no notice, no
-      // count. Only a new account is gated at all, and what it finishes is
+      // count. Only a new account was gated at all, and what it finished was
       // its Getting started list on Home (the tour as well as these), so
-      // that is what the words name (2026-10-01).
+      // that is what the words name (2026-10-01). Since #4635 no server sends
+      // a gate summary, so none of this draws.
       ...(onboarding.unlocked ? {} : {
         notice: PlatformI18n.t('leaderboard:challenges.locked.notice'),
         lockedCount: Number(onboarding.hidden_count) || 0,

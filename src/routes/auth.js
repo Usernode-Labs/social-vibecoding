@@ -632,9 +632,8 @@ function authRoutes(config) {
         ({ userId, codeId } = await withTransaction(pool, async (client) => {
           // needs_communities_choice: an account made with a code is asked
           // which communities to join, like an email sign-up (communities,
-          // stage 5; src/services/onboarding.js). getting_started_gate: and,
-          // being new, starts on the Getting started list that gates the
-          // season, like an email sign-up (src/db/schema.sql).
+          // stage 5; src/services/onboarding.js). getting_started_gate: and
+          // is marked as new, like an email sign-up (src/db/schema.sql).
           const { rows: userRows } = await client.query(
             'INSERT INTO users (username, password, needs_communities_choice, getting_started_gate) VALUES ($1, $2, TRUE, TRUE) RETURNING id',
             [username.trim(), hash]
@@ -781,14 +780,11 @@ function authRoutes(config) {
     // (frontend/src/features/auth/username-first-run.js askForPublic).
     let usernameProvisional = false;
     // Communities, stage 5 (src/services/onboarding.js): the join screen a
-    // new account answers after its username and the terms, and the
-    // Getting started card, for every account made since that card became
-    // the First challenges (`getting_started_gate`), however it signed up
-    // (#4601). Same
-    // failure direction as the flag above: unreadable means no blocking step
-    // and no card.
+    // new account answers after its username and the terms. Same failure
+    // direction as the flag above: unreadable means no blocking step. (The
+    // flag beside it that drew Home's Getting started card went with the
+    // card, #4635; an older cached client reads it missing as "no card".)
     let needsCommunitiesChoice = false;
-    let showGettingStarted = false;
     // Has this account finished (or skipped) the welcome tour, on any
     // device? The tour ORs it with its own per-browser flag, so the failure
     // direction here is the one it had before the server kept it: the
@@ -824,8 +820,6 @@ function authRoutes(config) {
                 u.needs_communities_choice,
                 u.password_set,
                 (u.username_provisional_since IS NOT NULL) AS username_provisional,
-                (u.getting_started_closed_at IS NULL
-                  AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
                 identity_needed(u.id) AS identity_needed,
                 EXISTS (
@@ -854,7 +848,6 @@ function authRoutes(config) {
       hasPassword = rows[0]?.password_set !== false;
       usernameProvisional = rows[0]?.username_provisional === true;
       needsCommunitiesChoice = rows[0]?.needs_communities_choice === true;
-      showGettingStarted = rows[0]?.show_getting_started === true;
       tourDone = rows[0]?.tour_done === true;
       // A member let in (not a private member, who waits for that).
       identityNeeded = rows[0]?.identity_needed === true && !!req.user.hasPlatformAccess;
@@ -970,10 +963,6 @@ function authRoutes(config) {
         // Only alongside storyFirstSession: the waitlist answer "What should
         // it do?" opens with (frontend/src/features/first-session/make.tsx).
         waitlistIdea,
-        // The Getting started card on Home: shown to every new account
-        // (getting_started_gate), however it signed up (#4601), until it is
-        // closed.
-        showGettingStarted,
         // The verified-identity rule holds this member to it (see above).
         identityNeeded,
         // The welcome tour was finished or skipped on this account, on any
@@ -1856,7 +1845,7 @@ function authRoutes(config) {
 
       // needs_communities_choice: asked which communities to join, like
       // every other new account (communities, stage 5); getting_started_gate:
-      // and starts on the Getting started list, like every other new one.
+      // and marked as new, like every other new one.
       const { rows } = await pool.query(
         `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at,
                             needs_communities_choice, getting_started_gate)

@@ -1149,71 +1149,71 @@
   },
   "tour.counter": {
     "text": "{{step}} of {{total}}",
-    "description": "Small counter at the top of each card of the welcome tour on the Home screen, started from the Getting started card or from Settings. {{step}} is the card's number and {{total}} how many cards there are, for example \"3 of 5\"."
+    "description": "Small counter at the top of each card of the welcome tour on the Home screen, started from Settings. {{step}} is the card's number and {{total}} how many cards there are, for example \"3 of 5\"."
   },
   "tour.skip": {
     "text": "Skip",
-    "description": "Button on each card of the welcome tour on the Home screen, started from the Getting started card or from Settings: asks whether to leave the tour."
+    "description": "Button on each card of the welcome tour on the Home screen, started from Settings: asks whether to leave the tour."
   },
   "tour.next": {
     "text": "Next",
-    "description": "Button on each card of the welcome tour on the Home screen, started from the Getting started card or from Settings except the last: goes to the next card."
+    "description": "Button on each card of the welcome tour on the Home screen, started from Settings except the last: goes to the next card."
   },
   "tour.finish": {
     "text": "Finish",
-    "description": "Button on the last card of the welcome tour on the Home screen, started from the Getting started card or from Settings: ends the tour. A verb."
+    "description": "Button on the last card of the welcome tour on the Home screen, started from Settings: ends the tour. A verb."
   },
   "tour.confirm.text": {
     "text": "Are you sure? You can reopen this from Settings.",
-    "description": "Question shown in the tour's card after Skip is pressed in the welcome tour on the Home screen, started from the Getting started card or from Settings. \"this\" is the tour. Settings is the name of a screen."
+    "description": "Question shown in the tour's card after Skip is pressed in the welcome tour on the Home screen, started from Settings. \"this\" is the tour. Settings is the name of a screen."
   },
   "tour.confirm.keepGoing": {
     "text": "Keep going",
-    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from the Getting started card or from Settings: stays in the tour."
+    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from Settings: stays in the tour."
   },
   "tour.confirm.skip": {
     "text": "Skip the tour",
-    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from the Getting started card or from Settings: leaves the tour."
+    "description": "Button under the question asked after Skip is pressed in the welcome tour on the Home screen, started from Settings: leaves the tour."
   },
   "tour.step.communities.title": {
     "text": "Communities",
-    "description": "Title of the first card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the Communities tab. The tab's name."
+    "description": "Title of the first card of the welcome tour on the Home screen, started from Settings: points at the Communities tab. The tab's name."
   },
   "tour.step.communities.body": {
     "text": "Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.",
-    "description": "Text of the first card of the welcome tour on the Home screen, started from the Getting started card or from Settings, which points at the Communities tab. \"Just you\", \"Private community\" and \"Public community\" are the names the product gives the three kinds of community; write them as it does. \"change\" is a noun: a change to a project. Homeroom is the product's name."
+    "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, which points at the Communities tab. \"Just you\", \"Private community\" and \"Public community\" are the names the product gives the three kinds of community; write them as it does. \"change\" is a noun: a change to a project. Homeroom is the product's name."
   },
   "tour.step.apps.title": {
     "text": "My apps",
-    "description": "Title of the second card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
+    "description": "Title of the second card of the welcome tour on the Home screen, started from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
   },
   "tour.step.apps.body": {
     "text": "The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.",
-    "description": "Text of the second card of the welcome tour on the Home screen, started from the Getting started card or from Settings, about the My apps section. \"people\" and \"a lock\" describe two small icons drawn on an app's tile."
+    "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the My apps section. \"people\" and \"a lock\" describe two small icons drawn on an app's tile."
   },
   "tour.step.appMenu.title": {
     "text": "The Homeroom menu",
-    "description": "Title of the third card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the Homeroom mark, the logo button that opens an app's menu. Homeroom is the product's name."
+    "description": "Title of the third card of the welcome tour on the Home screen, started from Settings: points at the Homeroom mark, the logo button that opens an app's menu. Homeroom is the product's name."
   },
   "tour.step.appMenu.body": {
     "text": "Inside any app, this mark opens its menu. Tap it, or tap Next to open it.",
-    "description": "Text of the third card of the welcome tour on the Home screen, started from the Getting started card or from Settings, about the Homeroom mark. \"this mark\" is the logo button and \"Next\" is the name of the button on this card."
+    "description": "Text of the third card of the welcome tour on the Home screen, started from Settings, about the Homeroom mark. \"this mark\" is the logo button and \"Next\" is the name of the button on this card."
   },
   "tour.step.menuActions.title": {
     "text": "Suggest an improvement",
-    "description": "Title of the fourth card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the button of this name in an app's menu, where a member says what the app should do differently."
+    "description": "Title of the fourth card of the welcome tour on the Home screen, started from Settings: points at the button of this name in an app's menu, where a member says what the app should do differently."
   },
   "tour.step.menuActions.body": {
     "text": "Say what should change. It doesn't vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group as a request, and you can follow along.",
-    "description": "Text of the fourth card of the welcome tour on the Home screen, started from the Getting started card or from Settings, about the Suggest an improvement button. \"change\" is a verb. Each \"it\" is the suggestion, and \"a request\" is an item the group votes on. Homeroom bot is the name of the assistant that builds changes."
+    "description": "Text of the fourth card of the welcome tour on the Home screen, started from Settings, about the Suggest an improvement button. \"change\" is a verb. Each \"it\" is the suggestion, and \"a request\" is an item the group votes on. Homeroom bot is the name of the assistant that builds changes."
   },
   "tour.step.settings.title": {
     "text": "Replay this any time",
-    "description": "Title of the last card of the welcome tour on the Home screen, started from the Getting started card or from Settings: points at the profile tab. \"this\" is the tour."
+    "description": "Title of the last card of the welcome tour on the Home screen, started from Settings: points at the profile tab. \"this\" is the tour."
   },
   "tour.step.settings.body": {
     "text": "You can replay this tour any time from Settings, on your profile.",
-    "description": "Text of the last card of the welcome tour on the Home screen, started from the Getting started card or from Settings. Settings is the name of a screen reached from the person's profile."
+    "description": "Text of the last card of the welcome tour on the Home screen, started from Settings. Settings is the name of a screen reached from the person's profile."
   },
   "firstSession.tour.general.title": {
     "text": "Talk in #general",

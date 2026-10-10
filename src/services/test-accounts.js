@@ -6,7 +6,7 @@
 //
 // Why a new account rather than "Reset first run" on an old one: a reset
 // brings back the join screen and the tour but keeps memberships, votes and
-// history, so Getting started shows progress a newcomer would not have. A test
+// history, so the First challenges show progress a newcomer would not have. A test
 // account is a REAL account — it signs in through the ordinary form (username
 // and a generated password is the one method that works on the web and in the
 // iOS app, against local, staging and production alike), auto-joins the
@@ -126,7 +126,7 @@ async function create(pool, body, { actorId, config = {} } = {}) {
       }
       const username = input.username || usernames.placeholderUsername();
       // terms consent and tour_done_at stay unset, so the terms, the
-      // community picker, the tour and Getting started all come up as they do
+      // community picker, the tour and the First challenges all come up as they do
       // for a real newcomer. With no username the account wears a
       // placeholder and needs_username_choice, so the tester picks a handle
       // in the real first-run step (frontend/src/features/auth/

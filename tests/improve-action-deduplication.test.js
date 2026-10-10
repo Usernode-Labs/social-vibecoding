@@ -373,8 +373,8 @@ test('Give feedback still opens the shared dialog for the current app', () => {
   const { Improve, calls } = improveHarness();
   Improve.giveFeedback();
   // #4236: `fromDev` with no `target`, so the dialog asks where it goes
-  // with neither destination chosen (#2707). Only Getting started's
-  // "Suggest a change to <app>", which named the app, preselects it.
+  // with neither destination chosen (#2707). Only a button that names the
+  // app (`target: 'app'`) preselects it.
   assert.deepEqual(calls, [['close'], ['feedback', true, undefined]]);
 });
 

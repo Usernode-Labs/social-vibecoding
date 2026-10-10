@@ -3517,20 +3517,6 @@
       ]
     },
     {
-      "id": "home.getting-started-card",
-      "name": "Home opens on a Getting started card: the tour first, then the season’s First challenges with their points, each step not done with a button (the next one filled), and what finishing unlocks (communities, stage 5; #3240; one list, 2026-10-01)",
-      "path": "/?shot=getting-started",
-      "expectSelector": "#home-getting-started:not(.hidden) [data-getting-started=\"1/5\"] [data-next]:has([data-getting-started-button=\"solid\"]) ~ [data-done=\"true\"] ~ [data-done=\"false\"] [data-getting-started-action=\"try\"][data-getting-started-button=\"outline\"]",
-      "expectText": "Spend 10 seconds in City garden.",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/home/getting-started.tsx",
-        "frontend/src/features/home/index.tsx",
-        "frontend/@/components/ui/button.tsx",
-        "src/services/onboarding.js"
-      ]
-    },
-    {
       "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
       "path": "/?shot=settings-back#settings",
       "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"profile\"]:not(.hidden)"

@@ -495,7 +495,10 @@ const ADDED_IDS = {
   // ── #3575: the person chooses the handle, and is told it is public ──
   'reg-username-public': '#3575: "Your username will be public to other users on Homeroom." directly under the register form\'s username field, ahead of #reg-username-hint. Its own element rather than a clause of the hint, because the hint is swapped whole for the server\'s refusal and this sentence has to stay beside the field while the person fixes the name. The input names both lines through aria-describedby. The email sign-up\'s set-password step and the first-run gate say the same sentence beside their fields.',
   // ── Communities, stage 5: the first run ─────────────────────────────
-  'home-getting-started': 'Home\'s Getting started card: the welcome tour and the season\'s First challenges for a new account that came through "What communities do you want to join?", ticked off from their credits (GET /api/me/getting-started; the one list, 2026-10-01). Ships empty and hidden; a React island (features/home/getting-started.tsx).',
+  // #home-getting-started left this map in #4635: every new account gets a
+  // tour, so Home's Getting started card went, and a new account's
+  // First challenges are ordinary cards in Home's Challenges area. It was
+  // only ever an ADDED id, so it simply leaves.
   // ── #1374: per-app notification settings ─────────────────────────
   // One switch per category governs the bell here AND the phone push,
   // because the preference gates whether the notification is CREATED and

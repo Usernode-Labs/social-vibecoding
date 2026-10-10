@@ -552,7 +552,9 @@ const STATES = [
   {
     // The season's one-time "First challenges" and an "Always open"
     // challenge counted hourly ("next count"). Every persona has finished the
-    // first challenges: an unfinished one hides the season's other cards.
+    // first challenges, so their group sits at the end (it leads while one is
+    // unfinished). Until #4635 an unfinished one also hid the season's other
+    // cards from a new account.
     id: 'shots-demo-challenge-groups-v1',
     persona: 'member',
     needs: {

@@ -3787,8 +3787,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // sync_favorite_community_member), so Home's featured list's ⊕ is a
       // join as much as /membership is, and is counted the same way: on the
       // spot (scoreOnJoin), not on the rule's next pass, and said so in the
-      // answer (`joined`) so the client can tell its Challenges block and
-      // Getting started card to read again.
+      // answer (`joined`) so the client can tell its Challenges block to
+      // read again.
       let joined = false;
       if (favorited) {
         const { rows: joinRows } = await pool.query(

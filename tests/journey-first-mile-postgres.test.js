@@ -124,8 +124,8 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     const host = await user('host', { platform_access_granted_at: '2026-06-01T00:00:00Z' });
     const guest = await user('guest', { admitted_by: host, platform_access_granted_at: '2026-09-25T08:00:00Z' });
 
-    // Getting started for the onboard column: a running season with two First
-    // challenges, and ana credited on both after finishing the tour.
+    // The first-run list for the onboard column: a running season with two
+    // First challenges, and ana credited on both after finishing the tour.
     const { rows: [season] } = await pool.query(
       `INSERT INTO seasons (name, starts_at, ends_at, is_active)
        VALUES ('Season 2', NOW() - INTERVAL '3 days', NOW() + INTERVAL '60 days', TRUE) RETURNING id`);
@@ -194,13 +194,13 @@ test('a cohort by admit date: one row per person, the furthest step, and where e
     assert.deepEqual(by.ana.onboard, { shown: true, done: 2, total: 3, complete: false },
       'the tour and one of two First challenges');
     assert.deepEqual(by.dee.onboard, { shown: true, done: 0, total: 3, complete: false },
-      'the card is drawn for every new account, join screen answered or not (#4601)');
-    assert.equal(by['ben@example.test'].onboard, null, 'no account, no card');
+      'every new account is on the list, join screen answered or not (#4601)');
+    assert.equal(by['ben@example.test'].onboard, null, 'no account, no list');
     await credit(ana, firsts[1].id);
     const again = (await journey.firstMile(pool, { day: D, now, leftOutIds })).people.find((p) => p.name === 'ana');
     assert.deepEqual(again.onboard, { shown: true, done: 3, total: 3, complete: true });
     assert.equal((await pool.query('SELECT getting_started_unlocked_at FROM users WHERE id = $1', [ana])).rows[0]
-      .getting_started_unlocked_at, null, 'an admin reading the first mile never opens the gate');
+      .getting_started_unlocked_at, null, 'an admin reading the first mile writes nothing');
 
     const passed = Object.fromEntries(mile.steps.map((s) => [s.key, s.passed]));
     assert.deepEqual(passed, {
