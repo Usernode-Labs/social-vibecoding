@@ -11019,6 +11019,8 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_shadow_build_platform', 'off'),
   -- #3624: $50 a week for each person's requests.
   ('homeroom_bot_user_weekly_cents', '5000'),
+  -- And $100 for an admin's, in place of it.
+  ('homeroom_bot_admin_weekly_cents', '10000'),
   -- Live work 12 at once, 3 per person; a DM is read.
   ('homeroom_bot_live_at_once', '12'),
   ('homeroom_bot_per_person', '3'),

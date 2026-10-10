@@ -76,6 +76,8 @@ test('the per-person allowance defaults to $50, and there is no DM list to read'
   assert.equal(Object.hasOwn(s, 'dmUsers'), false, 'a row left over from the list is not read');
   assert.equal(s.userWeeklyCents, 5000);
   assert.equal(bot.parseSettings([{ key: 'homeroom_bot_user_weekly_cents', value: '-3' }]).userWeeklyCents, 0);
+  assert.equal(s.adminWeeklyCents, 10000, 'an admin\'s defaults to $100');
+  assert.equal(bot.parseSettings([{ key: 'homeroom_bot_admin_weekly_cents', value: '25000' }]).adminWeeklyCents, 25000);
 });
 
 test('an admin sets the allowance; a DM list is no longer a setting; anything else is refused', () => {
@@ -87,6 +89,9 @@ test('an admin sets the allowance; a DM list is no longer a setting; anything el
   assert.deepEqual(bot.validateSettingsPatch({ dmUsers: ['evan'] }), { ok: false, error: 'Nothing to update' });
   assert.equal(bot.validateSettingsPatch({ userWeeklyCents: 1.5 }).ok, false);
   assert.equal(bot.validateSettingsPatch({ userWeeklyCents: -1 }).ok, false);
+  assert.deepEqual(bot.validateSettingsPatch({ adminWeeklyCents: 20000 }).updates, [['homeroom_bot_admin_weekly_cents', '20000']]);
+  assert.equal(bot.validateSettingsPatch({ adminWeeklyCents: 1.5 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ adminWeeklyCents: -1 }).ok, false);
 });
 
 test('a project the bot builds for somebody is live, as every app but a paused one is; never on staging', () => {

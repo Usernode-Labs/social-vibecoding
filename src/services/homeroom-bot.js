@@ -119,6 +119,10 @@ const KEY_SHADOW_BUILD_PLATFORM = 'homeroom_bot_shadow_build_platform';
 // platform pays; this is the ceiling that keeps one person from spending
 // it all.
 const KEY_USER_WEEKLY_CENTS = 'homeroom_bot_user_weekly_cents';
+// The same ceiling for an admin (users.is_admin, view-only admins included),
+// which applies to them instead of the one above (homeroom-bot-dm.js
+// weeklyCapCents). Admins build the platform itself, so theirs starts higher.
+const KEY_ADMIN_WEEKLY_CENTS = 'homeroom_bot_admin_weekly_cents';
 // #3654: the OpenRouter model each stage runs on. Blank means the platform
 // default (OPENROUTER_DEFAULT_CODEX_MODEL), which every stage used before.
 // `followup` covers both kinds of follow-up turn: an answer to people's
@@ -179,7 +183,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
-  KEY_USER_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
+  KEY_USER_WEEKLY_CENTS, KEY_ADMIN_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
   KEY_VOICE_SESSION, KEY_VOICE_ISSUE, KEY_VOICE_CHAT,
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING,
   KEY_LIVE_BUILD_STREAM,
@@ -202,6 +206,7 @@ const DEFAULTS = Object.freeze({
   buildConcurrency: 2,
   shadowBuildPlatform: false,
   userWeeklyCents: 5000,
+  adminWeeklyCents: 10000,
   // #3654: per-stage models; blank is the platform default (stageModel).
   models: Object.freeze({ triage: '', spec: '', build: '', followup: '' }),
   // Raised from 6 and 2 when every project went live: the background
@@ -583,6 +588,9 @@ function parseSettings(rows) {
   const userWeeklyCents = clampInt(
     map.get(KEY_USER_WEEKLY_CENTS), DEFAULTS.userWeeklyCents, 0, MAX_USER_WEEKLY_CENTS,
   );
+  const adminWeeklyCents = clampInt(
+    map.get(KEY_ADMIN_WEEKLY_CENTS), DEFAULTS.adminWeeklyCents, 0, MAX_USER_WEEKLY_CENTS,
+  );
   const models = {};
   for (const stage of MODEL_STAGES) {
     const raw = String(map.get(KEY_MODELS[stage]) || '').trim();
@@ -602,7 +610,7 @@ function parseSettings(rows) {
   const liveBuildStream = map.get(KEY_LIVE_BUILD_STREAM) !== 'off';
   return {
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
-    shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents,
+    shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
     liveAtOnce, perPerson, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
     everyoneSince, proposalCeiling, liveBuildStream,
   };
@@ -790,6 +798,13 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: 'userWeeklyCents must be a non-negative integer' };
     }
     updates.push([KEY_USER_WEEKLY_CENTS, String(n)]);
+  }
+  if (body.adminWeeklyCents !== undefined) {
+    const n = Number(body.adminWeeklyCents);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_USER_WEEKLY_CENTS) {
+      return { ok: false, error: 'adminWeeklyCents must be a non-negative integer' };
+    }
+    updates.push([KEY_ADMIN_WEEKLY_CENTS, String(n)]);
   }
   if (body.models !== undefined) {
     if (!body.models || typeof body.models !== 'object' || Array.isArray(body.models)) {

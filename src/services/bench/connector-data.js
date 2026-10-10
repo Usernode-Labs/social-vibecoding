@@ -109,6 +109,7 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       continueReads: s.continueReads !== false,
       proposalCeiling: num(s.proposalCeiling),
       userWeeklyCents: num(s.userWeeklyCents),
+      adminWeeklyCents: num(s.adminWeeklyCents),
     },
     spend: p.bot ? {
       weeklyLimitCents: num(p.bot.weeklyLimitCents), weeklySpentCents: num(p.bot.weeklySpentCents), hasIncludedKey: !!p.bot.hasIncludedKey,

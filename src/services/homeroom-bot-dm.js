@@ -38,8 +38,9 @@
 // It talks to everybody Homeroom has let in (hasBot). It was tried out one
 // person at a time first, on a list an admin kept. What each person's
 // requests may cost the platform in a week is capped
-// (`homeroom_bot_user_weekly_cents`, $50 to start), apart from their own
-// allowance for agents.
+// (`homeroom_bot_user_weekly_cents`, $50 to start; an admin's by
+// `homeroom_bot_admin_weekly_cents`, $100), apart from their own allowance
+// for agents.
 //
 // Never a reason anything else fails: every entry point here is called
 // best-effort, after the request, the post or the merge it follows.
@@ -690,17 +691,33 @@ async function weeklySpentCents(pool, userId) {
 // says so (activity.js), and the bot's own status answer calls it low.
 const ALLOWANCE_LOW_SHARE = 0.2;
 
+/**
+ * This person's week of building time, in cents: the per-admin cap
+ * (`homeroom_bot_admin_weekly_cents`) for an admin, view-only ones included,
+ * else the per-person one. 0 means no cap. Reads the account only when the
+ * two differ.
+ */
+async function weeklyCapCents(pool, settings, userId) {
+  const cap = Number(settings?.userWeeklyCents);
+  const adminCap = Number(settings?.adminWeeklyCents);
+  if (!userId || !Number.isFinite(adminCap) || adminCap === cap) return cap;
+  const { rows } = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userId]);
+  return rows[0]?.is_admin === true ? adminCap : cap;
+}
+
 /** Whether this person has less than ALLOWANCE_LOW_SHARE of their week left. False with no cap. */
 async function allowanceLow(pool, settings, userId) {
-  const cap = Number(settings?.userWeeklyCents);
-  if (!userId || !Number.isFinite(cap) || cap <= 0) return false;
+  if (!userId) return false;
+  const cap = await weeklyCapCents(pool, settings, userId);
+  if (!Number.isFinite(cap) || cap <= 0) return false;
   return cap - await weeklySpentCents(pool, userId) < cap * ALLOWANCE_LOW_SHARE;
 }
 
 /** Whether this person's requests have used their week's allowance. 0 means no cap. */
 async function overWeeklyAllowance(pool, settings, userId) {
-  const cap = Number(settings?.userWeeklyCents);
-  if (!userId || !Number.isFinite(cap) || cap <= 0) return false;
+  if (!userId) return false;
+  const cap = await weeklyCapCents(pool, settings, userId);
+  if (!Number.isFinite(cap) || cap <= 0) return false;
   return (await weeklySpentCents(pool, userId)) >= cap;
 }
 
@@ -4088,6 +4105,7 @@ module.exports = {
   requesterOf,
   personOf,
   weeklySpentCents,
+  weeklyCapCents,
   overWeeklyAllowance,
   noteOverAllowance,
   overAllowanceText,

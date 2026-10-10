@@ -225,8 +225,9 @@ test('settings default to off and clamp their numbers', () => {
     mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [],
     turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
     shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
-    // #3624: $50 a week each for what a person's requests cost the bot.
-    userWeeklyCents: 5000,
+    // #3624: $50 a week each for what a person's requests cost the bot,
+    // and $100 for an admin's.
+    userWeeklyCents: 5000, adminWeeklyCents: 10000,
     // #3654: every stage on the platform default until an admin names one.
     models: { triage: '', spec: '', build: '', followup: '' },
     // Live work, 12 at once and 3 per person (raised from 6 and 2 when every

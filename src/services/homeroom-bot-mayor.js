@@ -885,7 +885,7 @@ async function myWork(pool, { userId, settings, config = null, deps = {} }) {
     }))
     : (await bot.workingNow(pool, settings, { userId }))
       .map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since }));
-  const cap = Number(settings?.userWeeklyCents) || 0;
+  const cap = Number(await dmModule(deps).weeklyCapCents(pool, settings, userId)) || 0;
   const spent = cap > 0 ? await dmModule(deps).weeklySpentCents(pool, userId) : 0;
   return {
     workingOnNow,

@@ -68,8 +68,9 @@ interface Settings {
   buildConcurrency: number;
   shadowBuildPlatform: boolean;
   // #3624: what each person's requests may cost the platform in a week
-  // (cents; 0 for no limit).
+  // (cents; 0 for no limit). An admin's own, in place of it.
   userWeeklyCents: number;
+  adminWeeklyCents: number;
   // #3654: the model each stage runs on; blank is the platform default.
   models?: Record<ModelStage, string>;
   // #3624 stage 2: live work at once across the platform and per person,
@@ -1034,6 +1035,7 @@ interface Form {
   models: Record<ModelStage, string>;
   botCap: string;
   userCap: string;
+  adminCap: string;
   dmChat: boolean;
   voiceSession: boolean;
   voiceIssue: boolean;
@@ -1057,6 +1059,7 @@ const FIELD_LABEL: Record<FormKey, string> = {
   models: 'models',
   botCap: "the bot's weekly budget",
   userCap: 'the budget per person',
+  adminCap: 'the budget per admin',
   dmChat: 'reading DMs',
   voiceSession: 'answering on its changes',
   voiceIssue: 'answering on requests',
@@ -1084,6 +1087,7 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     },
     botCap: p.bot ? (p.bot.weeklyLimitCents / 100).toFixed(2) : '',
     userCap: ((s.userWeeklyCents ?? 5000) / 100).toFixed(2),
+    adminCap: ((s.adminWeeklyCents ?? 10000) / 100).toFixed(2),
     dmChat: s.dmChat !== false,
     voiceSession: s.voiceSession !== false,
     voiceIssue: s.voiceIssue !== false,
@@ -1150,6 +1154,7 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
       if (Object.keys(changed).length) patch.models = changed;
     } else if (key === 'botCap') patch.weeklyLimitCents = dollars('botCap', "The bot's weekly budget", '');
     else if (key === 'userCap') patch.userWeeklyCents = dollars('userCap', 'The budget per person', ' (0 for no limit)');
+    else if (key === 'adminCap') patch.adminWeeklyCents = dollars('adminCap', 'The budget per admin', ' (0 for no limit)');
     else if (key === 'buildConcurrency') patch.buildConcurrency = whole(key, 1, 4, 'Shadow builds at once');
     else if (key === 'liveAtOnce') patch.liveAtOnce = whole(key, 1, 24, 'Live requests at once');
     else if (key === 'perPerson') patch.perPerson = whole(key, 1, 6, 'Per person at once');
@@ -1801,6 +1806,18 @@ function HomeroomBotSection() {
                     onChange={(e) => setField('userCap', e.target.value)}
                   />
                   <p className={`${AdminUI.muted} mt-1`}>What one person&apos;s requests may cost the platform, apart from their own agent allowance. 0 for no limit.</p>
+                </div>
+                <div>
+                  <label className={AdminUI.label} htmlFor="admin-homeroom-bot-admin-cap">Per admin, per week</label>
+                  <input
+                    id="admin-homeroom-bot-admin-cap"
+                    type="number" min="0" step="1" inputMode="decimal"
+                    className={`${AdminUI.input} mt-1`}
+                    value={form.adminCap}
+                    disabled={!canWrite}
+                    onChange={(e) => setField('adminCap', e.target.value)}
+                  />
+                  <p className={`${AdminUI.muted} mt-1`}>Used for admins in place of the budget per person. 0 for no limit.</p>
                 </div>
               </div>
             </div>
