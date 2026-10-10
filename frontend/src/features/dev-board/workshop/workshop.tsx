@@ -2072,13 +2072,14 @@ export function endRingTotal(total: number, votedHere: number, leftVotes: number
   return Math.max(Number(total) || 0, votedHere + leftVotes);
 }
 
-function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: {
+function DoneItem({ total, acted, left, leftVotes, onDone, onBack, onSuggest, doneLabel }: {
   total: number;
   acted: number;
   left: number;
   leftVotes: number;
   onDone: () => void;
   onBack: () => void;
+  onSuggest?: () => void;
   doneLabel?: string;
 }): ReactNode {
   const t = useMessages('project');
@@ -2112,6 +2113,15 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
       {left > 0 ? (
         <button type="button" className="dev-ws-done-back" data-ws-done-back="" onClick={onBack}>
           {t('project:needsYou.end.backToSkipped')}
+        </button>
+      ) : null}
+      {/* #4680: the quiet second action on this card, a project only — the
+          Communities screen's feed of every project passes nothing. Same
+          look as the back-up-the-feed link, and the same form the hub's ⋯
+          row opens (a plain open, so comment mode is honoured). */}
+      {onSuggest ? (
+        <button type="button" className="dev-ws-done-back" data-ws-done-suggest="" onClick={onSuggest}>
+          {t('project:needsYou.end.suggest')}
         </button>
       ) : null}
     </section>
@@ -2343,13 +2353,17 @@ function useSwipeVote(
  * `renderApp` draws the project over a row's by-line; `doneLabel` is what the
  * end card offers once the feed is through.
  */
-export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabel, renderApp }: {
+export function NeedsFeed({ rows, total, models, slug, canPost, onDone, onSuggest, doneLabel, renderApp }: {
   rows: DevWorkshopView['queue'];
   total: number;
   models: DevWorkshopView['models'];
   slug: string;
   canPost: boolean;
   onDone: () => void;
+  /** #4680: the end card's link to the Suggest an improvement form. A
+   * project's feed passes it; the Communities screen's does not, where it
+   * would not be clear which project the suggestion is for. */
+  onSuggest?: () => void;
   doneLabel?: string;
   renderApp?: (row: QueueRow) => ReactNode;
 }): ReactNode {
@@ -3087,6 +3101,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           left={left}
           leftVotes={leftVotes}
           onDone={onDone}
+          onSuggest={onSuggest}
           doneLabel={doneLabel}
           onBack={() => go(items.findIndex((r) => !answered[r.key]) - i)}
         />
@@ -4786,6 +4801,10 @@ export function DevWorkshop(): ReactNode {
           slug={slug}
           canPost={canPost}
           onDone={() => openTab('status')}
+          // #4680: the end card's quiet way into the Suggest an improvement
+          // form, the same open the hub's ⋯ row makes. No `intent: 'issue'`,
+          // so the heading reads "Suggest an improvement".
+          onSuggest={() => { (window as any).App?.openFeedbackModal?.({ fromDev: true }); }}
         />
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This

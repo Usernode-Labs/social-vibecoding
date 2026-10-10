@@ -1083,6 +1083,10 @@
     "text": "Back to the first one you skipped",
     "description": "Button on the card after the last item of the Needs you feed: scrolls back up to the first item this person passed without answering."
   },
+  "needsYou.end.suggest": {
+    "text": "Suggest an improvement",
+    "description": "Quiet link on the card after the last item of a project's Needs you feed: opens the form for suggesting an improvement to this project."
+  },
   "needsYou.ask.reading": {
     "text": "Reading the change…",
     "description": "Placeholder answer in the Ask sheet of the Needs you feed, shown in the conversation while the AI model is preparing its answer about the item."

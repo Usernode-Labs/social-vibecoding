@@ -234,6 +234,9 @@ export function init() {
     };
     document.getElementById('feedback-sent-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-first-mine')?.addEventListener('click', openMine);
+    // #4680: the form's own link to it, under the intro line — seen before
+    // any typing starts, not only on a confirmation afterwards.
+    document.getElementById('feedback-form-mine')?.addEventListener('click', openMine);
     document.getElementById('feedback-sent-done')?.addEventListener('click', closeFeedback);
     // "Thanks! Posted to Run Club" / "Thanks! Posted to Homeroom" is the
     // heading; the notice under it carries only what else happened (a
