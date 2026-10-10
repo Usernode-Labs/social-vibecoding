@@ -102,6 +102,10 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       perPerson: num(s.perPerson),
       shadowBuilds: !!s.shadowBuilds,
       dmChat: !!s.dmChat,
+      // Its voice outside the DM, one switch per place (homeroom-bot-voice.js).
+      voiceSession: s.voiceSession !== false,
+      voiceIssue: s.voiceIssue !== false,
+      voiceChat: s.voiceChat !== false,
       continueReads: s.continueReads !== false,
       proposalCeiling: num(s.proposalCeiling),
       userWeeklyCents: num(s.userWeeklyCents),
@@ -125,6 +129,22 @@ async function botOverview(pool, config, query = {}, deps = {}) {
       turns: num(p.dmChat.turns), failed: num(p.dmChat.failed), recovered: num(p.dmChat.recovered),
       people: num(p.dmChat.people), costUsd: num(p.dmChat.costUsd),
     } : null,
+    // Its voice outside the DM this week (homeroom-bot-voice.js
+    // voiceSummary): codes and counts, never anybody's words.
+    voice: p.voice ? voiceOf(p.voice) : null,
+    // Errors that should not happen, the last week's (platform-incidents.js).
+    incidents: p.incidents ? {
+      days: num(p.incidents.days), total: num(p.incidents.total) || 0,
+      items: (p.incidents.items || []).slice(0, 20).map((i) => ({
+        at: i.at || null,
+        kind: CODE_RE.test(String(i.kind || '')) ? i.kind : 'unknown',
+        app: i.app || null,
+        runId: num(i.runId),
+        issueNumber: num(i.issueNumber),
+        why: i.why ? clipText(i.why, 300) : null,
+        outcome: CODE_RE.test(String(i.outcome || '')) ? i.outcome : null,
+      })),
+    } : null,
     // The build lane: what is queued and building now, and its last pass
     // (why a queued build is waiting: the budget, a platform fault, …).
     buildLane: p.builds ? {
@@ -140,6 +160,42 @@ async function botOverview(pool, config, query = {}, deps = {}) {
     runs,
     filters: { app: f.app, verdict: query.verdict && VERDICTS.includes(query.verdict) ? query.verdict : null },
     nextBefore: runs.length === f.limit ? runs[runs.length - 1].id : null,
+  };
+}
+
+/**
+ * The voice's summary as the connector carries it: the same fields, each
+ * read as the type it should be, so nothing else rides along.
+ * Pure.
+ */
+function voiceOf(v) {
+  const counts = (o, keys) => Object.fromEntries(keys.filter((k) => num(o?.[k]) != null).map((k) => [k, num(o[k])]));
+  const OUTCOMES = ['replied', 'quiet', 'fallback', 'failed'];
+  const code = (c) => (CODE_RE.test(String(c || '')) ? String(c) : null);
+  // A failure is a code with its stage and status ("v2:rate_limited:429").
+  const failure = (c) => (/^[A-Za-z0-9_:+.-]{1,80}$/.test(String(c || '')) ? String(c) : null);
+  return {
+    turns: num(v.turns) || 0, replied: num(v.replied) || 0, quiet: num(v.quiet) || 0,
+    fallback: num(v.fallback) || 0, failed: num(v.failed) || 0, people: num(v.people) || 0, costUsd: num(v.costUsd) || 0,
+    byPlace: Object.fromEntries(['session', 'issue', 'chat', 'category', 'message']
+      .filter((place) => v.byPlace && v.byPlace[place])
+      .map((place) => [place, counts(v.byPlace[place], OUTCOMES)])),
+    recentFailures: (v.recentFailures || []).slice(0, 20).map((f) => ({
+      at: f.at || null, app: f.app || null, place: code(f.place), ref: num(f.ref), outcome: code(f.outcome),
+      error: failure(f.error), failures: (f.failures || []).map(failure).filter(Boolean).slice(0, 10), rounds: num(f.rounds) || 0,
+    })),
+    asks: {
+      byStatus: counts(v.asks?.byStatus, ['queued', 'taken', 'done', 'failed', 'dropped']),
+      bySource: Object.fromEntries(Object.entries(v.asks?.bySource || {})
+        .filter(([k, n]) => /^[a-z_]{1,20}$/.test(k) && num(n) != null).map(([k, n]) => [k, num(n)])),
+      waiting: (v.asks?.waiting || []).slice(0, 20).map((w) => ({
+        app: w.app || null, change: num(w.change), issueNumber: num(w.issueNumber), status: code(w.status),
+        asks: num(w.asks) || 0, since: w.since || null, tries: num(w.tries) || 0,
+      })),
+    },
+    offers: Object.fromEntries(['file_request', 'withdraw_change', 'close_request']
+      .filter((kind) => v.offers && v.offers[kind])
+      .map((kind) => [kind, counts(v.offers[kind], ['open', 'deciding', 'done', 'declined', 'failed'])])),
   };
 }
 

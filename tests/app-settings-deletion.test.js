@@ -30,6 +30,9 @@ function setup(fetch) {
     setLoading(v){s.loading=v;},setBusy(v){s.busy=v;},
     setAccessDraft(v){s.accessDraft=v;},setAccessMessage(v){s.accessMessage=v;},
     setAccessMessageIsError(v){s.accessMessageIsError=v;},setAccessBusy(v){s.accessBusy=v;},
+    // #4659: the verify sheet's answer is configurable; a person who chooses
+    // Not now answers false. Default true keeps the retry path reachable.
+    askToVerifyForPublic(){return Promise.resolve(s.verifyChoice!==false);},
     setAccessProposalOpen(v){s.accessProposalOpen=v;},
     currentAccessMode(app){return app.collab_visibility==='public'?'public':(app.view_visibility==='private'?'private':'public-invite');},
     visibilityForAccess(mode){return ACCESS_MODES.find((item)=>item.id===mode);},
@@ -85,6 +88,17 @@ test('an existing visibility proposal is reported and prevents a duplicate retry
   assert.match(s.accessMessage,/already waiting for approval/);
   await s.proposeAccess();
   assert.equal(calls,1);
+});
+
+test('backing out of the verify sheet says the access did not change (#4659)',async()=>{
+  let calls=0;const s=setup(async()=>{calls++;return {ok:false,status:403,json:async()=>({code:'identity_required'})};});
+  s.verifyChoice=false;
+  await s.proposeAccess();
+  assert.equal(calls,1,'Not now does not retry the request');
+  assert.match(s.accessMessage,/Access not changed/);
+  assert.equal(s.accessMessageIsError,false,'declining to verify is not an error');
+  assert.equal(s.accessProposalOpen,false);
+  assert.equal(s.accessBusy,false);
 });
 
 test('deletion requires current permission and the exact app name',async()=>{

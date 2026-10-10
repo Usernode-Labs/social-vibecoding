@@ -9613,6 +9613,8 @@ async function adminPayload(pool, config, {
     // #3624 stage 2: what runs now, and what the DM's answers cost.
     workingNow: [...await workingNow(pool, settings), ...builds.building],
     dmChat: await dmChatSummary(pool),
+    // And its voice outside the DM this week (homeroom-bot-voice.js).
+    voice: await voiceModule(null).voiceSummary(pool),
     // Whether it is working, over the last week (homeroom-bot-health.js).
     health: await require('./homeroom-bot-health').rolloutHealth(pool, { botUsername: BOT_USERNAME }),
     // #4210: errors that should not happen (a build a restart cut short),
