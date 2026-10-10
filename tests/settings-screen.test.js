@@ -1273,6 +1273,34 @@ test('a failed read still leaves the snapshot-independent blocks up', () => {
     'the build line simply goes missing without a snapshot');
 });
 
+test('the released block-production note explains the ongoing notification (#3756)', () => {
+  // #3756: the persistent "Evaluating production slots" phone notification is
+  // the app's own block-production service; the platform cannot silence it.
+  // The released-producer state carries the explanation and the one control
+  // that quiets just that notification, so nobody answers it by switching off
+  // all Homeroom notifications.
+  const bpView = sliceMethod(settingsJs, '_bpView');
+  assert.match(bpView, /Evaluating production slots/,
+    'the released note names the notification its reader actually sees');
+  assert.match(bpView, /checking VRF eligibility and scheduling slots/,
+    'the explanation says what the notification is, in the FAQ’s own words');
+  assert.match(bpView,
+    /action: this\._unCanOpenNotifSettings === true\s*\?\s*\{[\s\S]{0,120}label: 'Open notification settings'[\s\S]{0,120}action: '_openNotifSettings'/,
+    'the note carries the existing open-notification-settings action, gated on the capability probe');
+  // Non-producers (and unreleased requests) keep their single-line copy:
+  // nobody who cannot see the notification is shown an explanation for it.
+  assert.doesNotMatch(bpView, /bp_requested.*Evaluating production slots/s,
+    'the pending state keeps its own copy');
+  // The renderer draws the action beneath the note it belongs to, and the
+  // model type admits it.
+  assert.match(usernodeTsx,
+    /bp\.kind === 'note' \? \(\s*<>\s*<UnP note=\{\{ text: bp\.text \}\} \/>\s*\{bp\.action \? <UnBtn btn=\{bp\.action\} \/> : null\}\s*<\/>\s*\) : null/,
+    'the block-production section renders the note’s action');
+  assert.match(usernodeStoreTs,
+    /kind: 'note'; text: string; action\?: UnAction \| null/,
+    'the note variant carries the optional action');
+});
+
 test('the native ZK identity entry is capability-gated and dispatchable', () => {
   const view = sliceMethod(settingsJs, '_usernodeView');
   assert.match(view,

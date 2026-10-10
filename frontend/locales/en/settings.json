@@ -3704,7 +3704,7 @@
     "description": "Note in the block production block of Settings > Homeroom app when the status could not be fetched."
   },
   "usernode.blockProduction.released": {
-    "text": "Released. Your node produces blocks when it wins slots.",
+    "text": "Released. Your node produces blocks when it wins slots. The ongoing \"Evaluating production slots\" notification on your phone is block production checking VRF eligibility and scheduling slots; Android re-shows it while block production runs, so swiping it away does not dismiss it for good. Quiet just that notification without turning off Homeroom’s other notifications:",
     "description": "Note in the block production block of Settings > Homeroom app: an administrator has released the person's keys, so their phone now produces blocks when its turn (\"slot\") comes."
   },
   "usernode.blockProduction.pending": {

@@ -6172,11 +6172,27 @@
       return { kind: 'ready', enabled: !!state.enabled, status };
     },
 
+    // #3756: the persistent "Evaluating production slots" phone notification
+    // is the app's own block-production service (an Android foreground service
+    // re-presents its notification after dismissal), so the platform cannot
+    // silence it. The released-producer state carries the explanation and the
+    // one control that quiets just that notification, so nobody answers it by
+    // switching off all Homeroom notifications. The button is gated on the
+    // same capability probe the Activity notifications block uses, so an app
+    // build without the bridge method never shows a dead button.
     _bpView() {
       const state = this._bpState;
       if (state === undefined) return { kind: 'checking' };
       if (!state) return { kind: 'note', text: tr('settings:usernode.blockProduction.checkFailed') };
-      if (state.bp_released) return { kind: 'note', text: tr('settings:usernode.blockProduction.released') };
+      if (state.bp_released) {
+        return {
+          kind: 'note',
+          text: tr('settings:usernode.blockProduction.released'),
+          action: this._unCanOpenNotifSettings === true
+            ? { label: tr('settings:usernode.body.openNotificationSettings'), action: '_openNotifSettings' }
+            : null,
+        };
+      }
       if (state.bp_requested) return { kind: 'note', text: tr('settings:usernode.blockProduction.pending') };
       if (!state.has_platform_access) return { kind: 'note', text: tr('settings:usernode.blockProduction.needsAccess') };
       return { kind: 'ask' };
