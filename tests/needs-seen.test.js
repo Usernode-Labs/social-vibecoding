@@ -155,7 +155,7 @@ test('the feed marks the vote you move on from, forward and unanswered only', ()
   // unseen votes, from the same keys.
   assert.match(WORKSHOP, /const owed = unseenNeeds\(v\.slug \|\| '', owedRows\.length, owedKeys\);/);
   assert.match(WORKSHOP, /describeCommunity\(v\.slug, \{\s*owedCount: owedRows\.length,\s*owed: owedKeys,/);
-  assert.match(WORKSHOP, /<NeedsCard queue=\{v\.queue\} slug=\{slug\}/);
+  assert.match(WORKSHOP, /<ForYouCard\s+slug=\{slug\}[\s\S]{0,80}queue=\{v\.queue\}/);
   // Nothing else in the feed moves: the order stays the one published.
   assert.match(WORKSHOP, /const live = rows\.filter\(\(r\): r is QueueRow => r\.t === 'card'\);/);
 });
@@ -163,18 +163,20 @@ test('the feed marks the vote you move on from, forward and unanswered only', ()
 test('the hub\'s Needs you counts what you have not seen, and stays a door to the rest', () => {
   fakeWindow(7);
   const seen = loadTsx(SEEN_SRC);
-  const { NeedsCard } = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx', {
+  const { ForYouCard } = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx', {
     stubs: { '../../workshop/needs-seen': seen },
   });
   const queue = [voteRow(1, 'Dark mode'), voteRow(2, 'Tags'), voteRow(3, 'Export')];
-  const html = () => renderToHtml(createElement(NeedsCard, { queue, slug: 'garden', canPost: true, onOpen: () => {} }));
+  const html = () => renderToHtml(createElement(ForYouCard, {
+    queue, slug: 'garden', name: 'Garden', mine: null, workEmpty: null, alone: false, data: null, canPost: true,
+    onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {},
+  }));
   assert.match(html(), /data-ws-hub-needs-votes="3"[\s\S]*3 to vote/);
   seen.markNeedsSeen('garden', 'proposal:1@0');
   const one = html();
   assert.match(one, /data-ws-hub-needs-votes="2"/);
-  assert.match(one, /<span class="dev-ws-head-n">2 to vote<\/span>/);
-  assert.match(one, /<span class="dev-ws-hub-needs-title">Tags<\/span>/, 'the first vote you have not seen leads');
-  assert.match(one, /and 1 more/);
+  assert.match(one, /<span class="dev-ws-foryou-pill">2 to vote<\/span>/);
+  assert.match(one, /<span data-ws-hub-needs-first="">Tags, and 1 more<\/span>/, 'the first vote you have not seen leads');
   seen.markNeedsSeen('garden', 'proposal:2@0');
   seen.markNeedsSeen('garden', 'proposal:3@0');
   const all = html();

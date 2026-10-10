@@ -1419,14 +1419,6 @@
     "text": "Should this change go in?",
     "description": "The question shown above the Yes and No buttons on a \"Needs you\" card for a proposal the viewer has not voted on. \"Go in\" means be merged into the project."
   },
-  "workshop.queue.claimAsk": {
-    "text": "Want to give this one a try?",
-    "description": "The question shown on a \"Needs you\" card for a request nobody is working on, inviting the viewer to take it on."
-  },
-  "workshop.queue.claimYes": {
-    "text": "Let's take it",
-    "description": "Button on a \"Needs you\" card for a request nobody is working on. It answers \"Want to give this one a try?\" and opens the request so the viewer can start work on it."
-  },
   "workshop.row.tag.checksPassed": {
     "text": "Checks passed",
     "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a change: all of its automatic checks have passed."

@@ -148,29 +148,18 @@ test('the app list behind @ is rate-limited like the other people searches', () 
   // bucket as /mention-candidates and /api/users/search.
   assert.match(CHAT_ROUTES, /\{[^}]*\buserDirectoryLimiter,[^}]*\} = require\('\.\.\/middleware\/rate-limits'\)/);
   assert.match(CHAT_ROUTES, /router\.get\('\/api\/apps\/:slug\/mention-suggestions', userDirectoryLimiter, async/);
-  // A 429 is a failure, not an answer: the hub's per-prefix lookup does not
-  // remember it as "nobody", and the whole-list cache does not keep it.
-  assert.match(between(HUB, 'function HubComposer', '\n}\n'),
-    /if \(res\.status === 429\) throw new Error\('rate_limited'\);\s*if \(!res\.ok\) return \[\];/);
+  // A 429 is a failure, not an answer: the whole-list cache does not keep
+  // it. (The hub's own composer, which asked per prefix, went with its
+  // channel card: the hub's Discussion row opens the room itself.)
+  assert.doesNotMatch(HUB, /function HubComposer/);
   assert.match(TYPEAHEAD, /if \(res\.status === 429\) return \[\];\s*let users/);
 });
 
-test('the hub composer suggests people: the app list, or #general by prefix', () => {
-  const { conversationIdFromPostUrl } = loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx');
-  assert.equal(conversationIdFromPostUrl('/api/conversations/42/messages'), 42);
-  assert.equal(conversationIdFromPostUrl('/api/apps/my-app/messages'), null);
-  assert.equal(conversationIdFromPostUrl('/api/conversations/0/messages'), null);
-  assert.equal(conversationIdFromPostUrl('/api/conversations/42/messages?x=1'), null);
-
-  const hub = between(HUB, 'function HubComposer', '\n}\n');
-  // Both rooms are asked by prefix: #general's conversation, or the app's
-  // list with ?q=, which finds a member past the whole list's 500-row cap.
-  assert.match(hub, /\/api\/conversations\/\$\{conversationId\}\/mention-candidates\?q=\$\{q\}&limit=8/);
-  assert.match(hub, /\$\{mentionSuggestionsPath\(slug\)\}\?q=\$\{q\}/);
-  assert.match(hub, /useMentionTypeahead\(\{\s*slug, inputRef, value: text, onChange: setText, lookup, wideTokens: !!conversationId,/);
-  assert.match(hub, /ref=\{inputRef\}/);
-  assert.match(hub, /mention\.onKeyDown\(e\)/, 'an open list owns Enter, so it picks rather than sends');
-  assert.match(hub, /<FeedMentionMenu/);
+test('the mention typeahead asks by prefix through its ordered lookup', () => {
+  // The hub's composer, which asked #general's conversation or the app's
+  // list by prefix, went with its channel card; the hook it used is the
+  // group chat's and the feed threads', and keeps its rules.
+  assert.equal(loadTsx('frontend/src/features/dev-board/workshop/hub-cards.tsx').conversationIdFromPostUrl, undefined);
 
   // The hook asks through the ordered lookup and applies only a live answer.
   const sync = between(TYPEAHEAD, 'const sync = useCallback', 'const accept = useCallback');

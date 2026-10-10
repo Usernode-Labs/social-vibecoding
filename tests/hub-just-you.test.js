@@ -89,7 +89,7 @@ test('a just-you project being built: the thumbnail and its build line, and no s
   assert.equal(hub.firstVersionStep, undefined);
   assert.equal(hub.firstVersionNote, undefined, 'one line, said once');
   const src = read(HUB);
-  assert.doesNotMatch(src.slice(src.indexOf('export const FIRST_VERSION_POLL_MS'), src.indexOf('export function ReelThumb(')),
+  assert.doesNotMatch(src.slice(src.indexOf('export const FIRST_VERSION_POLL_MS'), src.indexOf('export const owesVote')),
     /typical_minutes|\$\{minutes\}|usually in about|ProgressRing/, 'and nothing reads one');
 });
 
@@ -163,7 +163,7 @@ test('somebody else reading it while its plan waits: Planning it, and See the pl
 
 test('the line is the server\'s for this viewer, and its words are the build line\'s, never written on the hub', () => {
   const src = read(HUB);
-  const body = src.slice(src.indexOf('export const FIRST_VERSION_POLL_MS'), src.indexOf('export function ReelThumb('));
+  const body = src.slice(src.indexOf('export const FIRST_VERSION_POLL_MS'), src.indexOf('export const owesVote'));
   assert.match(body, /return buildLineOf\(fv\.line\) \|\| \(fv\.ready \? 'ready' : 'planning'\);/);
   assert.match(body, /<ThumbRow\s+name=\{data\?\.name \|\| slug\}\s+colorKey=\{slug\}\s+emoji=\{emoji\}\s+line=\{button \? null : line\}\s+\/>/);
   const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -184,7 +184,7 @@ test('nothing being built, or no record yet: no card', () => {
   // While it is on screen it reads the record again, as the App tab and the
   // made screen read theirs: no event marks each step.
   const src = read(HUB);
-  const body = src.slice(src.indexOf('export function FirstVersionCard('), src.indexOf('export function ReelThumb('));
+  const body = src.slice(src.indexOf('export function FirstVersionCard('), src.indexOf('export const owesVote'));
   assert.match(body, /window\.setInterval\(\(\) => \{\s*if \(document\.visibilityState !== 'visible'\) return;\s*if \(!ref\.current \|\| !ref\.current\.getClientRects\(\)\.length\) return;\s*void reloadCommunity\(slug\);\s*\}, FIRST_VERSION_POLL_MS\);/);
   assert.match(body, /return \(\) => window\.clearInterval\(timer\);/);
   assert.equal(hub.FIRST_VERSION_POLL_MS, 15000);
@@ -192,13 +192,12 @@ test('nothing being built, or no record yet: no card', () => {
 
 test('"Nothing more to vote on." is a zero on a project nobody else is in', () => {
   const { NothingToVote, hubAlone } = hub;
-  assert.equal(renderToHtml(createElement(NothingToVote, { queue: [], onOpen: () => {}, alone: true })), '');
-  const claims = [{ t: 'card', key: 'r1', kind: 'claim', card: { title: { text: 'Trail maps' } } }];
-  const one = renderToHtml(createElement(NothingToVote, { queue: claims, onOpen: () => {}, alone: true }));
+  assert.equal(renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {}, alone: true })), '');
+  const one = renderToHtml(createElement(NothingToVote, { unclaimed: 1, onOpen: () => {}, alone: true }));
   assert.match(one, /^<p class="dev-ws-week-note" data-ws-hub-needs-none=""><button[^>]*data-ws-hub-needs-requests="">1 request nobody has picked up<\/button><\/p>$/,
-    'a request still waiting is still the way into Needs you');
+    'a request still waiting is still the way to it');
   // A project with people in it: as it was (#3408).
-  assert.equal(renderToHtml(createElement(NothingToVote, { queue: [], onOpen: () => {} })),
+  assert.equal(renderToHtml(createElement(NothingToVote, { unclaimed: 0, onOpen: () => {} })),
     '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
   assert.equal(hubAlone(community()), true, 'Just you');
   assert.equal(hubAlone(community({ audience: 'open', audience_label: 'Public community', member_count: 1 })), true,
@@ -209,8 +208,7 @@ test('"Nothing more to vote on." is a zero on a project nobody else is in', () =
 });
 
 test('Your work on a project nobody else is in: how to change something, or nothing', () => {
-  const { YourWorkCard, hubWorkEmpty } = hub;
-  const props = { slug: 'geneva-hikes', canPost: true, openKey: null, onToggleRow: () => {}, all: false, onAll: () => {}, rows: [] };
+  const { ForYouCard, hubWorkEmpty } = hub;
   const is = (over) => hubWorkEmpty({ alone: true, building: false, startHere: false, readOnly: false, bot: false, ...over });
   assert.equal(is({ alone: false, building: true, startHere: true }), 'plain', 'a project with people in it keeps #3489');
   assert.equal(is({ building: true }), null, 'its first version being built already says what is next');
@@ -223,22 +221,31 @@ test('Your work on a project nobody else is in: how to change something, or noth
   assert.equal(is({ firstWeek: true }), null);
   assert.equal(is({ alone: false, firstWeek: true }), null);
 
-  assert.equal(renderToHtml(createElement(YourWorkCard, { ...props, empty: null })), '');
-  const bot = renderToHtml(createElement(YourWorkCard, { ...props, empty: 'bot' }));
-  assert.match(bot, /^<section class="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">/);
-  assert.match(bot, /data-ws-mine-empty="bot">Nothing in progress\. To change something, tell Homeroom bot\.<\/p>/);
-  assert.match(bot, /<button[^>]*data-ws-mine-bot=""[^>]*>Go to chat<\/button>/);
-  assert.match(bot, /data-ws-mine-bot="" class="rounded-full bg-zinc-100 /, 'a neutral pill: nothing waits on them');
-  const menu = renderToHtml(createElement(YourWorkCard, { ...props, empty: 'menu' }));
-  assert.match(menu, /data-ws-mine-empty="menu">Nothing in progress\. Press <span class="font-medium text-violet-700 dark:text-violet-400">⋯<\/span> to suggest an improvement\.<\/p>/);
+  // The For you card's Your work row says so in those words.
+  const row = (empty, mine = { viewer: true, bot: empty === 'bot', count: 0, shown: 3, rows: [] }) => renderToHtml(createElement(ForYouCard, {
+    slug: 'geneva-hikes', name: 'Geneva hike planner', queue: [], mine, workEmpty: empty, alone: true,
+    data: community(), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {},
+  }));
+  assert.equal(row(null), '', 'nothing to say: no row, and with no vote line nor discussion, no card');
+  const bot = row('bot');
+  assert.match(bot, /<button type="button" class="[^"]*dev-ws-foryou-row[^"]*" data-ws-mine-card="" data-ws-mine-open="bot">/,
+    'the row opens the chat where Homeroom bot builds for you');
+  assert.match(bot, /<span data-ws-mine-empty="bot">Nothing in progress\. To change something, tell Homeroom bot\.<\/span>/);
+  assert.match(read(HUB), /onClick=\{toBot \? \(\) => \{ void openBot\(\); \} : onOpen\}/);
+  const menu = row('menu');
+  assert.match(menu, /data-ws-mine-open="workshop"/);
+  assert.match(menu, /<span data-ws-mine-empty="menu">Nothing in progress\. Press <span class="font-medium text-violet-700 dark:text-violet-400">⋯<\/span> to suggest an improvement\.<\/span>/);
   // A project with people in it: as it was, for the declared check that
   // reads "No work in progress." on Homeroom's own hub.
-  const plain = renderToHtml(createElement(YourWorkCard, { ...props }));
-  assert.match(plain, /<p class="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">No work in progress\.<\/p>/);
+  const plain = row('plain');
+  assert.match(plain, /<span data-ws-mine-empty="">No work in progress\.<\/span>/);
   const declared = JSON.parse(read('dapp.json')).tests
     .find((t) => t.name === 'Hub: Your work stays when nothing is in progress, and says so (#3489)');
   assert.equal(declared.expectText, 'No work in progress.');
   assert.match(declared.path, /#app\/usernode-2d5619\/workshop$/, 'on Homeroom\'s own hub, which has people in it');
+  assert.equal(declared.expectSelector,
+    '#dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-mine-card] [data-ws-mine-empty=""]',
+    'For you\'s Your work row, saying so');
 });
 
 test('the Share it card says what an invite is for while it is being built', () => {
@@ -252,7 +259,7 @@ test('the hub puts the first version under the hero, and stands the start-here p
   const hubTab = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'discussion' ? ("));
   const at = (x) => hubTab.indexOf(x);
   assert.ok(at('<CommunityCard') >= 0 && at('<CommunityCard') < at('<FirstVersionCard')
-    && at('<FirstVersionCard') < at('{startHere ? <StartHereBanner />') && at('<FirstVersionCard') < at('<SinceSummaryCard'),
+    && at('<FirstVersionCard') < at('{startHere ? <StartHereBanner />') && at('<FirstVersionCard') < at('<ForYouCard'),
     'right under the hero, ahead of everything else on the hub');
   assert.match(hubTab, /\{slug \? \(\s*<FirstVersionCard slug=\{slug\} data=\{community\} emoji=\{app\.iconEmoji \|\| null\} onSeePlan=\{\(\) => openTab\('plan'\)\} \/>\s*\) : null\}/);
   // Before its description is filed the board is empty too, and "The first
@@ -260,8 +267,12 @@ test('the hub puts the first version under the hero, and stands the start-here p
   assert.match(LANDER, /const building = !!\(community && community\.first_version\);\s*const startHere = !!\(v\.dashboard && v\.dashboard\.open === 0 && !v\.dashboard\.everShipped\) && !building;/);
   assert.match(hubTab, /\{v\.emptyNote && !building \? \(/, 'nor the no-items note');
   assert.match(LANDER, /const alone = hubAlone\(community\);[\s\S]{0,400}const weekOne = !!\(community && community\.first_week\);\s*const workEmpty = hubWorkEmpty\(\{\s*alone, building, startHere, readOnly: !!actions\.readOnly, bot: !!\(v\.mine && v\.mine\.bot\), firstWeek: weekOne,\s*\}\);/);
-  assert.match(hubTab, /<NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} alone=\{alone \|\| weekOne\} \/>/);
-  assert.match(hubTab, /\{v\.mine && \(v\.mine\.rows\.length \|\| \(v\.mine\.viewer && workEmpty\)\) \? \(\s*<YourWorkCard[\s\S]{0,400}empty=\{workEmpty\}/);
+  // For you takes both: Needs you's quiet line leaves out its zero on a
+  // project nobody else is in or in its first week, and Your work says what
+  // hubWorkEmpty says.
+  assert.match(hubTab, /<ForYouCard[\s\S]{0,200}mine=\{v\.mine\}\s+workEmpty=\{workEmpty\}\s+alone=\{alone \|\| weekOne\}/);
+  assert.match(read(HUB), /: <NothingToVote unclaimed=\{claims\} onOpen=\{onWork\} alone=\{alone\} \/>\}/);
+  assert.match(read(HUB), /if \(!cards\.length && !\(mine\?\.viewer && empty\)\) return null;/, 'Your work for a signed-in viewer, with work or with something to say');
   // The thumbnail's row is app.css's, beside the hub's doors.
   assert.match(read('public/css/app.css'), /\.dev-ws-hub-first-row \{ display: flex; align-items: center; gap: 10px; min-width: 0; \}/);
 });

@@ -137,8 +137,8 @@ test('the swipe votes through answer(), so a No asks for its reason and a dismis
 
 test('only a card the viewer can vote on, on a phone, takes the gesture', () => {
   const can = body(WORKSHOP, 'function canSwipeVote(', '\n}\n');
-  assert.match(can, /row\.kind === 'vote' && !!\(row\.yes && row\.yes\.act\) && !!\(row\.no && row\.no\.act\)/,
-    'a proposal whose Yes and No both vote; an issue or a governance row does not');
+  assert.match(can, /return !!\(row\.yes && row\.yes\.act\) && !!\(row\.no && row\.no\.act\);/,
+    'a proposal whose Yes and No both vote; a governance row, which has no pair here, does not');
   const feed = body(WORKSHOP, 'function NeedsFeed(', '\nfunction GroupStrip(');
   assert.match(feed, /swipe=\{!wide && canSwipeVote\(r\) && !answered\[r\.key\]\}/,
     'marked only below the breakpoint, and not once answered here');
@@ -178,9 +178,8 @@ test('the hints are two aria-hidden stamps, drawn only on a swipeable card', () 
   assert.match(item, /\{swipe \? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">\{approves\(row\) \? t\('project:needsYou\.swipe\.dontApprove'\) : t\('project:needsYou\.swipe\.no'\)\}<\/span> : null\}/);
   assert.deepEqual(['approve', 'yes', 'dontApprove', 'no'].map((key) => message(`project:needsYou.swipe.${key}`)),
     ['Approve', 'Yes', 'Don’t approve', 'No']);
-  // After the caption, so `.dev-ws-item-by + .dev-ws-item-title +
-  // .dev-ws-item-summary ~ .dev-ws-item-caption` (a declared check) still
-  // matches.
+  // After the caption, so the item's reading order (the picture, then the
+  // caption over it, which a declared check walks) is untouched.
   assert.ok(item.indexOf('dev-ws-swipe-hint') > item.indexOf('dev-ws-item-caption'));
 });
 
@@ -232,5 +231,5 @@ test('the declared Needs-you anatomy check also pins that a wide window takes no
   const dapp = JSON.parse(read('dapp.json'));
   const anatomy = dapp.tests.filter((t) => /leads with who and when, then its title, then the sentence a voter reads/.test(t.name));
   assert.equal(anatomy.length, 1);
-  assert.match(anatomy[0].expectSelector, /\[data-ws-item\]\[data-ws-kind="vote"\]:not\(\[data-ws-swipeable\]\) > \.dev-ws-item-by \+ \.dev-ws-item-title/);
+  assert.match(anatomy[0].expectSelector, /\[data-ws-item\]\[data-ws-kind="vote"\]:not\(\[data-ws-swipeable\]\) > \.dev-ws-item-caption > \.dev-ws-item-by \+ \.dev-ws-item-title/);
 });

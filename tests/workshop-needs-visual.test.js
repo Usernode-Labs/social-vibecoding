@@ -1,8 +1,10 @@
 'use strict';
 
-// The Needs-you card as a picture first: who over the title, the run's own
-// outlined screen in place of the summary, the facts as one line, and a
-// Description sheet on the rail for everything the card leaves out.
+// The Needs-you card as a reel: the picture fills it (the run's own outlined
+// screen first), and over its foot the caption — who, the title, the summary
+// in two lines with a "more", the facts as one line. "more" (and D) grows the
+// caption over the picture with what the card leaves out; Comments and Ask
+// share one sheet, a panel beside the card on a wide window.
 //
 // Run with: node --test tests/workshop-needs-visual.test.js
 
@@ -12,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const AppView = require('../public/js/app-view.js');
 const { message } = require('./lib/platform-i18n');
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -96,23 +99,62 @@ test('the feed picture carries the run\'s own screens, numbered as the changes a
 
 test('each owed row carries its description, rendered where the page renders it', () => {
   assert.match(APP_VIEW, /descriptionHtml: x\.kind === 'proposal' \? AppView\._proposalSummaryHtml\(x\.item\) : '',/);
-  assert.match(APP_VIEW, /descriptionHtml: e\.item && e\.item\.body \? AppView\._issueBodyHtml\(e\.item\) : '',/);
+  // Requests are not in the feed, so neither is an issue's body.
+  assert.doesNotMatch(APP_VIEW, /descriptionHtml: e\.item && e\.item\.body/);
 });
 
-test('the card reads who, then the title, then the picture, then one line of facts', () => {
+test('the picture leads and the caption over it reads who, the title, the summary and one line of facts', () => {
   const item = body(WORKSHOP, 'const FeedItem = memo(function FeedItem(', '\n});\n');
-  const order = ['<ItemBy row={row} />', 'className="dev-ws-item-title"', 'className="dev-ws-item-caption"'];
+  // The picture first, then the scrim, then the caption laid over its foot.
+  const order = ['<ShotsPicture', 'className="dev-ws-item-scrim"', 'className="dev-ws-item-caption"'];
   const at = order.map((s) => item.indexOf(s));
-  assert.ok(at.every((x) => x >= 0) && at[0] < at[1] && at[1] < at[2], 'who, then the title, then the caption');
-  // With the run's screens the picture replaces the summary.
+  assert.ok(at.every((x) => x >= 0) && at[0] < at[1] && at[1] < at[2], 'picture, scrim, caption');
+  const caption = item.slice(item.indexOf('className="dev-ws-item-caption"'));
+  const parts = ['<ItemBy row={row} />', 'className="dev-ws-item-title"', "'dev-ws-item-summary-text'", '<FactsLine facts={facts} />'];
+  const pos = parts.map((s) => caption.indexOf(s));
+  assert.ok(pos.every((x) => x >= 0) && pos.every((x, k) => k === 0 || x > pos[k - 1]), 'who, the title, the summary, the facts');
+  // The summary is there whatever the picture is, two lines with its "more".
   assert.match(item, /const shots = !!\(row\.visuals && row\.visuals\.screens && row\.visuals\.screens\.length\);/);
-  assert.match(item, /\{shots \? null : summary \? \(/);
   assert.match(item, /\{shots && row\.visuals \? <ShotsPicture v=\{row\.visuals\} near=\{near\} wide=\{wide\} \/>/);
-  // The facts are one line, and a door to the sheet that has them in full.
-  assert.match(item, /<button type="button" className="dev-ws-item-facts" data-ws-facts="" aria-haspopup="dialog" onClick=\{onDescribe\}>/);
-  assert.doesNotMatch(item, /dev-ws-item-chips/, 'no row of chips on the card');
+  assert.match(CSS, /\.dev-ws-item-summary-text \{[^}]*-webkit-line-clamp: 2;/);
+  assert.match(item, /data-ws-more="" aria-expanded=\{false\} onClick=\{onMore\}/);
+  assert.equal(message('project:needsYou.caption.more'), 'more');
+  // The facts are one line, set apart from the vote's words on a wide window.
+  assert.match(WORKSHOP, /<p className="dev-ws-item-facts" data-ws-facts="">/);
+  assert.doesNotMatch(item, /dev-ws-item-chips|onDescribe/, 'no row of chips, and no Description sheet to open');
   const facts = body(WORKSHOP, 'function factsFor(', '\n}\n');
-  assert.ok(facts.indexOf("key: 'tally'") < facts.indexOf("key: 'state'"), 'where the vote stands comes first');
+  const tally = facts.indexOf("key: 'tally'");
+  assert.ok(tally >= 0 && tally < facts.indexOf("key: 'last'") && facts.indexOf("key: 'last'") < facts.indexOf("key: 'state'"),
+    'where the vote stands comes first, then "your yes puts it live", then the status');
+  // "your yes puts it live" only when exactly one more Yes meets the rule,
+  // and only once the viewer has not answered.
+  assert.match(facts, /if \(!voted && lastYes\(row\)\) out\.push\(\{ key: 'last'/);
+  assert.equal(message('project:needsYou.fact.yourYesPutsItLive'), 'your yes puts it live');
+  assert.match(APP_VIEW, /_yesPutsItLive\(pr\) \{[\s\S]*?if \(pr\.approval_policy === 'invited'\) return false;[\s\S]*?return !!st && st\.majority - st\.yes === 1;/);
+  assert.match(APP_VIEW, /\.\.\.\(x\.kind === 'proposal' && AppView\._yesPutsItLive\(x\.item\) \? \{ lastYes: true \} : \{\}\),/);
+});
+
+test('"more" grows the caption over the picture, with the summary in full, what changes and what it touches', () => {
+  const item = body(WORKSHOP, 'const FeedItem = memo(function FeedItem(', '\n});\n');
+  assert.match(item, /data-ws-open=\{open \? '' : undefined\}/);
+  assert.match(item, /\{row\.descriptionHtml \? <Html className="dev-ws-item-words" html=\{row\.descriptionHtml\} \/>/);
+  assert.match(item, /<h3 className="dev-ws-item-part-head">\{t\('project:needsYou\.caption\.whatChanges'\)\}<\/h3>/);
+  assert.match(item, /\{open && said \? <p className="dev-ws-item-touched">\{said\}<\/p> : null\}/);
+  assert.match(item, /className="dev-ws-item-less" data-ws-less="" aria-expanded onClick=\{onMore\}/);
+  assert.equal(message('project:needsYou.caption.less'), 'less');
+  // Open, the caption scrolls and the picture is dimmed under it.
+  assert.match(CSS, /\.dev-ws-item\[data-ws-open\] > \.dev-ws-item-caption \{\s*overflow-y: auto;/);
+  assert.match(CSS, /\.dev-ws-item\[data-ws-open\] > \.dev-ws-item-scrim \{[^}]*background: rgba\(0, 0, 0, \.62\);/);
+  // One toggle for "more", "less", a tap on a drawn picture and the D key;
+  // the next item arrives folded.
+  assert.match(WORKSHOP, /const toggleMore = useCallback\(\(\) => setCaptionOpen\(\(o\) => !o\), \[\]\);/);
+  assert.match(WORKSHOP, /if \(k === 'd' \|\| k === 'D'\) \{ toggleMore\(\); return; \}/);
+  assert.match(WORKSHOP, /if \(c !== i\) setCaptionOpen\(false\);/);
+  assert.match(WORKSHOP, /open=\{k === i && captionOpen\}/);
+  // What it touches, said as the picture says it to a screen reader.
+  const touches = read('frontend/src/features/dev-board/workshop/touches.tsx');
+  assert.match(touches, /export function touchesSaid\(t: Touches, nothingVisible = false\): string \{/);
+  assert.match(touches, /aria-label=\{touchesSaid\(t, nothingVisible\)\}/);
 });
 
 test('the switch sits above the picture, never on it', () => {
@@ -128,8 +170,13 @@ test('the switch sits above the picture, never on it', () => {
   };
   assert.doesNotMatch(rule('.dev-ws-seg'), /position: absolute/);
   assert.doesNotMatch(rule('.dev-ws-media-full'), /position: absolute/);
-  assert.match(rule('.dev-ws-media-bar'), /margin: 0 74px 8px 0;/, 'clear of the rail on a phone');
-  assert.match(rule('.dev-ws-item-facts'), /white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/);
+  assert.match(rule('.dev-ws-media-bar'), /margin: 0 14px 8px;/, 'the picture runs edge to edge under it');
+  // The facts wrap to a second line rather than losing their end (the topic
+  // is last), at every width.
+  assert.match(rule('.dev-ws-item-facts'), /white-space: normal; overflow-wrap: anywhere;/);
+  assert.doesNotMatch(rule('.dev-ws-item-facts'), /nowrap|text-overflow|overflow: hidden/);
+  const wideBlock = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS)[1];
+  assert.doesNotMatch(wideBlock, /\.dev-ws-item-facts[^{]*\{[^}]*(nowrap|text-overflow)/, 'nor on a wide window');
 });
 
 test('the picture is the reader\'s own screen size, cropped to the run\'s outlines', () => {
@@ -143,33 +190,90 @@ test('the picture is the reader\'s own screen size, cropped to the run\'s outlin
   // Tapping the picture flips it, from the keyboard too.
   assert.match(shotsPic, /onClick=\{flip\}/);
   assert.match(shotsPic, /if \(e\.key === ' ' \|\| e\.key === 'Enter'\) \{ e\.preventDefault\(\); flip\(\); \}/);
-  // Only the changes this screen shows are listed under it.
-  assert.match(shotsPic, /const changes = \(v\.changes \|\| \[\]\)\.filter\(\(c\) => shown\.has\(c\.n\)\);/);
+  // The changes its numbers stand for are the caption's "more", not a list
+  // under the picture, which the caption lies over now.
+  assert.doesNotMatch(shotsPic, /dev-ws-shot-changes/);
+  assert.match(WORKSHOP, /const changes = row\.visuals && row\.visuals\.changes \? row\.visuals\.changes : \[\];/);
 });
 
-test('Description is on the rail, second, with its key and its sheet', () => {
-  const rail = body(WORKSHOP, '<aside className="dev-ws-rail" data-ws-rail="" aria-label={t(\'project:needsYou.rail.label\')} ref={railRef}>', '</aside>');
-  const at = ['data-ws-rail-btn="vote"', 'data-ws-rail-btn="description"', 'data-ws-rail-btn="comments"'].map((s) => rail.indexOf(s));
-  assert.ok(at[0] < at[1] && at[1] < at[2], 'after Vote, before Comments');
-  assert.match(rail, /onClick=\{\(\) => toggleSheet\('description'\)\}/);
-  assert.match(rail, /<DescriptionIcon aria-hidden="true" \/>/);
-  assert.match(WORKSHOP, /if \(k === 'd' \|\| k === 'D'\) \{ toggleSheet\('description'\); return; \}/);
-  assert.match(WORKSHOP, /keys\.push\(\s*\{ id: 'project:needsYou\.keys\.description', keys: 1 \},/);
-  assert.equal(message('project:needsYou.keys.description'), '<0>D</0> description');
-  const sheet = body(WORKSHOP, '<div className="dev-ws-sheet-modal dev-ws-sheet-description"', '\n      ) : null}');
-  assert.match(sheet, /<Html className="dev-ws-desc-body" html=\{row\.descriptionHtml\} \/>/);
-  assert.match(sheet, /<h4 className="dev-ws-desc-head">\{t\('project:needsYou\.description\.whatChanges'\)\}<\/h4>/);
-  assert.equal(message('project:needsYou.description.whatChanges'), 'What changes');
-  assert.match(sheet, /<ItemBy row=\{row\} \/>/);
-  assert.match(sheet, /className=\{chipTone\(f\.tone\)\}/, 'the facts in full, as chips');
-  // A panel beside the rail on a wide window, like Ask and the comments.
-  assert.match(CSS, /\.dev-ws-sheet-ask, \.dev-ws-sheet-comments, \.dev-ws-sheet-description \{\s*position: relative;/);
-  assert.match(read('frontend/@/components/ui/icons.tsx'), /export const DescriptionIcon = stroked\('DescriptionIcon', 'M4 6h16M4 12h16M4 18h10'\);/);
+test('Description left the rail: Vote, Comments, Ask, Try it, More, and one sheet for Comments and Ask', () => {
+  const rail = body(WORKSHOP, '<aside className="dev-ws-rail" data-ws-rail="" aria-label={t(\'project:needsYou.rail.label\')}>', '</aside>');
+  const order = ['vote', 'comments', 'ask', 'try', 'more'].map((k) => rail.indexOf(`data-ws-rail-btn="${k}"`));
+  assert.ok(order.every((x) => x >= 0) && order.every((x, k) => k === 0 || x > order[k - 1]), 'in that order');
+  assert.ok(!/data-ws-rail-btn="description"|DescriptionIcon|data-ws-rail-btn="take"/.test(WORKSHOP), 'no Description, no Take it');
+  assert.ok(!/dev-ws-sheet-description|data-ws-description/.test(WORKSHOP + CSS), 'and no Description sheet');
+  // Comments shows its count when there are comments, and says it in words.
+  assert.match(rail, /\{commentCount \? String\(commentCount\) : t\('project:needsYou\.rail\.comments'\)\}/);
+  assert.equal(message('project:needsYou.rail.commentsCount', { count: 2 }), '2 comments');
+  // The legend lists the rail's keys, in its order.
+  const legend = body(WORKSHOP, 'function legendFor(', '\n}\n');
+  const keys = ['move', 'vote', 'comments', 'ask', 'tryIt', 'more'].map((k) => legend.indexOf(`'project:needsYou.keys.${k}'`));
+  assert.ok(keys.every((x) => x >= 0) && keys.every((x, k) => k === 0 || x > keys[k - 1]));
+  assert.doesNotMatch(legend, /keys\.description/);
+  // ONE sheet, two tabs: its kind is the tab, so switching keeps it up, and
+  // the lit button pressed again closes it.
+  const sheet = body(WORKSHOP, '<div className="dev-ws-sheet-modal dev-ws-sheet-talk"', '\n      ) : null}');
+  assert.match(WORKSHOP, /const talk = shown === 'comments' \|\| shown === 'ask';/);
+  assert.match(sheet, /data-ws-sheet=\{shown\}/);
+  assert.match(sheet, /data-ws-talk-tab="comments"\s*aria-selected=\{shown === 'comments'\}\s*onClick=\{\(\) => setSheet\('comments'\)\}/);
+  assert.match(sheet, /data-ws-talk-tab="ask"\s*aria-selected=\{shown === 'ask'\}\s*onClick=\{\(\) => setSheet\('ask'\)\}/);
+  assert.match(WORKSHOP, /const toggleSheet = \(kind: SheetKind\) => \{\s*if \(sheet === kind\) \{ closeSheet\(\); return; \}/);
+  assert.equal(message('project:needsYou.talk.ask'), 'Ask', 'Ask, not "Ask the bot": it is a model, not Homeroom bot');
+  assert.ok(!/the bot/i.test(message('project:needsYou.talk.ask')));
+  // Both tabs stay mounted while it is up; the legacy host stays constant
+  // and empty, and the thread and the ask box are the same components.
+  assert.match(sheet, /<div className="dev-ws-sheet-body" data-ws-comments="" role="tabpanel" hidden=\{shown !== 'comments'\} ref=\{commentsRef\}>/);
+  assert.match(sheet, /<div className="dev-feed-comments" data-comments-for=\{row\.commentsFor\} \/>/);
+  assert.match(sheet, /<FeedThread slug=\{rowSlug\(row, slug\)\} type=\{row\.thread\.type\} refId=\{row\.thread\.ref\} canPost=\{canPost\} \/>/);
+  assert.match(sheet, /<div className="dev-ws-ask" data-ws-ask="" role="tabpanel" hidden=\{shown !== 'ask'\}>/);
+  // The wide panel repeats the card's caption at its top, and the card keeps
+  // only its by-line while the panel is up.
+  assert.match(sheet, /<div className="dev-ws-talk-head" data-ws-talk-head="">\s*<ItemBy row=\{row\} \/>/);
+  assert.match(CSS, /\.dev-ws-needs:is\(\[data-ws-sheet="comments"\], \[data-ws-sheet="ask"\]\) \.dev-ws-item-caption > :not\(\.dev-ws-item-by\) \{ display: none; \}/);
+  assert.match(CSS, /\.dev-ws-talk > \[role="tabpanel"\]\[hidden\] \{ display: none; \}/);
 });
 
-test('the deck\'s top by-line does not move the change page\'s', () => {
-  // The change page's hero reuses `.dev-ws-item-by`; the deck's rules are
-  // scoped to the item.
-  assert.match(CSS, /\n\.dev-ws-item > \.dev-ws-item-by \{ margin: 14px 74px 0 0; \}/);
-  assert.doesNotMatch(CSS, /\n\.dev-ws-item-by \{[^}]*margin: 14px/);
+test('the by-line is the caption\'s, in white on the card and in the page\'s ink in the panel', () => {
+  assert.match(CSS, /\n\.dev-ws-item-caption \.dev-ws-item-avatar \{ box-shadow: 0 0 0 2px rgba\(255, 255, 255, \.9\); \}/);
+  assert.match(CSS, /\n\.dev-ws-item:not\(\.dev-ws-needs-done\) \{\n  --text-primary: #fff;/, 'the card is a dark scheme of its own');
+});
+
+test('a change with no picture at all is led by its words, with nothing drawn in the picture\'s place', () => {
+  const item = body(WORKSHOP, 'const FeedItem = memo(function FeedItem(', '\n});\n');
+  // Nothing to draw: no verified shots, no diagram, no capture pair and no
+  // "What it touches".
+  assert.match(item, /const pictureless = !shots && !row\.visuals && picture\.kind === 'none';/);
+  assert.match(item, /data-ws-picture=\{pictureless \? 'none' : undefined\}/);
+  assert.match(item, /: <div className="dev-ws-item-spacer" aria-hidden="true" \/>\}/, 'only the empty spacer, no placeholder art');
+  // The same caption and classes (the declared anatomy check walks them),
+  // set in the middle of the card in a larger size, the summary running to
+  // eight lines on a phone and ten on a wide window before "more".
+  assert.match(CSS, /\n\.dev-ws-item\[data-ws-picture="none"\] > \.dev-ws-item-caption \{ top: 56px; \}/);
+  assert.match(CSS, /\n\.dev-ws-item\[data-ws-picture="none"\] > \.dev-ws-item-caption > :first-child \{ margin-top: auto; \}/);
+  assert.match(CSS, /\n\.dev-ws-item\[data-ws-picture="none"\] > \.dev-ws-item-caption > :last-child \{ margin-bottom: auto; \}/);
+  assert.match(CSS, /\n\.dev-ws-item\[data-ws-picture="none"\] \.dev-ws-item-summary-text \{[^}]*-webkit-line-clamp: 8; \}/);
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS)[1];
+  assert.match(wide, /\.dev-ws-item\[data-ws-picture="none"\] \.dev-ws-item-summary-text \{[^}]*-webkit-line-clamp: 10; \}/);
+  // "more" only when there is more: the clamp cut the words short, or there
+  // are declared changes or touches behind them. The rendered description is
+  // the summary's own words, so it is not "more" by itself.
+  assert.match(item, /const behind = !!\(changes\.length \|\| said\);/);
+  assert.match(item, /const canMore = behind \|\| clamped;/);
+
+  // Rendered: the attribute is on a row with nothing to draw, and not on one
+  // whose author drew a diagram.
+  const { NeedsFeed } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const row = (key, extra = {}) => ({
+    t: 'card', key, kind: 'vote', ask: 'Should this change go in?', summary: 'A sentence a voter reads.',
+    card: { key, attrs: { 'data-proposal-row': '1' }, title: { text: key, title: '' }, pill: null, badges: [], chatCount: null,
+      rail: { menuKey: '', preview: null }, actionPreview: null },
+    yes: null, no: null, visuals: null, ...extra,
+  });
+  const html = renderToHtml(createElement(NeedsFeed, {
+    rows: [row('bare'), row('drawn', { diagram: { version: 1, kind: 'rename', from: 'spec', to: 'plan', places: [] } })],
+    models: { list: [], selected: null }, slug: 'demo', canPost: true, onDone() {},
+  }));
+  assert.match(html, /data-ws-item="bare"[^>]*data-ws-picture="none"/);
+  assert.doesNotMatch(/<section[^>]*data-ws-item="drawn"[^>]*>/.exec(html)[0], /data-ws-picture/);
+  assert.match(html, /data-ws-item="bare"[\s\S]*?<div class="dev-ws-item-spacer" aria-hidden="true"><\/div>[\s\S]*?<div class="dev-ws-item-caption"><p class="dev-ws-item-by">/);
 });

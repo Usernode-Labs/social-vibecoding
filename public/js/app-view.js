@@ -1273,12 +1273,10 @@ const AppView = {
       if (shot === 'themes') {
         AppView._workshopShot = 'themes';
       }
-      // `?shot=mine-session` unfolds the viewer's own session in "What you
-      // are working on" — the state the #1887 check reads: a card about your
-      // own session opens as the CARD, with the session a link inside it,
-      // rather than as the session. Only that strip has the row and only an
-      // unfolded row has the link, so this is the URL that reaches it (see
-      // _workshopView's autoExpand).
+      // `?shot=mine-session` leads the viewer's work with their own session
+      // — the state the #1887 check reads: the hub's Your work row names it,
+      // and opens the Workshop, whose row opens the change's page rather than
+      // the session (see _workshopView's `mine`).
       if (shot === 'mine-session') {
         AppView._workshopShot = 'mine-session';
       }
@@ -10435,6 +10433,41 @@ const AppView = {
     return null;
   },
 
+  // RECENTLY LIVE, the hub's last section: the newest few changes that
+  // merged, newest first, from the Completed stream the board already loaded
+  // (`_merged`, GET /api/apps/:slug/merged; an applied close-issue proposal is
+  // a decision, not a change, so it is left out). Each carries its after
+  // still from its before & after shots (`_workshopVisuals`, the Needs-you
+  // feed's own reading of them; a merged row carries no "What it touches",
+  // so without one the card draws a plain tile), and who made it and when
+  // it went live — or that it is going live now: merged,
+  // and production has not run it yet (its rollout pending, or `live_at`
+  // null; a row without the field reads live, as the dashboard's count reads
+  // it). One whose rollout failed or stalled has not gone live, and its page
+  // says so (`_topicHeroView`), so it is not one of these.
+  _workshopRecentLive(limit = AppView.WORKSHOP_RECENT_LIVE_MAX) {
+    const rows = (Array.isArray(AppView._merged) ? AppView._merged : [])
+      .filter((m) => m && m.row_type !== 'close_issue' && m.id != null
+        && m.deployment_state !== 'failed' && m.deployment_state !== 'stalled')
+      .slice(0, limit);
+    return rows.map((m) => {
+      const pictures = AppView._workshopVisuals(null, m.shots || null);
+      const dep = m.deployment_state;
+      const going = dep === 'pending' || dep === 'deploying' || (dep !== 'deployed' && m.live_at === null);
+      const raw = AppView._devCardAuthor('merged', m);
+      return {
+        key: `live:${m.id}`,
+        sessionId: Number(m.id),
+        prNumber: m.pr_number != null ? Number(m.pr_number) : null,
+        title: String(m.pr_title || m.session_title || ''),
+        who: AppView._botBuilt(m) ? PlatformI18n.t('changes:workshop.row.byBot') : (raw || null),
+        at: going ? null : (m.live_at || m.merged_at || m.created_at || null),
+        going,
+        picture: pictures && pictures.after ? pictures.after : null,
+      };
+    });
+  },
+
   // The first before/after capture pair, as the Needs-you feed's picture.
   // `visuals` is the server shape visualsTilesHtml reads — the grouped form
   // or the legacy flat one — and this keeps only what the feed draws: one
@@ -10795,6 +10828,8 @@ const AppView = {
   // The viewer's own work in flight. Same cap and the same reveal-in-place
   // as the vote strip: this is a reminder, not an inbox.
   WORKSHOP_MINE_MAX: 3,
+  // The hub's Recently live: its picture cards, newest first.
+  WORKSHOP_RECENT_LIVE_MAX: 3,
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
   // Rows of the SAME list from before the baseline — what the reader has
@@ -11315,6 +11350,28 @@ const AppView = {
     return top.name;
   },
 
+  // WHERE MOST OF THE OPEN WORK IS (After-Workshop-B): the Workshop's
+  // Overview names the categories with the most open work, as chips under
+  // its figures. Open work is what the "open items" figure counts: open,
+  // underway and in review. Over EVERY category the app has, not the ones
+  // All items' search left standing (#2915), because the Overview is about
+  // the app; a category with none is not named, and ties keep the
+  // grouping's own order (a project's topics first). Each carries its
+  // topic, whose chip is the way into its channel.
+  WORKSHOP_OPEN_THEMES_MAX: 4,
+  _workshopOpenThemes(themes) {
+    return (themes || [])
+      .filter((t) => t && !t.ungrouped)
+      .map((t, i) => {
+        const c = t.counts || {};
+        return { t, i, open: (c.open || 0) + (c.underway || 0) + (c.review || 0) };
+      })
+      .filter((x) => x.open > 0)
+      .sort((a, b) => (b.open - a.open) || (a.i - b.i))
+      .slice(0, AppView.WORKSHOP_OPEN_THEMES_MAX)
+      .map(({ t, open }) => ({ id: t.id, name: t.name, open, topic: t.topic || null }));
+  },
+
   /**
    * The topic body for one card, for the Workshop to draw UNDER that card
    * without leaving the lander (#1787 round four).
@@ -11340,7 +11397,7 @@ const AppView = {
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
     const empty = {
       votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
-      since: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [],
+      since: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [], recentLive: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
         lastError: null, digestError: null, coverage: null, placing: 0, filtered: false,
@@ -11530,8 +11587,13 @@ const AppView = {
     // #2182: the strip stays on screen when there is nothing in it, so the
     // pane's shape does not change with the viewer's workload. `viewer` is
     // what the empty strip is drawn on: a guest has no work to have none of.
-    // `?shot=mine-empty` empties it on purpose, for the declared check.
-    const mineList = AppView._workshopShot === 'mine-empty' ? [] : mineItems;
+    // `?shot=mine-empty` empties it on purpose, for the declared check, and
+    // `?shot=mine-session` leads it with the viewer's own sessions, the row
+    // the hub's Your work then names (#1887's check).
+    const mineList = AppView._workshopShot === 'mine-empty' ? []
+      : AppView._workshopShot === 'mine-session'
+        ? mineItems.filter((x) => x.kind === 'my-session').concat(mineItems.filter((x) => x.kind !== 'my-session'))
+        : mineItems;
     const mine = {
       viewer: meId != null,
       // Homeroom bot builds requests here for this viewer: the empty strip
@@ -11605,7 +11667,6 @@ const AppView = {
         who: AppView._devCardAuthor(kind, item) || null,
         ago: AppView._workshopAgo(item && (item.promoted_at || item.created_at)),
         number: item && (item.pr_number || item.id) != null ? Number(item.pr_number || item.id) : null,
-        body: null,
         // A change not yet up for a vote shows its before & after shots
         // too, and never a legacy capture.
         visuals: kind === 'proposal'
@@ -11844,6 +11905,8 @@ const AppView = {
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
       busiest: AppView._busiestTheme(named),
+      // Where most of the open work is: the Overview's chips.
+      openThemes: AppView._workshopOpenThemes(named),
       // The model's three windowed lines, when there are any: the Workshop
       // draws them as cards. The flattened paragraph below is what a row
       // written under the previous digest prompt still has, and the derived
@@ -11892,19 +11955,19 @@ const AppView = {
 
     // ── The Needs-you queue ──
     //
-    // One ordered list of QUESTIONS, which is what that tab answers: the
-    // proposals owed a vote first, then the issues nobody has claimed. The
-    // unclaimed used to be a lane on the status tab, alone under a heading
-    // that covered nothing else; they are the back of this queue now,
-    // because "will you take this?" is the same shape of ask as "should
-    // this go in?" — one card, one question, three answers.
+    // One ordered list of DECISIONS, which is what that tab answers: the
+    // changes and group decisions owed this viewer's vote, and nothing else.
+    // The requests nobody has picked up used to be the back of this queue
+    // ("will you take this?"), but a request is the group's to pick up, not
+    // the viewer's to answer: the feed is a review of what other people
+    // submitted, and its end card says how the votes went. The requests are
+    // counted (`dashboard.unclaimed`) and offered (`nextUp`) where the work
+    // is, on the Hub's line and the Workshop.
     //
     // Each row carries the question and what Yes and No DO, so the deck
     // renders buttons rather than deciding policy. A proposal's pair comes
     // from `_cardVoteButtonSpecs`, which keeps the reviewed-head revision
-    // argument the server checks. An issue has no claim API, so Yes opens
-    // it — the same thing tapping the row has always done — and No records
-    // nothing beyond moving on, which is stated rather than implied.
+    // argument the server checks.
     const queue = [];
     for (const x of owed) {
       const card = x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item);
@@ -11914,7 +11977,7 @@ const AppView = {
       queue.push({
         ...(voteRow(card, x.item, x.kind) || {}),
         kind: 'vote',
-        // The Description sheet's body: the summary as its own page renders
+        // The expanded caption's body: the summary as its own page renders
         // it (sanitised where it is built), for a proposal that has one.
         descriptionHtml: x.kind === 'proposal' ? AppView._proposalSummaryHtml(x.item) : '',
         ask: PlatformI18n.t('changes:workshop.queue.voteAsk'),
@@ -11922,33 +11985,9 @@ const AppView = {
         // item says Approve / Don't approve, as its card does.
         yes: yes ? { label: yes.label, tally: yes.tally, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
         no: no ? { label: no.label, tally: no.tally, act: no.act } : null,
-      });
-    }
-    for (const e of idle.slice(0, AppView.WORKSHOP_LANE_MAX)) {
-      const n = e.item && e.item.number;
-      queue.push({
-        ...e.row,
-        key: `need:${e.row.key}`,
-        kind: 'claim',
-        summary: null,
-        askAbout: n != null ? { kind: 'issue', ref: n } : null,
-        who: AppView._devCardAuthor('issue', e.item) || null,
-        ago: AppView._workshopAgo(e.item && (e.item.createdAt || e.item.created_at)),
-        number: n != null ? Number(n) : null,
-        // The issue's own words, as the line under its title. Plain text:
-        // the feed sets it as a sentence, not as a document.
-        body: AppView._workshopExcerpt(e.item && e.item.body),
-        // And the whole of them, rendered, for the Description sheet.
-        descriptionHtml: e.item && e.item.body ? AppView._issueBodyHtml(e.item) : '',
-        visuals: null,
-        // TWO ANSWERS, NOT THREE. "No" and "Skip" were the same press wearing
-        // two labels: neither recorded anything, both moved the deck on, and
-        // offering them side by side asked the reader to tell apart a
-        // distinction the app does not make. Skip is the honest one — it says
-        // "not now" without implying the app filed a preference.
-        ask: PlatformI18n.t('changes:workshop.queue.claimAsk'),
-        yes: n ? { label: PlatformI18n.t('changes:workshop.queue.claimYes'), act: { fn: 'openTopic', args: ['issue', n] } } : null,
-        no: null,
+        // The facts line's "your yes puts it live", and the end card's "Your
+        // yes put it over the line": exactly one more Yes meets the rule.
+        ...(x.kind === 'proposal' && AppView._yesPutsItLive(x.item) ? { lastYes: true } : {}),
       });
     }
 
@@ -11994,15 +12033,6 @@ const AppView = {
       // folded — which is the state the lanes check is about.
       const first = drawn.find((t) => t.lanes.some((l) => l.rows.length));
       if (first) autoExpand = { theme: first.id, key: '' };
-    } else if (AppView._workshopShot === 'mine-session') {
-      // The viewer's own session in "What you are working on", unfolded
-      // (#1887). `theme` is the row's SCOPE, and the strip's is `mine` — the
-      // key the Workshop's toggleRow files it under. Among the rows the strip
-      // draws before "N more of yours", so the link cannot name a row that
-      // is not on screen.
-      const r = mine.rows.slice(0, mine.shown)
-        .find((row) => row.t === 'card' && row.card.attrs && row.card.attrs['data-session-chip']);
-      if (r) autoExpand = { theme: 'mine', key: r.key };
     }
 
     // The BOARD holding nothing, which no search can cause: `entries` is
@@ -12033,6 +12063,9 @@ const AppView = {
       mine,
       since,
       dashboard,
+      // The hub's Recently live: the newest changes that merged, each with
+      // its after shot when the checks took one.
+      recentLive: AppView._workshopRecentLive(),
       nextUp,
       nextMore,
       discussion,
@@ -15879,6 +15912,34 @@ const AppView = {
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
       },
     ];
+  },
+
+  // The Needs-you card's "your yes puts it live" (and the end card's "Your
+  // yes put it over the line"): exactly one more Yes meets the change's rule,
+  // and this viewer's Yes is one that counts. False wherever that is not
+  // known: on a project where only invited approvers' votes count (this
+  // viewer's may be advisory), and for a vote recorded but not counted.
+  _yesPutsItLive(pr) {
+    if (!pr || pr.status !== 'promoted' || pr.my_vote || pr.my_vote_uncounted === true || AppView.readOnly) return false;
+    if (AppView._approveSolo(pr)) return true;
+    if (pr.approval_policy === 'invited') return false;
+    const st = AppView.statusPillState(pr);
+    return !!st && st.majority - st.yes === 1;
+  },
+
+  // Where a change the viewer just voted on in the Needs-you feed stands
+  // NOW, for the end card's "What your votes did": read off the board rows
+  // the vote's own refresh brought back (a merged change is in the merged
+  // list), as its pill reads it. `key` is the pill's state (`merging`,
+  // `deploying`, `merged`, `deployed`, …), its words (`label`), the Yes votes
+  // that count (`yes`) and the rule's number (`majority`). Null for anything
+  // not loaded here, such as another project's change on the Communities
+  // screen.
+  _needsOutcome(kind, id) {
+    if (kind !== 'proposal') return null;
+    const item = AppView._findItem('proposal', Number(id));
+    const st = item ? AppView.statusPillState(item) : null;
+    return st ? { key: st.key, label: st.label || '', yes: Number(st.yes) || 0, majority: Number(st.majority) || 1 } : null;
   },
 
   // Everything a proposal card demoted off its face, as ⋯ descriptors.

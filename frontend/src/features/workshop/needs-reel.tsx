@@ -7,8 +7,8 @@
  * src/routes/workshop-overview.js), each item naming the project it belongs
  * to. It used to draw its own cards (a Yes and a No at the foot of each, a
  * link to read the rest), so the two Needs you screens looked and answered
- * differently: the project's had the rail (Vote, Description, Comments, Ask,
- * Try it, More), the vote sheet, the swipe, the keys and the end card, and
+ * differently: the project's had the rail (Vote, Comments, Ask, Try it,
+ * More), the vote sheet, the swipe, the keys and the end card, and
  * this one had none of them. Now the rows are adapted here and drawn by the
  * project's own `NeedsFeed` (dev-board/workshop/workshop.tsx), so the two
  * cannot drift apart again.
@@ -18,8 +18,9 @@
  * A CHANGE is voted from the vote sheet with the platform's own vote
  * (AppView.castVote), carrying the approval epoch the server checks (#2038),
  * asking for a line on a No the way every vote does, and turning a
- * membership refusal into Join through the fetch wrapper. Description,
- * Comments and Ask are the project's own, addressed to the row's project.
+ * membership refusal into Join through the fetch wrapper. The caption's
+ * "more", Comments and Ask are the project's own, addressed to the row's
+ * project.
  * A GROUP DECISION (a rename, a secret, closing a request) is decided on its
  * own page, where its options and consequences are shown: those votes can
  * apply the decision on the spot, and that belongs on the screen that
@@ -91,7 +92,7 @@ type FeedRow = DevWorkshopView['queue'][number];
 /**
  * A proposal's summary is Markdown written for its own page. On the item it
  * is a paragraph: headings, emphasis, code ticks and list markers go, a link
- * keeps its words, and the whitespace collapses. The Description sheet has
+ * keeps its words, and the whitespace collapses. The caption's "more" has
  * it rendered.
  */
 export function plainSummary(md: string | null | undefined): string {
@@ -113,7 +114,7 @@ export function plainSummary(md: string | null | undefined): string {
  * the epoch, and on a project that is just yours the Yes marked `approve`, so
  * the item says Approve and Don't approve as its card does, #4270); a group
  * decision has none, and the vote sheet opens its page.
- * `html` renders a summary for the Description sheet (DevChat's renderer,
+ * `html` renders a summary for the caption's "more" (DevChat's renderer,
  * through AppView, where it is loaded).
  */
 export function reelRows(
@@ -156,7 +157,6 @@ export function reelRows(
       who: item.author || null,
       ago: item.at ? agoStamp(item.at).text : '',
       number: item.number,
-      body: null,
       summary,
       descriptionHtml: item.summary ? html(item.summary) : '',
       visuals: feedVisuals(item),
@@ -239,7 +239,6 @@ export function NeedsReel({ items, error, capped, onDone }: {
       <div className="workshop-needs-feed" data-needs-reel="">
         <NeedsFeed
           rows={rows}
-          total={rows.length}
           models={models}
           slug=""
           canPost
