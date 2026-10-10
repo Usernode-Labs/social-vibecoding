@@ -4450,5 +4450,97 @@
   "topic.request.shots.showComments": {
     "text": "Show comments",
     "description": "Small button on the corner of a screenshot in a request, while the several comments pinned to the picture are hidden: draws them over the picture again."
+  },
+  "touches.kicker": {
+    "text": "What it touches",
+    "description": "Small label at the top of the picture a change's card shows when it has no before and after shots: which parts of the project the change touches, drawn from its files."
+  },
+  "touches.files.none": {
+    "text": "none",
+    "description": "Beside an area of the project in the \"What it touches\" picture, when the change touches no file in it."
+  },
+  "touches.files.count_one": {
+    "text": "{{count}} file",
+    "description": "Beside an area of the project in the \"What it touches\" picture: how many of the change's files are in it."
+  },
+  "touches.files.count_other": {
+    "text": "{{count}} files",
+    "description": "Beside an area of the project in the \"What it touches\" picture: how many of the change's files are in it."
+  },
+  "touches.area.screens": {
+    "text": "Screens",
+    "description": "Area of a project in the \"What it touches\" picture: the screens people see (its interface code)."
+  },
+  "touches.area.server": {
+    "text": "Server",
+    "description": "Area of a project in the \"What it touches\" picture: its server code."
+  },
+  "touches.area.database": {
+    "text": "Database",
+    "description": "Area of a project in the \"What it touches\" picture: its database schema and data."
+  },
+  "touches.area.tests": {
+    "text": "Tests",
+    "description": "Area of a project in the \"What it touches\" picture: its automated tests."
+  },
+  "touches.area.docs": {
+    "text": "Docs",
+    "description": "Area of a project in the \"What it touches\" picture: its documentation."
+  },
+  "touches.area.other": {
+    "text": "Other",
+    "description": "Area of a project in the \"What it touches\" picture: files that belong to none of the other areas."
+  },
+  "touches.area.withFiles": {
+    "text": "{{area}}, {{files}}",
+    "description": "One area in the spoken description of the \"What it touches\" picture. {{area}} is the area's name (Screens, Server…) and {{files}} how many files, for example \"Server, 2 files\"."
+  },
+  "touches.areas.pair": {
+    "text": "{{first}}; {{second}}",
+    "description": "How the areas are joined in the spoken description of the \"What it touches\" picture, for example \"Server, 2 files; Tests, 1 file\". {{first}} is everything said so far and {{second}} the next area. Only the punctuation is translated."
+  },
+  "touches.label": {
+    "text": "What it touches. {{areas}}.",
+    "description": "What a screen reader says for the \"What it touches\" picture on a change's card: the parts of the project the change touches. {{areas}} lists them, for example \"Server, 2 files; Tests, 1 file\"."
+  },
+  "touches.labelNothingVisible": {
+    "text": "{{said}} Nothing on screen changes.",
+    "description": "The spoken description of the \"What it touches\" picture when the change's author declared that nothing on screen changes. {{said}} is the description that comes first (\"What it touches. Server, 2 files.\")."
+  },
+  "touches.footNothingVisible": {
+    "text": "Nothing on screen changes · drawn from the change’s files",
+    "description": "Line under the \"What it touches\" picture when the change's author declared that nothing on screen changes; it also says the picture was drawn from the change's files."
+  },
+  "menu.topics.title": {
+    "text": "Topics",
+    "description": "Row in a project's + menu that opens its topics: its lasting conversations, each a channel and a category requests are filed under."
+  },
+  "menu.topics.sub": {
+    "text": "The project's channels, and the categories requests are filed under",
+    "description": "Second line of the Topics row in a project's + menu, saying what topics are."
+  },
+  "discussion.topic.none": {
+    "text": "This project has no #{{handle}} channel.",
+    "description": "Shown on a project's page when a link names a topic channel the project does not have. {{handle}} is the channel's short name, shown after #."
+  },
+  "discussion.topic.mergedInto": {
+    "text": "#{{handle}} was merged into #{{into}}. Its history stays here to read.",
+    "description": "Notice under a topic channel that was merged into another, in place of the message box. {{handle}} is this channel's short name and {{into}} the one it joined, each shown after #."
+  },
+  "discussion.topic.mergedIntoAnother": {
+    "text": "#{{handle}} was merged into another topic. Its history stays here to read.",
+    "description": "Notice under a topic channel that was merged into another one that can no longer be found, in place of the message box. {{handle}} is this channel's short name, shown after #."
+  },
+  "discussion.topic.archived": {
+    "text": "#{{handle}} is archived. Its history stays here to read.",
+    "description": "Notice under an archived topic channel, in place of the message box. {{handle}} is the channel's short name, shown after #."
+  },
+  "discussion.topic.joinToPost": {
+    "text": "Join this community to post here.",
+    "description": "Notice under a topic channel for someone who has not joined the project's community, in place of the message box."
+  },
+  "discussion.topic.placeholder": {
+    "text": "Message #{{handle}}",
+    "description": "Placeholder in the message box of a project's topic channel. {{handle}} is the channel's short name, shown after #."
   }
 }

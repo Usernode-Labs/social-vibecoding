@@ -394,7 +394,8 @@ test('Settings & rules has a Topics row that opens the Topics dialog', () => {
   assert.ok(at > FRAME_SRC.indexOf('data-plus="rename"') && at < FRAME_SRC.indexOf('data-plus="secrets"'),
     'beside the other change that is a proposal against dapp.json, the display name');
   const row = FRAME_SRC.slice(at, FRAME_SRC.indexOf('/>', FRAME_SRC.indexOf('onClick', at)));
-  assert.match(row, /title="Topics"/);
+  assert.match(row, /title=\{t\('project:menu\.topics\.title'\)\}/);
+  assert.equal(message('project:menu.topics.title'), 'Topics');
   // Its own onClick, so it works however the menu was wired (a row the menu
   // wired before it rendered would otherwise be dead), and it closes the menu
   // before the dialog goes up.

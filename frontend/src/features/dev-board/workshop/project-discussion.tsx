@@ -334,12 +334,13 @@ function TopicChannelPlace({ slug, name, data, handle, onPlace }: {
   handle: string;
   onPlace?: (key: PlaceKey) => void;
 }): ReactNode {
+  const t = useMessages('project');
   if (!data) return null;
   const topic = findChannel(data.places, handle);
   if (!topic || topic.kind !== 'topic' || topic.id == null) {
     return (
       <p className="dev-ws-week-note" data-ws-discussion-none="">
-        {`This project has no #${handle} channel.`}
+        {t('project:discussion.topic.none', { handle })}
       </p>
     );
   }
@@ -357,6 +358,7 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
   readOnly: boolean;
   onPlace?: (key: PlaceKey) => void;
 }): ReactNode {
+  const t = useMessages('project');
   const host = useRef<HTMLDivElement | null>(null);
   const ref = Number(topic.id);
   const closed = topic.state !== 'live';
@@ -375,9 +377,11 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
   markersRef.current = markers;
   const notice = closed
     ? (topic.state === 'merged'
-      ? `#${topic.handle} was merged into ${survivor ? `#${survivor.handle}` : 'another topic'}. Its history stays here to read.`
-      : `#${topic.handle} is archived. Its history stays here to read.`)
-    : 'Join this community to post here.';
+      ? (survivor
+        ? t('project:discussion.topic.mergedInto', { handle: topic.handle, into: survivor.handle })
+        : t('project:discussion.topic.mergedIntoAnother', { handle: topic.handle }))
+      : t('project:discussion.topic.archived', { handle: topic.handle }))
+    : t('project:discussion.topic.joinToPost');
   // The reply thread open beside the channel, as beside #general: `key`
   // makes the same thread asked for again (a second notification) a fresh
   // mount.
@@ -411,7 +415,7 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
         readOnly: readOnly || closed,
         archived: false,
         channel: { type: 'category', ref, markers: markersRef.current },
-        placeholder: `Message #${topic.handle}`,
+        placeholder: t('project:discussion.topic.placeholder', { handle: topic.handle }),
         notice,
       });
     }, 0);
@@ -518,8 +522,8 @@ function TopicChannel({ slug, name, data, topic, readOnly, onPlace }: {
             <button
               type="button"
               className="messages-thread-action"
-              aria-label="Close thread"
-              title="Close thread"
+              aria-label={t('project:discussion.closeThread')}
+              title={t('project:discussion.closeThread')}
               onClick={() => setThread(null)}
             >
               <XIcon aria-hidden="true" />

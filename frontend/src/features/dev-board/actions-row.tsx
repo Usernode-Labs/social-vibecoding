@@ -488,8 +488,8 @@ export function DevPlusMenu({
             <PlusRow
               data-plus="topics"
               icon={<HashIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Topics"
-              sub="The project's channels, and the categories requests are filed under"
+              title={t('project:menu.topics.title')}
+              sub={t('project:menu.topics.sub')}
               onClick={() => {
                 callAppView('_closePlusMenu');
                 window.UsernodeReact?.dialogs?.topics?.open({ slug: window.AppView?.appData?.slug });
