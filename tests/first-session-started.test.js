@@ -78,7 +78,33 @@ test('C3: who, then the community, then the app, then one line over two buttons'
   // Nothing else: no note under the card, no plan, no old invite heading.
   assert.doesNotMatch(html, /Homeroom is making|Needs you|Go to chat|Invite people to Plant Pal|They can follow along|data-first-session-note|Share again|Start the tour/);
   // Invite people later starts the tour with nothing sent.
-  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true\)\} className=\{SECONDARY\}>\s*\{continueLabel\(entry, false, made\.name\)\}/);
+  assert.match(CODE, /data-first-session-continue="" onClick=\{\(\) => onContinue\(true\)\} className=\{SECONDARY\} aria-busy=\{waiting !== null \|\| undefined\}>\s*\{onLabel\(false\)\}/);
+  assert.match(CODE, /const onLabel = \(sent: boolean\) => \(waiting !== null \? t\(GETTING_READY\) : continueLabel\(entry, sent, made\.name\)\);/);
+});
+
+// Evan, 10 Oct 2026, iPhone: a ready-made app was still being set up when
+// the made screen let him on, so Home showed a grey letter the tour's first
+// card asked him to tap. A press of the way on now waits for it to run.
+test('on a ready-made app still being set up, the way on waits for it to run', () => {
+  const { holdsContinue, READY_POLL_MS, READY_WAIT_MS, GETTING_READY } = made;
+  assert.equal(holdsContinue(true, 'creating', false), true, 'being set up: it waits');
+  assert.equal(holdsContinue(true, null, false), true, 'nothing read yet: it waits');
+  assert.equal(holdsContinue(true, 'running', false), false, 'running, and its icon is on the record: on at once');
+  assert.equal(holdsContinue(true, 'error', false), false, 'a setup that failed: on, its card says so');
+  assert.equal(holdsContinue(true, 'awaiting_secrets', false), false, 'one that waits on secrets: on');
+  assert.equal(holdsContinue(true, 'creating', true), false, 'the wait is up: on, and the tile catches up');
+  assert.equal(holdsContinue(false, 'creating', false), false, 'one the bot builds never waits');
+  assert.equal(READY_POLL_MS, 2000);
+  assert.equal(READY_WAIT_MS, 45000);
+  assert.equal(message(GETTING_READY), 'Getting it ready…');
+  // Read every two seconds while it is set up, every ten after.
+  assert.match(CODE, /const settingUp = holdsContinue\(readyMade, appStatus, false\);/);
+  assert.match(CODE, /const t = window\.setInterval\(read, settingUp \? READY_POLL_MS : 10000\);\s+return \(\) => \{ live = false; window\.clearInterval\(t\); \};\s+\}, \[made\.slug, settingUp\]\);/);
+  // A press held goes on by itself once it no longer holds.
+  assert.match(CODE, /const onContinue = \(skipped: boolean\) => \{\s+if \(holds\) setWaiting\(skipped\);\s+else goOn\(skipped\);\s+\};/);
+  assert.match(CODE, /if \(waiting === null \|\| holds\) return;\s+setWaiting\(null\);\s+goOn\(waiting\);/);
+  // The first render presses nothing: the way on says where it goes.
+  assert.match(draw(), /<button type="button" data-first-session-continue="" class="[^"]*">Invite people later<\/button>/);
 });
 
 test('C4: the sheet is titled with the community, a small caps label over the invite as they will see it', () => {
