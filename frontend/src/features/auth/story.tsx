@@ -84,8 +84,10 @@ export function nextStep(fit: number, footBottom: number, screenBottom: number):
   return fit + 1;
 }
 
-export function Story({ primaryClass, onStart, onSignIn }: {
+export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn }: {
   primaryClass: string;
+  /** The address a "You're in" mail's link names, greeted under the welcome. */
+  welcomeEmail?: string | null;
   onStart: () => void;
   onSignIn: () => void;
 }) {
@@ -94,6 +96,7 @@ export function Story({ primaryClass, onStart, onSignIn }: {
   const footRef = useRef<HTMLDivElement>(null);
   // One fit: the screen it was made for, and whether it has settled.
   const fitting = useRef<{ width: number; height: number; settled: boolean } | null>(null);
+  const fittedFor = useRef<string | null | undefined>(undefined);
   const [fit, setFit] = useState(0);
   const [measure, setMeasure] = useState(0);
   // Measured before the browser paints, so the steps are never seen: the
@@ -103,6 +106,13 @@ export function Story({ primaryClass, onStart, onSignIn }: {
     const story = storyRef.current;
     const foot = footRef.current;
     if (!story || !foot || !story.offsetHeight) return;
+    // The address arrives after the story is drawn, a line more to fit:
+    // start again from full size.
+    if (fittedFor.current !== welcomeEmail) {
+      fittedFor.current = welcomeEmail;
+      fitting.current = null;
+      if (fit !== 0) { setFit(0); return; }
+    }
     if (!fitting.current) fitting.current = { width: window.innerWidth, height: window.innerHeight, settled: false };
     const f = fitting.current;
     if (f.settled) return;
@@ -112,7 +122,7 @@ export function Story({ primaryClass, onStart, onSignIn }: {
     const next = nextStep(fit, foot.getBoundingClientRect().bottom + scrolled, screenFoot());
     if (next === null) f.settled = true;
     else setFit(next);
-  }, [fit, measure]);
+  }, [fit, measure, welcomeEmail]);
   // A new screen (a turned phone, a resized window) starts again from full
   // size. A story first laid out while its screen was hidden is measured
   // once it shows.
@@ -154,6 +164,12 @@ export function Story({ primaryClass, onStart, onSignIn }: {
           className={`mx-auto block h-auto ${s.picture} max-w-full`}
         />
         <div className={`${s.label} ${SMALL_CAPS}`}>{t('auth:story.welcome')}</div>
+        {/* "Welcome to Homeroom" and the address, from a "You're in" mail's
+            link (Evan, 10 Oct 2026). Its own line, as written: an address
+            in small caps would read as shouting. */}
+        {welcomeEmail ? (
+          <div data-landing-story-email="" className="mt-1 max-w-full text-[15px] leading-5 font-semibold text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]">{welcomeEmail}</div>
+        ) : null}
         <h1 className={`mt-2 ${s.headline} font-extrabold text-balance`}>
           {t('auth:story.headline')}
         </h1>

@@ -783,6 +783,10 @@
     "text": "Start the tour",
     "description": "Button on the screen shown right after a project is made once an invite has gone out, on a new member's first session: goes on to a short tour of Homeroom."
   },
+  "firstSession.made.gettingReady": {
+    "text": "Getting it ready…",
+    "description": "Label of the button that goes on from the screen shown right after a project is made, once it has been pressed while a ready-made app is still being set up: the screen goes on by itself as soon as the app is running. \"it\" is the project."
+  },
   "firstSession.made.goTo": {
     "text": "Go to {{community}}",
     "description": "Button on the screen shown right after a project is made once an invite has gone out, when the project was started from the Create button: opens the new project. {{community}} is its name."
