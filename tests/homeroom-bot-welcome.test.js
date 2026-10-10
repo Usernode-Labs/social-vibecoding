@@ -28,8 +28,9 @@ const welcome = require('../src/services/homeroom-bot-welcome');
 test('the welcome says what the bot does and where to start, in plain words', () => {
   assert.match(welcome.WELCOME_TEXT, /^Hi, I'm Homeroom bot, the AI that builds things on Homeroom\. As of today I work for everyone\./);
   assert.match(welcome.WELCOME_TEXT, /\n\nWant to make something new\? Tap New project on your Home screen, say what it should do, and I'll build a first version you can try\.\n\n/);
-  assert.match(read('frontend/src/features/home/create-tile.tsx'), /export const CREATE_TILE_LABEL = 'New project';/,
+  assert.match(read('frontend/src/features/home/create-tile.tsx'), /export const CREATE_TILE_LABEL = 'home:create\.label';/,
     'the tile it names is called that');
+  assert.equal(require('./lib/platform-i18n').message('home:create.label'), 'New project');
   assert.match(welcome.WELCOME_TEXT, /Post a request on it, or tap Suggest an improvement on its page/);
   assert.match(welcome.WELCOME_TEXT, /I'll ask here, with answers you can tap\.$/);
   assert.ok(welcome.WELCOME_PROMPTS.length <= 3, 'at most three questions to tap');

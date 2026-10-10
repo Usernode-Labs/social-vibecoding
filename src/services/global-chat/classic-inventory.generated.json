@@ -13016,6 +13016,21 @@
     {
       "source": "src/routes/ui-telemetry.js",
       "method": "GET",
+      "path": "/api/browser-languages",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.browser.languages.695031c1",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/ui-telemetry.js",
+      "method": "GET",
       "path": "/api/admin/analytics/ui-failures",
       "expression": null,
       "status": "mapped",
