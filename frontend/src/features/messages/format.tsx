@@ -119,13 +119,14 @@ export function swatchFor(name: string): string {
  */
 /**
  * B5: how a sender or a peer is named. The Homeroom bot by its name ("Homeroom
- * bot"), never its handle; a person by their @handle; nobody (a deleted
- * account, the platform's own system line) by the word it carries.
+ * bot"), never its handle; a person by their @handle — except in a direct
+ * message, where they are named by their bare username (#4655); nobody (a
+ * deleted account, the platform's own system line) by the word it carries.
  */
-export function senderName(user?: Pick<ConversationUser, 'id' | 'username' | 'bot' | 'displayName'> | null): string {
+export function senderName(user?: Pick<ConversationUser, 'id' | 'username' | 'bot' | 'displayName'> | null, opts?: { bare?: boolean }): string {
   if (!user) return '';
   if (user.bot && user.displayName) return user.displayName;
-  return user.id ? `@${user.username}` : user.username;
+  return user.id && !opts?.bare ? `@${user.username}` : user.username;
 }
 
 /** B5: the bot's face, the Homeroom mark tile the header's menu button wears. */
