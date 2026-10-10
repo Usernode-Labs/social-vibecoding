@@ -58,6 +58,8 @@ const READY_STATES = Object.freeze([
     ['member']],
   ['shots-demo-member-bot-file-offer-v1', 'your chat with Homeroom bot, ending in its drafted request with File it and Not now',
     ['member']],
+  ['shots-demo-member-app-access-v1', 'a project of yours with a GitHub repository, whose App settings can change its access',
+    ['member']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
 // The states a declared change can need that a copy holds only when

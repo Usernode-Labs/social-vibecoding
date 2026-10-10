@@ -23,7 +23,7 @@ const friends = require('../src/services/friends');
 const { loadOnboarding } = require('../src/services/topochain/challenge-onboarding');
 const { loadCadence } = require('../src/services/topochain/challenge-scorer');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('../src/routes/topochain/challenge-view');
-const { attachForkLineage } = require('../src/routes/apps');
+const { attachForkLineage, accessFlags } = require('../src/routes/apps');
 const suggestBack = require('../src/services/suggest-back');
 const conversations = require('../src/services/conversations');
 const botActivity = require('../src/services/homeroom-bot-activity');
@@ -412,6 +412,27 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   const suggested = await suggestBack.preview({ pool, user: { id: member, username: 'usernode-capture' }, fork: remix });
   assert.equal(suggested.reason.code, 'lineage_missing');
   assert.equal(suggested.original.slug, 'staging-demo-forkable');
+
+  // A project of the member's with a GitHub repository: App settings' Access
+  // section is live on it (can_manage plus a repo_url), where the member's
+  // other fixture apps have no repository and show the read-only line. The
+  // repository address is well formed but fake, as the visibility-pr route's
+  // parse expects one to be.
+  const { rows: [accessApp] } = await pool.query('SELECT * FROM apps WHERE slug = $1',
+    ['shots-demo-member-walking-club']);
+  assert.equal(Number(accessApp.id), demoStates.IDS.accessApp);
+  assert.equal(Number(accessApp.created_by), member);
+  assert.deepEqual([accessApp.collab_visibility, accessApp.view_visibility, accessApp.self_hosted],
+    ['private', 'private', false]);
+  assert.match(accessApp.repo_url, /github\.com\/([^/]+)\/([^/]+)/);
+  assert.equal(accessFlags(accessApp, { id: member }, true).can_manage, true,
+    'its maker can manage it, so App settings opens with the Access section live');
+  assert.equal(accessFlags(accessApp, { id: ids['usernode-capture-admin'] }, true).can_manage, false,
+    'the read-only admin, with no admin flags, does not manage it');
+  const { rows: [collab] } = await pool.query(
+    `SELECT status FROM app_collaborators WHERE app_id = $1 AND user_id = $2`,
+    [accessApp.id, member]);
+  assert.equal(collab.status, 'member');
 
   // The member's chat with the Homeroom bot: two activity cards on one
   // request, read through the cards' own reader. The older one's build is
