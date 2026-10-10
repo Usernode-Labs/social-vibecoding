@@ -882,9 +882,16 @@ exit "$TEST_STATUS"
 // and a `# tests / # pass / # fail / # skipped / # cancelled` block at the
 // end; jest prints neither, and then the phase is all this can say. The
 // running counts are an approximation on purpose — a parent test's own
-// `not ok` repeats a child's failure, and a describe() suite gets an `ok`
-// of its own — so the summary block, when it arrives, REPLACES them. None
-// of it touches the verdict, which stays the exit code.
+// `not ok` repeats a child's failure — so the summary block, when it
+// arrives, REPLACES them. A describe() suite also gets an `ok` of its own
+// with `type: 'suite'` in the YAML block right under it; `# tests` leaves
+// suites out, so the tracker takes that one line back off the running count
+// (node:test's `t.test` parents say `type: 'test'` and stay counted), which
+// makes the running count the same population as `# tests`. Until the
+// summary arrives, `expected` is the stored last-run figure as a FLOOR: a
+// run with more tests than the last one grows it to `ran`, so the row never
+// reads more than 100% done. None of it touches the verdict, which stays
+// the exit code.
 function makeUnitSuiteTracker(expected = null) {
   let phase = 'cloning';
   let passed = 0;
@@ -892,6 +899,10 @@ function makeUnitSuiteTracker(expected = null) {
   let skipped = 0;
   let summary = null;
   let recap = false;
+  // Which counter the most recent result line bumped ('pass' | 'fail' |
+  // 'skip'), for the suite line that owns it to take back; the YAML block
+  // comes straight after its own result line.
+  let lastCounter = null;
   const total = Number.isInteger(expected) && expected > 0 ? expected : null;
   return {
     // Returns true when the line changed the state.
@@ -902,12 +913,21 @@ function makeUnitSuiteTracker(expected = null) {
       // The recap repeats failures already counted.
       if (l.startsWith(`${RECAP_SENTINEL}=`)) { recap = true; return false; }
       if (recap) return false;
+      // A describe() suite's YAML block says `type: 'suite'`: take its own
+      // result line back off the count, so suites are not counted as tests.
+      if (/^\s*type:\s*'suite'\s*$/.test(l) && lastCounter) {
+        if (lastCounter === 'pass') passed -= 1;
+        else if (lastCounter === 'fail') failed -= 1;
+        else skipped -= 1;
+        lastCounter = null;
+        return true;
+      }
       const m = /^\s*(not ok|ok)\b(.*)$/.exec(l);
       if (m) {
         if (phase !== 'running') phase = 'running';
-        if (/#\s*(SKIP|TODO)\b/i.test(m[2])) skipped += 1;
-        else if (m[1] === 'ok') passed += 1;
-        else failed += 1;
+        if (/#\s*(SKIP|TODO)\b/i.test(m[2])) { skipped += 1; lastCounter = 'skip'; }
+        else if (m[1] === 'ok') { passed += 1; lastCounter = 'pass'; }
+        else { failed += 1; lastCounter = 'fail'; }
         return true;
       }
       const sm = /^# (tests|pass|fail|skipped|cancelled|todo) (\d+)\s*$/.exec(l);
@@ -941,7 +961,10 @@ function makeUnitSuiteTracker(expected = null) {
       return {
         phase,
         ran, passed: p, failed: f, skipped: k,
-        expected: s && Number.isInteger(s.tests) ? s.tests : total,
+        // Before the summary, the stored estimate is a floor: a run with
+        // more tests than the last one grows the total with the count,
+        // so the bar never reads past 100%.
+        expected: s && Number.isInteger(s.tests) ? s.tests : (total == null ? null : Math.max(total, ran)),
         done: phase === 'done',
         ...(phase === 'done' ? { exitOk: !!this.exitOk } : {}),
         ...(phase === 'done' && this.notRun ? { notRun: true } : {}),
