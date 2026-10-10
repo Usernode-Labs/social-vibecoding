@@ -3,16 +3,17 @@
  *
  * A topic whose dapp.json entry names figures (services/topic-figures.js)
  * shows them here, to everyone who can read the channel: a label over the
- * card saying what window they cover, a control for which projects they
- * cover (all, Homeroom, the others; none when every figure belongs to no
- * one project), and the card, one cell per figure:
+ * card saying what window they cover, and the card, one cell per figure.
+ * A split figure shows Homeroom over the other projects, each with its own
+ * number, and the target once under them:
  *
- *   LAST 7 DAYS                                      All projects ⌄
- *   ┌─────────────────┬─────────────────┬──────────────┬────────────┐
- *   │ Merge → live  ⓘ │ Deploys that…  ⓘ│ Apps up    ⓘ │ Limits…  ⓘ │
- *   │ 6 min           │ 4%              │ Not recorded │ 2 times    │
- *   │ median · target │ 3 of 74 merges  │ Needs restart│ across the │
- *   └─────────────────┴─────────────────┴──────────────┴────────────┘
+ *   LAST 7 DAYS
+ *   ┌────────────────────────┬─────────────────┬────────────────┐
+ *   │ Merge → live         ⓘ │ Deploys that… ⓘ │ App opens th… ⓘ│
+ *   │ Homeroom      ⚠ 19 min │ 4%              │ 99.2%          │
+ *   │ Other projects   3 min │ 3 of 74 project │ 1,204 of 1,213 │
+ *   │ median · target 15 min │ merges · target │ opens · target │
+ *   └────────────────────────┴─────────────────┴────────────────┘
  *
  * The Homeroom bot's figures are a grid instead: a row each for Answers
  * and Builds, a column each for Quality, Cost and Speed.
@@ -33,12 +34,22 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 import { createPortal } from 'react-dom';
 
 import { SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon, InfoCircleIcon, WarningTriangleIcon } from '@/components/ui/icons';
+import { InfoCircleIcon, WarningTriangleIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
 import type { PlaceChannel } from './community-card';
 
 export type FigureState = 'ok' | 'warn' | 'calm' | 'empty' | 'missing' | 'error';
+
+/** One side of a split figure: Homeroom, or the other projects. */
+export interface FigureSide {
+  key: string;
+  name: string;
+  state: FigureState;
+  value: string;
+  /** A rate's count ("3 of 140 runs"), or nothing. */
+  detail: string;
+}
 
 export interface TopicFigure {
   id: string;
@@ -50,6 +61,8 @@ export interface TopicFigure {
   state: FigureState;
   value: string;
   sub: string;
+  /** A split figure's sides, Homeroom first; drawn in place of `value`. */
+  sides?: FigureSide[];
 }
 
 export interface TopicFiguresPayload {
@@ -59,14 +72,9 @@ export interface TopicFiguresPayload {
   groups?: Array<{ key: string; name: string; about: string }>;
   columns?: Array<{ key: string; name: string }>;
   days?: number;
-  scopes?: string[];
-  scope?: string;
   note?: string | null;
   demo?: boolean;
 }
-
-const SCOPE_KEYS = ['all', 'homeroom', 'others'] as const;
-type Scope = (typeof SCOPE_KEYS)[number];
 
 function demoAsked(): boolean {
   try {
@@ -77,10 +85,9 @@ function demoAsked(): boolean {
 }
 
 /** Where a topic's figures are read from. Pure. */
-export function figuresUrl(slug: string, key: string, scope: string, demo = false): string {
-  const q = new URLSearchParams({ scope });
-  if (demo) q.set('demo', '1');
-  return `/api/apps/${encodeURIComponent(slug)}/topics/${encodeURIComponent(key)}/figures?${q.toString()}`;
+export function figuresUrl(slug: string, key: string, demo = false): string {
+  const path = `/api/apps/${encodeURIComponent(slug)}/topics/${encodeURIComponent(key)}/figures`;
+  return demo ? `${path}?demo=1` : path;
 }
 
 /** Whether a topic shows figures at all, from its record. Pure. */
@@ -126,7 +133,9 @@ function FigureCell({ figure, open, onOpen, onClose, label }: {
     };
   }, [open, figure.id, onClose]);
 
-  const muted = figure.state === 'missing' || figure.state === 'empty' || figure.state === 'error';
+  const quiet = (state: FigureState) => state === 'missing' || state === 'empty' || state === 'error';
+  const muted = quiet(figure.state);
+  const sides = Array.isArray(figure.sides) && figure.sides.length ? figure.sides : null;
   // The ⓘ keeps to the label's last word, so it never wraps onto a line alone.
   const cut = figure.label.lastIndexOf(' ');
   const head = cut > 0 ? figure.label.slice(0, cut + 1) : '';
@@ -160,10 +169,30 @@ function FigureCell({ figure, open, onOpen, onClose, label }: {
           </button>
         </span>
       </span>
-      <span className={muted ? 'dev-ws-fig-value dev-ws-fig-value-muted' : 'dev-ws-fig-value'}>{figure.value}</span>
+      {sides ? (
+        <span className="dev-ws-fig-sides">
+          {sides.map((side) => (
+            <span key={side.key} className="dev-ws-fig-side" data-fig-side={side.key} data-fig-state={side.state}>
+              <span className="dev-ws-fig-side-name">{side.name}</span>
+              <span
+                className={quiet(side.state)
+                  ? 'dev-ws-fig-side-value dev-ws-fig-side-value-muted'
+                  : (side.state === 'warn' ? 'dev-ws-fig-side-value dev-ws-fig-side-value-warn' : 'dev-ws-fig-side-value')}
+              >
+                {side.state === 'warn' ? <WarningTriangleIcon className="dev-ws-fig-warn" aria-hidden="true" /> : null}
+                {side.value}
+              </span>
+              {side.detail ? <span className="dev-ws-fig-side-detail">{side.detail}</span> : null}
+            </span>
+          ))}
+        </span>
+      ) : (
+        <span className={muted ? 'dev-ws-fig-value dev-ws-fig-value-muted' : 'dev-ws-fig-value'}>{figure.value}</span>
+      )}
       {figure.sub ? (
-        <span className={figure.state === 'warn' ? 'dev-ws-fig-sub dev-ws-fig-sub-warn' : 'dev-ws-fig-sub'}>
-          {figure.state === 'warn' ? <WarningTriangleIcon className="dev-ws-fig-warn" aria-hidden="true" /> : null}
+        // A split figure marks the side that is off target; its line is the target alone.
+        <span className={figure.state === 'warn' && !sides ? 'dev-ws-fig-sub dev-ws-fig-sub-warn' : 'dev-ws-fig-sub'}>
+          {figure.state === 'warn' && !sides ? <WarningTriangleIcon className="dev-ws-fig-warn" aria-hidden="true" /> : null}
           {figure.sub}
         </span>
       ) : null}
@@ -189,14 +218,12 @@ function FigureCell({ figure, open, onOpen, onClose, label }: {
 
 /**
  * The strip itself, from a payload as GET /api/apps/:slug/topics/:key/figures
- * answers it: the section header and the projects control, the card, and
- * the lines under it. Pure apart from which explanation is open.
+ * answers it: the section header, the card, and the lines under it. Pure
+ * apart from which explanation is open.
  */
-export function TopicFiguresView({ handle, data, scope, onScope }: {
+export function TopicFiguresView({ handle, data }: {
   handle: string;
   data: TopicFiguresPayload;
-  scope: string;
-  onScope: (scope: Scope) => void;
 }): ReactNode {
   const t = useMessages('project');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -204,7 +231,6 @@ export function TopicFiguresView({ handle, data, scope, onScope }: {
   const onClose = useCallback((id: string) => setOpenId((cur) => (cur === id ? null : cur)), []);
 
   if (!data.figures.length) return null;
-  const scopes = (data.scopes || []).filter((s): s is Scope => (SCOPE_KEYS as readonly string[]).includes(s));
   const days = Number(data.days) || 7;
   const cell = (figure: TopicFigure) => (
     <FigureCell
@@ -250,20 +276,6 @@ export function TopicFiguresView({ handle, data, scope, onScope }: {
     <section className="dev-ws-figs" data-topic-figures={handle} aria-label={t('project:places.topicFigures.label')}>
       <div className="dev-ws-figs-head">
         <SectionHeader className="p-0">{t('project:places.topicFigures.window', { count: days })}</SectionHeader>
-        {scopes.length ? (
-          <label className="dev-ws-figs-scope">
-            <span className="sr-only">{t('project:places.topicFigures.scopeLabel')}</span>
-            <select
-              className="dev-ws-figs-scope-select"
-              data-topic-figures-scope=""
-              value={scopes.includes(scope as Scope) ? scope : 'all'}
-              onChange={(e) => onScope(e.target.value as Scope)}
-            >
-              {scopes.map((s) => <option key={s} value={s}>{t(`project:places.topicFigures.scope.${s}`)}</option>)}
-            </select>
-            <ChevronDownIcon className="dev-ws-figs-scope-chev" aria-hidden="true" />
-          </label>
-        ) : null}
       </div>
       {card}
       {data.note ? <p className="dev-ws-figs-note">{data.note}</p> : null}
@@ -276,7 +288,6 @@ export function TopicFigures({ slug, topic }: {
   slug: string;
   topic: PlaceChannel & { figures?: string[] | null };
 }): ReactNode {
-  const [scope, setScope] = useState<Scope>('all');
   const [data, setData] = useState<TopicFiguresPayload | null>(null);
   const shows = topicHasFigures(topic);
   const key = topic.key || '';
@@ -285,22 +296,20 @@ export function TopicFigures({ slug, topic }: {
   // Another topic starts over: no strip until its own figures arrive.
   useEffect(() => {
     setData(null);
-    setScope('all');
   }, [slug, key]);
 
-  // A new choice of projects keeps the strip up until its figures arrive.
   useEffect(() => {
     if (!slug || !key || !shows) return undefined;
     const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-    fetch(figuresUrl(slug, key, scope, demoAsked()), ctl ? { signal: ctl.signal } : undefined)
+    fetch(figuresUrl(slug, key, demoAsked()), ctl ? { signal: ctl.signal } : undefined)
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
         if (body && Array.isArray(body.figures)) setData(body as TopicFiguresPayload);
       })
       .catch(() => { /* no strip: the channel reads the same without it */ });
     return () => { ctl?.abort(); };
-  }, [slug, key, scope, shows, figureList]);
+  }, [slug, key, shows, figureList]);
 
   if (!shows || !data) return null;
-  return <TopicFiguresView handle={topic.handle} data={data} scope={scope} onScope={setScope} />;
+  return <TopicFiguresView handle={topic.handle} data={data} />;
 }

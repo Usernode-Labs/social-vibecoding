@@ -19051,25 +19051,18 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
    label over the card is the section header; the card is the plane colour,
    20px, one hairline (AGENTS.md, "Type and colour"), one cell per figure
    with a hairline between them (the card's own fill showing through a 1px
-   gap). Colour only for a figure off its target: the attention ink, with
-   its glyph. With under 560px of room the figures sit two by two, and the
-   bot's grid puts each row's name across its row. Beside a thread it goes
-   where the topic's line goes. */
+   gap). A split figure lists Homeroom over Other projects, each name with
+   its number, the number falling under its name where the cell is too
+   narrow for both. Colour only for a figure off its target: the attention
+   ink, with its glyph, on the line or on the side that is off. With under
+   560px of room the figures sit two by two, and the bot's grid puts each
+   row's name across its row. Beside a thread it goes where the topic's
+   line goes. */
 .dev-ws-figs { flex: none; margin: 0 0 10px; container-type: inline-size; }
 .dev-ws-figs-head {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   min-height: 32px; padding: 0 4px 2px;
 }
-.dev-ws-figs-scope { position: relative; display: inline-flex; align-items: center; color: var(--accent); }
-.dev-ws-figs-scope-select {
-  appearance: none; -webkit-appearance: none;
-  min-height: 32px; padding: 6px 20px 6px 4px;
-  border: 0; border-radius: 8px; background: transparent; color: inherit;
-  font: inherit; font-size: 13px; line-height: 18px; font-weight: 600; cursor: pointer;
-  field-sizing: content;
-}
-.dev-ws-figs-scope-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dev-ws-figs-scope-chev { position: absolute; right: 2px; width: 14px; height: 14px; pointer-events: none; }
 .dev-ws-figs-card {
   display: grid; gap: 1px; overflow: hidden;
   border: 1px solid var(--app-sheet-line); border-radius: 20px;
@@ -19100,6 +19093,21 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 .dev-ws-fig-sub { display: inline-flex; align-items: flex-start; gap: 4px; font-size: 12px; line-height: 16px; color: var(--text-muted); }
 .dev-ws-fig-sub-warn { font-weight: 600; color: var(--state-attention); }
 .dev-ws-fig-warn { flex: none; width: 13px; height: 13px; margin-top: 1px; }
+.dev-ws-fig-sides { display: flex; flex-direction: column; gap: 4px; align-self: stretch; margin: 4px 0 2px; }
+.dev-ws-fig-side {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  column-gap: 8px; min-width: 0;
+}
+.dev-ws-fig-side-name { min-width: 0; font-size: 13px; line-height: 20px; color: var(--text-secondary); }
+.dev-ws-fig-side-value {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 17px; line-height: 22px; font-weight: 650; white-space: nowrap;
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}
+.dev-ws-fig-side-value-muted { font-size: 13px; line-height: 20px; font-weight: 600; color: var(--text-muted); }
+.dev-ws-fig-side-value-warn { color: var(--state-attention); }
+.dev-ws-fig-side-value-warn .dev-ws-fig-warn { margin-top: 0; }
+.dev-ws-fig-side-detail { flex-basis: 100%; font-size: 12px; line-height: 16px; color: var(--text-muted); }
 /* The Homeroom bot's grid: a corner and the three column heads, then a row
    per group, its name first. */
 .dev-ws-figs-grid { grid-template-columns: 140px repeat(3, minmax(0, 1fr)); }
@@ -19127,6 +19135,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-figs-grid .dev-ws-fig { padding: 6px 10px 10px; }
   .dev-ws-figs-grid .dev-ws-fig-value { font-size: 18px; line-height: 24px; }
   .dev-ws-figs-grid .dev-ws-fig-sub { font-size: 11px; line-height: 15px; }
+  .dev-ws-fig-side-name { font-size: 12px; line-height: 18px; }
+  .dev-ws-fig-side-value { font-size: 15px; line-height: 20px; }
 }
 /* What a figure means: drawn on the body, under its glyph, so the card's
    rounded edge does not cut it off. */

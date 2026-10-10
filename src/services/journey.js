@@ -2175,6 +2175,12 @@ async function summary(pool, { week, now = new Date(), leftOutIds = [], memberId
 }
 
 module.exports = {
+  // Spelled as properties, not shorthand, so scripts/check-sql.js can
+  // resolve the queries elsewhere that splice them in
+  // (services/topic-figures.js reads them as journey.<NAME>).
+  ADMITTED_CTE: ADMITTED_CTE,
+  NEWCOMER_OR_NO_ACCOUNT: NEWCOMER_OR_NO_ACCOUNT,
+  REAL_PERSON_SQL: REAL_PERSON_SQL,
   COHORTS_SQL,
   CHANGE_LOOP_SQL,
   CREATION_PATH_SQL,
@@ -2215,7 +2221,6 @@ module.exports = {
   TREND_WEEKS_MAX,
   LOST_CUTOFFS,
   NEWCOMER_DAYS,
-  REAL_PERSON_SQL,
   REAL_VOTER_SQL,
   CHANGE_PERSON_SQL,
   RESERVED_PATTERNS,
@@ -2233,6 +2238,7 @@ module.exports = {
   pairReading,
   pairs,
   cohorts,
+  realPersonParams,
   coverage,
   groupsForWeek,
   inviteLoop,
