@@ -663,6 +663,15 @@ const App = {
   //                          or the full one-shot authed boot.
   _authedBooted: false,
 
+  // The head's first-session hold (frontend/src/head.html): a document that
+  // opens while the story's sheet is handing a new account to "What do you
+  // want to make?" (a sign-in that reloaded onto the live build) keeps its
+  // body hidden until the shell has drawn its first screen. Each way the
+  // boot ends lifts it; it never holds a screen nobody is about to cover.
+  _liftFirstSessionBoot() {
+    try { document.documentElement.classList.remove('first-session-boot'); } catch (err) { /* no document */ }
+  },
+
   async enterAnonymous() {
     let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
@@ -697,6 +706,7 @@ const App = {
     // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
+    App._liftFirstSessionBoot();
     App._drainLogoutNotice();
     // A signed-out document behind the live build moves to it before a
     // sign-in starts on it (see _moveToLiveShell). Not awaited: the landing
@@ -965,11 +975,13 @@ const App = {
     // must not lock anyone out.
     if (App.user?.hasPlatformAccess === false && window.AuthScreens) {
       AuthScreens.showWaiting();
+      App._liftFirstSessionBoot();
       return;
     }
 
     if (App._authedBooted) {
       App.restoreFromHash();
+      App._liftFirstSessionBoot();
       return;
     }
     App._authedBooted = true;
@@ -1005,6 +1017,10 @@ const App = {
     document.dispatchEvent(new CustomEvent('sv:authed', {
       detail: { user: App.user },
     }));
+    // The first screen is drawn now ("What do you want to make?" opened by
+    // the `sv:authed` listeners, in this same tick, before anything paints),
+    // so the head's hold comes off.
+    App._liftFirstSessionBoot();
     App.restoreFromHash();
     // The fragment-scoped `?shot=` states, applied for whatever fragment is
     // live now and re-applied whenever it changes — see _applyRouteShots.

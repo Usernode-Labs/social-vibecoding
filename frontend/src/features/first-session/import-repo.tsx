@@ -263,14 +263,12 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
             autoComplete="off"
             enterKeyHint="go"
             value={name}
-            aria-describedby="make-import-name-hint"
+            aria-describedby={missing === 'name' ? 'make-import-name-hint' : undefined}
             onChange={(e) => { setName(e.target.value); setMissing(null); setError(null); }}
             placeholder={t('onboarding:firstSession.import.namePlaceholder')}
             className={INPUT}
           />
-          {missing === 'name'
-            ? <p id="make-import-name-hint" role="alert" className={NEEDED}>{t('onboarding:firstSession.import.needed.name')}</p>
-            : <p id="make-import-name-hint" className={HINT}>{t('onboarding:firstSession.import.nameHint')}</p>}
+          {missing === 'name' ? <p id="make-import-name-hint" role="alert" className={NEEDED}>{t('onboarding:firstSession.import.needed.name')}</p> : null}
         </div>
       </div>
       {note ? <p data-make-import-note="" className="mt-2 px-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">{note}</p> : null}

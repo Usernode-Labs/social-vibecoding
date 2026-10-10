@@ -331,7 +331,7 @@ const RELEASE_HEADLINE = 'Make and share apps with groups and friends.';
 // and a client that blocks images shows a blank gap, not a broken layout.
 const ILLUSTRATION_URL = `${PRODUCTION_ORIGIN}/brand/people.png`;
 
-// The four "once you're inside" points as landing-page chips. The colours are
+// The three "once you're inside" points as landing-page chips. The colours are
 // the MID stops of frontend/src/features/auth/landing.tsx's `CHIPS`
 // gradients — one solid fill per chip rather than the gradient itself,
 // because mail clients do not draw `radial-gradient` reliably.
@@ -339,7 +339,6 @@ const RELEASE_CAN_DO = [
   { line: 'Make an app for your group', color: '#3484fc' },
   { line: 'Use and improve apps together', color: '#8bd669' },
   { line: 'Suggest, preview and vote on changes', color: '#fc5750' },
-  { line: 'Take on early challenges', color: '#ffce4d' },
 ];
 
 // Install notes per platform, one line each with the one step that is a

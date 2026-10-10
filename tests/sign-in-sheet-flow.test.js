@@ -207,9 +207,14 @@ test('the account step\'s password is optional (#4595)', () => {
   const src = read(SHEET);
   assert.match(src, /data-sign-in-sheet-skip-password=""[^>]*onClick=\{\(\) => \{ void finishAccount\(true\); \}\}>\{t\('auth:signInSheet\.account\.skip'\)\}<\/button>/);
   assert.equal(message('auth:signInSheet.account.skip'), 'Skip for now');
-  // Skipped, or both fields empty: no password in the request.
-  assert.match(src, /\.\.\.\(password \? \{ password, passwordConfirmation: confirm \} : \{\}\),/);
-  assert.match(src, /if \(password \|\| confirm\) \{\s+if \(password\.length < 8\)/);
+  // Skipped, or the field empty: no password in the request.
+  assert.match(src, /\.\.\.\(password \? \{ password \} : \{\}\),/);
+  assert.match(src, /if \(password && password\.length < 8\) \{ setError\(translate\('auth:signInSheet\.account\.passwordTooShort'\)\); return; \}/);
+  // Asked once (Evan, 10 Oct 2026): no "Password again", and so no
+  // confirmation sent; a mistyped one is reset by email. The field shows
+  // what was typed on request instead (the shared PasswordInput's toggle).
+  assert.doesNotMatch(src, /Password again|passwordConfirmation|confirmField/);
+  assert.match(src, /<PasswordInput ref=\{passwordField\} id="sign-in-sheet-password" autoComplete="new-password"/);
 });
 
 test('the sheet fills in the token\'s address and sends the code once per tab, through the sign-in screen\'s lookup', async () => {

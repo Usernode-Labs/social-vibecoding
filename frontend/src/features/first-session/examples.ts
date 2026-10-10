@@ -65,8 +65,6 @@ export type Choice = {
   emoji?: string;
   /** A game starter (services/app-templates.js): the project starts from it, and the bot builds their idea on it. */
   starter?: string;
-  /** The message id of the whole line under the chips that says what the starter is. */
-  starts?: string;
 };
 
 export type Template = {
@@ -123,10 +121,10 @@ export const TEMPLATES: readonly Template[] = [
     short: 'onboarding:firstSession.template.game.short',
     finish: true,
     choices: [
-      { key: 'board', label: 'onboarding:firstSession.template.game.board.label', sentence: 'onboarding:firstSession.template.game.board.sentence', example: 'onboarding:firstSession.template.game.board.example', name: 'onboarding:firstSession.template.game.board.name', description: 'onboarding:firstSession.template.game.board.description', starter: 'game-board', starts: 'onboarding:firstSession.template.game.board.starterLine' },
-      { key: 'shooter', label: 'onboarding:firstSession.template.game.shooter.label', sentence: 'onboarding:firstSession.template.game.shooter.sentence', example: 'onboarding:firstSession.template.game.shooter.example', name: 'onboarding:firstSession.template.game.shooter.name', description: 'onboarding:firstSession.template.game.shooter.description', starter: 'game-space', starts: 'onboarding:firstSession.template.game.shooter.starterLine' },
-      { key: 'blocks', label: 'onboarding:firstSession.template.game.blocks.label', sentence: 'onboarding:firstSession.template.game.blocks.sentence', example: 'onboarding:firstSession.template.game.blocks.example', name: 'onboarding:firstSession.template.game.blocks.name', description: 'onboarding:firstSession.template.game.blocks.description', starter: 'game-blocks', starts: 'onboarding:firstSession.template.game.blocks.starterLine' },
-      { key: 'trivia', label: 'onboarding:firstSession.template.game.trivia.label', sentence: 'onboarding:firstSession.template.game.trivia.sentence', example: 'onboarding:firstSession.template.game.trivia.example', name: 'onboarding:firstSession.template.game.trivia.name', description: 'onboarding:firstSession.template.game.trivia.description', starter: 'game-trivia', starts: 'onboarding:firstSession.template.game.trivia.starterLine' },
+      { key: 'board', label: 'onboarding:firstSession.template.game.board.label', sentence: 'onboarding:firstSession.template.game.board.sentence', example: 'onboarding:firstSession.template.game.board.example', name: 'onboarding:firstSession.template.game.board.name', description: 'onboarding:firstSession.template.game.board.description', starter: 'game-board' },
+      { key: 'shooter', label: 'onboarding:firstSession.template.game.shooter.label', sentence: 'onboarding:firstSession.template.game.shooter.sentence', example: 'onboarding:firstSession.template.game.shooter.example', name: 'onboarding:firstSession.template.game.shooter.name', description: 'onboarding:firstSession.template.game.shooter.description', starter: 'game-space' },
+      { key: 'blocks', label: 'onboarding:firstSession.template.game.blocks.label', sentence: 'onboarding:firstSession.template.game.blocks.sentence', example: 'onboarding:firstSession.template.game.blocks.example', name: 'onboarding:firstSession.template.game.blocks.name', description: 'onboarding:firstSession.template.game.blocks.description', starter: 'game-blocks' },
+      { key: 'trivia', label: 'onboarding:firstSession.template.game.trivia.label', sentence: 'onboarding:firstSession.template.game.trivia.sentence', example: 'onboarding:firstSession.template.game.trivia.example', name: 'onboarding:firstSession.template.game.trivia.name', description: 'onboarding:firstSession.template.game.trivia.description', starter: 'game-trivia' },
     ],
     own: { sentence: 'onboarding:firstSession.template.game.own.sentence', example: 'onboarding:firstSession.template.game.own.example', name: '', description: 'onboarding:firstSession.template.game.own.description' },
     note: 'onboarding:firstSession.template.game.note',
@@ -244,14 +242,14 @@ export function readyMadeOf(t: Template, key: string): { template: string; emoji
 }
 
 /**
- * The game starter a choice makes its project from, and the message id of
- * the line that says what it is (make.tsx `starterLine` reads it), or
- * null: for Your own words, or a choice with none. Unlike a ready-made app,
- * Homeroom bot still builds the first version, on it.
+/**
+ * The game starter a choice makes its project from, or null: for Your own
+ * words, or a choice with none. Unlike a ready-made app, Homeroom bot still
+ * builds the first version, on it.
  */
-export function starterOf(t: Template, key: string): { template: string; starts: string } | null {
+export function starterOf(t: Template, key: string): { template: string } | null {
   const c = key === OWN ? null : choiceOf(t, key);
-  return c && c.starter ? { template: c.starter, starts: c.starts || 'onboarding:firstSession.make.starterLine.fallback' } : null;
+  return c && c.starter ? { template: c.starter } : null;
 }
 
 /** The project's one-line description for a choice, in the language on screen. */

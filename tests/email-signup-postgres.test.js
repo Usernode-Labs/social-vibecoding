@@ -276,7 +276,17 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
         ['new.user@example.com'],
       )).rows[0].password_set, false);
 
-      const complete = await setPassword({ username: 'New_User' });
+      // A confirmation that disagrees is refused, and spends nothing.
+      const mismatched = await setPassword({ username: 'New_User', passwordConfirmation: 'correct horse battery stapler' });
+      assert.equal(mismatched.status, 422);
+      assert.equal((await mismatched.json()).code, 'password_mismatch');
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM web_signup_sessions',
+      )).rows[0].count, 1);
+
+      // The sign-in sheet asks for the password once and sends no
+      // confirmation (Evan, 10 Oct 2026): that is a password, not a mismatch.
+      const complete = await setPassword({ username: 'New_User', passwordConfirmation: undefined });
       assert.equal(complete.status, 200);
       const body = await complete.json();
       assert.deepEqual(Object.keys(body), ['user']);

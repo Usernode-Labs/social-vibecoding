@@ -251,7 +251,6 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
     ['onboarding:firstSession.make.title', 'What do you want to make?'],
     ['onboarding:firstSession.make.briefLabel', 'What should it do?'],
     ['onboarding:firstSession.make.nameLabel', 'What should we call it?'],
-    ['onboarding:firstSession.make.nameHint', 'It\'s your group\'s name too. You can change it later.'],
     ['onboarding:firstSession.make.lookAround', 'Not sure yet? <0>Look around first</0>'],
   ]) {
     assert.ok(make.includes(`'${id}'`) || make.includes(`"${id}"`), words);
@@ -283,10 +282,11 @@ test('a choice that needs no typing makes a ready-made app, with nothing for Hom
   assert.match(src, /const ready = templated && example \? readyMadeOf\(example, choice\) : null;/);
   assert.match(src, /emoji: ready \? ready\.emoji : example \? example\.emoji : null,/);
   assert.match(src, /\.\.\.\(ready \? \{ readyMade: true \} : \{\}\),/);
-  // The sentence says so, quietly, under its choices.
+  // Nothing under its choices says so (Evan, 10 Oct 2026): the line read as
+  // fine print on a screen that is about the idea.
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(message(make.READY_LINE), 'Ready-made: nothing to build, so it is ready as soon as it is set up.');
-  assert.match(src, /\{readyMadeOf\(template, choice\) \? <p data-make-ready="" className=\{HINT\}>\{t\(READY_LINE\)\}<\/p> : null\}/);
+  assert.equal(make.READY_LINE, undefined);
+  assert.doesNotMatch(src, /data-make-ready|Ready-made:/);
 });
 
 // Evan, 8 Oct 2026: each game preset starts its project from a game
@@ -304,21 +304,18 @@ test('a game preset starts from a working game starter, and its brief is still b
     assert.ok(appTemplates.botStarter(s.template), `${c.key}: a starter the bot builds on`);
     assert.equal(appTemplates.isReadyMade(s.template), false, `${c.key}: never ready-made`);
     assert.equal(readyMadeOf(game, c.key), null);
-    // `starts` is the id of the whole line; the catalog holds the words.
-    assert.equal(s.starts, `onboarding:firstSession.template.game.${c.key}.starterLine`);
-    assert.ok(!/\u2014/.test(message(s.starts)), `${c.key}: says what it starts from`);
-    assert.match(message(s.starts), /^Starts from a game that already works, .+, and Homeroom bot builds your idea on it\.$/);
   }
   assert.equal(starterOf(game, OWN), null, 'their own game idea starts from the empty scaffold');
   for (const t of TEMPLATES.filter((x) => x.key !== 'game')) {
     for (const c of t.choices) assert.equal(starterOf(t, c.key), null, `${c.key}: no game starter`);
   }
   const make = loadTsx(`${DIR}/make.tsx`);
-  assert.equal(make.starterLine('onboarding:firstSession.template.game.board.starterLine'), 'Starts from a game that already works, a dice race, and Homeroom bot builds your idea on it.');
   const src = read(`${DIR}/make.tsx`);
   // Only while the sentence is drawn as it is, like a ready-made app.
   assert.match(src, /const starter = templated && example \? starterOf\(example, choice\) : null;/);
-  assert.match(src, /\{starterOf\(template, choice\) \? <p data-make-starter="" className=\{HINT\}>\{t\(starterOf\(template, choice\)!\.starts\)\}<\/p> : null\}/);
+  // And, like it, nothing under the choices says so (Evan, 10 Oct 2026).
+  assert.equal(make.starterLine, undefined);
+  assert.doesNotMatch(src, /data-make-starter|Starts from a game/);
 });
 
 // #4384: the make screen no longer says, under Make it, that what you write
@@ -367,7 +364,15 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
   // (preventScroll since 5 Oct 2026: the keyboard surface reveals the field, with Make it.)
   // The caret goes to what is missing: the name, a template's blank, or the plain box.
   assert.match(src, /const gap: Missing = templated && said\?\.blank \? 'blank' : missingAnswer\(text, name\);\s+if \(gap\) \{\s+setMissing\(gap\);\s+\(gap === 'name' \? nameRef\.current : templated \? wordsField\(\) : briefRef\.current\)\?\.focus\(\{ preventScroll: true \}\);\s+return;\s+\}/);
-  assert.match(src, /\{missing === 'name'\s+\? <p id="first-session-name-hint" role="alert" className=\{NEEDED\}>\{needed\}<\/p>/);
+  assert.match(src, /\{missing === 'name' \? <p id="first-session-name-hint" role="alert" className=\{NEEDED\}>\{needed\}<\/p> : null\}/);
+  // No standing hint under the name (Evan, 10 Oct 2026): "What should we
+  // call it?" says it. The line only appears when a name is missing, and
+  // the field points at it only then.
+  assert.match(src, /aria-describedby=\{missing === 'name' \? 'first-session-name-hint' : undefined\}/);
+  for (const file of ['make.tsx', 'import-repo.tsx']) {
+    assert.doesNotMatch(read(`${DIR}/${file}`), /group's name too/, file);
+  }
+  assert.match(read(`${DIR}/import-repo.tsx`), /aria-describedby=\{missing === 'name' \? 'make-import-name-hint' : undefined\}/);
   // The placeholder reads as an example, not as a name already given.
   assert.match(src, /placeholder=\{t\('onboarding:firstSession\.make\.namePlaceholder'\)\}/);
   assert.equal(message('onboarding:firstSession.make.namePlaceholder'), 'For example, Hiking Tier List');

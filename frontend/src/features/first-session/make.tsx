@@ -117,23 +117,6 @@ import { TierChart } from './tier-chart';
 
 export { deviceTimeZone };
 
-/**
- * Under the sentence when its choice is one of the ready-made apps
- * (examples.ts `readyMadeOf`): Make it makes that app, with nothing to build.
- * A message id, read when the line is drawn.
- */
-export const READY_LINE = 'onboarding:firstSession.make.readyMade';
-
-/**
- * Under the sentence when its choice is a game preset with a starter
- * (examples.ts `starterOf`): the project starts as that working game, and
- * Homeroom bot builds their idea on it.
- */
-export function starterLine(starts: string): string {
-  // `starts` is the message id of the whole line (examples.ts `starterOf`).
-  return translate(starts);
-}
-
 /** The server's floor and ceiling for a description (services/homeroom-bot-dm.js MIN_/MAX_BRIEF_CHARS). */
 export const BRIEF_MIN = 10;
 export const BRIEF_MAX = 4000;
@@ -628,8 +611,6 @@ export function MakeScreen({
                       </Chip>
                     ))}
                   </div>
-                  {readyMadeOf(template, choice) ? <p data-make-ready="" className={HINT}>{t(READY_LINE)}</p> : null}
-                  {starterOf(template, choice) ? <p data-make-starter="" className={HINT}>{t(starterOf(template, choice)!.starts)}</p> : null}
                 </>
               ) : (
                 <>
@@ -672,7 +653,7 @@ export function MakeScreen({
                 autoComplete="off"
                 enterKeyHint="go"
                 value={name}
-                aria-describedby="first-session-name-hint"
+                aria-describedby={missing === 'name' ? 'first-session-name-hint' : undefined}
                 onChange={(e) => {
                   setName(e.target.value);
                   // A name of their own stays; an emptied one follows the choice again.
@@ -683,9 +664,7 @@ export function MakeScreen({
                 placeholder={t('onboarding:firstSession.make.namePlaceholder')}
                 className={INPUT}
               />
-              {missing === 'name'
-                ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p>
-                : <p id="first-session-name-hint" className={HINT}>{t('onboarding:firstSession.make.nameHint')}</p>}
+              {missing === 'name' ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p> : null}
             </div>
           </div>
           {allowance}
