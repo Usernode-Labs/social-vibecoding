@@ -8038,13 +8038,25 @@ const AppView = {
       return AppView._devTopicInPanel && !!document.getElementById('dev-topic-thread')
         && !!t && t.kind === kind && t.id === id;
     };
+    // #4640: a request's and a governance discussion are reply threads on the
+    // ref alone, as _renderTopicSubView mounts them (`threadMounted =
+    // ref.kind === 'issue' || ref.kind === 'gov'`): mount the thread as soon
+    // as this panel holds, so its discussion starts loading straight away —
+    // as it does on the item's full page — instead of waiting behind the
+    // item fetch. A change's thread still waits for its item: its "Only you
+    // can see this change" notice reads the row's status.
+    let threadMounted = false;
+    if ((kind === 'issue' || kind === 'gov') && current()) {
+      threadMounted = true;
+      AppView._mountTopicThread();
+    }
     if (!AppView._findTopicItem()) {
       if (kind === 'gov') await AppView._fetchGovProposalById(id);
       else if (kind === 'issue') await AppView._fetchIssueByNumber(id);
       else await AppView._fetchProposalById(id);
     }
     if (!current() || !AppView._findTopicItem()) return;
-    AppView._mountTopicThread();
+    if (!threadMounted) AppView._mountTopicThread();
     AppView._renderTopicHead();
     // The change page's head host is rendered by its own portal, which may
     // land a frame after the mount; on the full page later repaints cover
@@ -13203,6 +13215,15 @@ const AppView = {
   // nothing the board already shows. Under two characters nothing is asked:
   // a one-letter search would match every thread and buy only a round trip.
   KANBAN_COMMENT_SEARCH_MIN: 2,
+
+  // #4650: while a search or filter is on, the board back-fills older Done
+  // history through the same keyset pager a manual "Show more" uses, so a
+  // search reaches past the pages the board had already loaded. Bounded —
+  // 10 batches of 50, about 500 older items per visit — so a very long
+  // history is not fetched forever on each keystroke; past the bound "Show
+  // more" stays at the foot of Done for anyone who wants to keep going.
+  MERGED_SEARCH_BACKFILL_PAGES: 10,
+  MERGED_SEARCH_BACKFILL_LIMIT: 50,
   _kanbanCommentHits: null,
   _kanbanCommentHitsSeq: 0,
   _kanbanCommentHitsPending: null,
@@ -13217,11 +13238,77 @@ const AppView = {
 
   // The filter object the predicate sees: the stored filters plus the
   // comment hits for the query in the box. Every surface repaint builds its
-  // filters through here, which is also what keeps the hits current.
+  // filters through here, which is also what keeps the hits current — and,
+  // since #4650, what offers the search its look through older Done history
+  // (see _backfillMergedForSearch). Scheduled off the paint so the loop's
+  // own repaints cannot re-enter a paint that is still running.
   _kanbanMatchFilters() {
     AppView._syncKanbanCommentHits();
+    setTimeout(() => {
+      try { AppView._backfillMergedForSearch(); } catch { /* a paint never fails for the back-fill */ }
+    }, 0);
     const f = AppView._kanbanFilters || {};
     return { ...f, commentHits: AppView._kanbanCommentHitsFor(f.q) };
+  },
+
+  // #4650: whether the filters on the board deserve older Done history — a
+  // non-`q` filter set, or a query long enough that the comment search would
+  // ask the server for it (a one-letter search with nothing else does not
+  // back-fill, matching KANBAN_COMMENT_SEARCH_MIN).
+  _kanbanBackfillWorthIt() {
+    if (!AppView._kanbanFiltersActive()) return false;
+    const f = AppView._kanbanFilters || {};
+    const nonQ = !!(f.priority || f.category || f.assignee || f.needsVote || f.theme
+      || f.assignedToMe || f.createdByMe);
+    if (nonQ) return true;
+    return String(f.q || '').trim().length >= AppView.KANBAN_COMMENT_SEARCH_MIN;
+  },
+
+  // While a search or filter is on, keep appending older merged pages so
+  // Done's search reaches past what the board had already loaded. Runs
+  // through the SAME pager a manual "Show more" uses — loadMoreMerged keeps
+  // the queue, the repaints and the footer's "Loading…" state — so the
+  // batches land one repaint at a time, exactly as if each had been clicked.
+  //
+  // Bounded: at most MERGED_SEARCH_BACKFILL_PAGES pages per visit to the
+  // app, counted on the pager's own object so _resetMergedPagination (an
+  // app switch) clears it, and history already loaded stays searchable with
+  // no new fetch. Single-flight on `autoRunning`: every paint schedules a
+  // call, and one loop at a time consumes them. On `false` — an error, a
+  // nonadvancing cursor, a retired pager — the loop sets `autoFailed` and
+  // stops for the visit; no retry loop. Eligibility is re-checked before
+  // each page, so clearing the search stops the loop after the page in
+  // flight.
+  _backfillMergedForSearch() {
+    const pager = AppView._mergedPager;
+    if (!pager || !AppView._mergedPagerActive(pager)) return;
+    if (pager.autoRunning || pager.autoFailed) return;
+    if ((pager.autoPages || 0) >= AppView.MERGED_SEARCH_BACKFILL_PAGES) return;
+    if (!AppView._kanbanBackfillWorthIt()) return;
+    if (!AppView._mergedHasMore || !AppView._mergedCursor || AppView._mergedLoadingMore) return;
+    pager.autoRunning = true;
+    (async () => {
+      try {
+        while (AppView._mergedPagerActive(pager)
+          && AppView._kanbanBackfillWorthIt()
+          && !pager.autoFailed
+          && (pager.autoPages || 0) < AppView.MERGED_SEARCH_BACKFILL_PAGES
+          && AppView._mergedHasMore && AppView._mergedCursor
+          && !AppView._mergedLoadingMore) {
+          let ok = false;
+          try {
+            ok = await AppView.loadMoreMerged({ limit: AppView.MERGED_SEARCH_BACKFILL_LIMIT });
+          } catch { ok = false; }
+          if (!AppView._mergedPagerActive(pager)) return;
+          if (!ok) { pager.autoFailed = true; return; }
+          pager.autoPages = (pager.autoPages || 0) + 1;
+        }
+      } catch {
+        pager.autoFailed = true; // never an unhandled rejection from a fire-and-forget loop
+      } finally {
+        pager.autoRunning = false;
+      }
+    })();
   },
 
   _syncKanbanCommentHits() {
@@ -20847,9 +20934,15 @@ const AppView = {
   // column's, both built in _workshopView / _kanbanView.
 
   // Append the next keyset page, coordinated with background refreshes.
-  async loadMoreMerged() {
-    if (AppView._mergedLoadingMore || !AppView._mergedHasMore) return;
-    if (!AppView.appData || !AppView._mergedCursor) return;
+  // `opts.limit` sizes the page (the search back-fill uses 50); the footer's
+  // button calls it with no arguments, so manual paging keeps the server
+  // default. Resolves true when a page was appended, false on an early
+  // return, an error or a pager that was retired mid-flight — the truthiness
+  // the search back-fill's loop reads.
+  async loadMoreMerged(opts = null) {
+    const limit = (opts && opts.limit) || null;
+    if (AppView._mergedLoadingMore || !AppView._mergedHasMore) return false;
+    if (!AppView.appData || !AppView._mergedCursor) return false;
     const slug = AppView.appData.slug;
     const pager = AppView._mergedPagerFor(slug);
     AppView._mergedLoadingMore = true;
@@ -20858,12 +20951,13 @@ const AppView = {
     // and the Feed's completed rows are inline in #dev-feed — the separate
     // #gc-merged section this used to patch in place is gone.
     AppView._repaintDevBody();
+    let appended = false;
     try {
-      await AppView._queueMergedOperation(pager, async () => {
-        if (!AppView._mergedHasMore || !AppView._mergedCursor) return;
+      appended = await AppView._queueMergedOperation(pager, async () => {
+        if (!AppView._mergedHasMore || !AppView._mergedCursor) return false;
         const cur = AppView._mergedCursor;
-        const data = await AppView._fetchMergedPage(slug, cur);
-        if (!AppView._mergedPagerActive(pager)) return;
+        const data = await AppView._fetchMergedPage(slug, cur, limit);
+        if (!AppView._mergedPagerActive(pager)) return false;
         const have = new Set((AppView._merged || []).map(AppView._mergedRowKey));
         const fresh = data.merged.filter((row) => {
           const key = AppView._mergedRowKey(row);
@@ -20895,15 +20989,18 @@ const AppView = {
             GroupChat.refreshVoteControls();
           }
         }
+        return true;
       });
     } catch {
       // Leave the existing rows in place; surface nothing destructive.
+      appended = false;
     } finally {
       if (AppView._mergedPagerActive(pager)) {
         AppView._mergedLoadingMore = false;
         AppView._repaintDevBodyKeepingPosition();
       }
     }
+    return !!appended;
   },
 
 

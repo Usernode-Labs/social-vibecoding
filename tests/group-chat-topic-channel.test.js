@@ -221,7 +221,7 @@ test('reading a topic\'s channel moves its own cursor, past its replies, and its
   assert.deepEqual(fetches.at(-1), ['/api/apps/homeroom/messages/unread', { message_id: 60, thread_type: 'category', thread_ref: TOPIC }]);
   assert.deepEqual(channelReads.at(-1), ['homeroom', TOPIC, true]);
   assert.equal(gc._unreadHold, 'homeroom');
-  // #general's read names no channel.
+  // #general's read names no channel, and its count is the record's too now.
   gc._channel = null;
   gc._unreadHold = null;
   gc._readUpTo = 0;
@@ -229,6 +229,13 @@ test('reading a topic\'s channel moves its own cursor, past its replies, and its
   await gc.markRead();
   assert.deepEqual(fetches.at(-1), ['/api/apps/homeroom/messages/read', { message_id: 70 }]);
   assert.equal(refreshes.length, 1);
+  assert.deepEqual(channelReads.at(-1), ['homeroom', null]);
+  // "Mark unread" in #general asks for its count back, and refreshes too.
+  await gc.markUnread(70);
+  assert.deepEqual(fetches.at(-1), ['/api/apps/homeroom/messages/unread', { message_id: 70 }]);
+  assert.deepEqual(channelReads.at(-1), ['homeroom', null, true]);
+  assert.equal(gc._unreadHold, 'homeroom');
+  assert.equal(refreshes.length, 2);
 });
 
 // ── 4. Its reply threads ────────────────────────────────────────────────
