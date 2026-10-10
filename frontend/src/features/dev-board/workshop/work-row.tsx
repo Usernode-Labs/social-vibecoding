@@ -20,12 +20,11 @@
  *     width first, then the card's coloured category chip and its 💬 count
  *     (dev-card.tsx's own pieces, unchanged), then small tags for what is
  *     happening on it ("Picked up · zura", "Checks passed",
- *     AppView._workshopBrief), and on the Workshop tab a change's status
- *     pill and Vote at the line's far end. #4485: the vote shares the tags' line on
- *     every width, a phone's too, rather than taking a line of its own (it
- *     wraps only when the line has no room), so the longest tags say less
- *     on a row ("Taking shots", "Preview"; the full words are their tooltip
- *     and what a screen reader says);
+ *     AppView._workshopBrief), and on the Workshop tab the card's coloured
+ *     category chip and its 💬 count. #4718: a change's status pill and
+ *     Vote no longer ride this line — they take a line of their own under
+ *     it, at the row's far end, on every width, so rows beside each other
+ *     keep the same shape whatever the tags' length;
  *   - ☰, the card's own menu trigger with the card's own key, so
  *     `_toggleCardMenu`, the touch action sheet and every item in it work
  *     unchanged;
@@ -176,7 +175,9 @@ function Tag({ t }: { t: RowTag }): ReactNode {
  * A change's vote on the Workshop tab (#4486): the card's own status pill,
  * with its own words ("0 of 1 approval"), at its words' width plus the 56px
  * the thin bar it replaces took (app.css `.dev-ws-wvote-state`), and the
- * card's own Vote button, at the far end of the tags line (#4485).
+ * card's own Vote button. #4718: the pair takes a line of its own under the
+ * tags, at the row's far end, on every width — it never shares the tags'
+ * line, so rows beside each other keep their pills lined up.
  */
 function Votes({ card }: { card: DevCardModel }): ReactNode {
   const s = card.pill?.state || null;
@@ -225,10 +226,10 @@ export function WorkRow({
   const hasChat = (card.chatCount || 0) > 0;
   const chip = hasChip ? <CategoryChip card={card} /> : null;
   const chat = hasChat ? <ChatCount card={card} /> : null;
-  // The Workshop tab's bar and Vote ride the tags line; the board's ride
-  // the band under it.
+  // The Workshop tab's bar and Vote take a line of their own under the tags
+  // (#4718), at the row's far end; the board's ride the band under it.
   const votes = !board && b.vote ? <Votes card={card} /> : null;
-  const status = live || hasChip || hasChat || tags.length > 0 || !!votes;
+  const status = live || hasChip || hasChat || tags.length > 0;
   const menuKey = card.rail && card.rail.menuKey ? card.rail.menuKey : '';
   const specs = board && !live ? voteSpecs(card) : null;
   return (
@@ -259,9 +260,9 @@ export function WorkRow({
             {chip}
             {chat}
             {tags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
-            {votes}
           </span>
         ) : null}
+        {votes ? <span className="dev-ws-wrow-votes">{votes}</span> : null}
       </span>
       {menuKey ? <span className="dev-ws-wrow-menu"><MenuTrigger menuKey={menuKey} /></span> : null}
       {board && !live ? (

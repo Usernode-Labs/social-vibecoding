@@ -2300,7 +2300,7 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
     'none of the card\'s chrome, and none of the hooks the Board\'s handler opens a card on');
 });
 
-test('#4457, #4485, #4486: a change up for a vote keeps its vote at the end of the tags\' line: the card\'s bar with its own words, and its Vote', () => {
+test('#4457, #4486, #4718: a change up for a vote keeps its vote on its own line under the tags: the card\'s bar with its own words, and its Vote', () => {
   const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
   const AppView = makeAppView();
   seed(AppView);
@@ -2323,13 +2323,15 @@ test('#4457, #4485, #4486: a change up for a vote keeps its vote at the end of t
     'the bar, then Vote');
   assert.ok(!/dev-ws-wvote-bar|dev-ws-wvote-n|dev-ws-wvote-cell/.test(html), 'no thin bar, no count beside it');
   assert.match(CSS, /\.dev-ws-wvote-state \{ flex: none; padding: 0 calc\(10px \+ 56px\) 0 10px; \}/);
-  // #4485: the vote shares the tags' line, at its far end, on every width:
-  // no phone rule gives it a line of its own (it wraps only when the line
-  // has no room). So the longest tags say less on a row, the full words
-  // their tooltip and what a screen reader reads.
-  assert.match(html, /<span class="dev-ws-tag" data-tone="plain"><svg[^>]*>.*?<\/svg>Preview ready<\/span><span class="dev-ws-wvote" data-ws-vote="">/, 'a tag without short words draws its label, and the vote follows the tags on their line');
+  // #4718: the vote takes a line of its own under the tags, at the row's
+  // far end, on every width — it never rides the tags' line, so rows beside
+  // each other keep their pills lined up whatever the tags' length.
+  assert.match(html, /<\/span><span class="dev-ws-wrow-votes"><span class="dev-ws-wvote" data-ws-vote="">/, 'the tags line closes, then the votes line opens with the vote');
+  const statusLine = html.slice(html.indexOf('<span class="dev-ws-wrow-status">'), html.indexOf('<span class="dev-ws-wrow-votes">'));
+  assert.ok(!statusLine.includes('dev-ws-wvote'), 'the tags line holds no vote');
+  assert.match(html, /<span class="dev-ws-tag" data-tone="plain"><svg[^>]*>.*?<\/svg>Preview ready<\/span><\/span><span class="dev-ws-wrow-votes">/, 'a tag without short words draws its label, and the tags line ends before the vote');
+  assert.match(CSS, /\.dev-ws-wrow-votes \{ margin-top: 6px; display: flex; align-items: center; \}/);
   assert.match(CSS, /\.dev-ws-wvote \{\s*position: relative; z-index: 1; margin-left: auto;/);
-  assert.doesNotMatch(CSS.replace(/\/\*[\s\S]*?\*\//g, ' '), /\.dev-ws-wvote \{ margin-left: 0; width: 100%; \}/, 'no line of its own on a phone');
   const short = { ...brief, tags: [{ label: 'Taking before & after shots', short: 'Taking shots', tone: 'run' }, { label: 'Preview ready', short: 'Preview', tone: 'plain', glyph: 'eye' }] };
   const shortHtml = renderToHtml(createElement(WorkRow, { row: { ...row, brief: short }, slug: 'demo-app' }));
   assert.match(shortHtml, /<span class="dev-ws-tag" data-tone="run" title="Taking before &amp; after shots"><span class="dc-status-spinner-arc" aria-hidden="true"><\/span><span aria-hidden="true">Taking shots<\/span><span class="sr-only">Taking before &amp; after shots<\/span><\/span>/);
@@ -4929,7 +4931,7 @@ test('#4457: the weeks before this one open on two rows, and Earlier weeks adds 
   // Every class it emits has a rule (the #2097 lesson).
   const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const cls of ['dev-ws-wlist', 'dev-ws-wrow', 'dev-ws-wrow-tile', 'dev-ws-wrow-main', 'dev-ws-wrow-link', 'dev-ws-wrow-sub',
-    'dev-ws-wrow-status', 'dev-ws-wrow-chev', 'dev-ws-tag', 'dev-ws-wvote', 'dev-ws-wvote-state', 'dev-ws-wvote-btn',
+    'dev-ws-wrow-status', 'dev-ws-wrow-votes', 'dev-ws-wrow-chev', 'dev-ws-tag', 'dev-ws-wvote', 'dev-ws-wvote-state', 'dev-ws-wvote-btn',
     'dev-ws-wrow-menu', 'dev-ws-wrow-live', 'dev-ws-brow', 'dev-ws-arow', 'dev-ws-arow-act', 'dev-ws-head-sub',
     'dev-ws-week', 'dev-ws-week-main', 'dev-ws-week-head', 'dev-ws-week-fresh', 'dev-ws-week-n',
     'dev-ws-weekpage', 'dev-ws-week-meta', 'dev-ws-week-lead', 'dev-ws-none', 'dev-ws-since-clear', 'dev-ws-parthead',
