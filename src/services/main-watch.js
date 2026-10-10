@@ -45,6 +45,23 @@
 //     verdict re-tests main. Everything else waits. (services/votes.js,
 //     the main_healthy gate.)
 //
+// And three from the nine pauses of 26 September to 10 October 2026, every
+// one of which an admin ended by hand:
+//
+//   * A paused main asks again by itself (recheckPaused). A red that a
+//     re-run could not confirm is retried within minutes; a confirmed red
+//     is re-run every quarter hour, up to MAIN_WATCH_RECHECKS times, and a
+//     green one lifts the pause like any green. Twice, a flaky test's red
+//     stood for hours because the confirming re-run never happened.
+//
+//   * A test that failed and then passed on the same commit is remembered
+//     as flaky (main_test_flakes), and a request to fix it is filed for the
+//     app. A red whose failures are ALL such tests, named in full, is
+//     recorded but pauses nothing: it says nothing new about the code.
+//
+//   * The verdict keeps the failing tests by name (`failingTests`), from
+//     the suite's own recap of them at the end of its output.
+//
 // Only the unit suite. The dapp.json assertions need a built preview of
 // main, which is production itself; a red production is caught by the
 // deploy's own health check and the rollback that follows it.
@@ -65,6 +82,36 @@ const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
 const checkRuns = require('./check-runs');
 const checksQueue = require('./checks-queue');
+
+// How many failing tests a verdict keeps by name, in its detail.
+const MAX_FAILING_TESTS = 20;
+// A red is taken for flaky tests only when it named this few: a dozen
+// tests failing and then passing is the run's environment, not each test.
+const MAX_FLAKES_PER_RED = 3;
+// A flake is known for this long after it was last seen.
+const FLAKE_MEMORY_DAYS = 30;
+// One request per flaky test per this many days, and none while the last
+// one is still open.
+const FLAKE_REQUEST_DAYS = 14;
+
+function intEnv(name, fallback) {
+  const v = parseInt(process.env[name], 10);
+  return Number.isFinite(v) && v >= 0 ? v : fallback;
+}
+
+// How many times a paused main is re-run before only a fix or an admin
+// can lift the pause. 0 turns the rechecks off.
+function maxRechecks() { return intEnv('MAIN_WATCH_RECHECKS', 3); }
+// How long after its last verdict a confirmed red is re-run.
+function recheckMs() { return intEnv('MAIN_WATCH_RECHECK_MS', 15 * 60 * 1000); }
+// How long after a confirming re-run that could not happen it is tried again.
+function confirmRetryMs() { return intEnv('MAIN_WATCH_CONFIRM_RETRY_MS', 3 * 60 * 1000); }
+
+// File a request for each newly flaky test. On by default.
+function flakeRequestsEnabled() {
+  const v = String(process.env.MAIN_WATCH_FLAKE_REQUESTS ?? '1').trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off');
+}
 
 function isEnabled() {
   const v = String(process.env.MAIN_WATCH_ENABLED ?? '1').trim().toLowerCase();
@@ -167,12 +214,22 @@ async function mergePause(pool, appId) {
 // output that never reached a test, or a runner killed at its deadline —
 // and says nothing about main, so it pauses nothing. A verdict about the
 // code is 'passing' or 'failing'.
+//
+// A red keeps its failing tests by name (`failingTests`, `{ file, test }`)
+// and whether those are all of them (`failingTestsComplete`); the tests'
+// excerpts ride beside the verdict for a flake request, never stored.
 function classify(outcome) {
   if (!outcome || !outcome.row) return { state: 'skipped', detail: { reason: 'no runnable test script' } };
   const row = outcome.row;
+  const named = outcome.failingTests && Array.isArray(outcome.failingTests.tests) ? outcome.failingTests : null;
   const detail = {
     ...(row.summary ? { summary: row.summary } : {}),
     ...(row.failureReason ? { failureReason: row.failureReason } : {}),
+    ...(row.status !== 'pass' && named && named.tests.length ? {
+      failingTests: named.tests.slice(0, MAX_FAILING_TESTS)
+        .map((t) => ({ file: t.file || null, test: String(t.test || '') })),
+      failingTestsComplete: !!named.complete && named.tests.length <= MAX_FAILING_TESTS,
+    } : {}),
   };
   if (row.status === 'pass') return { state: 'passing', detail };
   // A suite that never reached `npm test`: it could not run at all, or its
@@ -183,7 +240,19 @@ function classify(outcome) {
   if (/^Suite setup failed/.test(reason) || /^Suite run exceeded/.test(reason)) {
     return { state: 'error', detail };
   }
-  return { state: 'failing', detail };
+  const excerpts = Array.isArray(row.failureDetails) ? row.failureDetails : [];
+  return { state: 'failing', detail, ...(excerpts.length ? { excerpts } : {}) };
+}
+
+// The suite's own account of a red, without the bookkeeping a run keeps
+// around it: what a re-run carries over as the red it is re-asking about.
+function redOf(detail) {
+  const d = detail && typeof detail === 'object' ? detail : {};
+  const out = {};
+  for (const key of ['summary', 'failureReason', 'failingTests', 'failingTestsComplete']) {
+    if (d[key] !== undefined) out[key] = d[key];
+  }
+  return out;
 }
 
 // Is `mergeSha` still the merge the app's row is about? A run waiting for
@@ -257,10 +326,13 @@ async function runSuite(config, pool, app, parsed, mergeSha) {
 // The compare-and-swap write of a state for the merge commit this run is
 // about. The pause column moves with the state: green clears it, red sets
 // it (unless an admin already resumed this very sha), anything else — a run
-// that could not happen — leaves it as it was. Returns true when the row
-// was still ours, false when a newer merge re-claimed it, null on a failed
-// write.
+// that could not happen — leaves it as it was. A red whose failures are all
+// known flakes (`flakesOnly`) is green for the pause: every other test
+// passed, so it clears a pause rather than setting one. Returns true when
+// the row was still ours, false when a newer merge re-claimed it, null on a
+// failed write.
 async function writeState(pool, app, mergeSha, state, detail) {
+  const quiet = !!detail && Array.isArray(detail.flakesOnly) && detail.flakesOnly.length > 0;
   try {
     const write = await pool.query(
       `UPDATE apps
@@ -272,7 +344,7 @@ async function writeState(pool, app, mergeSha, state, detail) {
               END
         WHERE id = $1 AND main_check_sha = $2::text`,
       [app.id, mergeSha, state, JSON.stringify(detail),
-        state === 'passing', state === 'failing' || state === 'confirming']
+        state === 'passing' || quiet, (state === 'failing' || state === 'confirming') && !quiet]
     );
     return write.rowCount !== 0;
   } catch (err) {
@@ -331,7 +403,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
   if (confirmationOf) {
     // The first run already happened and was red; the process that was
     // re-running it is gone. Pick up where it stopped.
-    verdict = { state: 'failing', detail: confirmationOf };
+    verdict = { state: 'failing', detail: redOf(confirmationOf) };
   } else {
     log.info('main-watch', 'Running the unit suite on main', {
       appId: app.id, slug: app.slug, sha: mergeSha, prNumber,
@@ -340,10 +412,16 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
   }
   if (verdict.state === 'superseded') return null;
 
+  // The first red's tests, for a flake record if the re-run is green.
+  const firstRun = verdict.state === 'failing' ? verdict.detail : null;
+  const firstExcerpts = verdict.excerpts || [];
   if (verdict.state === 'failing' && confirmEnabled()) {
-    // Provisional: hold the pause, say so, and ask the suite again.
-    const firstRun = verdict.detail;
-    const held = await writeState(pool, app, mergeSha, 'confirming', { ...startedDetail, ...firstRun, confirming: true });
+    // Provisional: hold the pause, say so, and ask the suite again. A red
+    // of known flakes alone holds nothing while it is asked again.
+    const quietFirst = await knownFlakeNames(pool, app.id, firstRun);
+    const held = await writeState(pool, app, mergeSha, 'confirming', {
+      ...startedDetail, ...firstRun, confirming: true, ...(quietFirst ? { flakesOnly: quietFirst } : {}),
+    });
     if (held === null) return null;
     if (!held) {
       log.info('main-watch', 'Discarded a first red for a superseded merge', { appId: app.id, sha: mergeSha });
@@ -364,11 +442,16 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
       verdict = { state: 'failing', detail: { ...again.detail, confirmed: true, firstRun } };
     } else {
       // The re-run could not happen: it neither confirms nor clears the
-      // first red, which stands, and says so.
+      // first red, which stands, and says so. recheckPaused asks again in
+      // a few minutes.
       verdict = { state: 'failing', detail: { ...firstRun, confirmed: false, confirmation: again.detail } };
     }
   }
   const detail = { ...startedDetail, ...verdict.detail };
+  if (verdict.state === 'failing') {
+    const quiet = await knownFlakeNames(pool, app.id, redOf(verdict.detail));
+    if (quiet) detail.flakesOnly = quiet;
+  }
 
   const stored = await writeState(pool, app, mergeSha, verdict.state, detail);
   if (stored === null) return null;
@@ -379,6 +462,7 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
   log.info('main-watch', `main is ${verdict.state}`, {
     appId: app.id, slug: app.slug, sha: mergeSha, prNumber, state: verdict.state,
     confirmed: detail.confirmed, flake: !!detail.flake,
+    ...(detail.flakesOnly ? { flakesOnly: detail.flakesOnly.length } : {}),
   });
 
   // A red pauses merges and a green lifts the pause: the stored state is
@@ -386,9 +470,15 @@ async function afterMerge(config, pool, { app, session = null, mergeSha, confirm
   // (main-pause-store). A channel carries no activity.
   if (verdict.state === 'passing' && detail.flake) {
     kickQueue(config, app.id, 'post-flake');
-  } else if (verdict.state === 'passing' && wasPaused) {
+  } else if ((verdict.state === 'passing' || detail.flakesOnly) && wasPaused) {
     // The pause lifted; whatever was approved meanwhile can go.
     kickQueue(config, app.id, 'post-green');
+  }
+  // Red then green on one commit: the tests that failed are flaky.
+  if (verdict.state === 'passing' && detail.flake && firstRun) {
+    await noteFlakes(config, pool, app, mergeSha, [firstRun], firstExcerpts);
+  } else if (detail.flakesOnly) {
+    await fileFlakeRequests(config, pool, app, redOf(detail).failingTests || [], { mergeSha });
   }
   return { state: verdict.state, sha: mergeSha, detail };
 }
@@ -399,6 +489,294 @@ function kickQueue(config, appId, why) {
   } catch (err) {
     log.warn('main-watch', `${why} enqueue failed`, { appId, err: err.message });
   }
+}
+
+// ── Flaky tests ──────────────────────────────────────────────────────────
+//
+// A test that failed on a commit and then passed on the same commit failed
+// for a reason outside the code: it is flaky. main_test_flakes remembers it
+// per app, and a red made only of such tests stops pausing merges. Twelve
+// first reds of 26 September to 10 October 2026 were flakes the confirming
+// re-run cleared, and three more paused merges for hours.
+
+const testKey = (t) => `${t.file || ''}\u0000${t.test}`;
+
+// The failing tests' names when EVERY one of them is a known flake: named
+// in full (the suite's recap counted no failure the list lacks) and each
+// seen flaking within FLAKE_MEMORY_DAYS. Null otherwise, and on any doubt:
+// a read that fails pauses as before.
+async function knownFlakeNames(pool, appId, red) {
+  const tests = red && Array.isArray(red.failingTests) ? red.failingTests : [];
+  if (!tests.length || red.failingTestsComplete !== true) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT file, test FROM main_test_flakes
+        WHERE app_id = $1 AND last_seen_at > NOW() - ($2::int * interval '1 day')`,
+      [appId, FLAKE_MEMORY_DAYS]
+    );
+    const known = new Set((rows || []).map((r) => testKey({ file: r.file, test: r.test })));
+    return tests.every((t) => known.has(testKey(t))) ? tests.map((t) => t.test) : null;
+  } catch (err) {
+    log.warn('main-watch', 'flake read failed; pausing as usual', { appId, err: err.message });
+    return null;
+  }
+}
+
+// Record the tests of each red that a green on the same commit showed to
+// be flaky, then file a request for each. A red counts only when it named
+// all of its failures and no more than MAX_FLAKES_PER_RED of them. Never
+// throws; returns the tests recorded.
+async function noteFlakes(config, pool, app, mergeSha, reds, excerpts = []) {
+  const tests = new Map();
+  for (const red of reds) {
+    const named = red && Array.isArray(red.failingTests) ? red.failingTests : [];
+    if (!named.length || red.failingTestsComplete !== true || named.length > MAX_FLAKES_PER_RED) continue;
+    for (const t of named) tests.set(testKey(t), t);
+  }
+  const recorded = [];
+  for (const t of tests.values()) {
+    try {
+      await pool.query(
+        `INSERT INTO main_test_flakes (app_id, file, test, last_sha)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (app_id, file, test) DO UPDATE
+           SET seen_count = main_test_flakes.seen_count + 1, last_seen_at = NOW(), last_sha = EXCLUDED.last_sha`,
+        [app.id, t.file || '', t.test, mergeSha]
+      );
+      recorded.push(t);
+    } catch (err) {
+      log.warn('main-watch', 'flake record failed (non-fatal)', { appId: app.id, test: t.test, err: err.message });
+    }
+  }
+  if (recorded.length) {
+    log.info('main-watch', 'Recorded flaky tests', {
+      appId: app.id, slug: app.slug, sha: mergeSha, tests: recorded.map((t) => t.test),
+    });
+    await fileFlakeRequests(config, pool, app, recorded, { mergeSha, excerpts });
+  }
+  return recorded;
+}
+
+async function fileFlakeRequests(config, pool, app, tests, { mergeSha, excerpts = [] } = {}) {
+  const filed = [];
+  for (const t of tests) {
+    const excerpt = (excerpts.find((d) => d && d.test === t.test && (d.file || null) === (t.file || null)) || {}).excerpt;
+    const n = await fileFlakeRequest(config, pool, app, t, { mergeSha, excerpt });
+    if (n) filed.push(n);
+  }
+  return filed;
+}
+
+// A fence longer than any run of backticks in `text`.
+function fenceFor(text) {
+  const longest = (String(text).match(/`+/g) || []).reduce((n, run) => Math.max(n, run.length), 0);
+  return '`'.repeat(Math.max(3, longest + 1));
+}
+
+function flakeRequestText(t, { mergeSha, seenCount, firstSeenAt, excerpt }) {
+  const name = t.test.length > 120 ? `${t.test.slice(0, 119)}…` : t.test;
+  const where = t.file ? ` in \`${t.file}\`` : '';
+  const since = firstSeenAt ? new Date(firstSeenAt).toISOString().slice(0, 10) : null;
+  const lines = [
+    `The test "${t.test}"${where} failed on main and then passed on the same commit`
+      + `${mergeSha ? ` (${String(mergeSha).slice(0, 9)})` : ''}, so its result does not depend only on the code.`,
+    '',
+    `- Seen flaking on main ${seenCount === 1 ? 'once' : `${seenCount} times`}${since ? `, first on ${since}` : ''}.`,
+    '- While it stays flaky, a red main whose only failures are known flaky tests is recorded but does not pause merges.',
+    '- The fix is to make the test deterministic: find what it waits on or races (time, timers, ordering, a shared resource) and remove the dependence.',
+  ];
+  if (excerpt) {
+    const text = String(excerpt).slice(0, 1500);
+    const fence = fenceFor(text);
+    lines.push('', 'What it printed when it failed:', '', `${fence}text`, text, fence);
+  }
+  lines.push('', '---', 'Filed by Homeroom\'s main watch, which re-runs main\'s unit suite after every merge.');
+  return { title: `Flaky test: ${name}`, body: lines.join('\n') };
+}
+
+// One request for a flaky test, filed as Homeroom bot: at most once per
+// FLAKE_REQUEST_DAYS, and never while the last one is still open. The
+// request_filed_at claim keeps two processes from filing the same one.
+// Never throws; returns the issue number, or null.
+async function fileFlakeRequest(config, pool, app, t, { mergeSha = null, excerpt = '' } = {}) {
+  if (!flakeRequestsEnabled()) return null;
+  const parsed = parseRepo(app.repo_url);
+  const github = require('./github');
+  if (!parsed || !github.isEnabled()) return null;
+  const key = [app.id, t.file || '', t.test];
+  let claimed;
+  try {
+    ({ rows: claimed } = await pool.query(
+      `UPDATE main_test_flakes f
+          SET request_filed_at = NOW()
+        WHERE f.app_id = $1 AND f.file = $2 AND f.test = $3
+          AND (f.request_filed_at IS NULL OR f.request_filed_at < NOW() - ($4::int * interval '1 day'))
+          AND NOT EXISTS (
+            SELECT 1 FROM issues i
+             WHERE i.app_id = f.app_id AND i.github_issue_number = f.request_issue_number
+               AND i.status = 'open')
+      RETURNING f.seen_count, f.first_seen_at`,
+      [...key, FLAKE_REQUEST_DAYS]
+    ));
+  } catch (err) {
+    log.warn('main-watch', 'flake request claim failed (non-fatal)', { appId: app.id, test: t.test, err: err.message });
+    return null;
+  }
+  if (!claimed || !claimed.length) return null;
+  try {
+    const bot = require('./homeroom-bot');
+    const botUser = await bot.ensureBotUser(pool, config);
+    const { title, body } = flakeRequestText(t, {
+      mergeSha, seenCount: Number(claimed[0].seen_count) || 1, firstSeenAt: claimed[0].first_seen_at, excerpt,
+    });
+    const created = await github.createIssue(parsed.owner, parsed.repo, {
+      title, body: typeof github.safeMention === 'function' ? github.safeMention(body) : body,
+    });
+    const issueNumber = Number(created && created.number);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
+    try { github.noteIssueCreated?.(parsed.owner, parsed.repo, created); } catch {}
+    const { rows } = await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
+       VALUES ($1, $2, $3, $4, 'general', '{}', $5) RETURNING id`,
+      [app.id, issueNumber, title, body, botUser.id]
+    );
+    await pool.query(
+      'UPDATE main_test_flakes SET request_issue_number = $4 WHERE app_id = $1 AND file = $2 AND test = $3',
+      [...key, issueNumber]
+    );
+    try {
+      require('./notifications').notifyIssueFiled?.(pool, {
+        appId: app.id, issueNumber, authorId: botUser.id, text: `${title}\n\n${body}`,
+      });
+    } catch {}
+    try {
+      require('./ws').pushIssueUpdate?.({ action: 'created', appSlug: app.slug, appId: app.id, issueId: rows[0]?.id, kind: 'general' });
+    } catch {}
+    try { bot.noteIssueActivity?.({ appId: app.id, issueNumber, reason: 'created' }); } catch {}
+    log.info('main-watch', 'Filed a request for a flaky test', { appId: app.id, slug: app.slug, issueNumber, test: t.test });
+    return issueNumber;
+  } catch (err) {
+    log.warn('main-watch', 'flake request failed (non-fatal)', { appId: app.id, test: t.test, err: err.message });
+    await pool.query(
+      'UPDATE main_test_flakes SET request_filed_at = NULL WHERE app_id = $1 AND file = $2 AND test = $3',
+      key
+    ).catch(() => {});
+    return null;
+  }
+}
+
+// ── Rechecks ─────────────────────────────────────────────────────────────
+//
+// A paused main asks the suite again by itself. The state stays 'failing'
+// throughout, so the banner and an admin's Resume read as before; the
+// detail's `rechecks` counter is the claim (two sweeps that read the same
+// count cannot both move it on), and `recheckingAt` marks the run in
+// flight until its verdict replaces the detail.
+
+/**
+ * Re-run the suite on each paused main that is due: a red whose confirming
+ * re-run could not happen after confirmRetryMs, a confirmed red after
+ * recheckMs, each at most maxRechecks times. Green lifts the pause and
+ * records the flakes; red stands. Leader-only, on start()'s timer. The runs
+ * are not awaited: returns the rows taken, and `done` for tests.
+ */
+async function recheckPaused(config, { pool = null, max = maxRechecks() } = {}) {
+  const none = { rechecked: [], done: Promise.resolve([]) };
+  if (!isEnabled() || !(max > 0)) return none;
+  const db = pool || require('../db/pool').getPool(config);
+  let rows;
+  try {
+    ({ rows } = await db.query(
+      `SELECT id, slug, repo_url, main_check_sha, main_check_detail
+         FROM apps
+        WHERE main_check_state = 'failing'
+          AND main_check_sha IS NOT NULL
+          AND lower(coalesce(main_check_paused_sha, '')) = lower(main_check_sha)
+          AND coalesce((main_check_detail->>'rechecks')::int, 0) < $1::int
+          AND (main_check_detail->>'recheckingAt' IS NULL
+               OR (main_check_detail->>'recheckingAt')::timestamptz < NOW() - ($4::int * interval '1 millisecond'))
+          AND main_check_at < NOW() - (CASE WHEN main_check_detail->>'confirmed' = 'false'
+                                            THEN $2::int ELSE $3::int END * interval '1 millisecond')
+        ORDER BY main_check_at`,
+      [max, confirmRetryMs(), recheckMs(), staleMs()]
+    ));
+  } catch (err) {
+    log.warn('main-watch', 'Could not list paused mains (non-fatal)', { err: err.message });
+    return none;
+  }
+  if (!rows || !rows.length) return none;
+  const rechecked = [];
+  const runs = [];
+  for (const row of rows) {
+    rechecked.push({ appId: row.id, sha: row.main_check_sha });
+    runs.push(recheckOne(config, db, row, max).catch((err) => {
+      log.warn('main-watch', 'Recheck failed (non-fatal)', { appId: row.id, err: err.message });
+      return null;
+    }));
+  }
+  return { rechecked, done: Promise.all(runs) };
+}
+
+async function recheckOne(config, pool, row, max) {
+  const app = { id: row.id, slug: row.slug, repo_url: row.repo_url };
+  const parsed = parseRepo(app.repo_url);
+  if (!parsed) return null;
+  const mergeSha = row.main_check_sha;
+  const before = row.main_check_detail && typeof row.main_check_detail === 'object' ? row.main_check_detail : {};
+  const n = (Number.isInteger(before.rechecks) ? before.rechecks : 0) + 1;
+  const claim = await pool.query(
+    `UPDATE apps
+        SET main_check_detail = coalesce(main_check_detail, '{}'::jsonb)
+              || jsonb_build_object('rechecks', $3::int, 'recheckingAt', NOW())
+      WHERE id = $1 AND main_check_sha = $2 AND main_check_state = 'failing'
+        AND main_check_paused_sha IS NOT NULL
+        AND coalesce((main_check_detail->>'rechecks')::int, 0) = $3::int - 1`,
+    [app.id, mergeSha, n]
+  );
+  if (!claim.rowCount) return null;
+  const red = redOf(before);
+  log.info('main-watch', before.confirmed === false
+    ? 'Retrying a confirmation that could not run'
+    : 'Re-checking a paused main', {
+    appId: app.id, slug: app.slug, sha: mergeSha, recheck: n, of: max, test: firstFailingTest(red.failureReason),
+  });
+  const again = await runSuite(config, pool, app, parsed, mergeSha);
+  if (again.state === 'superseded') return null;
+  const keep = {
+    ...(before.prNumber !== undefined ? { prNumber: before.prNumber } : {}),
+    ...(before.sessionId !== undefined ? { sessionId: before.sessionId } : {}),
+    rechecks: n,
+  };
+  let state;
+  let detail;
+  if (again.state === 'passing') {
+    state = 'passing';
+    detail = { ...keep, ...again.detail, flake: red };
+  } else if (again.state === 'failing') {
+    state = 'failing';
+    detail = { ...keep, ...again.detail, confirmed: true, firstRun: red };
+    const quiet = await knownFlakeNames(pool, app.id, again.detail);
+    if (quiet) detail.flakesOnly = quiet;
+  } else {
+    // It could not run this time either: the red stands as it was, with
+    // one recheck spent.
+    const { recheckingAt, ...rest } = before;
+    state = 'failing';
+    detail = { ...rest, rechecks: n, recheckError: again.detail };
+  }
+  const stored = await writeState(pool, app, mergeSha, state, detail);
+  if (!stored) return null;
+  log.info('main-watch', `main is ${state}`, {
+    appId: app.id, slug: app.slug, sha: mergeSha, state, recheck: n, flake: !!detail.flake,
+    ...(detail.flakesOnly ? { flakesOnly: detail.flakesOnly.length } : {}),
+  });
+  if (state === 'passing' || detail.flakesOnly) kickQueue(config, app.id, 'post-recheck');
+  if (state === 'passing') {
+    await noteFlakes(config, pool, app, mergeSha, [red, before.firstRun].filter(Boolean));
+  } else if (detail.flakesOnly) {
+    await fileFlakeRequests(config, pool, app, again.detail.failingTests || [], { mergeSha, excerpts: again.excerpts || [] });
+  }
+  return { state, sha: mergeSha, detail };
 }
 
 /**
@@ -491,7 +869,7 @@ async function resumeInterrupted(config, { pool = null, olderThanMs = staleMs() 
     const session = detail.sessionId ? { id: detail.sessionId, pr_number: detail.prNumber || null } : null;
     // A confirming row's detail is the first red (writeState above): the
     // suite's own account of it, minus the bookkeeping this run re-adds.
-    const { prNumber, sessionId, confirming, ...firstRun } = detail;
+    const firstRun = redOf(detail);
     const confirmationOf = row.main_check_state === 'confirming' && firstRun.failureReason ? firstRun : null;
     log.info('main-watch', 'Re-driving an interrupted run', {
       appId: row.id, slug: row.slug, sha: row.main_check_sha, was: row.main_check_state,
@@ -507,12 +885,15 @@ async function resumeInterrupted(config, { pool = null, olderThanMs = staleMs() 
   return { resumed, done: Promise.all(runs) };
 }
 
-/** The leader's timer for resumeInterrupted. Returns a stop function. */
+/** The leader's timer for resumeInterrupted and recheckPaused. Returns a stop function. */
 function start(config, { intervalMs = 2 * 60 * 1000 } = {}) {
   if (!isEnabled()) return () => {};
   const timer = setInterval(() => {
     resumeInterrupted(config).catch((err) => {
       log.warn('main-watch', 'Interrupted-run sweep failed (non-fatal)', { err: err.message });
+    });
+    recheckPaused(config).catch((err) => {
+      log.warn('main-watch', 'Paused-main sweep failed (non-fatal)', { err: err.message });
     });
   }, intervalMs);
   if (typeof timer.unref === 'function') timer.unref();
@@ -526,9 +907,18 @@ module.exports = {
   mergePause,
   resume,
   resumeInterrupted,
+  recheckPaused,
   start,
   staleMs,
   describe,
   classify,
   firstFailingTest,
+  // Exported for tests.
+  knownFlakeNames,
+  noteFlakes,
+  fileFlakeRequest,
+  flakeRequestText,
+  maxRechecks,
+  recheckMs,
+  confirmRetryMs,
 };
