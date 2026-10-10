@@ -9330,6 +9330,10 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS fixed_check_sync_keys TEXT[];
 --   main_check_resumed_sha  the sha an admin's "resume merges" was about,
 --                           so a red verdict still in flight for that same
 --                           sha cannot re-pause. A later red is a new pause.
+--
+-- A red whose failing tests are all known flakes (main_test_flakes below)
+-- is stored as 'failing' with detail.flakesOnly and does not pause: every
+-- other test passed. The backfill leaves those rows alone.
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_state VARCHAR(16);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_sha VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_at TIMESTAMPTZ;
@@ -9337,13 +9341,33 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_detail JSONB;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_resumed_sha VARCHAR(40);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR(40);
 -- Carry the derived pauses over. Idempotent: only rows that are red, not
--- resumed for that red, and not yet carrying the pause column.
+-- resumed for that red, not a red of known flakes alone, and not yet
+-- carrying the pause column.
 UPDATE apps
    SET main_check_paused_sha = main_check_sha
  WHERE main_check_state = 'failing'
    AND main_check_sha IS NOT NULL
    AND main_check_paused_sha IS NULL
-   AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha);
+   AND lower(coalesce(main_check_resumed_sha, '')) <> lower(main_check_sha)
+   AND (main_check_detail -> 'flakesOnly') IS NULL;
+
+-- Tests main-watch saw fail and then pass on the same merge commit
+-- (services/main-watch.js). A red whose failures are all tests seen here in
+-- the last 30 days pauses no merges, and each test gets one request to fix
+-- it (filed as Homeroom bot) at most every 14 days, none while the last is
+-- open. `file` is '' when the suite's output named no file for the test.
+CREATE TABLE IF NOT EXISTS main_test_flakes (
+  app_id               INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  file                 TEXT NOT NULL DEFAULT '',
+  test                 TEXT NOT NULL,
+  first_seen_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  seen_count           INTEGER NOT NULL DEFAULT 1,
+  last_sha             VARCHAR(40),
+  request_issue_number INTEGER,
+  request_filed_at     TIMESTAMPTZ,
+  PRIMARY KEY (app_id, file, test)
+);
 
 -- #2253: a ceiling on each app's own Postgres database. Uploaded files have
 -- had a per-app cap since app-files.js; the database had none, and one app
