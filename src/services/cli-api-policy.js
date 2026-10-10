@@ -296,6 +296,9 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // the account its link makes is a test account (services/test-accounts.js
   // sendRelease), and the mail goes through the ordinary throttle.
   { method: 'POST', pattern: '/api/test-accounts/release-emails' },
+  // The browser languages people use, and where the translation step stands
+  // (routes/ui-telemetry.js): a read, behind the same full-admin gate.
+  { method: 'GET', pattern: '/api/browser-languages' },
 ]);
 
 // ── Delegated grants (#2779) ───────────────────────────────────────────

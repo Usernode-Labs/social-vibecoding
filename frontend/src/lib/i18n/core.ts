@@ -24,6 +24,10 @@ type Commit = { id: number; language: string; value: string | null; auto: boolea
 const DEVICE_KEY = 'homeroom:language:device';
 // Set once the automatic-language notice has been shown on this device.
 const NOTICE_KEY = 'homeroom:language:auto-notice';
+// The language last on screen on this device. The head's first-paint hold
+// (frontend/src/head.html) reads it before anything paints.
+const SHOWN_KEY = 'homeroom:language:shown';
+const PENDING_CLASS = 'language-pending';
 const PACK_TIMEOUT_MS = 8000;
 const RETRY_AFTER_MS = 10000;
 
@@ -260,6 +264,10 @@ export function createLanguageRuntime(catalogs: Catalogs) {
       document.documentElement.lang = language;
     }
     if (changed) announce();
+    // The language is on screen: lift the head's hold, and remember it so
+    // the next load holds (or does not) for the right language.
+    writeStored(SHOWN_KEY, language);
+    if (typeof document !== 'undefined') document.documentElement.classList?.remove(PENDING_CLASS);
     // Once per device, the first time the language was picked for the person
     // rather than by them. Shown, it is spent, whatever they do with it.
     if (auto && language !== 'en') {

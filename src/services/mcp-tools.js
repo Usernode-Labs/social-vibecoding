@@ -7477,6 +7477,39 @@ function registerTools(server, ctx) {
       });
     });
 
+    server.registerTool('get_browser_languages', {
+      title: 'Languages people use, and Homeroom\'s translations',
+      description: 'Admin only. Which language people\'s browsers ask Homeroom for first: each person counted once, under the language of their most recent visit in the window (days: 1, 7, 14, 30 or 90; 14 by default), platform admins left out unless includeAdmins. It is what to read before changing the languages Homeroom ships (frontend/locales/config.json). Also where Homeroom\'s translation step stands: whether it is on, the main commit it last read, a Message Batch still running (when it was sent, how many messages), and the last translation proposal it opened (its pull request number and status). Recorded only since the language was first collected, so a long window can read short. It changes nothing.',
+      inputSchema: {
+        days: z.number().int().positive().max(90).optional(),
+        includeAdmins: z.boolean().optional(),
+      },
+      outputSchema: {
+        days: z.number(), people: z.number(),
+        languages: z.array(z.object({ language: z.string(), people: z.number() })),
+        translation: z.any().nullable(),
+      },
+      annotations: readAnnotations,
+    }, async ({ days, includeAdmins }) => {
+      const guard = scopeGuard(READ_SCOPE) || studioAdminOnly();
+      if (guard) return guard;
+      const q = new URLSearchParams();
+      if (days) q.set('days', String(days));
+      if (includeAdmins) q.set('includeAdmins', 'true');
+      const r = await callPlatform(baseUrl, accessToken, 'GET', `/api/browser-languages?${q}`);
+      if (!r.ok) return studioRefusal(r, 'count');
+      const b = r.body || {};
+      return readResult('get_browser_languages', {
+        days: sNum(b.days),
+        people: sNum(b.people),
+        languages: (Array.isArray(b.languages) ? b.languages : []).map((row) => ({
+          language: String(row.language || '').slice(0, 35),
+          people: sNum(row.people),
+        })),
+        translation: b.translation || null,
+      });
+    });
+
     server.registerTool('rate_homeroom_bot_run', {
       title: 'Homeroom bot: rate one of its runs',
       description: 'Admin only. Record a person\'s rating of one Homeroom bot run, as the console\'s Rate does: rating "yes" (it was right) or "no", a short note, and optionally the verdict it should have given (labelVerdict). It is how runs are labelled before they become benchmark tasks. Recorded under your connector user. It changes no app.',

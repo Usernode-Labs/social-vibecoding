@@ -1295,6 +1295,11 @@ async function becomeLeader() {
   // copy of the broken fixture until it is. Every five minutes, at most
   // four syncs a pass. See services/fixed-check-sync.js.
   require('./src/services/fixed-check-sync').start(config, getPool(config));
+  // Interface text merged in English and not yet in Homeroom's other
+  // languages is translated and put to the community as one proposal. Every
+  // three hours; a whole language goes as a Message Batch. See
+  // services/language-sync-runner.js.
+  require('./src/services/language-sync-runner').start(config, getPool(config));
 
   // Backfill `main_sha` for apps created before #21 added the column.
   // Non-blocking: we log and continue so a single slow/unauthorized
@@ -6476,6 +6481,7 @@ async function cleanup() {
   const retentionStop = require('./src/services/build-retention').stop();
   const checkRetentionStop = require('./src/services/check-retention').stop();
   const fixedCheckSyncStop = require('./src/services/fixed-check-sync').stop();
+  const languageSyncStop = require('./src/services/language-sync-runner').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
@@ -6681,7 +6687,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        Promise.all([retentionStop, checkRetentionStop, fixedCheckSyncStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
+        Promise.all([retentionStop, checkRetentionStop, fixedCheckSyncStop, languageSyncStop, scorerStop, workflowStop]).then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

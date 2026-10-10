@@ -87,6 +87,31 @@ test('a pack whose bytes do not match the build is refused', async (t) => {
   assert.equal(runtime.t('hello', { name: 'Ana' }), 'Hola Ana');
 });
 
+test('the first paint is held while a remembered language loads, and released once it shows', async (t) => {
+  // The head's inline hold (frontend/src/head.html) runs before anything
+  // paints: it reads the language this device last showed and, unless that
+  // was English, hides the body until the runtime has put the language on
+  // screen. It always lets go by itself after three seconds.
+  const head = read('frontend/src/head.html');
+  assert.match(head, /html\.language-pending body \{ visibility: hidden; \}/);
+  const hold = head.slice(head.indexOf("localStorage.getItem('homeroom:language:shown')") - 400);
+  assert.match(hold, /if \(!shown \|\| shown === 'en'\) return;/, 'English, or nothing remembered, is never held');
+  assert.match(hold, /root\.classList\.add\('language-pending'\);\s*setTimeout\(function \(\) \{ root\.classList\.remove\('language-pending'\); \}, 3000\);/);
+  assert.ok(head.indexOf("'homeroom:language:shown'") > head.indexOf('window.Theme'), 'after the theme, which paints the ground');
+
+  const { runtime, page } = setup(t);
+  const classes = new Set(['language-pending']);
+  globalThis.document.documentElement.classList = { remove: (name) => { classes.delete(name); } };
+  page.hold = async () => { assert.ok(classes.has('language-pending'), 'still held while the pack loads'); };
+  await runtime.changeLanguage('es');
+  assert.equal(classes.has('language-pending'), false, 'released once Spanish is on screen');
+  assert.equal(page.storage.get('homeroom:language:shown'), 'es', 'the next load holds for Spanish');
+  classes.add('language-pending');
+  await runtime.changeLanguage('en');
+  assert.equal(classes.has('language-pending'), false);
+  assert.equal(page.storage.get('homeroom:language:shown'), 'en', 'and the one after holds nothing');
+});
+
 test('a change loads, then saves, then switches; a failed save leaves the screen as it was', async (t) => {
   const { runtime, page } = setup(t);
   const order = [];

@@ -255,11 +255,15 @@ test('the Settings picker is offered to everyone, with Auto and the shipped lang
   const select = html.slice(html.indexOf('id="settings-locale"'));
   const options = [...select.slice(0, select.indexOf('</select>')).matchAll(/<option value="([^"]*)"/g)]
     .map((match) => match[1]);
-  const shipped = Object.keys(JSON.parse(read('frontend/locales/config.json')).languages);
+  // A configured language ships once its translations are filled
+  // (scripts/language-packs.js): the build hands the shell only those.
+  const packs = require('../scripts/language-packs');
+  const { config, report } = packs.collectCatalogs(path.join(__dirname, '..'));
+  const shipped = Object.keys(packs.shippedLanguages(config, report));
   assert.deepEqual(options, ['', ...shipped], 'Auto, then exactly the languages Homeroom ships');
   assert.match(read('frontend/src/features/settings/sections/language.tsx'),
     /shippedLanguages\.map\(\(\{ tag, name \}\) => \(/, 'the options are the config, not a second list');
-  assert.deepEqual(shipped, ['en'], 'English is the only shipped language');
+  assert.equal(shipped[0], 'en', 'English always ships, and comes first');
   // A locale saved when the picker listed more stays visible and changeable.
   const start = js.indexOf('    _renderLanguageSection() {');
   const fn = js.slice(start, start + 900);

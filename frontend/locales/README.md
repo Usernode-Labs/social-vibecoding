@@ -3,8 +3,10 @@
 Homeroom's own screens are in English. This directory and
 `frontend/src/lib/i18n/` are what let them be shown in other languages: the
 English source, the runtime that loads a language on demand, and the build
-that turns catalogs into packs. `config.json` lists the languages that ship.
-Today that is English only. The shell's text is in the catalogs here, one
+that turns catalogs into packs. `config.json` lists Homeroom's languages:
+English, Bahasa Indonesia, Español, Français, Português (Brasil) and Tiếng
+Việt. A language ships once Homeroom's translation step has filled it (see
+"Translations"). The shell's text is in the catalogs here, one
 namespace per surface (`core` and `shell` for what every screen has, then
 `auth`, `home`, `messages`, `project`, `settings` and the rest), so another
 language loads only what the screen on show needs.
@@ -59,13 +61,53 @@ a mistake in your change, so it fails.
 
 **Contributors do not write these, edit them or compute a hash.** They come
 from the translation step, not from the person changing the UI. `"locked":
-true` marks an entry a person corrected, which that step must leave alone.
+true` marks an entry a person corrected, which that step leaves alone until
+the English it corrects changes.
 
 A translation never fails a build. An entry that is missing, whose `source`
 no longer matches the English text, or whose parameters, tags or plural forms
 do not match is left out of that language's pack, and the runtime shows
 English for that one message. `node scripts/language-packs.js --report` lists
-what each language is missing and why.
+what each language is missing and why (`--all` for every key).
+
+### The translation step
+
+Homeroom runs it on its own catalogs (`src/services/language-sync-runner.js`),
+and no build ever calls a model. Every three hours the leader reads
+`frontend/locales` on main. When English has messages a configured language
+lacks, because new text merged or a language was just added to `config.json`,
+it translates them (`src/services/language-sync.js`) and opens **one proposal**
+carrying only the translation files, which the community votes on like any
+other change.
+
+- **What a model is given.** Each message with its description, the language's
+  style note, Homeroom's own terms in that language and the names never to
+  translate, all from `glossary.json`. Change the glossary to change how a word
+  is translated everywhere; it is votable like everything else here.
+- **What it must pass.** The build's own checks (parameters, numbered tags,
+  every plural form the language uses), and stricter ones: no space at an
+  edge, the same line breaks, no em dash or markup the English lacks, names
+  written as they are. A failed answer is asked again once, alone; a message
+  that fails twice stays English and is listed in the proposal.
+- **How much at once.** A few hundred messages, the usual merge's worth, go one
+  request at a time and are up for a vote the same pass. More, a whole new
+  language, go as one Message Batch at half the price; a later pass opens the
+  proposal once the batch has ended.
+- **One at a time.** While a translation proposal is open no other is opened.
+  One the community closes is not offered again until the English changes.
+- **Why not on each proposal's own branch.** A commit the platform adds to a
+  proposal under review clears its votes and restarts its checks, and races
+  the author's agent pushing to the same branch. A translation proposal lags
+  the English by one vote instead; until it merges, new messages show in
+  English, one at a time.
+- `LANGUAGE_SYNC_ENABLED=false` turns it off. Its spend counts against the
+  platform's daily system budget. A full admin's connector reads where it
+  stands with `get_browser_languages`.
+
+`node scripts/language-sync.js --plan` shows what each language needs on a
+checkout, and the same script translates by hand with an `ANTHROPIC_API_KEY`
+(`--batch` for a Message Batch, `--changed-from <ref>` for one change's
+messages).
 
 ## Using a message
 
@@ -192,10 +234,20 @@ second language.
   a notice above the tab bar says so once ("Showing Homeroom in Español")
   with a "Switch to English" button. There is no language picker on the
   sign-in screen.
+- The document is prerendered in English. When this device last showed
+  Homeroom in another language (`homeroom:language:shown`), an inline script
+  in the head hides the page before it paints, and the runtime shows it again
+  the moment that language is on screen. It lets go by itself after three
+  seconds, so a slow or failed pack costs a moment of English, never the page.
+  A device's first visit is not held: it shows English until its language
+  loads, then the notice above.
 
 ## Adding a language
 
-Add it to `config.json` with its own name, and its catalogs. Settings offers
-every language in `config.json`. Two things are not built yet and belong with
-the first language that needs them: right-to-left layout, and hiding the first
-paint while a pack loads.
+Add it to `config.json` with its own name; that is the whole change. The
+translation step fills it in a proposal of its own, and the build offers it
+(in Settings and to devices that ask for it) once its translations cover
+`minimumCoverage` of the English, 95% today. Until then a configured language
+gets no pack and nobody sees it. Give the glossary its terms and a style note
+in the same change. Right-to-left layout is not built yet and belongs with the
+first right-to-left language.

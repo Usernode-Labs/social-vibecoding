@@ -21,12 +21,41 @@ const { ENGLISH, SPANISH, browser, catalogFixture, from, runtimeFor, says } = re
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
-test('Homeroom ships English only, and its English source is valid', () => {
-  const { config, namespaces, catalogs, report } = collectCatalogs(ROOT);
-  assert.deepEqual(config.languages, { en: 'English' });
+test('a configured language ships only once its translations cover enough of the English', (t) => {
+  const { put, build } = catalogFixture(t, {
+    languages: { en: 'English', es: 'Español', fr: 'Français' },
+    translations: {
+      es: {
+        ...Object.fromEntries(Object.entries(ENGLISH).map(([key, entry]) => [key, from(entry.text, `es ${entry.text}`)])),
+        // Spanish counts in three forms; its `many` stands for English's `other`.
+        items_many: from(ENGLISH.items_other.text, 'es {{count}} many'),
+      },
+    },
+  });
+  put('config.json', { sourceLanguage: 'en', minimumCoverage: 0.95, languages: { en: 'English', es: 'Español', fr: 'Français' } });
+  const { report, manifest, catalogs, languages } = build();
+  assert.equal(report.es.ships, true);
+  assert.equal(report.fr.ships, false, 'French has no translations yet');
+  assert.deepEqual(languages, { en: 'English', es: 'Español' });
+  assert.deepEqual(catalogs.languages, { en: 'English', es: 'Español' }, 'Settings and the device match offer only what ships');
+  assert.deepEqual(Object.keys(manifest), ['es'], 'a language not offered gets no pack');
+  assert.match(formatReport(report), /^fr: 0 of 7 translated \(0%\), 7 missing, 0 stale, 0 invalid, not offered yet$/m);
+  assert.match(formatReport(report, { limit: 2 }), /^ {2}missing {2}… and 5 more$/m, 'a long list is cut short');
+  // One message short of 95% of seven is not enough.
+  put('es/core.json', { ...JSON.parse(JSON.stringify(SPANISH)) });
+  assert.equal(build().report.es.ships, false);
+  put('config.json', { sourceLanguage: 'en', minimumCoverage: 2, languages: { en: 'English' } });
+  assert.throws(() => build(), /minimumCoverage is a fraction from 0 to 1/);
+});
+
+test('Homeroom configures its languages, ships only the covered ones, and its English source is valid', () => {
+  const { config, namespaces, report } = collectCatalogs(ROOT);
+  assert.equal(config.languages.en, 'English');
+  assert.ok(config.minimumCoverage >= 0.9 && config.minimumCoverage <= 1, 'a language ships nearly whole or not at all');
   assert.ok(namespaces.includes('core'));
-  assert.deepEqual(catalogs, {}, 'no other language has a pack');
-  assert.equal(formatReport(report), 'Only English is shipped; there is no translation coverage to report.');
+  for (const [language, tally] of Object.entries(report)) {
+    assert.equal(tally.ships, tally.translated / tally.total >= config.minimumCoverage, language);
+  }
   for (const namespace of namespaces) {
     for (const [key, entry] of Object.entries(JSON.parse(read(`frontend/locales/en/${namespace}.json`)))) {
       assert.ok(entry.description.trim(), `${namespace}:${key} says where it appears`);
