@@ -665,9 +665,11 @@ const App = {
 
   // The head's first-session hold (frontend/src/head.html): a document that
   // opens while the story's sheet is handing a new account to "What do you
-  // want to make?" (a sign-in that reloaded onto the live build) keeps its
-  // body hidden until the shell has drawn its first screen. Each way the
-  // boot ends lifts it; it never holds a screen nobody is about to cover.
+  // want to make?" (a sign-in that reloaded onto the live build), or with no
+  // saved session (SESSION_SNAPSHOT_KEY: the landing is coming, not Home),
+  // keeps its body hidden until the shell has drawn its first screen. Each
+  // way the boot ends lifts it; it never holds a screen nobody is about to
+  // cover.
   _liftFirstSessionBoot() {
     try { document.documentElement.classList.remove('first-session-boot'); } catch (err) { /* no document */ }
   },
