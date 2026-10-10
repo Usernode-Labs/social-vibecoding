@@ -55,24 +55,33 @@ export function fitStyle(fit: number) {
 // new width, starts again.
 const TOOLBAR_SLACK = 120;
 
-// The space under the foot is the story's to use. Under "Sign in" the page
-// keeps its own bottom air and, in iPhone Safari, room for the toolbar (the
-// story's padding, css/app.css). Counting all of it as out of bounds dropped
-// the third example on an iPhone 13 mini with about 100px left empty above
-// the toolbar (Evan, 10 Oct 2026); holding 18px of it back still did, as
-// that phone keeps only about 38px for the toolbar (#4691). So the story
-// may run into all of it, scrolling a little if it must. "Sign in" still
-// ends above the foot of the page's own box, which in Safari is above the
-// toolbar, with the foot's own 12px under it.
-//
-// The step a fit settles on, once step `fit` is the first that fits with
-// `room` to spare above and below its group: the earliest step whose story
-// (`heights`, one per step taken) is no taller than that room plus the space
-// under the foot (`under`).
-export function settledStep(heights: number[], fit: number, room: number, under: number) {
-  const tallest = heights[fit] + 2 * room + Math.max(0, under);
-  const best = heights.findIndex((h) => h <= tallest);
-  return best >= 0 && best < fit ? best : fit;
+// WHERE THE SCREEN ENDS. The fit used to work it out from the box the page
+// lays the story out in and the space that box keeps under the foot (its
+// bottom air and, in iPhone Safari, a toolbar allowance from `100lvh -
+// 100svh`). On an iPhone 13 mini in Safari 26 that box ends some 50px above
+// the toolbar and the allowance comes to almost nothing, so the third
+// example went with about 100px left empty over the toolbar (Evan, 10 Oct
+// 2026, through #4691 and #4695). A fixed box is measured instead: Safari
+// ends one just above its toolbar (where the sign-in sheet's dim and the
+// make screen stopped on that phone), and elsewhere it is the screen less
+// the home indicator. The probe is added for the moment it is read and
+// taken away again.
+export function screenFoot(): number {
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;left:0;top:0;width:1px;bottom:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none';
+  document.body.appendChild(probe);
+  const foot = probe.getBoundingClientRect().bottom;
+  probe.remove();
+  return foot;
+}
+
+// The step after `fit`, or null once it fits: the story's foot ("Sign in"
+// and the 12px under it), as it would sit on the page unscrolled, ends at or
+// above the foot of the screen. Past the last step there is nothing more to
+// take, and the page scrolls.
+export function nextStep(fit: number, footBottom: number, screenBottom: number): number | null {
+  if (footBottom <= screenBottom + 0.5 || fit >= FIT_STEPS) return null;
+  return fit + 1;
 }
 
 export function Story({ primaryClass, onStart, onSignIn }: {
@@ -82,39 +91,27 @@ export function Story({ primaryClass, onStart, onSignIn }: {
 }) {
   const t = useMessages('auth');
   const storyRef = useRef<HTMLDivElement>(null);
-  const groupRef = useRef<HTMLDivElement>(null);
   const footRef = useRef<HTMLDivElement>(null);
-  // One fit: the screen it was made for, the story's height at each step
-  // taken so far, and whether it has settled.
-  const fitting = useRef<{ width: number; height: number; heights: number[]; settled: boolean } | null>(null);
+  // One fit: the screen it was made for, and whether it has settled.
+  const fitting = useRef<{ width: number; height: number; settled: boolean } | null>(null);
   const [fit, setFit] = useState(0);
   const [measure, setMeasure] = useState(0);
-  // Measured before the browser paints, so the steps are never seen. The
-  // group is centred by auto margins in the room the story fills; while the
-  // story is taller than that room the margins are zero, and that is the cue
-  // for the next step. At the first step that fits, `settledStep` may go
-  // back to one it passed on the way, using the space under the foot. The
-  // first render (the prerender's) is step 0.
+  // Measured before the browser paints, so the steps are never seen: the
+  // next step while the foot ends below the foot of the screen. The first
+  // render (the prerender's) is step 0.
   useLayoutEffect(() => {
     const story = storyRef.current;
-    const group = groupRef.current;
     const foot = footRef.current;
-    if (!story || !group || !foot || !story.offsetHeight) return;
-    if (!fitting.current) fitting.current = { width: window.innerWidth, height: window.innerHeight, heights: [], settled: false };
+    if (!story || !foot || !story.offsetHeight) return;
+    if (!fitting.current) fitting.current = { width: window.innerWidth, height: window.innerHeight, settled: false };
     const f = fitting.current;
     if (f.settled) return;
-    f.heights[fit] = group.offsetHeight + foot.offsetHeight;
-    const room = group.getBoundingClientRect().top - story.getBoundingClientRect().top;
-    if (room < 1) {
-      if (fit < FIT_STEPS) setFit(fit + 1);
-      else f.settled = true;
-      return;
-    }
-    const under = parseFloat(getComputedStyle(story).paddingBottom)
-      + (story.parentElement ? parseFloat(getComputedStyle(story.parentElement).paddingBottom) : 0);
-    f.settled = true;
-    const best = settledStep(f.heights, fit, room, under);
-    if (best !== fit) setFit(best);
+    // Where the foot would end with the page at its top: the document in a
+    // phone browser, the landing's own scroller in the app.
+    const scrolled = window.scrollY + (story.closest('#auth-landing-scroll')?.scrollTop || 0);
+    const next = nextStep(fit, foot.getBoundingClientRect().bottom + scrolled, screenFoot());
+    if (next === null) f.settled = true;
+    else setFit(next);
   }, [fit, measure]);
   // A new screen (a turned phone, a resized window) starts again from full
   // size. A story first laid out while its screen was hidden is measured
@@ -147,7 +144,7 @@ export function Story({ primaryClass, onStart, onSignIn }: {
           label 16px under it, the headline 8px under that, and the examples
           28px lower (closer from step 2). Where even step 4 does not fit,
           the auto margins fall to zero and the page scrolls. */}
-      <div ref={groupRef} className={`my-auto flex flex-col items-center ${s.group}`}>
+      <div className={`my-auto flex flex-col items-center ${s.group}`}>
         <img
           src="/brand/people.png"
           alt=""
