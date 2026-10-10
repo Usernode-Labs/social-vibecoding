@@ -476,7 +476,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const waitingOn = awaiting
     ? active.peer?.username || active.members.find((member) => member.status === 'invited')?.username || ''
     : '';
-  const who = waitingOn ? `@${waitingOn}` : 'them';
+  // #4655: a message request is always a direct message, so its peer is
+  // named bare, as the thread names them.
+  const who = waitingOn || 'them';
   if (awaiting && (!active.canSend || snap.messages.length > 0)) {
     return (
       <div className="messages-composer messages-composer-awaiting platform-safe-bar" data-awaiting-acceptance="">
@@ -496,12 +498,12 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
       {/* QA 2026-09-24 Q2: before the opening message of a request, what it
           will be — so the composer turning into a notice after it is no
           surprise. */}
-      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingOn ? `@${waitingOn} gets` : 'They get'} your first message as a message request. You can send more once they accept.</p> : null}
+      {awaiting ? <p className="messages-composer-hint" data-awaiting-acceptance="">{waitingOn ? `${waitingOn} gets` : 'They get'} your first message as a message request. You can send more once they accept.</p> : null}
       {/* The white card. The bar around it is what carries the home-indicator
           inset (`platform-safe-bar`), so the card keeps its own padding on a
           notched phone instead of growing a tall blank foot. */}
       <div className="messages-composer-card">
-      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to {senderName(reply.sender)}</span><p className="truncate">{plainText(reply.content) || 'Attachment'}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{`Your reply is posted on ${requestPlace(reply.metadata.homeroomBot)}’s public discussion.`}</p> : null}{reply.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? <p className="messages-bot-note">Say what to change, and Homeroom bot sends a new plan. Only you see this.</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label="Cancel reply">×</button></div> : null}
+      {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to {senderName(reply.sender, { bare: active.kind === 'direct' })}</span><p className="truncate">{plainText(reply.content) || 'Attachment'}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{`Your reply is posted on ${requestPlace(reply.metadata.homeroomBot)}’s public discussion.`}</p> : null}{reply.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? <p className="messages-bot-note">Say what to change, and Homeroom bot sends a new plan. Only you see this.</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label="Cancel reply">×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => { setObject(null); setPrompt(null); }} aria-label="Remove shared item">×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
       {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label="Channels">{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
