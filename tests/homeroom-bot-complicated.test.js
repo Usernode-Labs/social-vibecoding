@@ -352,6 +352,32 @@ test('a first version labelled complicated is built exactly as a first version',
   assert.deepEqual(seen.built[0].review.reviewer, REVIEWER, 'its own review, from its own configuration');
 });
 
+// #4662: a plan kept from a build a restart interrupted carries its HTML
+// beside its markdown, and the build resumes from it whatever the change's
+// size: the version people open keeps its tabs and its screens. A complicated
+// change still prefers the exact spec its requester approved.
+test('a kept plan\'s screens ride along an ordinary resumed build, unreviewed and unchecked', async (t) => {
+  const seen = stubLive(t);
+  stubConfigs(t);
+  await bot.buildLive(verdictArgs({
+    presetSpec: '# Kept', presetSpecHtml: '<article data-spec><h1>Kept</h1></article>',
+    parsed: { verdict: 'ready', buildNote: 'Fix the typo.' },
+  }));
+  const built = seen.built[0];
+  assert.equal(built.presetSpec, '# Kept', 'built from the kept plan');
+  assert.equal(built.presetSpecHtml, '<article data-spec><h1>Kept</h1></article>', 'its screens are kept');
+  assert.equal(built.review, undefined, 'no check round: the change is not complicated');
+  assert.equal(built.checkedFirst, undefined, 'and not checked first');
+
+  // Where the kept HTML comes from: the build lane's candidates read the
+  // run's column, and buildOne falls back to it when the plan is not
+  // complicated and its approved screens cannot be read.
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /r\.build_spec_md, r\.build_spec_html, r\.build_cost_usd/, 'liveBuildCandidates reads it');
+  assert.match(src, /run\.complicated === true \? await approvedSpecHtml\(pool, run\.plan\) : null\) \|\| run\.build_spec_html \|\| null/,
+    'buildOne falls back to the run\'s kept HTML');
+});
+
 test('buildAndPropose\'s plan-only mode stops after the spec, and a preset spec keeps its screens', () => {
   const src = read('src/services/homeroom-bot-live.js');
   const body = src.slice(src.indexOf('async function buildAndPropose('), src.indexOf('async function reviewLanded('));
