@@ -3310,8 +3310,9 @@ const AppView = {
    * features/app-frame/app-status.tsx). A card that does not say it, such as
    * today's "this shows how the build is going", leaves it in place.
    * While a first-session tour runs, app-status.tsx holds "Review the plan"
-   * back and its line says the bot is working on it (heldForTour): the
-   * tour's last card is what names the plan.
+   * back and its line says the bot is working on it (heldForTour). The
+   * maker's tour ends by opening this screen from the hub, and it is offered
+   * here from then on.
    */
   _firstVersionView(appData) {
     const fv = appData.first_version || {};

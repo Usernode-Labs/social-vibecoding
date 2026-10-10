@@ -21,8 +21,8 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const APP = read('public/js/app.js');
 
-test('the private tour: the maker\'s nine cards, three reworded for someone invited, ending on the waitlist card', () => {
-  const { privateSteps, makerSteps, invitedSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
+test('the private tour: the shared seven cards, three reworded for someone invited, ending on the waitlist card', () => {
+  const { privateSteps, invitedSteps } = loadTsx('frontend/src/features/first-session/tour-steps.ts');
   const project = { slug: 'best-brunch', name: 'Best brunch spots' };
   const steps = privateSteps(project);
   assert.deepEqual(steps.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'home']);
@@ -52,13 +52,13 @@ test('the private tour: the maker\'s nine cards, three reworded for someone invi
     ['Meet Homeroom bot', 'Tell it what Best brunch spots should do next, and it builds it for the group to try. It\'s always here in Messages.'],
     ['Your own apps start here', 'Join the waitlist to get your spot.'],
   ]);
-  // The first seven are the maker's own steps, the same places and presses,
-  // with only the three reworded cards' text differing.
-  const maker = makerSteps({ ...project, conversationId: 12 }).slice(0, 7);
-  assert.deepEqual(maker, invitedSteps(project).slice(0, 7), 'which the join tour shares');
+  // The first seven are the steps every tour of a project shares (the join
+  // tour's first seven), the same places and presses, with only the three
+  // reworded cards' text differing.
+  const shared = invitedSteps(project).slice(0, 7);
   steps.slice(0, 7).forEach((s, i) => {
-    assert.deepEqual({ ...s, text: '' }, { ...maker[i], text: '' }, `step ${i + 1} is the maker's`);
-    if (![1, 3, 6].includes(i)) assert.equal(s.text, maker[i].text, `step ${i + 1} in the maker's words`);
+    assert.deepEqual({ ...s, text: '' }, { ...shared[i], text: '' }, `step ${i + 1} is the shared one`);
+    if (![1, 3, 6].includes(i)) assert.equal(s.text, shared[i].text, `step ${i + 1} in the shared words`);
   });
   // The Suggest card is the one in the menu, pointed at and not pressed.
   assert.equal(steps[3].inMenu, true);
