@@ -1811,9 +1811,15 @@ function triagePromptFor({
   guidance = null,
   // The game starter a first version builds on (firstVersionNote).
   starter = null,
+  // #4645: the requester's language preference (users.locale; null unset).
+  // The wording rule is in the prompt file above; this names the value it
+  // matches, and says nothing when it is unset, so the default stands.
+  locale = null,
 }) {
   return [
-    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(), live.requestRulesLines().join('\n').trim(),
+    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
+    locale ? `The requester's locale is \`${locale}\`.` : null,
+    live.requestRulesLines().join('\n').trim(),
     firstVersion ? firstVersionNote(starter) : null,
     firstVersion ? membersNote(members) : null,
     firstVersion ? planChangeNote(planChange) : null,
@@ -3030,6 +3036,8 @@ async function runTriage(pool, config, {
     seed, issueNumber, firstVersion: !!requester?.firstVersion, decider,
     ...(members ? { members } : {}),
     ...(starter ? { starter } : {}),
+    // #4645: their language preference, for the triage's wording rule.
+    locale: requester?.locale || null,
     ...(triageGuidance ? { guidance: triageGuidance } : {}),
     ...(planChange ? { planChange: { ...planChange, requester: requester.username } } : {}),
   };
@@ -3896,10 +3904,15 @@ async function shadowBuild({
   const buildStartedMs = Date.now();
   // A first version builds as the live lane builds it: its doubled clock,
   // and the spec and build that decide its look (buildOne).
+  // #4645: the requester's language preference, for the prompts' wording
+  // rule (localeRule); unset, everything the group reads stays English.
+  const requester = await (deps.dm || require('./homeroom-bot-dm'))
+    .requesterOf(pool, app.id, issueNumber).catch(() => null);
   const built = await live.buildAndPropose({
     pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
     ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, presetSpec,
     firstVersion, starter,
+    locale: requester?.locale || null,
     platformRepo: isPlatformRepo(app, config),
     onSession: (session) => pool.query(
       'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [runId, session.id],
@@ -5821,11 +5834,18 @@ async function runFollowUp(pool, config, {
     // too, so the reply can fix them (followup.failingNowLines). Whether or
     // not a fix turn already looked at this head.
     const failingNow = await failingChecksNow(pool, session.id);
+    // #4645: the requester's language preference (users.locale), for the
+    // prompts' wording rule: a question the bot asks reaches them in their
+    // DM with it, so that is where the rule can match their locale.
+    const requester = await (deps.dm || require('./homeroom-bot-dm'))
+      .requesterOf(pool, app.id, issueNumber).catch(() => null);
+    const locale = requester?.locale || null;
     const prompt = followup.followUpPrompt({
       seed, proposalBlock, spec, prNumber: session.pr_number, replies, canRevise, design, checks: failingNow,
       // #4612: how an updated plan is written, when the revision changes
       // what the change does for people.
-      planFormat: canRevise ? live.followUpPlanFormat({ config, app }) : undefined,
+      planFormat: canRevise ? live.followUpPlanFormat({ config, app, locale }) : undefined,
+      locale,
     });
     snapshot = {
       stage: 'followup', appId: app.id, issueNumber,
@@ -6358,7 +6378,13 @@ async function runChecksFix(pool, config, {
       sessionId: session.id, prNumber,
       threadMessages: proposalThread?.messages || [], truncated: !!proposalThread?.truncated,
     });
-    const prompt = followup.checksFixPrompt({ seed, proposalBlock, prNumber, failing, total, broken });
+    // #4645: the requester's language preference, for the prompt's wording
+    // rule (localeRule); unset, the note to the group stays English.
+    const requester = await (deps.dm || require('./homeroom-bot-dm'))
+      .requesterOf(pool, app.id, issueNumber).catch(() => null);
+    const prompt = followup.checksFixPrompt({
+      seed, proposalBlock, prNumber, failing, total, broken, locale: requester?.locale || null,
+    });
     snapshot = {
       stage: 'checks_fix', appId: app.id, issueNumber,
       baseSha: head,
@@ -7317,11 +7343,16 @@ async function planBeforeBuilding({
   let drafted;
   liveBuildsInFlight.add(runId);
   try {
+    // #4645: the requester's language preference, for the plan's wording
+    // rule (localeRule); unset, the plan stays English.
+    const requester = await (deps.dm || require('./homeroom-bot-dm'))
+      .requesterOf(pool, app.id, issueNumber).catch(() => null);
     drafted = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed,
       buildNote: `${parsed.buildNote || ''}${planChoicesNote(questions)}`,
       ...buildBudgets(app, config, turnBudgetMs), model, specModel, deps,
       platformRepo: isPlatformRepo(app, config), planOnly: true,
+      locale: requester?.locale || null,
       skipCheck: () => whyNotBuild(pool, { runId, botId: bot.id, appId: app.id, issueNumber, github, repo }),
       origin: { lane: 'live', runId },
       ...(harnessed ? { harnessOf: live.recipeHarness, specGuidance: guidance?.spec || null } : {}),
@@ -7697,10 +7728,15 @@ async function buildLive({
       budgetCheck: ({ spentUsd } = {}) => botBudgetStop(pool, bot, deps, { spentUsd }),
     } : checkFirst ? await complicatedReview(pool, { runId, bot, deps }) : null;
     const buildStartedMs = Date.now();
+    // #4645: the requester's language preference, for the prompts' wording
+    // rule (localeRule); unset, everything the group reads stays English.
+    const requester = await (deps.dm || require('./homeroom-bot-dm'))
+      .requesterOf(pool, app.id, issueNumber).catch(() => null);
     built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
       ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
+      locale: requester?.locale || null,
       // #3737: a first version's spec and build decide and record its look;
       // made from a game starter, they build on it.
       firstVersion, starter,

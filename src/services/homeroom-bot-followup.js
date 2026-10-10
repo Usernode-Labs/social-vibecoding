@@ -48,7 +48,7 @@
 // within the same MAX_REVISIONS.
 
 const log = require('./logger');
-const { parseStopMentioning, failedClaudeTurn, requestRulesLines } = require('./homeroom-bot-live');
+const { parseStopMentioning, failedClaudeTurn, requestRulesLines, localeRule } = require('./homeroom-bot-live');
 const shotsState = require('./shots-state');
 const { withoutEmDashes } = require('./em-dashes');
 
@@ -204,6 +204,10 @@ function specLines(spec) {
 function followUpPrompt({
   seed, proposalBlock = '', spec = '', prNumber = null, replies = [], canRevise = true, design = '', checks = null,
   planFormat = '',
+  // #4645: the requester's locale (users.locale; null unset), for the
+  // language rule below. Their DM with the bot is where a question and a
+  // handover reach them, so this is the one turn whose wording can follow it.
+  locale = null,
 }) {
   // B4: never a PR number: the model's own words echo it back to people.
   void prNumber;
@@ -246,7 +250,7 @@ function followUpPrompt({
     '',
     ...(canRevise && design ? [design, ''] : []),
     ...(canRevise && planFormat ? [planFormat, ''] : []),
-    'Write `reply`, `answers`, `summary` and `title` in plain words, without em dashes: use a comma, a colon or a full stop.',
+    `Write \`reply\`, \`answers\`, \`summary\` and \`title\` in plain words, without em dashes: use a comma, a colon or a full stop. ${localeRule(locale)} Quote people's own words as they wrote them.`,
     `END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:`,
     `{"action": ${actions}, "reply": "what to post back to them, in plain language", "answers": ["for ask only: your suggested default first", "another answer"], "summary": "for revise only: one sentence on what you changed", "title": "for revise only, when what the proposal does changed: its new short title"${canRevise && planFormat ? ', "plan": "for revise only: true when you wrote an updated plan above"' : ''}, "stop_mentioning": ["name of each person who asked the bot to stop tagging them"], "resume_mentioning": ["name of each person who asked to be tagged again"]}`,
     '',
@@ -633,7 +637,7 @@ function describeFailing(f) {
  * follow-up reads them, then the failing checks. The check output is the
  * app's own text, so it is framed as data.
  */
-function checksFixPrompt({ seed, proposalBlock = '', prNumber = null, failing = [], total = 0, broken = [] }) {
+function checksFixPrompt({ seed, proposalBlock = '', prNumber = null, failing = [], total = 0, broken = [], locale = null }) {
   void prNumber;
   const shown = failing.slice(0, MAX_FAILING_SHOWN);
   const more = failing.length - shown.length;
@@ -664,7 +668,7 @@ function checksFixPrompt({ seed, proposalBlock = '', prNumber = null, failing = 
     '- "revise": the failures come from your change. Either the code does not do what the check expects, or a check your proposal added expects something the code does not do (text, a label, a selector that differs from what you built). Fix whichever one is wrong, and nothing else. Never loosen, skip or delete a check that was there before your proposal, and never change one the group wrote to match your code. Follow the repository\'s own agent instructions, and run the checks or tests that cover the fix. Do not commit or push yourself: your working tree is committed and pushed to the proposal for you, which clears its votes so the group looks again.',
     '- "person": the failures are not caused by your change (they fail without it too), a check the group wrote expects behaviour the request asked you to change, or you cannot fix them safely. Say which, and why, in plain words. Change no files.',
     '',
-    'Write `reply` and `summary` in plain words, without em dashes: use a comma, a colon or a full stop.',
+    `Write \`reply\` and \`summary\` in plain words, without em dashes: use a comma, a colon or a full stop. ${localeRule(locale)}`,
     'END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:',
     '{"action": "revise" | "person", "reply": "what to tell the group, in plain language", "summary": "for revise only: one sentence on what you fixed", "cause": "for person only: \\"not_change\\" when the failures are not caused by your change (they fail without it too), \\"change\\" when they are and you cannot fix them safely, \\"unsure\\" otherwise"}',
   ].join('\n');

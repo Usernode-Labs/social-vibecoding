@@ -420,6 +420,21 @@ function requestRulesLines() {
   ];
 }
 
+// #4645: the language rule every prompt that writes text people read
+// carries, in the words the change's group asked for: match the user's
+// locale in DMs, default to English otherwise. `locale` is the requester's
+// language preference (users.locale, set in Settings → Language; null or
+// unset means English), read from the request's recorded requester
+// (homeroom-bot-dm.js requesterOf). Homeroom ships English only, so the
+// unset wording is what nearly every turn reads, and it keeps the English
+// the prompts pinned before this rule could name a locale.
+function localeRule(locale) {
+  const tag = String(locale || '').trim().slice(0, 35);
+  return tag
+    ? `Match the user's locale in DMs and default to English otherwise: the requester's locale is \`${tag}\`.`
+    : 'Match the user\'s locale in DMs and default to English otherwise: the requester\'s locale is unset, so write English.';
+}
+
 // A turn's progress lines to its own record (lastActivity) and, for a
 // benchmark trial, to the trial's watch as well (services/bench/progress.js).
 // The caller's listener can never break the turn.
@@ -519,8 +534,10 @@ function specDesignBrief(firstVersion = false, starter = null) {
 
 function specPrompt({
   seed, buildNote, firstVersion = false, html = false, platformStyles = false, guidance = null, starter = null,
+  // #4645: the requester's locale, for the language rule below.
+  locale = null,
 }) {
-  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter });
+  if (html) return specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance, starter, locale });
   return [
     seed,
     '',
@@ -545,6 +562,7 @@ function specPrompt({
     ...specScopeLines(firstVersion, starter),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
+    `- ${localeRule(locale)}`,
     `- ${specDesignBrief(firstVersion, starter)}`,
     ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
@@ -573,7 +591,7 @@ function specPrompt({
   ].join('\n');
 }
 
-function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null }) {
+function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidance = null, starter = null, locale = null }) {
   return [
     seed,
     '',
@@ -597,6 +615,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     ...specScopeLines(firstVersion, starter),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
+    `- ${localeRule(locale)}`,
     `- ${specDesignBrief(firstVersion, starter)}`,
     ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
@@ -1048,7 +1067,7 @@ async function postRevisedSpecComment({ github, repo, issueNumber, spec, version
  * screens draw), said briefly. The revised plan is stored and posted like
  * any other spec version.
  */
-function followUpPlanFormat({ config, app }) {
+function followUpPlanFormat({ config, app, locale = null }) {
   const html = specHtml.htmlSpecsEnabledFor(config, app?.slug);
   const platformStyles = specHtml.specStylesFor({ slug: app?.slug, self_hosted: app?.self_hosted }) === 'platform';
   if (html) {
@@ -1056,7 +1075,7 @@ function followUpPlanFormat({ config, app }) {
       'Write the updated plan as an HTML document: start with <h1> Title and end with </article>, no preamble.',
       '- Two sections, "user" (what people will see and do differently, no file paths) then "tech" (the files,',
       '  data, edge cases and tests). Title it with what the change DOES, at most 72 characters.',
-      '- Written without em dashes: use a comma, a colon or a full stop.',
+      `- Written without em dashes: use a comma, a colon or a full stop. ${localeRule(locale)}`,
       specHtmlContract(platformStyles),
     ].join('\n');
   }
@@ -1066,7 +1085,7 @@ function followUpPlanFormat({ config, app }) {
     '  headings, in this order: "## User-facing changes" then "## Technical implementation". The user half is',
     '  what people will see and do differently, no file paths; the technical half holds the files, data, edge',
     '  cases and tests.',
-    '- Written without em dashes: use a comma, a colon or a full stop.',
+    `- Written without em dashes: use a comma, a colon or a full stop. ${localeRule(locale)}`,
   ].join('\n');
 }
 
@@ -1681,21 +1700,25 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
 // #3518: the proposal's summary, the text the group reads before it votes.
 // The same block an OpenRouter dev chat turn ends with (#2820), parsed by
 // proposal-description.js; prepareProposal files it where the promote route
-// reads it.
-const BUILD_DESCRIPTION_LINES = Object.freeze([
-  '',
-  'After the summary the rules above ask for, end your final message with a description of the change for the',
-  'people who will vote on it, between these two marker lines:',
-  '',
-  '==== DESCRIPTION ====',
-  'One or two short paragraphs, in plain language: what is different for someone using the app, what they can',
-  'now do, or what stops going wrong.',
-  '==== END DESCRIPTION ====',
-  '',
-  'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
-  'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop. Skip the',
-  'block only if you changed nothing.',
-]);
+// reads it. The language rule it ends with is the change's one wording rule
+// (localeRule): a description is for the group, so it reads English unless
+// a DM context is carrying the requester's locale.
+function buildDescriptionLines(locale = null) {
+  return [
+    '',
+    'After the summary the rules above ask for, end your final message with a description of the change for the',
+    'people who will vote on it, between these two marker lines:',
+    '',
+    '==== DESCRIPTION ====',
+    'One or two short paragraphs, in plain language: what is different for someone using the app, what they can',
+    'now do, or what stops going wrong.',
+    '==== END DESCRIPTION ====',
+    '',
+    'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
+    'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop.',
+    `${localeRule(locale)} Skip the block only if you changed nothing.`,
+  ];
+}
 
 // #4487: the bot's proposals get before/after shots on the exact builds, as
 // a person's do, and the group relies on them to check a small change that
@@ -1708,7 +1731,8 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
 // shots end on "I can't reach my model" (PR 4536), so the build is told to
 // start from a reply already there. The tool's answer warns about it too
 // (shots-ready-states.js).
-const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
+function buildVisibleChangesLines(locale = null) {
+  return [
   '',
   'Once the change is built and committed, call the provided declare_visible_changes tool once, with the changes',
   'as you actually built them: one to three, each a claim in plain words a voter would recognise, the real',
@@ -1725,7 +1749,8 @@ const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
   'it cannot reach its model there, and an app\'s own AI features get no answer. Never make a step ask Homeroom bot',
   '(or any AI feature) for something and wait for its reply. Start from a state that already holds the reply: a',
   'ready-made state the tool\'s answer lists, or a message the app\'s staging seed writes.',
-]);
+  ];
+}
 
 // A build of the platform's own repository runs its tests the way that
 // repository's AGENTS.md asks every agent to: the suites that pin what it
@@ -1946,6 +1971,9 @@ function firstVersionDesignLines(starter = null) {
 function buildPrompt({
   seed, buildNote, spec = null, platformRepo = false, readsImages = false, firstVersion = false, guidance = null,
   clock = null, starter = null,
+  // #4645: the requester's locale, for the language rule the description and
+  // declared-change lines below carry.
+  locale = null,
 }) {
   const time = clock ? clockLines(clock) : [];
   const specBlock = spec
@@ -1987,8 +2015,8 @@ function buildPrompt({
     '',
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
-    ...(firstVersion ? [] : BUILD_VISIBLE_CHANGES_LINES),
-    ...BUILD_DESCRIPTION_LINES,
+    ...(firstVersion ? [] : buildVisibleChangesLines(locale)),
+    ...buildDescriptionLines(locale),
   ].join('\n');
 }
 
@@ -2199,6 +2227,8 @@ async function draftSpec({
   harness = 'auto', reasoningEffort = null,
   // The game starter a first version builds on (services/app-templates.js).
   starter = null,
+  // #4645: the requester's locale, for the spec's language rule.
+  locale = null,
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -2212,7 +2242,7 @@ async function draftSpec({
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
   const prompt = specPrompt({
-    seed, buildNote, firstVersion, guidance, starter,
+    seed, buildNote, firstVersion, guidance, starter, locale,
     html: specHtml.htmlSpecsEnabledFor(config, session.app_slug),
     platformStyles: specHtml.specStylesFor({ slug: session.app_slug, self_hosted: session.app_self_hosted }) === 'platform',
   });
@@ -2681,6 +2711,10 @@ async function buildAndPropose({
   // #4488: the plan was checked with its requester first, which its
   // description says (prepareProposal).
   checkedFirst = false,
+  // #4645: the requester's language preference (users.locale; null unset),
+  // for the language rule the prompts that write to people carry
+  // (localeRule). The caller reads it off the request's recorded requester.
+  locale = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const buildStartedMs = Date.now();
@@ -2851,6 +2885,7 @@ async function buildAndPropose({
     : await draftSpec({
       pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
       model: specModel || model, deps, specBudgetMs, firstVersion, starter, guidance: specGuidance, onProgress,
+      locale,
       ...(telemetry ? { telemetryComponent: telemetry } : {}),
       ...(harnessOf ? {
         harness: harnessOf(specModel || model, config),
@@ -2944,6 +2979,7 @@ async function buildAndPropose({
   const prompt = buildPrompt({
     seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo, readsImages, firstVersion, starter, guidance: buildGuidance,
     clock: { startedAt: turnStartedMs, budgetMs: turnBudgetMs },
+    locale,
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -3066,6 +3102,7 @@ async function buildAndPropose({
     reviewed = await reviewLanded({
       pool, config, bot, app, repo, session, branchName, seed, spec: spec.ok ? spec.specMd : null,
       review, deps, runBuildTurn, turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, fixTurnIds,
+      locale,
       start: {
         sha: landedSha, commits: landedCommits,
         costUsd, activeMs: Date.now() - buildStartedMs, buildText: result.lastResultText || null,
@@ -3165,6 +3202,8 @@ async function rollbackReviewBranch({ github, repo, branchName, sha }) {
 async function reviewLanded({
   pool, config, bot, app, repo, session, branchName, seed, spec, review, deps, runBuildTurn,
   turnBudgetMs, readsImages, platformRepo, skipNow, onProgress, start, fixTurnIds = null,
+  // #4645: the requester's locale, for the review prompts' language rule.
+  locale = null,
 }) {
   const botReview = require('./bot-review');
   const { worker } = deps;
@@ -3193,7 +3232,7 @@ async function reviewLanded({
     worker.clearPendingStop?.(session.id);
     const turn = await runBuildTurn({
       prompt: botReview.fixPrompt({
-        seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo,
+        seed, spec, issues, round, maxRounds: reviewer.maxRounds, readsImages, platformRepo, locale,
       }),
       budgetMs: Math.max(1000, Math.min(budgetMs, turnBudgetMs)),
       resumeThreadId: null,
@@ -3219,7 +3258,8 @@ async function reviewLanded({
       capture,
       review: ({ round, capture: shot, previousIssues, timeoutMs }) => botReview.reviewCapture({
         pool, config, userId: bot.id, model: reviewer.model, seed, spec, capture: shot, previousIssues,
-        round, maxRounds: reviewer.maxRounds, appId: app.id, sessionId: session.id, timeoutMs, deps: deps.reviewDeps || {},
+        round, maxRounds: reviewer.maxRounds, appId: app.id, sessionId: session.id, timeoutMs, locale,
+        deps: deps.reviewDeps || {},
       }),
       fix,
       rollback: ({ sha }) => rollbackReviewBranch({ github: deps.github, repo, branchName, sha }),
@@ -3280,7 +3320,9 @@ module.exports = {
   specUserFacing,
   buildDescription,
   buildPrompt,
-  BUILD_VISIBLE_CHANGES_LINES,
+  buildVisibleChangesLines,
+  buildDescriptionLines,
+  localeRule,
   clockLines,
   BUILD_SOFT_BUDGET_MS,
   DRAG_TEST_LINES,

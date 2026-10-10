@@ -138,6 +138,9 @@ function requesterFrom(row, overrides = {}) {
     isSynthetic: !!row.is_synthetic,
     hasPlatformAccess: !!row.has_platform_access,
     isAdmin: !!row.is_admin,
+    // #4645: their language preference (users.locale, Settings → Language;
+    // null unset), for the prompts that write to them (live.localeRule).
+    locale: row.locale || null,
     ...overrides,
   };
 }
@@ -581,7 +584,7 @@ async function whileTyping(pool, { botId, conversationId, ws = null }, work) {
 async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   const title = issue?.title ? clip(issue.title, 300) : null;
   const { rows: found } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.locale, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [app.id, issueNumber],
@@ -616,7 +619,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
   if (!rows.length) return null;
   // Who they are, as hasBot reads it.
   const { rows: who } = await pool.query(
-    'SELECT u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.username, u.is_synthetic, u.locale, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [rows[0].user_id],
   );
   return requesterFrom({ ...rows[0], ...(who[0] || {}) }, { username: who[0]?.username || poster });
@@ -626,7 +629,7 @@ async function recordRequester(pool, { app, repo, issueNumber, issue = null }) {
 async function personOf(pool, userId) {
   if (!userId) return null;
   const { rows } = await pool.query(
-    'SELECT u.id AS user_id, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
+    'SELECT u.id AS user_id, u.username, u.is_synthetic, u.locale, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [userId],
   );
   return rows[0] ? requesterFrom(rows[0]) : null;
@@ -634,7 +637,7 @@ async function personOf(pool, userId) {
 
 async function requesterOf(pool, appId, issueNumber) {
   const { rows } = await pool.query(
-    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
+    `SELECT q.user_id, q.first_version, q.issue_title, q.asked_text, u.username, u.is_synthetic, u.locale, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin
        FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
       WHERE q.app_id = $1 AND q.issue_number = $2`,
     [appId, issueNumber],
