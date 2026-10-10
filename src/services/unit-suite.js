@@ -1012,7 +1012,10 @@ function readFailure({
 // stdout line changes it, and once more with phase 'done' when the run
 // ends; the caller owns any throttling. Normal failures become check rows;
 // explicit cancellation propagates to the preview lifecycle owner.
-async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null }) {
+//
+// `jobNamePrefix` names the Job outside a preview run's own check Jobs: an
+// early unit suite started with the preview build (services/early-unit-suite.js).
+async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null, jobNamePrefix = null }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
@@ -1064,6 +1067,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     const options = {
       onStdoutLine: observe,
       signal, previewRunId,
+      ...(jobNamePrefix ? { namePrefix: jobNamePrefix } : {}),
       image: UNIT_SUITE_IMAGE,
       cmd: ['bash', '-c', RUN_SCRIPT],
       env: {

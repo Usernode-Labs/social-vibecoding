@@ -217,6 +217,43 @@ const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // the container gets to emit its sentinel rather than being killed.
 const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '650000';
 
+// ── Browser checks across several pods ──
+//
+// On 10 Oct 2026 one 733-check run took 126s in a single browser pod that
+// spent it at 7.9 of its 8 CPUs, throttled most of the time, while the
+// preview it was testing idled under one CPU: the browser was the bound. So
+// a run of at least CAPTURE_SHARD_MIN_TESTS checks is split across
+// CAPTURE_SHARDS pods. Each gets the whole list and its shard number and
+// runs only its share of the page groups (capture/capture.js shardGroups);
+// the first also takes the screenshots. Their output is joined in shard
+// order and read exactly as one pod's would be. A check no shard reported,
+// when no shard ran out of time, is asked again in one more pod before the
+// verdict (`sweep`), so a lost pod costs a short re-run, never a red.
+//
+// A shard asks the scheduler for CAPTURE_SHARD_CPU_REQUEST CPUs (it may
+// burst to CAPTURE_CPUS), so three shards ask for 6 where one pod asked
+// for 4: the worker namespace's quota counts requests, and the checks
+// queue's four runs must still fit in it. CAPTURE_SHARDS=1 runs one pod,
+// as before.
+function captureShardCount(raw = process.env.CAPTURE_SHARDS) {
+  if (raw == null || String(raw).trim() === '') return 3;
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, 8) : 3;
+}
+const CAPTURE_SHARD_MIN_TESTS = Number.parseInt(process.env.CAPTURE_SHARD_MIN_TESTS, 10) || 60;
+const CAPTURE_SHARD_CPU_REQUEST = process.env.CAPTURE_SHARD_CPU_REQUEST || '2';
+// Pages each shard keeps open at once, in place of TEST_CONCURRENCY. Every
+// page loads the one preview, and through it the Postgres primary that
+// production and every preview share; on 7 Oct 2026 that primary was the
+// bottleneck when too many runs went at once (services/checks-queue.js).
+// Three shards of 5 are 15 pages where one pod had 8 starved of CPU, so a
+// run's load on the primary is about doubled during its shorter browser
+// phase rather than tripled.
+const CAPTURE_SHARD_CONCURRENCY = process.env.CAPTURE_SHARD_CONCURRENCY || '5';
+// The checks' own pixel density (capture/capture.js TEST_DEVICE_SCALE_FACTOR):
+// 1× unless set. The shots keep the app's density.
+const CAPTURE_TEST_DEVICE_SCALE = process.env.CAPTURE_TEST_DEVICE_SCALE || '1';
+
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.
 //
@@ -700,20 +737,44 @@ function parseTests(stdout) {
 // Absent when the container died before finishing, or when an OLD capture
 // image (which never emitted it) served the run — both callers below treat
 // `null` as "no claim made" and fall back to counting frames.
+//
+// One pod's line: the last wins, as it always has. A run split across
+// browser pods (runCaptureShards) has one line per shard, each naming its
+// shard: those add up, with the sweep's line if there was one, and any
+// shard's deadline is the run's.
 function parseTestsDone(stdout) {
   const lines = String(stdout || '').split('\n');
-  let found = null;
+  let last = null;
+  const shards = new Map();
   for (const line of lines) {
     if (!line.startsWith('__USERNODE_TESTS_DONE__ ')) continue;
     const attrs = {};
     for (const m of line.matchAll(/(\w+)=(\S+)/g)) attrs[m[1]] = m[2];
-    found = {
+    const one = {
       ran: parseInt(attrs.ran, 10) || 0,
       expected: parseInt(attrs.expected, 10) || 0,
       deadline: attrs.deadline === '1',
     };
+    if (attrs.shard) shards.set(attrs.shard, one);
+    else last = one;
   }
-  return found;
+  if (!shards.size) return last;
+  return [...shards.values(), ...(last ? [last] : [])].reduce((sum, one) => ({
+    ran: sum.ran + one.ran, expected: sum.expected + one.expected, deadline: sum.deadline || one.deadline,
+  }), { ran: 0, expected: 0, deadline: false });
+}
+
+// The declared checks a capture output has a frame for (retries excluded).
+function reportedTestIndexes(stdout) {
+  const seen = new Set();
+  for (const line of String(stdout || '').split('\n')) {
+    if (!line.startsWith('__USERNODE_TEST__ ')) continue;
+    const m = /\bindex=(\d+)\b/.exec(line);
+    if (!m) continue;
+    const index = parseInt(m[1], 10);
+    if (index < CAPTURE_RETRY_INDEX_BASE) seen.add(index);
+  }
+  return seen;
 }
 
 // What the capture container wrote down about itself while it ran
@@ -2228,6 +2289,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     log.info('visuals', 'Checks already passing for this commit — skipping redundant run', {
       sessionId: session.id, commitHash, trigger,
     });
+    require('./early-unit-suite').cancel(config, session.id, 'the checks for this commit already passed', { commitHash });
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, null);
     scheduleShots(config, pool, session.id, commitHash, 'checks-already-decided');
@@ -2273,6 +2335,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   let stopHeartbeat = () => {};
   // True once the verdict is stored: the run's Jobs have nothing left to give.
   let settledRun = false;
+  // The unit suite this run took over from the preview build, if it did
+  // (services/early-unit-suite.js): its own Job, under its own run id.
+  let earlyUnit = null;
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
@@ -2769,8 +2834,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // is best-effort and swallowed: the verdict below is still read from
     // the whole stdout. `closeProgress` is called before the verdict is
     // written so a late timer can never broadcast 'pending' after it.
+    // How many browser pods this run's checks are split across.
+    const captureShards = kubernetesCapture && !(shotsOnly && !media)
+      && tests.length >= CAPTURE_SHARD_MIN_TESTS ? captureShardCount() : 1;
     const progress = makeChecksProgressState({
       expected: tests.length,
+      shards: captureShards,
       // The build half, finished, rides every testing-half snapshot.
       build: buildProgressFromTimings(stagingResult && stagingResult.timings),
       flush: async (snap) => {
@@ -2785,6 +2854,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     });
     closeProgress = progress.close;
     const progressObserver = progress.observeCapture;
+
+    // The unit suite already running since the preview build started, if
+    // there is one for this head. A deferred verdict runs no suite, so it
+    // stops one.
+    if (shotsOnly) {
+      require('./early-unit-suite').cancel(config, session.id, 'the verdict is deferred', { commitHash });
+    } else {
+      earlyUnit = require('./early-unit-suite').adopt(config, session.id, commitHash, gitRef, {
+        onProgress: progress.observeUnit, signal: operation?.signal,
+      });
+    }
 
     // The full manifest, written before either Job exists: everything the
     // verdict needs that the Jobs' own output does not carry, so a process
@@ -2819,6 +2899,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           dispatched,
           ceilingDropped: Number(declared.ceilingDropped) || 0,
           build: buildProgressFromTimings(stagingResult && stagingResult.timings),
+          captureShards,
+          // Where the harvest finds the unit suite when it is the early one.
+          ...(earlyUnit ? { unitRunId: earlyUnit.runId } : {}),
         },
       });
       // This run is now the one the session waits on. The Jobs of its runs
@@ -2832,10 +2915,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
     // capture container and awaited after it, so the suite runs in its own
     // one-shot container CONCURRENTLY with the browser checks and adds
-    // ~zero wall clock unless it outlasts the whole capture run. The
+    // ~zero wall clock unless it outlasts the whole capture run. Usually it
+    // is already running, started with the preview build (earlyUnit). The
     // .catch collapses every failure mode to null (no row) — the checks
     // run must never die because the unit-suite runner did.
-    const unitSuitePromise = shotsOnly ? Promise.resolve(null) : unitSuite.maybeRunUnitSuite({
+    const unitSuitePromise = shotsOnly ? Promise.resolve(null) : earlyUnit ? earlyUnit.promise : unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id, sessionId: session.id,
       repoOwner, repoName, ref: gitRef,
       prNumber: Number(session.pr_number) || null,
@@ -2932,6 +3016,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           TEST_CONCURRENCY,
           TEST_TIMEOUT_MS,
           TESTS_DEADLINE_MS,
+          // The checks' own density, 1× (capture.js TEST_DEVICE_SCALE_FACTOR).
+          TEST_DEVICE_SCALE_FACTOR: CAPTURE_TEST_DEVICE_SCALE,
       };
       if (shotsOnly && !media) {
         // A deferred verdict on a range with no frontend files: no
@@ -2939,6 +3025,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // for the container to do. The stamp below still lands.
         stdout = '';
         res = { partial: false };
+      } else if (kubernetesCapture && captureShards > 1) {
+        ({ stdout, ...res } = await runCaptureShards(config, {
+          shards: captureShards, tests, env: captureEnv, onStdoutLine: progressObserver,
+          signal: operation?.signal, previewRunId: runId, sessionId: session.id,
+        }));
       } else if (kubernetesCapture) {
         ({ stdout, ...res } = await kubernetes.runCaptureJob(config, {
           onStdoutLine: progressObserver,
@@ -3069,10 +3160,86 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // worker namespace's Job slots for another hour. A run that ended any
     // other way keeps its Jobs for whoever cancels them, and the TTL.
     if (harvestable && settledRun) releaseCheckJobs(config, session.id, runId);
+    if (harvestable && settledRun && earlyUnit) releaseCheckJobs(config, session.id, earlyUnit.runId);
+    // A run that ended without its verdict leaves nothing to read the suite
+    // it took over: stop it rather than let it run on to its deadline.
+    if (earlyUnit && !settledRun) earlyUnit.stop('the checks run ended without a verdict');
     _inFlight.delete(key);
     drainQueued(key, session.id, commitHash, traceStatus);
     scheduleShots(config, pool, session.id, commitHash);
   }
+}
+
+// The tests as a capture Job takes them: inline when small, through its
+// input Secret (TESTS='@stdin') when not (see the #47 note in
+// captureForSession).
+function captureTestsInput(tests) {
+  const json = JSON.stringify(tests);
+  return json.length > 90 * 1024 ? { TESTS: '@stdin', stdinPayload: json } : { TESTS: json, stdinPayload: null };
+}
+
+// One run's browser checks across `shards` capture Jobs at once (see
+// CAPTURE_SHARDS above). Shard 0 carries the screenshots; the rest run
+// checks only. Resolves the shape runCaptureJob does, with the shards'
+// output joined in shard order. Any declared check no shard reported, when
+// none of them ran out of time, is run once more in a sweep Job, which also
+// takes the screenshots when shard 0 is what was lost. A cancelled run
+// throws its signal's reason; a sweep that cannot run throws, as a single
+// capture Job that could not run always has.
+async function runCaptureShards(config, {
+  shards, tests, env, onStdoutLine = null, signal = null, previewRunId = null, sessionId,
+  runJob = (opts) => kubernetes.runCaptureJob(config, opts),
+}) {
+  const { TESTS: _tests, ...rest } = env;
+  const base = { ...rest, TEST_CONCURRENCY: CAPTURE_SHARD_CONCURRENCY };
+  const checksOnly = {
+    ...base, TARGETS: '[]', BEFORE_URL: '', AFTER_URL: '', BEFORE_FALLBACK_URL: '',
+    BEFORE_COOKIE: '', AFTER_COOKIE: '', MEDIA: '0',
+  };
+  const input = captureTestsInput(tests);
+  const common = {
+    onStdoutLine, memory: CAPTURE_MEMORY, cpus: CAPTURE_CPUS, cpuRequest: CAPTURE_SHARD_CPU_REQUEST,
+    signal, previewRunId, sessionId, timeoutMs: RUN_TIMEOUT_MS, maxBuffer: RUN_MAX_BUFFER, salvagePartial: true,
+  };
+  const settled = await Promise.allSettled(Array.from({ length: shards }, (_, shard) => runJob({
+    ...common,
+    env: { ...(shard === 0 ? base : checksOnly), TESTS: input.TESTS,
+      TEST_SHARD_INDEX: String(shard), TEST_SHARD_COUNT: String(shards) },
+    stdinPayload: input.stdinPayload,
+    shard, nameSuffix: shard === 0 ? null : `k${shard}`,
+  })));
+  signal?.throwIfAborted();
+  const outs = [];
+  const lost = [];
+  settled.forEach((r, shard) => {
+    if (r.status === 'fulfilled') outs.push(r.value || {});
+    else lost.push({ shard, err: r.reason });
+  });
+  let stdout = outs.map((o) => String(o.stdout || '')).join('\n');
+  const stderr = outs.map((o) => String(o.stderr || '')).filter(Boolean).join('\n');
+  let partial = outs.some((o) => o.partial);
+  const reasons = outs.map((o) => o.partialReason).filter(Boolean);
+  const reported = reportedTestIndexes(stdout);
+  const missing = tests.filter((t) => !reported.has(t.index));
+  const outOfTime = !!(parseTestsDone(stdout) || {}).deadline;
+  if (lost.length || (missing.length && !outOfTime)) {
+    const mediaLost = lost.some((l) => l.shard === 0);
+    log.warn('visuals', 'Browser-check shards came back short; running the rest once more', {
+      sessionId, shards, lost: lost.map((l) => ({ shard: l.shard, err: String(l.err && l.err.message || l.err).slice(0, 200) })),
+      missing: missing.length, outOfTime, retakingShots: mediaLost,
+    });
+    const sweepInput = captureTestsInput(missing);
+    const sweep = await runJob({
+      ...common,
+      env: { ...(mediaLost ? base : checksOnly), TESTS: sweepInput.TESTS, TEST_RETRY_SLOT: String(shards) },
+      stdinPayload: sweepInput.stdinPayload,
+      shard: shards, nameSuffix: 'r',
+    });
+    stdout = `${stdout}\n${String(sweep.stdout || '')}`;
+    partial = partial || !!sweep.partial;
+    if (sweep.partialReason) reasons.push(sweep.partialReason);
+  }
+  return { stdout, stderr, partial, partialReason: [...new Set(reasons)].join('; '), shards };
 }
 
 // Best-effort and detached: a Job left behind still goes with its TTL.
@@ -3727,10 +3894,13 @@ function notifyVisualsReady(sessionId, visuals, send) {
 // "744 of 732". The container's own done line counts declared checks only,
 // for the same reason.
 const CAPTURE_RETRY_INDEX_BASE = 1000000; // capture/capture.js RETRY_INDEX_BASE
-function makeChecksProgressTracker(expected) {
+function makeChecksProgressTracker(expected, { shards = 1 } = {}) {
   const byIndex = new Map();
   let done = false;
   let doneRan = null;
+  // A run split across pods is done when every shard has said so.
+  let doneLines = 0;
+  const doneNeeded = Math.max(1, Number(shards) || 1);
   const total = Number.isInteger(expected) && expected >= 0 ? expected : null;
   return {
     // Returns true when the line advanced the state (a new frame, or done).
@@ -3748,9 +3918,11 @@ function makeChecksProgressTracker(expected) {
         return before !== status;
       }
       if (l.startsWith('__USERNODE_TESTS_DONE__ ')) {
-        done = true;
+        doneLines += 1;
         const r = /\bran=(\d+)\b/.exec(l);
-        doneRan = r ? parseInt(r[1], 10) : null;
+        if (r) doneRan = (doneRan || 0) + parseInt(r[1], 10);
+        if (doneLines < doneNeeded) return false;
+        done = true;
         return true;
       }
       return false;
@@ -3930,8 +4102,8 @@ const CHECKS_PROGRESS_MIN_GAP_MS = 1000;
 // `done` from either side flushes at once. `close()` drops any pending
 // timer and makes every later observation a no-op: the verdict write that
 // follows it must be the last thing anyone hears about this run.
-function makeChecksProgressState({ expected, flush, minGapMs = CHECKS_PROGRESS_MIN_GAP_MS, build = null }) {
-  const tracker = makeChecksProgressTracker(expected);
+function makeChecksProgressState({ expected, flush, minGapMs = CHECKS_PROGRESS_MIN_GAP_MS, build = null, shards = 1 }) {
+  const tracker = makeChecksProgressTracker(expected, { shards });
   let unit = null;
   let lastFlushAt = 0;
   let timer = null;
@@ -4045,6 +4217,10 @@ module.exports = {
   // The settlement half of a run and the in-flight seat, for the harvester
   // (services/check-harvest.js) settling a run whose launcher died.
   settleCaptureRun,
+  runCaptureShards,
+  captureShardCount,
+  reportedTestIndexes,
+  CAPTURE_SHARD_MIN_TESTS,
   holdCapture,
   notifyChecks,
   RUN_TIMEOUT_MS,
