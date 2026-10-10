@@ -116,8 +116,11 @@ test('the container asks again, on its own document, within its caps', () => {
   assert.match(src, /const RETRY_RUNS = 3;/);
   assert.match(src, /const RETRY_MAX_CHECKS = 10;/);
   assert.match(src, /const RETRY_SKIP_FRACTION = 0\.25;/);
-  assert.match(src, /const tooManyRed = failedPrimaries\.length > list\.length \* RETRY_SKIP_FRACTION;/,
+  // Of the checks this run answers for: a shard's own share when the run
+  // is split across pods (tests/capture-shards.test.js), else all of them.
+  assert.match(src, /const tooManyRed = failedPrimaries\.length > own\.length \* RETRY_SKIP_FRACTION;/,
     'a quarter of the suite red is the change, not flakiness');
+  assert.match(src, /const own = shard \? groups\.flat\(\) : list;/);
   assert.match(src, /retryGroups\.push\(\[\{ \.\.\.t, index, solo: true \}\]\);/,
     'each retry is its own group and its own cold load, or it is a second '
     + 'assertion against a page somebody already loaded');

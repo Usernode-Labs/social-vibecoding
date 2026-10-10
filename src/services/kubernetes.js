@@ -2130,6 +2130,45 @@ async function runUnitSuiteJob(config, options) {
   return runCheckJob(config, options, 'unit-suite');
 }
 
+// A check Job's name before any shard suffix: `sv-<kind>-s<session>-<run>`,
+// or under `namePrefix` in place of `sv-<kind>`.
+function checkJobRunName(kind, sessionId, runId, namePrefix = null) {
+  return `${namePrefix || `sv-${kind}`}-s${sessionId}-${runId}`;
+}
+
+// Delete one check Job by name, with its Pod and input Secret (Background
+// propagation, as stopCheckJobs). For a Job no preview run owns, such as
+// an early unit suite nobody adopted. Never throws.
+async function deleteCheckJob(config, name) {
+  try {
+    const { batch } = getClients();
+    await deleteIfPresent(batch, 'deleteNamespacedJob', dnsName(name), config.kubernetes.workerNamespace,
+      { propagationPolicy: 'Background' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// How many unit-suite Jobs (a run's own, main-watch's, and early ones) are
+// running in the worker namespace. Null when the count could not be read.
+async function countRunningUnitSuiteJobs(config) {
+  try {
+    const { batch } = getClients();
+    const jobs = await batch.listNamespacedJob({
+      namespace: config.kubernetes.workerNamespace,
+      labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/workload=check`,
+    });
+    return (jobs.items || []).filter((job) => {
+      const name = job.metadata?.name || '';
+      return (name.startsWith('sv-unit-suite-') || name.startsWith('sv-unit-early-'))
+        && !job.metadata?.deletionTimestamp && describeCheckJob(job).state === 'running';
+    }).length;
+  } catch {
+    return null;
+  }
+}
+
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
 // `spare(runId)` keeps the Jobs of the runs it names (by preview-run-id):
@@ -2245,10 +2284,17 @@ function reconcileCheckOutput(observed, terminal) {
   return known;
 }
 
+// `namePrefix` names a Job outside the preview's own check Jobs: an early
+// unit suite (services/early-unit-suite.js) is `sv-unit-early-…`, which
+// cancelPreviewChecks and stopCheckJobs leave alone. `nameSuffix` and
+// `shard` name and label one of a run's capture shards; `cpuRequest` is a
+// shard's smaller share of the scheduler (services/visuals.js
+// CAPTURE_SHARD_CPU_REQUEST).
 async function runCheckJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
   onStdoutLine = null, cmd, memory = '2g', cpus = '4', maxBuffer = 64 * 1024 * 1024,
   salvagePartial = false, signal = null, previewRunId = null,
+  namePrefix = null, nameSuffix = null, shard = null, cpuRequest = null,
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
@@ -2256,7 +2302,7 @@ async function runCheckJob(config, {
   const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
   const resources = {
     requests: {
-      cpu: checkResourceRequest('4', cpuLimit, 'CPU'),
+      cpu: checkResourceRequest(cpuRequest || '4', cpuLimit, 'CPU'),
       memory: checkResourceRequest(unitSuite ? '1Gi' : '3Gi', memoryLimit, 'memory'),
       'ephemeral-storage': '1Gi',
     },
@@ -2265,8 +2311,8 @@ async function runCheckJob(config, {
   const image = unitSuite ? cfg.workerImage : cfg.captureImage;
   if (!image?.includes('@sha256:')) throw new Error(`${unitSuite ? 'KUBERNETES_WORKER_IMAGE' : 'KUBERNETES_CAPTURE_IMAGE'} must be an immutable digest`);
   const namespace = cfg.workerNamespace;
-  const runName = `sv-${kind}-s${sessionId}-${previewRunId || Date.now().toString(36)}`;
-  const name = dnsName(runName);
+  const runName = checkJobRunName(kind, sessionId, previewRunId || Date.now().toString(36), namePrefix);
+  const name = nameSuffix ? withSuffix(runName, nameSuffix) : dnsName(runName);
   const inputSecretName = !unitSuite && stdinPayload == null ? null : withSuffix(name, 'input');
   if (stdinPayload != null && Buffer.byteLength(String(stdinPayload), 'utf8') > 900 * 1024) {
     throw new Error('Capture stdin payload exceeds the Kubernetes Secret transport limit');
@@ -2320,6 +2366,10 @@ async function runCheckJob(config, {
   if (previewRunId) {
     body.metadata.labels['social.usernode.io/preview-run-id'] = previewRunId;
     body.spec.template.metadata.labels['social.usernode.io/preview-run-id'] = previewRunId;
+  }
+  if (Number.isInteger(shard)) {
+    body.metadata.labels['social.usernode.io/capture-shard'] = String(shard);
+    body.spec.template.metadata.labels['social.usernode.io/capture-shard'] = String(shard);
   }
   let inputSecretCreated = false;
   let inputSecret = null;
@@ -2562,12 +2612,19 @@ async function findCheckJobs(config, { sessionId, previewRunId }) {
   const namespace = config.kubernetes.workerNamespace;
   const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId},social.usernode.io/preview-run-id=${previewRunId}`;
   const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
-  const found = { capture: null, unitSuite: null };
+  // `captures` is every capture Job of the run, by name: one, or one per
+  // shard plus a sweep (services/visuals.js runCaptureShards). `capture` is
+  // the first of them, as before shards existed.
+  const found = { capture: null, captures: [], unitSuite: null };
   for (const job of jobs.items || []) {
     const name = job.metadata?.name || '';
-    if (name.startsWith(`sv-capture-s${sessionId}-`)) found.capture = describeCheckJob(job);
-    else if (name.startsWith(`sv-unit-suite-s${sessionId}-`)) found.unitSuite = describeCheckJob(job);
+    if (name.startsWith(`sv-capture-s${sessionId}-`)) found.captures.push(describeCheckJob(job));
+    else if (name.startsWith(`sv-unit-suite-s${sessionId}-`) || name.startsWith(`sv-unit-early-s${sessionId}-`)) {
+      found.unitSuite = describeCheckJob(job);
+    }
   }
+  found.captures.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  found.capture = found.captures[0] || null;
   return found;
 }
 
@@ -2731,7 +2788,8 @@ async function deleteSettledCheckJobs(config, { sessionId, previewRunId }) {
   let deleted = 0;
   for (const job of jobs.items || []) {
     const name = job.metadata?.name || '';
-    if (!name.startsWith(`sv-capture-s${sessionId}-`) && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) continue;
+    if (!name.startsWith(`sv-capture-s${sessionId}-`) && !name.startsWith(`sv-unit-suite-s${sessionId}-`)
+        && !name.startsWith(`sv-unit-early-s${sessionId}-`)) continue;
     if (job.metadata?.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) continue;
     if (job.metadata?.deletionTimestamp || describeCheckJob(job).state === 'running') continue;
     await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' });
@@ -2916,6 +2974,7 @@ module.exports = {
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
+  checkJobRunName, deleteCheckJob, countRunningUnitSuiteJobs,
   deleteSettledCheckJobs, listCheckLeftovers, deleteCheckLeftover, MANAGED_BY, CHECK_JOB_TTL_SECONDS,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
