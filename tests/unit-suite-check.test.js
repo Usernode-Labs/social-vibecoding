@@ -340,6 +340,93 @@ test('#4265: the Kubernetes path records the counted failures as a red suite wit
   assert.match(out.row.failureReason, /^18 tests failed, but the saved output does not name them\. \| /);
 });
 
+// ── The failures printed again at the end of the log (#4658) ───────────
+//
+// PR #4658's run counted "# fail 2" out of 23,439 and its saved log named
+// neither: the kubelet had rotated the container's log past them, and the
+// API serves only the newest file. The script now prints every failing
+// test's TAP block again after a failing `npm test`, under
+// FAILURES_SENTINEL, where the surviving end of the log holds it.
+
+/** The script's own ending, run in bash with `npm test` printing `tap` and exiting `code`. */
+function runScriptEnding(tap, code) {
+  const { execFileSync } = require('node:child_process');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-suite-ending-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'tap.txt'), tap);
+    const ending = unitSuite.RUN_SCRIPT.slice(unitSuite.RUN_SCRIPT.indexOf('set +e'));
+    const npm = `npm() { cat "${path.join(dir, 'tap.txt')}"; return ${code}; }\n`;
+    try {
+      return { stdout: execFileSync('bash', ['-c', `set -eu\ncd "${dir}"\n${npm}${ending}`], { encoding: 'utf8' }), code: 0, dir };
+    } catch (err) {
+      return { stdout: String(err.stdout || ''), code: err.status, dir };
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('#4658: a failing run prints its failures again at the end, and keeps npm\'s exit code', () => {
+  const tap = [
+    'TAP version 13',
+    'ok 1 - fine',
+    tapFail(2, 'explodes', 'tests/a.test.js'),
+    'not ok 3 - not yet # TODO',
+    '# Subtest: nested parent',
+    '    not ok 1 - nested child',
+    '    ---',
+    '    ...',
+    tapFail(4, 'nested parent', 'tests/b.test.js'),
+    '1..4', '# tests 4', '# pass 1', '# fail 2',
+  ].join('\n');
+  const { stdout, code, dir } = runScriptEnding(tap, 1);
+  assert.equal(code, 1, 'the exit code is npm test\'s, not tee\'s or awk\'s');
+  const after = stdout.slice(stdout.indexOf(unitSuite.FAILURES_SENTINEL)).split('\n');
+  assert.equal(after[0], unitSuite.FAILURES_SENTINEL);
+  assert.ok(after[1].startsWith(`${unitSuite.ROOT_SENTINEL}=`) && after[1].includes(require('node:path').basename(dir)),
+    'the workspace again, so paths come back relative');
+  const repeated = after.filter((l) => /^not ok/.test(l));
+  assert.deepEqual(repeated, ['not ok 2 - explodes', 'not ok 4 - nested parent'], 'top-level failures only, no TODO');
+  assert.ok(after.includes(`  location: '${WS}/tests/a.test.js:10:1'`), 'each with its YAML block');
+  assert.ok(stdout.indexOf('# fail 2') < stdout.indexOf(unitSuite.FAILURES_SENTINEL), 'after the run\'s own output');
+  // A passing run prints nothing more.
+  const green = runScriptEnding('TAP version 13\nok 1 - fine\n# fail 0', 0);
+  assert.equal(green.code, 0);
+  assert.ok(!green.stdout.includes(unitSuite.FAILURES_SENTINEL));
+});
+
+test('#4658: a log that lost its start names its failures from the copy at the end', () => {
+  const lost = [
+    tailOnly([], 2),
+    unitSuite.FAILURES_SENTINEL,
+    `${unitSuite.ROOT_SENTINEL}=${WS}`,
+    tapFail(4529, 'the redacted stream stays live', 'tests/runner.test.js').replace(/^# Subtest: .*\n/, ''),
+    tapFail(18719, 'a spec screen is drawn', 'tests/spec-frame.test.js').replace(/^# Subtest: .*\n/, ''),
+  ].join('\n');
+  const d = unitSuite.failureDetail(lost, JOB_FAILED);
+  assert.doesNotMatch(d, /does not name/);
+  assert.match(d, /^tests\/runner\.test\.js \(1\): the redacted stream stays live \| tests\/spec-frame\.test\.js \(1\): a spec screen is drawn \| /);
+  const { details } = unitSuite.unitFailureDetails(lost.split('\n'));
+  assert.deepEqual(details.map((x) => x.file), ['tests/runner.test.js', 'tests/spec-frame.test.js'], 'with their excerpts');
+});
+
+test('#4658: a failure the log kept is not counted again from the copy', () => {
+  const both = [
+    tapRun([tapFail(1, 'regression', 'tests/x.test.js')]),
+    unitSuite.FAILURES_SENTINEL,
+    `${unitSuite.ROOT_SENTINEL}=${WS}`,
+    tapFail(1, 'regression', 'tests/x.test.js').replace(/^# Subtest: .*\n/, ''),
+  ].join('\n');
+  assert.match(unitSuite.failureDetail(both, ''), /^tests\/x\.test\.js \(1\): regression \| /);
+  // And the live progress counts it once.
+  const tracker = unitSuite.makeUnitSuiteTracker();
+  for (const line of both.split('\n')) tracker.feed(line);
+  assert.equal(tracker.snapshot().failed, 1);
+});
+
 // ── unitSuiteFailures: what a stored row says failed (#4265) ───────────
 
 const storedUnitRow = (over = {}) => ({

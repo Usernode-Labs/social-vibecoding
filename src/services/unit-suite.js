@@ -100,6 +100,19 @@ const CLONED_SENTINEL = '__UNIT_SUITE_CLONED__';
 // strips this prefix so the reason names `tests/foo.test.js`, the path a fix
 // turn can hand straight back to `node --test`.
 const ROOT_SENTINEL = '__UNIT_SUITE_ROOT__';
+// Printed after a failing `npm test`, above every failing test's TAP block
+// printed again (RUN_SCRIPT). The log the row is read from can come back
+// without its beginning: the kubelet keeps a container's log in files of a
+// fixed size and the API serves only the newest, so a suite whose TAP
+// outgrows one keeps its summary and loses the failures printed before the
+// last rotation. PR #4217's run did (#4265), and so did #4658's: "2 tests
+// failed, but the saved output does not name them", out of 23,439. Printed
+// again at the very end, they are in whatever part of the log survives.
+const FAILURES_SENTINEL = '__UNIT_SUITE_FAILURES__';
+// How much of the failures the end of the log carries: enough for the
+// reason and the excerpts (MAX_UNIT_EXCERPTS), small next to the log.
+const DIGEST_MAX_FAILURES = 50;
+const DIGEST_MAX_BLOCK_LINES = 60;
 
 function isEnabled() {
   const v = String(process.env.UNIT_SUITE_CHECK_ENABLED ?? '1').trim().toLowerCase();
@@ -150,9 +163,24 @@ const TAP_STRUCTURE = /^\s*(?:not ok\b|ok\b|\.\.\.|#\s|1\.\.\d+)/;
 // The block's own lines and the stdout just before the `not ok` ride along
 // (`blockLines`, `before`) for the per-test excerpts (#3978); the grouped
 // reason below reads only name and file, so its shape never moves.
+//
+// The failures printed again under FAILURES_SENTINEL are read too, after
+// the run's own: a test whose own lines survived is kept as the run printed
+// it (with the stdout before it), and one whose lines went with the start
+// of the log is named from the copy.
 function failingTestsWithExcerpts(lines) {
   const rootLine = lines.find((l) => l.startsWith(`${ROOT_SENTINEL}=`));
   const root = rootLine ? rootLine.slice(ROOT_SENTINEL.length + 1).trim().replace(/\/+$/, '') : null;
+  const at = lines.indexOf(FAILURES_SENTINEL);
+  if (at === -1) return failingTestsIn(lines, root);
+  const own = failingTestsIn(lines.slice(0, at), root);
+  const key = (f) => `${f.file}\u0000${f.name}`;
+  const seen = new Set(own.map(key));
+  const again = failingTestsIn(lines.slice(at + 1), root).filter((f) => !seen.has(key(f)));
+  return [...own, ...again];
+}
+
+function failingTestsIn(lines, root) {
   const out = [];
   for (let i = 0; i < lines.length; i += 1) {
     const m = /^not ok\b\s*\d*\s*(?:-\s*)?(.*)$/.exec(lines[i]);
@@ -751,7 +779,23 @@ if node -e "const p=require('./package.json');process.exit(p.scripts?.['lint:sql
   export SQL_CHECK_CONNECTION_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres
   npm run lint:sql
 fi
-npm test
+# The suite's output is kept, and when it fails every failing top-level
+# test's TAP block is printed again at the very end, where a log that lost
+# its beginning still holds it (FAILURES_SENTINEL). The exit code is npm's.
+set +e
+npm test 2>&1 | tee /tmp/unit-suite-test.log
+status=\${PIPESTATUS[0]}
+set -e
+if [ "$status" -ne 0 ]; then
+  echo "${FAILURES_SENTINEL}"
+  echo "${ROOT_SENTINEL}=$(pwd -P)"
+  awk -v max=${DIGEST_MAX_FAILURES} -v lines=${DIGEST_MAX_BLOCK_LINES} '
+    /^not ok/ && !/#[[:blank:]]*(SKIP|TODO|skip|todo)/ { if (shown >= max) exit; shown++; print; block = 1; n = 0; next }
+    block && /^[[:blank:]]/ { if (n < lines) print; n++; if ($0 ~ /^[[:blank:]]*[.][.][.][[:blank:]]*$/) block = 0; next }
+    { block = 0 }
+  ' /tmp/unit-suite-test.log || true
+fi
+exit "$status"
 `;
 
 // Live progress of a run, read off the container's stdout as it streams
@@ -765,6 +809,9 @@ npm test
 // of it touches the verdict, which stays the exit code.
 function makeUnitSuiteTracker(expected = null) {
   let phase = 'cloning';
+  // The failures printed again after the run (FAILURES_SENTINEL) were
+  // counted once already.
+  let repeating = false;
   let passed = 0;
   let failed = 0;
   let skipped = 0;
@@ -774,6 +821,8 @@ function makeUnitSuiteTracker(expected = null) {
     // Returns true when the line changed the state.
     feed(line) {
       const l = String(line || '');
+      if (l === FAILURES_SENTINEL) { repeating = true; return false; }
+      if (repeating) return false;
       if (l === CLONED_SENTINEL) { phase = 'installing'; return true; }
       if (l === SETUP_DONE_SENTINEL) { phase = 'running'; return true; }
       const m = /^\s*(not ok|ok)\b(.*)$/.exec(l);
@@ -1103,5 +1152,7 @@ module.exports = {
   SETUP_DONE_SENTINEL,
   CLONED_SENTINEL,
   ROOT_SENTINEL,
+  FAILURES_SENTINEL,
   FAILURE_DETAIL_MAX,
+  RUN_SCRIPT,
 };
