@@ -1324,12 +1324,20 @@ async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
+  skipIssueThread = false, skipGithub = false,
 }) {
   // Answered where it was asked: a reply to people who wrote only in the
   // change's own discussion is said there alone, with no GitHub comment and
   // no copy in the request's thread (9 Oct 2026: every answer on PR #4584
   // was posted twice, the request's copy with "@evan" in front).
   const proposalOnly = !!(onlyProposal && proposalSessionId);
+  // 10 October: what the bot's voice tells people itself, where they asked
+  // (homeroom-bot-voice.js reportFollowUp), is not said again here: the
+  // request's thread (`skipIssueThread`) and GitHub (`skipGithub`, which
+  // then hears only milestones) are left out, and the post is recorded,
+  // and relayed to the requester's DM when it carries `dm`, as before.
+  const noComment = proposalOnly || !!skipGithub;
+  const noIssueThread = proposalOnly || !!skipIssueThread;
   // Everybody this post tags (mentionTargets); `mention` is the one-person
   // form the older callers pass. #4488: `untag` is somebody already told in
   // their DM with the bot, as untaggedRequester leaves them out below.
@@ -1353,7 +1361,7 @@ async function post({
   const postId = rows[0].id;
   let comment = null;
   let message = null;
-  if (!proposalOnly) {
+  if (!noComment) {
     try {
       comment = await github.createIssueComment(repo.owner, repo.repo, issueNumber, text);
     } catch (err) {
@@ -1395,7 +1403,7 @@ async function post({
   // person (homeroom-bot-words.js); GitHub keeps it as written.
   const own = firstPerson(text);
   const threadText = handles ? `${handles} ${own}` : own;
-  if (!proposalOnly) {
+  if (!noIssueThread) {
     try {
       // A spec is a card in the thread (its full text is on GitHub, and one
       // click away from the card), not a wall of markdown in a chat bubble.

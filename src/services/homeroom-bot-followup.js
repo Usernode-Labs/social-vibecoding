@@ -110,8 +110,38 @@ function newReplies({
 }
 
 function describeReply(r) {
-  const place = r.where === 'proposal' ? 'in the proposal\'s discussion' : (r.via === 'github' ? 'on the GitHub issue' : 'in the issue\'s discussion');
+  const place = r.via === 'ask' ? `asked you for a change ${ASKED_IN[r.askedIn] || 'in Homeroom'}, as you wrote it down when they asked`
+    : r.where === 'proposal' ? 'in the proposal\'s discussion' : (r.via === 'github' ? 'on the GitHub issue' : 'in the issue\'s discussion');
   return `- ${r.author}, ${place} (${String(r.createdAt || '').slice(0, 16)}):\n${clipText(r.body, 2000).split('\n').map((l) => `  ${l}`).join('\n')}`;
+}
+
+// Where a change asked of the bot was asked (homeroom_bot_change_asks.source).
+const ASKED_IN = Object.freeze({
+  thread: 'in the proposal\'s discussion',
+  session: 'in the proposal\'s discussion',
+  issue: 'in the issue\'s discussion',
+  chat: 'in the project\'s chat',
+  category: 'in one of the project\'s topics',
+  message: 'in a reply thread in the project\'s chat',
+  dm: 'in their chat with you',
+  vote_no: 'with their No vote on it',
+});
+
+/**
+ * Pure: a change somebody asked the bot's voice to make on one of its
+ * changes (homeroom-bot-voice.js recordAsk, a homeroom_bot_change_asks row),
+ * as a reply the follow-up reads beside the others.
+ */
+function askAsReply(ask) {
+  return {
+    where: ask.place_type === 'issue' ? 'issue' : 'proposal',
+    via: 'ask',
+    askedIn: ask.source || ask.place_type || null,
+    author: ask.asker || 'someone',
+    body: String(ask.instruction || ''),
+    createdAt: ask.created_at instanceof Date ? ask.created_at.toISOString() : ask.created_at,
+    askId: Number(ask.id) || null,
+  };
 }
 
 /**
@@ -895,6 +925,8 @@ module.exports = {
   ACTIONS,
   VERDICT_FOR,
   newReplies,
+  askAsReply,
+  ASKED_IN,
   followUpPrompt,
   parseFollowUp,
   planOutOf,

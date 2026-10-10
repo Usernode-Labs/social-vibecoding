@@ -255,6 +255,8 @@ function admitSocketFrame(client, msg, now = Date.now()) {
 
 function attach(server, config) {
   const pool = getPool(config);
+  // The bot's voice is handed messages from here, and reads its config here.
+  require('./homeroom-bot-voice').setConfig(config);
   // Also reconcile after a missed NOTIFY or reconnect. This includes HTTP
   // streams; the timer runs on every pod, independently of leader duties.
   const revocationTimer = setInterval(() => {
@@ -1410,6 +1412,15 @@ async function handleMessage(pool, client, msg) {
           appId: client.appId, userId: client.user.id, messageId: rows[0].id, content, thread, postedVia,
         }).catch((err) => log.warn('ws', 'Homeroom bot hand-over failed', { err: err.message }));
       }
+      // 10 October: the bot's voice hears a person's message in any place
+      // but a governance vote's, and answers when it was spoken to
+      // (services/homeroom-bot-voice.js decides, in code, before any model
+      // runs). Not awaited, and never a connector's post.
+      if (postedVia !== 'agent' && (!thread || thread.type !== 'governance')) {
+        void require('./homeroom-bot-voice').noteMessage(pool, null, {
+          appId: client.appId, messageId: rows[0].id, hint: { content, thread, quoted: !!quote },
+        }).catch((err) => log.warn('ws', 'Homeroom bot voice hand-over failed', { err: err.message }));
+      }
       // WP-E: somebody an invite brought, writing here for the first time:
       // the link's maker hears they said hi (services/invite-activity.js).
       // Not awaited here; the small-group ring below waits for it, so the
@@ -2042,6 +2053,20 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
      RETURNING id, created_at`,
     [appId, Number(user.id), text, JSON.stringify(metadata || {}), thread.type, thread.ref, kind]
   );
+  // A reply in a reply thread names its root, as a person's does, so the
+  // stream the root is in can draw it (the bot's voice answers there).
+  let threadRoot = null;
+  if (thread.type === appChat.MESSAGE_THREAD) {
+    const root = await appChat.findThreadRoot(pool, appId, thread.ref).catch(() => null);
+    if (root) {
+      threadRoot = {
+        id: Number(root.id), username: root.username || null,
+        content: root.deleted_at ? '' : appChat.snippet(root.content), deleted: !!root.deleted_at,
+        thread_type: root.thread_type || null,
+        thread_ref: root.thread_ref == null ? null : Number(root.thread_ref),
+      };
+    }
+  }
   await broadcastFromSender(pool, appId, {
     type: 'chat',
     id: rows[0].id,
@@ -2051,6 +2076,7 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
     msgType: kind,
     ...(metadata ? { metadata } : {}),
     thread,
+    ...(threadRoot ? { threadRoot } : {}),
     createdAt: rows[0].created_at,
     postedVia: null,
   }, Number(user.id));
@@ -2431,4 +2457,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { noteBoardChange, connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { noteBoardChange, broadcastThreadSummary, connectedUserIds, disconnectUser, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

@@ -79,6 +79,9 @@ function incidents() { return require('./platform-incidents'); }
 // #4530: whether the new words on a request the bot already answered were
 // for the bot, so a repeat note is held back when they were not.
 function addressedMod() { return require('./homeroom-bot-addressed'); }
+// The bot's voice outside its DM (homeroom-bot-voice.js): which places it
+// answers in, and the asks it queues on its changes.
+function voiceModule(deps) { return (deps && deps.voice) || require('./homeroom-bot-voice'); }
 
 // One name, in the live module, which compares thread authors against it.
 const { BOT_USERNAME } = live;
@@ -138,6 +141,14 @@ const KEY_PER_PERSON = 'homeroom_bot_per_person';
 // (homeroom-bot-mayor.js). On by default; the switch is there to stop it
 // without switching the whole bot off.
 const KEY_DM_CHAT = 'homeroom_bot_dm_chat';
+// Its voice outside the DM (homeroom-bot-voice.js), one switch per place, on
+// unless switched off: on, the bot answers there as it does in a DM; off, a
+// place goes back to the fixed notes it had before. On its own changes (any
+// person's message there), on requests (a mention or a reply to it), and in
+// project chats, topics and #general (a mention or a reply to it).
+const KEY_VOICE_SESSION = 'homeroom_bot_voice_session';
+const KEY_VOICE_ISSUE = 'homeroom_bot_voice_issue';
+const KEY_VOICE_CHAT = 'homeroom_bot_voice_chat';
 // Whether reading a request again continues the conversation that read it
 // last (previousRead), so the model starts from what it already found
 // rather than from the repository. On by default; off reads every time
@@ -169,6 +180,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
   KEY_USER_WEEKLY_CENTS, KEY_LIVE_AT_ONCE, KEY_PER_PERSON, KEY_DM_CHAT,
+  KEY_VOICE_SESSION, KEY_VOICE_ISSUE, KEY_VOICE_CHAT,
   KEY_CONTINUE_READS, KEY_EVERYONE_SINCE, KEY_PROPOSAL_CEILING,
   KEY_LIVE_BUILD_STREAM,
   ...Object.values(KEY_MODELS),
@@ -198,6 +210,9 @@ const DEFAULTS = Object.freeze({
   liveAtOnce: 12,
   perPerson: 3,
   dmChat: true,
+  voiceSession: true,
+  voiceIssue: true,
+  voiceChat: true,
   continueReads: true,
   everyoneSince: null,
   proposalCeiling: 0,
@@ -576,6 +591,9 @@ function parseSettings(rows) {
   const liveAtOnce = clampInt(map.get(KEY_LIVE_AT_ONCE), DEFAULTS.liveAtOnce, 1, MAX_LIVE_AT_ONCE);
   const perPerson = clampInt(map.get(KEY_PER_PERSON), DEFAULTS.perPerson, 1, MAX_PER_PERSON);
   const dmChat = map.get(KEY_DM_CHAT) !== 'off';
+  const voiceSession = map.get(KEY_VOICE_SESSION) !== 'off';
+  const voiceIssue = map.get(KEY_VOICE_ISSUE) !== 'off';
+  const voiceChat = map.get(KEY_VOICE_CHAT) !== 'off';
   const continueReads = map.get(KEY_CONTINUE_READS) !== 'off';
   // Written once by schema.sql; readSettings fills in a database without it.
   const sinceMs = Date.parse(map.get(KEY_EVERYONE_SINCE) || '');
@@ -585,7 +603,7 @@ function parseSettings(rows) {
   return {
     mode, concurrency, batchSize, pausedApps, turnSeconds, turnInputTokens,
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents,
-    liveAtOnce, perPerson, dmChat, continueReads, models,
+    liveAtOnce, perPerson, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
     everyoneSince, proposalCeiling, liveBuildStream,
   };
 }
@@ -700,6 +718,11 @@ function validateSettingsPatch(patch) {
   if (body.dmChat !== undefined) {
     if (typeof body.dmChat !== 'boolean') return { ok: false, error: 'dmChat must be true or false' };
     updates.push([KEY_DM_CHAT, body.dmChat ? 'on' : 'off']);
+  }
+  for (const [field, key] of [['voiceSession', KEY_VOICE_SESSION], ['voiceIssue', KEY_VOICE_ISSUE], ['voiceChat', KEY_VOICE_CHAT]]) {
+    if (body[field] === undefined) continue;
+    if (typeof body[field] !== 'boolean') return { ok: false, error: `${field} must be true or false` };
+    updates.push([key, body[field] ? 'on' : 'off']);
   }
   if (body.continueReads !== undefined) {
     if (typeof body.continueReads !== 'boolean') return { ok: false, error: 'continueReads must be true or false' };
@@ -1464,7 +1487,10 @@ async function refreshApp(pool, app, {
     issueHolders(pool, app.id),
     threadActivityByIssue(pool, app.id),
     lastRunsByIssue(pool, app.id),
-    capRoom && bot ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
+    // With the bot's voice on in changes' discussions, what people say there
+    // is the voice's to answer: it brings nothing back (homeroom-bot-voice.js).
+    capRoom && bot && !voiceModule(null).voiceOn(settings, { type: 'session' })
+      ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
   ]);
   const backlogUntil = toMs(importedAt);
@@ -2878,6 +2904,7 @@ async function runTriage(pool, config, {
           deps: {
             github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
             activeWorkers, votes: deps.votes || null, dm: deps.dm || null, ...liveD,
+            ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
           },
         });
       }
@@ -2900,6 +2927,10 @@ async function runTriage(pool, config, {
       || item.reason === RETRY_FAILED_REASON || item.reason === READ_AGAIN_REASON ? null : await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
       kind: 'looking', text: live.lookingText(), sender: bot,
+      // 10 October: with the bot's voice on in requests' discussions, a read
+      // is recorded but not announced: the request's card and the tray say
+      // it is reading, and what it posts there is what it found.
+      ...(voiceModule(deps).voiceOn(settings, { type: 'issue' }) ? { skipIssueThread: true, skipGithub: true } : {}),
     }).catch((err) => {
       log.warn('homeroom-bot', 'Looking post failed (continuing)', { app: app.slug, issueNumber, err: err.message });
       return null;
@@ -5573,9 +5604,51 @@ async function runFollowUp(pool, config, {
   // message as new and answer it a second time. Set below, before any run
   // is recorded; fail() reads it.
   let seenThrough = null;
+  // 10 October: with the bot's voice on in a change's discussion
+  // (homeroom-bot-voice.js), what people say there, and on its request once
+  // the change is up, is the voice's to answer, at once. What they ask it to
+  // change is queued as an ask wherever they asked (the discussion, a chat,
+  // the DM, a No vote's line), and this turn takes those asks: the voice
+  // tells each of them what came of it, where they asked, and this turn
+  // posts nothing there itself. GitHub's comments come here as before.
+  const voice = voiceModule(deps);
+  const voiceSettings = await readSettings(pool).catch(() => null);
+  const voiceOnChange = voice.voiceOn(voiceSettings, { type: 'session' });
+  const voiceOnRequest = voice.voiceOn(voiceSettings, { type: 'issue' });
+  const voiceDeps = { ...(deps.voiceDeps || {}), ...(deps.ws ? { ws: deps.ws } : {}) };
+  const runTag = recovered?.mark?.askTag || `fu${Number(item.id) || 0}-${Date.now().toString(36)}`;
+  let asks = [];
+  // The replies that are not asks, which this turn answers itself (set once
+  // they are read).
+  let others = [];
+  let reportSession = { id: proposal.id, pr_number: proposal.pr_number || null, title: proposal.title || null };
+  // Asks that came in while this ran, or that wait to be tried again, are
+  // its follow-up's next.
+  const requeueAsks = async () => {
+    if (!(await voice.asksWaiting(pool, proposal.id).catch(() => false))) return;
+    await enqueueFront(pool, { appId: app.id, issueNumber, reason: 'voice_update' })
+      .catch((err) => log.warn('homeroom-bot', 'Could not queue the asks waiting on a change', { app: app.slug, err: err.message }));
+  };
+  // A run that took asks and did not make them: they wait for the next one,
+  // unless they were tried as often as they may be, and then the people who
+  // asked hear so. A refusal or a platform fault never got going, so it is
+  // not a try.
+  const asksFailed = async (error, { refund = false } = {}) => {
+    const gaveUp = await voice.releaseAsks(pool, { runTag, refund }).catch(() => []);
+    if (gaveUp.length) {
+      await voice.reportFollowUp(pool, config, {
+        app, session: reportSession, bot, asks: gaveUp, outcome: { action: 'failed', why: replyFailedWhy(error) }, deps: voiceDeps,
+      });
+    }
+    if (!refund) await requeueAsks();
+  };
   const fail = async (error, extra = {}, opts = {}) => {
     const out = await recordFailure(error, { proposalSessionId: proposal.id, threadSeenAt: seenThrough, ...extra }, opts);
     if (!opts.infra && out?.runId) await recordSnapshot(out.runId);
+    if (asks.length) {
+      await asksFailed(error, { refund: !!opts.infra || REFUSAL_ERRORS.has(error) });
+      if (!others.length) return out;
+    }
     // #4610: a reply turn that failed used to post nothing, so the person
     // who wrote heard nothing at all. A wait (a refusal) is said where it
     // happens, and a platform fault is retried on its own row: neither is
@@ -5626,7 +5699,7 @@ async function runFollowUp(pool, config, {
   ]);
   // #4533: a recovered turn answered what it read before the restart; its
   // mark says where that was, which is where the answer goes.
-  const replies = recovered ? [{ where: recovered.mark.onProposal ? 'proposal' : 'issue' }] : followup.newReplies({
+  let replies = recovered ? [{ where: recovered.mark.onProposal ? 'proposal' : 'issue' }] : followup.newReplies({
     comments,
     issueThread: issueThread?.messages || [],
     proposalThread: proposalThread?.messages || [],
@@ -5634,7 +5707,22 @@ async function runFollowUp(pool, config, {
     botUsername: BOT_USERNAME,
     sinceMs: toMs(since.sinceAt),
   });
-  noteSessionId = replies.some((r) => r.where === 'proposal') ? proposal.id : null;
+  if (!recovered) {
+    // What people wrote where the voice answers is the voice's; what they
+    // asked it to change comes here as asks.
+    replies = replies.filter((r) => r.via !== 'homeroom' || (r.where === 'proposal' ? !voiceOnChange : !voiceOnRequest));
+    if (voiceOnChange) {
+      asks = await voice.takeAsks(pool, { sessionId: proposal.id, runTag }).catch((err) => {
+        log.warn('homeroom-bot', 'Could not take the asks waiting on a change', { app: app.slug, err: err.message });
+        return [];
+      });
+      replies = [...replies, ...asks.map(followup.askAsReply)].sort((a, b) => toMs(a.createdAt) - toMs(b.createdAt));
+    }
+  } else if (recovered.mark.askTag) {
+    asks = await voice.asksOf(pool, runTag).catch(() => []);
+  }
+  others = recovered ? (asks.length ? [] : replies) : replies.filter((r) => r.via !== 'ask');
+  noteSessionId = others.some((r) => r.where === 'proposal') ? proposal.id : null;
   // #4613: every run this turn records carries a mark past what it read, so
   // the next look does not read the same replies again (followup.readThrough).
   // advanceSeen still raises it further when it can (the GitHub comment's
@@ -5672,8 +5760,18 @@ async function runFollowUp(pool, config, {
   const session = sessionRows[0];
   if (!session || !session.branch_name) {
     await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+    if (asks.length) {
+      // Merged or closed before its update: what was asked of it goes, and
+      // the people who asked hear so.
+      await voice.finishAsks(pool, { runTag, status: 'dropped' }).catch(() => {});
+      await voice.dropAsks(pool, proposal.id);
+      await voice.reportFollowUp(pool, config, {
+        app, session: reportSession, bot, asks, outcome: { action: 'gone' }, deps: voiceDeps,
+      });
+    }
     return { ran: false, reason: 'has_proposal' };
   }
+  reportSession = session;
   // #4533: whether a recovered turn moved the head is read against the head
   // it started from: the person's recovery tail has made its push the
   // reviewed head since.
@@ -5745,16 +5843,17 @@ async function runFollowUp(pool, config, {
       turnMark: followUpMark({
         kind: 'reply', app, item, runMode, model, startedMs, seedReadAt, session,
         threadSeenAt: seenThrough,
-        extra: { onProposal: replies.some((r) => r.where === 'proposal') },
+        extra: { onProposal: others.some((r) => r.where === 'proposal'), ...(asks.length ? { askTag: runTag } : {}) },
       }),
-      // #4610: once the turn is really going ahead, the person hears so.
-      onStart: deps.ws ? () => postThreadNote({
+      // #4610: once the turn is really going ahead, the person hears so. An
+      // ask was told so by the voice when it was queued.
+      onStart: deps.ws && !asks.length ? () => postThreadNote({
         pool, ws: deps.ws, app, issueNumber, kind: 'followup_working', text: followup.workingText(), bot,
         sessionId: noteSessionId,
       }) : null,
     });
     // #4610: and when it has to wait for another turn on the change, why.
-    if (turn.routed?.error === 'session_busy' && deps.ws) {
+    if (turn.routed?.error === 'session_busy' && deps.ws && !asks.length) {
       await noteFollowUpWait(pool, { app, issueNumber, bot, why: 'session_busy', sessionId: session.id, ws: deps.ws });
     }
   }
@@ -5818,8 +5917,15 @@ async function runFollowUp(pool, config, {
       // Answered where it was asked: the proposal's thread too, when that
       // is where somebody wrote, and there alone when nobody wrote anywhere
       // else (live.post onlyProposal).
-      proposalSessionId: replies.some((r) => r.where === 'proposal') ? session.id : null,
-      onlyProposal: replies.length > 0 && replies.every((r) => r.where === 'proposal'),
+      proposalSessionId: others.some((r) => r.where === 'proposal') ? session.id : null,
+      onlyProposal: others.length > 0 && others.every((r) => r.where === 'proposal'),
+      // What the voice tells the people who asked is not said again in the
+      // request's thread, and GitHub hears an update, or an answer to a
+      // comment left there, and nothing else.
+      ...(asks.length ? {
+        skipIssueThread: !others.some((r) => r.where === 'issue' && r.via === 'homeroom'),
+        skipGithub: kind !== 'followup_revise' && !others.some((r) => r.via === 'github'),
+      } : {}),
       ...extra,
     });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
@@ -5847,10 +5953,14 @@ async function runFollowUp(pool, config, {
     // (`why`) stays on the run and in the line above (followup.revisionFailedText).
     // The requester hears it in their DM too, with the change's card.
     const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id, session.pr_number) : null;
-    await say('followup_failed', followup.revisionFailedText({ why, canRevise }), postedAt, {
-      dm: { reason: why, canRevise, sessionId: session.id, link: proposalUrl },
-    })
-      .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+    // Asks are tried again, once, and the voice says when they give up.
+    if (asks.length) await asksFailed(`revise: ${why}`);
+    if (others.length) {
+      await say('followup_failed', followup.revisionFailedText({ why, canRevise }), postedAt, {
+        dm: { reason: why, canRevise, sessionId: session.id, link: proposalUrl },
+      })
+        .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+    }
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
       proposalSessionId: session.id,
@@ -5926,8 +6036,21 @@ async function runFollowUp(pool, config, {
   // B4: an update carries the change's card in the thread, in place of an address.
   const card = action === 'revise'
     ? { msgType: 'vote', metadata: { vote: { sessionId: session.id, prNumber } } } : {};
-  await say(`followup_${action}`, text, postedAt, { ...card, ...(dm ? { dm } : {}) })
+  // With asks, a question or a note reaches the requester's DM only when
+  // somebody asked there; an update still moves their card.
+  const dmHere = dm && (!asks.length || action === 'revise' || others.length > 0 || asks.some((a) => a.source === 'dm'))
+    ? dm : null;
+  await say(`followup_${action}`, text, postedAt, { ...card, ...(dmHere ? { dm: dmHere } : {}) })
     .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
+  if (asks.length) {
+    // The people who asked hear what came of it, where they asked, in the
+    // voice's own words.
+    await voice.reportFollowUp(pool, config, {
+      app, session, bot, asks, deps: voiceDeps,
+      outcome: { action, moved, summary: parsed?.summary || null, reply: parsed?.reply || null, planVersion },
+    });
+    await voice.finishAsks(pool, { runTag, runId }).catch(() => {});
+  }
   // #4612: the updated plan, where the first plan was posted: the spec card
   // in the change's discussion, then its copy on the GitHub issue. Its own
   // comment is pushed into postedAt so the turn does not read it back as
@@ -5953,6 +6076,7 @@ async function runFollowUp(pool, config, {
     proposalSessionId: session.id,
   }).catch((err) => log.warn('homeroom-bot', 'Could not record what the bot has seen', { err: err.message }));
   if (!moved) await requeueChecks();
+  await requeueAsks();
   return { ran: true, verdict: followup.VERDICT_FOR[action], runId, acted: `followup_${action}` };
 }
 
@@ -6733,9 +6857,14 @@ async function actOnVerdict({
   // while the bot's last word there is itself one of those notes (after a
   // failed build or a held verdict, asking is what brings it back), and an
   // edit of the request since counts as news.
+  // With the bot's voice on in requests' discussions, a mention or a reply
+  // there is the voice's to answer (homeroom-bot-voice.js), not a reason to
+  // say the note again.
+  const voiceAnswers = (relook || askedLook) && voiceModule(deps).voiceOn(await readSettings(pool).catch(() => null), { type: 'issue' });
   const gate = (relook || askedLook) && !capSuppressed && addressedMod().NOTE_KINDS.includes(parsed.verdict)
     ? await addressedMod().shouldSpeak(pool, {
       appId: app.id, issueNumber, botId: bot.id, comments, botLogin, waitingOnly: !relook, updatedAt: issue?.updatedAt || null,
+      voiceAnswers,
     })
     : { speak: true };
   if (!gate.speak) {
@@ -9164,6 +9293,10 @@ async function noteProposalActivity(pool, { appId, sessionId, deps = {} } = {}) 
         ws: deps.ws || null,
       });
     }
+    // With the bot's voice on in changes' discussions, it answers there
+    // itself (homeroom-bot-voice.js), and a change asked for is queued as an
+    // ask: a message is no reason to look at the change again.
+    if (voiceModule(deps).voiceOn(settings, { type: 'session' })) return false;
     return noteIssueActivity({ appId, issueNumber, reason: 'proposal_thread' });
   } catch (err) {
     log.warn('homeroom-bot', 'Proposal activity check failed', { err: err.message });
@@ -9965,6 +10098,9 @@ module.exports = {
   KEY_LIVE_AT_ONCE,
   KEY_PER_PERSON,
   KEY_DM_CHAT,
+  KEY_VOICE_SESSION,
+  KEY_VOICE_ISSUE,
+  KEY_VOICE_CHAT,
   KEY_CONTINUE_READS,
   KEY_LIVE_BUILD_STREAM,
   KEY_EVERYONE_SINCE,

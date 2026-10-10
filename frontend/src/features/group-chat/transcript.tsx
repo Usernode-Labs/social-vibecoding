@@ -89,6 +89,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
 import {
   transcriptStore,
   type Attachment,
+  type BotOfferView,
   type Quote,
   type TranscriptMarker,
   type TranscriptMessage,
@@ -98,6 +99,44 @@ import { MergedTopicCard } from '../dev-board/workshop/merged-topic-card';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
+}
+
+/**
+ * The buttons under Homeroom bot's offer in a thread (File it / Not now,
+ * Withdraw it / Keep it, Propose to close / Keep it open), for the one
+ * person it was offered to. A tap is sent once (GroupChat.decideBotOffer);
+ * the buttons then go for everybody when the room hears it was decided.
+ */
+function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView }) {
+  const [busy, setBusy] = useState(false);
+  if (id == null) return null;
+  const decide = async (choice: 'yes' | 'no') => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await controller()?.decideBotOffer?.(id, choice);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-2 flex flex-wrap gap-2" data-gc-bot-offer="">
+      {offer.actions.map((action) => (
+        <Button
+          key={action.id}
+          type="button"
+          onClick={() => { void decide(action.id); }}
+          disabled={busy}
+          variant={action.primary ? 'pillAccent' : 'pillNeutral'}
+          ink={action.primary ? 'solid' : 'neutral'}
+          size="sm"
+          className="font-semibold"
+        >
+          {action.label}
+        </Button>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -804,6 +843,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
             >
               {msg.openApp.label}
             </Button>
+          ) : null}
+          {/* Homeroom bot's offer in a thread: its buttons, for the person it was offered to. */}
+          {msg.botOffer && msg.botOffer.forMe && msg.botOffer.status === 'open' && msg.botOffer.actions.length ? (
+            <BotOfferButtons id={msg.id} offer={msg.botOffer} />
           ) : null}
           {grouped && msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>

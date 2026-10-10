@@ -3912,5 +3912,17 @@ module.exports = {
   reportBody,
   reportReceipt,
   reportProblem,
+  // The voice outside the DM (homeroom-bot-voice.js) runs on the same engine.
+  canView,
+  askModel,
+  parseArgs,
+  codeOf,
+  botKey,
+  platformCall,
+  withdrawNow,
+  proposalNamed,
+  ownOpenProposals,
+  MAX_TOOL_RESULT_CHARS,
+  DEFAULT_MODEL,
   _chainsForTests() { return chains.size; },
 };

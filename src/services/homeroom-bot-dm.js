@@ -2671,6 +2671,8 @@ async function announceFirstVersion(pool, run, { live = false, deps = {} } = {})
  * re-read later.
  */
 async function noteProposalMerged(pool, session, { config = null, sha = null, live: known = null, deps = {} } = {}) {
+  // What was still asked of it goes: it can no longer change.
+  if (session?.id) await (deps.voice || require('./homeroom-bot-voice')).dropAsks(pool, session.id);
   if (!session?.id) return null;
   const { rows } = await pool.query(
     `SELECT r.app_id, r.issue_number, a.slug, a.name, a.self_hosted, a.runtime_kind, a.runtime_name
@@ -2875,14 +2877,27 @@ async function postOnProposal(pool, {
     return { ok: false, why };
   }
   let queued = null;
-  try {
-    queued = !!(await settingsModule().enqueueFront(pool, {
-      appId: app.id, issueNumber: Number(issueNumber), userId: user.id, reason: queueReason,
-      // Whoever asked for the change pays for it (homeroom-bot.js billingOf).
-      payerId,
-    }));
-  } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not put the proposal\'s follow-up first', { app: app.slug, err: err.message });
+  // 10 October: with the bot's voice on in changes' discussions, the words
+  // are an ask its next follow-up takes, whether or not one runs now, and
+  // the voice tells them what came of it, under their message
+  // (homeroom-bot-voice.js recordAsk). It queues the follow-up itself.
+  const asked = await (deps.voice || require('./homeroom-bot-voice')).recordAsk(pool, {
+    appId: app.id, sessionId, issueNumber, askerId: user.id, instruction: text,
+    source: queueReason === 'vote_no' ? 'vote_no' : 'dm', place: { type: 'session', ref: Number(sessionId) },
+    messageId: Number(posted.message?.id) || null, payerId, deps, queueReason,
+  });
+  if (asked) {
+    queued = asked.queued;
+  } else {
+    try {
+      queued = !!(await settingsModule().enqueueFront(pool, {
+        appId: app.id, issueNumber: Number(issueNumber), userId: user.id, reason: queueReason,
+        // Whoever asked for the change pays for it (homeroom-bot.js billingOf).
+        payerId,
+      }));
+    } catch (err) {
+      log.warn('homeroom-bot-dm', 'Could not put the proposal\'s follow-up first', { app: app.slug, err: err.message });
+    }
   }
   log.info('homeroom-bot-dm', 'Posted a DM change on the bot\'s proposal', {
     app: app.slug, sessionId, issueNumber, userId: user.id, queued,
