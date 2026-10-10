@@ -285,7 +285,11 @@ test('the live queue reads which rows are follow-ups, lets only them past a busy
   const { s, params } = asked[0];
   // The last two are a scope's every-app flag and what it leaves out
   // (live.liveScope): a bare list of slugs is just those apps.
-  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7, false, []]);
+  assert.deepEqual(params, [['a1'], [103], [], 200, [101], 77, ['101:5'], 7, false, [], 20]);
+  // One turn for a burst: a person still writing on the request or on the
+  // bot's change for it is read once they pause (SETTLE_MS).
+  assert.match(s, /m\.created_at > NOW\(\) - make_interval\(secs => \$11\)/);
+  assert.match(s, /OR \(fu\.id IS NOT NULL AND m\.thread_type = 'session' AND m\.thread_ref = fu\.id\)/);
   // Plant Pal #1 and #3: a request whose live build waits or runs is read
   // once that build ends, whatever queued it.
   assert.match(s, /AND NOT EXISTS \(\s+SELECT 1 FROM homeroom_bot_runs b\s+WHERE b\.app_id = q\.app_id AND b\.issue_number = q\.issue_number/);

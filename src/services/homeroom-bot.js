@@ -260,6 +260,16 @@ const BUSY_PASS_DELAY_MS = 2 * 1000;
 const IDLE_PASS_DELAY_MS = 30 * 1000;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const BUS_KIND = 'homeroom_bot';
+// One turn for a burst. People write a thought in two or three messages, or
+// a message and then a bare "@Homeroom bot" (PR #4584, 9 Oct 2026: a message
+// and its ping 2 seconds apart were answered twice, 23 seconds apart). A
+// reply turn waits until a person's last message on the request, or on the
+// bot's change for it, is this old, so it reads them all at once
+// (liveCandidates); a wake that long after the message picks it up then
+// (wakeAfterSettle).
+const SETTLE_MS = 20 * 1000;
+// What wakes the loop for a person's words, and so waits to settle.
+const SETTLE_REASONS = new Set(['thread', 'proposal_thread']);
 
 // Eligibility windows. A human claim counts while it is younger than the
 // board's own claim TTL; a paused human session counts while it is inside
@@ -5500,7 +5510,9 @@ async function postThreadNote({ pool, ws, app, issueNumber, runId = null, kind, 
       'INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, $2, $3, $4)',
       [app.id, issueNumber, runId, kind],
     );
-    await ws.sendBotMessage(pool, app.id, { user: bot, content: text, thread: { type: 'issue', ref: Number(issueNumber) } });
+    await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: require('./homeroom-bot-words').firstPerson(text), thread: { type: 'issue', ref: Number(issueNumber) },
+    });
     return true;
   } catch (err) {
     log.warn('homeroom-bot', 'Could not post a note in the thread', { app: app?.slug, issueNumber, kind, err: err.message });
@@ -5797,8 +5809,10 @@ async function runFollowUp(pool, config, {
       pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot, senderId: bot.id,
       mentions: live.tagsPoster(kind) ? targets : [], notifications: deps.notifications || null,
       // Answered where it was asked: the proposal's thread too, when that
-      // is where somebody wrote.
+      // is where somebody wrote, and there alone when nobody wrote anywhere
+      // else (live.post onlyProposal).
       proposalSessionId: replies.some((r) => r.where === 'proposal') ? session.id : null,
+      onlyProposal: replies.length > 0 && replies.every((r) => r.where === 'proposal'),
       ...extra,
     });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
@@ -6126,7 +6140,7 @@ async function runChecksFix(pool, config, {
   }
 
   let runId = null;
-  const handOff = async ({ why, verdict, extra = {} }) => {
+  const handOff = async ({ why, verdict, extra = {}, notChange = false }) => {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item),
@@ -6137,6 +6151,27 @@ async function runChecksFix(pool, config, {
     });
     await recordSnapshot(runId);
     await dropRow();
+    if (notChange) {
+      // Not the change's doing: the platform's to look at. Admins are told
+      // (the Unexpected events list and its digest), the group voting on the
+      // change gets one line where it votes, and nobody else is told.
+      await incidents().record(pool, {
+        kind: incidents().KINDS.CHECKS_NOT_CHANGE, appId: app.id, sessionId: session.id,
+        detail: {
+          runId, issueNumber, prNumber: prNumber || null, head: head || null,
+          failing: failing.slice(0, 5).map((f) => clip(String(f?.name || f?.title || f || ''), 120)),
+          why: clip(String(why || ''), 300),
+        },
+      });
+      await live.postOnProposal({
+        pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_not_change', bot, sessionId: session.id,
+        text: followup.checksNotChangeText({ failingCount: failing.length }),
+      }).catch((err) => log.warn('homeroom-bot', 'Checks note failed', { app: app.slug, issueNumber, err: err.message }));
+      log.info('homeroom-bot', 'Its proposal\'s failing checks are not its doing; told admins', {
+        app: app.slug, issueNumber, sessionId: session.id, head, runId,
+      });
+      return { ran: true, verdict, runId, acted: 'checks_not_change' };
+    }
     const targets = await live.mentionTargets({
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
     }).catch(() => []);
@@ -6318,6 +6353,8 @@ async function runChecksFix(pool, config, {
     why,
     verdict: parsed?.action === 'person' ? 'person' : 'failed',
     extra: { ...spent, ...(turn.stopped ? { budgetStop: 'wall clock' } : {}) },
+    // The turn found the failures are not the change's (followup.CAUSES).
+    notChange: parsed?.action === 'person' && parsed.cause === 'not_change' && failing.length > 0 && !broken.length,
   });
 }
 
@@ -7919,10 +7956,21 @@ async function liveCandidates(pool, {
            WHERE fv.app_id = q.app_id AND fv.bot_builds AND fv.issue_number IS DISTINCT FROM q.issue_number
              AND ${FIRST_VERSION_PENDING_SQL}
         ))
+        -- One turn for a burst (SETTLE_MS): a person still writing on the
+        -- request, or on the bot's change for it, is read once they pause.
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_messages m
+            LEFT JOIN users mu ON mu.id = m.user_id
+           WHERE m.app_id = q.app_id AND m.msg_type = 'message' AND m.deleted_at IS NULL
+             AND mu.is_synthetic IS NOT TRUE
+             AND ((m.thread_type = 'issue' AND m.thread_ref = q.issue_number)
+               OR (fu.id IS NOT NULL AND m.thread_type = 'session' AND m.thread_ref = fu.id))
+             AND m.created_at > NOW() - make_interval(secs => $11)
+        )
       ORDER BY (q.priority = 0) DESC, (fu.id IS NOT NULL) DESC, q.priority, q.enqueued_at
       LIMIT $4`,
     [scope.slugs, excludeAppIds, pausedApps, limit, busyAppIds, botId, excludeFollowUps, ABANDONED_LIVE_WINDOW_DAYS,
-      scope.all, scope.except],
+      scope.all, scope.except, SETTLE_MS / 1000],
   );
   return rows;
 }
@@ -9063,8 +9111,20 @@ function noteIssueActivity({ appId, issueNumber, reason = 'activity' } = {}) {
   if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(n) || n <= 0) return false;
   interruptRead({ appId: id, issueNumber: n, reason });
   wake({ appId: id });
+  if (SETTLE_REASONS.has(reason)) wakeAfterSettle(id);
   publishWake({ appId: id, issueNumber: n, reason: String(reason).slice(0, 40) });
   return true;
+}
+
+/**
+ * A person's message waits SETTLE_MS before a turn reads it (liveCandidates),
+ * so the loop is woken again once it has: the idle poll would find it too,
+ * up to IDLE_PASS_DELAY_MS later. Only where the loop runs (wake answers
+ * false elsewhere, and the leader schedules its own from the bus).
+ */
+function wakeAfterSettle(appId) {
+  const t = setTimeout(() => { wake({ appId }); }, SETTLE_MS + 1000);
+  if (typeof t?.unref === 'function') t.unref();
 }
 
 /**
@@ -9106,7 +9166,9 @@ function onBusMessage(data) {
   if (data.builds) return wakeBuilds();
   // The activity may have landed on another Pod than the one reading.
   if (data.issueNumber != null) interruptRead({ appId: data.appId, issueNumber: data.issueNumber, reason: data.reason });
-  return wake({ appId: data.appId, all: !!data.all });
+  const woke = wake({ appId: data.appId, all: !!data.all });
+  if (woke && SETTLE_REASONS.has(data.reason)) wakeAfterSettle(Number(data.appId));
+  return woke;
 }
 
 // ── The dashboard's read and writes ─────────────────────────────────────

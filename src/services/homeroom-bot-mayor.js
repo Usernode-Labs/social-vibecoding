@@ -2119,6 +2119,7 @@ async function resumeDeferred(pool, config, deps = {}) {
     if (!bot) return 0;
     const { rows } = await pool.query(
       `SELECT t.message_id, t.conversation_id, t.tries, u.id AS user_id, u.username,
+              u.is_synthetic, u.has_platform_access, u.is_admin, u.private_member_since,
               m.content, m.reply_to_id
          FROM (
            SELECT DISTINCT ON (message_id) message_id, conversation_id, user_id, fallback,
@@ -2133,7 +2134,17 @@ async function resumeDeferred(pool, config, deps = {}) {
       [DEFER_DELAYS_MS.length],
     );
     for (const row of rows) {
-      const user = { id: Number(row.user_id), username: row.username };
+      // What dm.hasBot reads about the person (deferredTurn checks it), as the
+      // auth middleware builds it: with only an id and a name, every answer a
+      // restart picked up was dropped there without a word.
+      const user = {
+        id: Number(row.user_id),
+        username: row.username,
+        isSynthetic: !!row.is_synthetic,
+        hasPlatformAccess: !!row.has_platform_access,
+        isAdmin: !!row.is_admin,
+        privateMember: !row.has_platform_access && !row.is_admin && row.private_member_since != null,
+      };
       const message = { id: Number(row.message_id), content: row.content, reply: row.reply_to_id ? { id: Number(row.reply_to_id) } : null };
       scheduleDeferred(pool, config, {
         bot, user, conversationId: Number(row.conversation_id), message, deps,

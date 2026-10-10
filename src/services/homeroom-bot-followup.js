@@ -313,10 +313,18 @@ function parseFollowUp(text) {
         ? obj.answers.filter((a) => typeof a === 'string').map((a) => clipText(withoutEmDashes(a), 200)).filter(Boolean).slice(0, 6)
         : [],
     } : {}),
+    // A checks fix that hands over says whose the failure is: "not_change"
+    // when the change did not cause it (it fails without it too), which is
+    // the platform's to look at, not the group's (homeroom-bot.js
+    // runChecksFix records it for admins).
+    ...(action === 'person' ? { cause: CAUSES.has(String(obj.cause || '').toLowerCase()) ? String(obj.cause).toLowerCase() : null } : {}),
     stopMentioning: parseStopMentioning(obj.stop_mentioning),
     resumeMentioning: parseStopMentioning(obj.resume_mentioning),
   };
 }
+
+// A checks fix's `cause` when it hands over (checksFixPrompt).
+const CAUSES = new Set(['change', 'not_change', 'unsure']);
 
 /**
  * #4612: the plan a revise turn wrote, as the text before its action JSON
@@ -628,7 +636,7 @@ function checksFixPrompt({ seed, proposalBlock = '', prNumber = null, failing = 
     '',
     'Write `reply` and `summary` in plain words, without em dashes: use a comma, a colon or a full stop.',
     'END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:',
-    '{"action": "revise" | "person", "reply": "what to tell the group, in plain language", "summary": "for revise only: one sentence on what you fixed"}',
+    '{"action": "revise" | "person", "reply": "what to tell the group, in plain language", "summary": "for revise only: one sentence on what you fixed", "cause": "for person only: \\"not_change\\" when the failures are not caused by your change (they fail without it too), \\"change\\" when they are and you cannot fix them safely, \\"unsure\\" otherwise"}',
   ].join('\n');
 }
 
@@ -647,6 +655,20 @@ function checksRevisedText({ summary, reply, link, broken = false, failing = tru
 function checksRetryText({ broken = false, failing = true } = {}) {
   const what = broken && !failing ? 'what didn\'t work on this change' : 'the failing checks on this change';
   return `Homeroom bot ran out of time fixing ${what}. It is trying once more.`;
+}
+
+/**
+ * A red check the bot found is not its change's doing (the fix turn's
+ * `cause` "not_change"): that is the platform's to look at, and admins are
+ * told (homeroom-bot.js runChecksFix, a platform incident). The change's own
+ * discussion, where the group votes, gets this one line; the request, GitHub
+ * and the requester's DM get nothing: none of them can act on it (9 Oct 2026:
+ * a diagnosis of the staging seed, cut off mid-word, reached all four on
+ * #4524, #4569, #4570 and #4571).
+ */
+function checksNotChangeText({ failingCount = 0 } = {}) {
+  const checks = failingCount === 1 ? 'The failing check on this change is' : 'The failing checks on this change are';
+  return `${checks} not caused by it: they fail without it too. I've flagged them to Homeroom's admins, who look after the checks.`;
 }
 
 function checksPersonText({ why, failingCount = 0, broken = [] }) {
@@ -903,6 +925,7 @@ module.exports = {
   checksFixPrompt,
   checksRevisedText,
   checksPersonText,
+  checksNotChangeText,
   MAX_FAILING_SHOWN,
   INFRA_MIN_FAILING,
   INFRA_FAILING_SHARE,

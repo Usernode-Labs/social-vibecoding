@@ -20,6 +20,10 @@ const TYPE = events.EVENT_TYPES.PLATFORM_INCIDENT;
 
 const KINDS = Object.freeze({
   BUILD_INTERRUPTED: 'build_interrupted',
+  // A change's red check that the bot's fix turn found is not the change's
+  // doing (it fails without it too): the checks' own problem, which only
+  // admins can fix (homeroom-bot.js runChecksFix).
+  CHECKS_NOT_CHANGE: 'checks_not_change',
 });
 
 // How far back the console looks, and how many it lists.

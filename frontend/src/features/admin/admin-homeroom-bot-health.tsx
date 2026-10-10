@@ -123,7 +123,8 @@ export function healthRows(h: RolloutHealthData, now: number = Date.now()): Heal
 }
 
 // #4210: an error that should not happen, as the payload's incidents list
-// them (services/platform-incidents.js). Only build_interrupted so far.
+// them (services/platform-incidents.js): build_interrupted, and a red check
+// that is not its change's doing (checks_not_change).
 export interface Incident {
   at: string;
   kind: string;
@@ -142,6 +143,7 @@ export interface Incidents {
 
 export const INCIDENT_KIND: Record<string, string> = {
   build_interrupted: 'Build interrupted',
+  checks_not_change: 'Red check not caused by its change',
 };
 
 export const INCIDENT_OUTCOME: Record<string, string> = {
