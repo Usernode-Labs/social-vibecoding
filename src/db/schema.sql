@@ -1147,12 +1147,22 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS captured_at TIMESTAM
 --   check_error_notified_at  : stamped when the proposal owner is notified of
 --                              the failure, so they're nudged once per streak
 --                              (cleared when a new commit resets the streak).
+--   check_error_platform     : the stored 'error' is the platform's fault and
+--                              nothing else: the unit suite's Job was refused
+--                              or lost before any of the proposal's code ran
+--                              (unit-suite-row.isPlatformNotRun). Written with
+--                              every 'error'. Such a row is not held to
+--                              CHECK_MAX_AUTO_RETRIES: the error lane keeps
+--                              retrying it for a day from the streak's first
+--                              failure, and a platform boot makes it due at
+--                              once (services/staging-recovery.js).
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_detail TEXT;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS consecutive_check_failures INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS first_check_failure_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS last_check_failure_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_next_retry_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_platform BOOLEAN NOT NULL DEFAULT false;
 -- Which STAGE a 'pending' check run is in, so the proposal card can say
 -- "Preparing the staging preview…" vs "Running the automated tests…"
 -- instead of one opaque "Checks are still running…" for the whole run.

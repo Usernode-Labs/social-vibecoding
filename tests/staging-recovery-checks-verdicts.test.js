@@ -161,7 +161,9 @@ test('stuck-check recovery includes submitted active CLI handoffs without wideni
     assert.match(queries[0].sql,
       /cs\.check_state = 'pending'[\s\S]*cs\.checks_checked_at IS NULL/,
       'legacy pending rows with no timestamp are recoverable');
-    assert.deepEqual(queries[0].params, [600000, 6, 50]);
+    // The fourth is how long a platform fault is retried past the cap
+    // (tests/platform-fault-retry.test.js).
+    assert.deepEqual(queries[0].params, [600000, 6, 50, subject.PLATFORM_FAULT_RETRY_MS]);
   } finally { restore(); }
 });
 

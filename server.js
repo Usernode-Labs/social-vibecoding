@@ -1575,7 +1575,9 @@ async function becomeLeader() {
     // proposal checks so PRs left permanently "still running its tests" by a
     // restart mid-capture self-heal on boot. Off the critical path; the
     // re-checked PRs become merge-eligible and the next vote (or the eligible-
-    // merge reconcile on a later boot) merges them.
+    // merge reconcile on a later boot) merges them. Platform faults are made
+    // due first, so it re-runs them too.
+    .then(() => rearmPlatformFaultsAtBoot(config))
     .then(() => reconcileStuckChecks(config))
     // The whole-tree check under direct merges (services/main-watch.js) is
     // fire-and-forget from the process that merged — which, for the
@@ -2225,6 +2227,23 @@ async function checkRunLeftToHarvest(config, pool, session, reason) {
     });
   }
   return !!run;
+}
+
+// A proposal whose checks errored on the platform's own fault (its unit
+// suite's Job refused or lost: chat_sessions.check_error_platform) waits for
+// its scheduled retry, up to 30 minutes, like any error. A boot is when the
+// fix most often arrives, so it makes them due now and the reconcile that
+// follows re-runs them (services/staging-recovery.js rearmPlatformFaults).
+async function rearmPlatformFaultsAtBoot(config) {
+  const { getPool } = require('./src/db/pool');
+  try {
+    const ids = await stagingRecovery.rearmPlatformFaults(getPool(config));
+    if (ids.length) {
+      log.info('server', 'Platform faults made due at boot', { count: ids.length, sessionIds: ids.slice(0, 20) });
+    }
+  } catch (err) {
+    log.warn('server', 'Could not make platform faults due at boot', { err: err.message });
+  }
 }
 
 // #447: reconcile stuck proposal checks. check_state is only ever advanced

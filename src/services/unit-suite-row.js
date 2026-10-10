@@ -81,6 +81,26 @@ function notRunDetail(r) {
   return sentence || null;
 }
 
+// The words a not-run row's sentence opens with, one per way the suite did
+// not get going (services/unit-suite.js notRunOutcome writes them).
+const NOT_RUN_LEAD = Object.freeze({
+  start: 'The unit suite could not start',
+  run: 'The unit suite could not run',
+  setup: 'The unit suite stopped before any test ran',
+});
+
+// A not-run row that is the platform's fault and nothing else: the runner
+// never got the suite's Job going (Kubernetes refused it: a name already
+// taken, the namespace's quota) or lost the API before the Job ended. None
+// of the proposal's code ran. A suite that stopped in setup is not counted:
+// an install can run out of memory or time on the proposal's own
+// dependencies. The error lane keeps retrying these past
+// CHECK_MAX_AUTO_RETRIES (services/staging-recovery.js).
+function isPlatformNotRun(r) {
+  const sentence = notRunDetail(r);
+  return !!sentence && (sentence.startsWith(NOT_RUN_LEAD.start) || sentence.startsWith(NOT_RUN_LEAD.run));
+}
+
 // A stored run whose 'error' verdict is the unit suite that could not run:
 // check_state 'error', a not-run unit row, and check_error_detail that row's
 // sentence. Returns the sentence, or null. An error with any other cause (a
@@ -149,8 +169,10 @@ module.exports = {
   MAX_INLINE_EXCERPT_TESTS,
   MAX_INLINE_EXCERPT_CHARS,
   isUnitSuiteRow,
+  NOT_RUN_LEAD,
   isNotRunRow,
   notRunDetail,
+  isPlatformNotRun,
   notRunError,
   unitSuiteFailures,
 };

@@ -997,7 +997,12 @@ function classifyTests(frames, expectedCount, options) {
     const all = results.concat(extraRows);
     // A merge-blocking unit suite that never ran gave no verdict: 'error'.
     const notRun = blockingNotRun(extraRows);
-    if (notRun) return { state: 'error', results: all, errorDetail: unitSuiteRow.notRunDetail(notRun) };
+    if (notRun) {
+      return {
+        state: 'error', results: all, errorDetail: unitSuiteRow.notRunDetail(notRun),
+        platformFault: unitSuiteRow.isPlatformNotRun(notRun),
+      };
+    }
     // Legacy container rows carry no advisory flag (always blocking);
     // extra rows block only when non-advisory — an ungraduated unit-suite
     // failure shows on the card without closing the gate (#1019 stance).
@@ -1179,6 +1184,9 @@ function classifyTests(frames, expectedCount, options) {
       state: 'error',
       results,
       errorDetail: unitSuiteRow.notRunDetail(notRun),
+      // Its Job refused or lost before any code ran: the platform's fault,
+      // which the error lane keeps retrying past its usual cap.
+      platformFault: unitSuiteRow.isPlatformNotRun(notRun),
       blockingCount: blocking, advisoryCount: advisoryFailures, passingCount: passed,
       ranCount: rows.length, declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
     };
@@ -1243,6 +1251,13 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     // failure count (so the first failure waits ~2m). `errorDetail` is the
     // concise reason (see summarizeBootFailure) — kept across retries via
     // COALESCE so a later retry that fails to collect logs doesn't blank it.
+    // `result.platformFault` (classifyTests: the unit suite's Job refused or
+    // lost before any code ran) is written with every error, true or false,
+    // so it always describes the error stored.
+    // The exponent is capped: power(2, n) times 120 overflows a double past
+    // about 1,017 failures, and the whole write then failed. On 10 Oct 2026
+    // proposal 5638's preview, at 1,018, could no longer store its error, so
+    // its retry never moved and the heal rebuilt it every few minutes.
     const write = await pool.query(
       `UPDATE chat_sessions
           SET check_state = $1,
@@ -1252,15 +1267,17 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
               checks_checked_at = NOW(),
               check_phase = NULL,
               check_error_detail = COALESCE($5, check_error_detail),
+              check_error_platform = $6::boolean,
               consecutive_check_failures = consecutive_check_failures + 1,
               first_check_failure_at = COALESCE(first_check_failure_at, NOW()),
               last_check_failure_at = NOW(),
               check_next_retry_at = NOW() + make_interval(
-                secs => LEAST(120 * power(2, consecutive_check_failures), 1800)::double precision)
+                secs => LEAST(120 * power(2, LEAST(consecutive_check_failures, 10)), 1800)::double precision)
         WHERE id = $4
           AND status IN ('active', 'paused', 'promoted', 'merging')
           AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
-      [result.state, serializeTestResults(result.results), commitSha || null, sessionId, errorDetail]
+      [result.state, serializeTestResults(result.results), commitSha || null, sessionId, errorDetail,
+        result.platformFault === true]
     );
     return write.rowCount !== 0;
   }
@@ -1290,6 +1307,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
              'checksMs', ROUND(EXTRACT(EPOCH FROM (NOW() - checks_checked_at)) * 1000)::bigint
            )), '{}'::jsonb),
            check_error_detail = NULL,
+           check_error_platform = false,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
            last_check_failure_at = NULL,
@@ -1332,6 +1350,7 @@ async function storeChecksSkipped(
            checks_checked_at = NOW(),
            check_phase = NULL,
            check_error_detail = $2,
+           check_error_platform = false,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
            last_check_failure_at = NULL,
@@ -3464,6 +3483,9 @@ async function settleCaptureRun(config, pool, run) {
   // check_state='error' that sends the author back to an unchanged diff.
   if (checksResult.state === 'error' && parsedTests.length === 0 && testsCount > 0) {
     checksResult.errorDetail = captureFailureDetail({ stdout, stderr, runPartialReason });
+    // The capture produced nothing, which the proposal's preview can cause:
+    // not the platform's fault alone, whatever the unit suite said.
+    checksResult.platformFault = false;
   }
 
   // Re-label a whole-origin outage as 'error' rather than 'failing'
