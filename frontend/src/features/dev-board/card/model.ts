@@ -378,8 +378,9 @@ export interface ChecksProgress {
 export interface RowTag {
   label: string;
   tone: 'plain' | 'run' | 'ok' | 'warn' | 'bad';
-  /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486). */
-  glyph?: 'eye' | 'lock';
+  /** `lock`: only the viewer can see it ("Only you", "Spec draft · only you", #4486).
+   *  `bot`: Homeroom bot built it from the viewer's request (#4728). */
+  glyph?: 'eye' | 'lock' | 'bot';
   /** #4485: the fewer words the row draws ("Taking shots"); `label` stays
    *  the chip's tooltip and what a screen reader says. */
   short?: string;
