@@ -37,6 +37,8 @@ import { useId, type MouseEvent, type ReactNode } from 'react';
 
 import { BallotIcon, BoardIcon, HashIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import type { PlacesPayload } from './community-card';
 import { channelPlace, litPlace, liveTopics, PAGE_PLACES, placeHref, type PlaceKey } from './places';
 
@@ -48,8 +50,8 @@ export function countText(n: number): string {
 /** What a place's count says aloud, or null for none (a zero says nothing). */
 export function countPhrase(key: PlaceKey, n: number): string | null {
   if (!(n > 0)) return null;
-  if (key === 'needs') return `${n} to vote`;
-  return `${n} unread`;
+  if (key === 'needs') return translate('project:places.count.toVote', { count: n });
+  return translate('project:places.count.unread', { count: n });
 }
 
 /** The entries the list draws, in order: what the tests read. Pure. */
@@ -61,7 +63,7 @@ export function placeRows(places: PlacesPayload | null | undefined, owed: number
   const channels = places && Array.isArray(places.channels) ? places.channels : [];
   const general = channels.find((c) => c.kind === 'general');
   return {
-    pages: PAGE_PLACES.map((p) => ({ key: p.key, label: p.label, count: p.key === 'needs' ? Math.max(0, Number(owed) || 0) : 0 })),
+    pages: PAGE_PLACES.map((p) => ({ key: p.key, label: translate(p.label), count: p.key === 'needs' ? Math.max(0, Number(owed) || 0) : 0 })),
     general: { key: 'discussion', label: 'general', count: Math.max(0, Number(general?.unread) || 0) },
     topics: liveTopics(places).map((t) => ({
       key: channelPlace(t.handle),
@@ -91,6 +93,7 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
   extra?: ReactNode;
   onPlace: (key: PlaceKey) => void;
 }) {
+  const t = useMessages('project');
   const phrase = countPhrase(k, count);
   const press = (event: MouseEvent<HTMLAnchorElement>) => {
     const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
@@ -113,7 +116,7 @@ function PlaceLink({ slug, k, label, count, lit, title, extra, onPlace }: {
       {phrase ? (
         <>
           <span className="dev-ws-place-count" data-place-count="" aria-hidden="true">{countText(count)}</span>
-          <span className="sr-only">{` (${phrase})`}</span>
+          <span className="sr-only">{` ${t('project:places.list.countAloud', { phrase })}`}</span>
         </>
       ) : null}
       {extra}
@@ -136,6 +139,7 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
   /** The tray's foot: "Switch community". */
   onSwitch?: (el: HTMLElement | null) => void;
 }): ReactNode {
+  const t = useMessages('project');
   const id = useId();
   const lit = litPlace(place);
   const rows = placeRows(places, owed);
@@ -143,7 +147,7 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
   const topicsId = `${id}-topics`;
   return (
     <div className="dev-ws-places" data-places={slug}>
-      <nav className="dev-ws-places-nav" aria-label={name ? `${name}'s places` : 'Places'}>
+      <nav className="dev-ws-places-nav" aria-label={name ? t('project:places.list.name', { project: name }) : t('project:places.list.nameUnnamed')}>
         {rows.pages.map((p) => (
           <PlaceLink
             key={p.key}
@@ -156,14 +160,14 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
             extra={p.key === 'workshop' && filtered ? (
               <>
                 <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
-                <span className="sr-only"> (filtered)</span>
+                <span className="sr-only">{` ${t('project:places.list.filtered')}`}</span>
               </>
             ) : null}
           />
         ))}
         <div className="dev-ws-places-line" role="separator" />
         <div className="dev-ws-places-group" role="group" aria-labelledby={channelsId} data-places-group="channels">
-          <div id={channelsId} className="dev-ws-places-head">Channels</div>
+          <div id={channelsId} className="dev-ws-places-head">{t('project:places.list.channels')}</div>
           <PlaceLink
             slug={slug}
             k={rows.general.key}
@@ -175,7 +179,7 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
         </div>
         {rows.topics.length ? (
           <div className="dev-ws-places-group" role="group" aria-labelledby={topicsId} data-places-group="topics">
-            <div id={topicsId} className="dev-ws-places-head">Topics</div>
+            <div id={topicsId} className="dev-ws-places-head">{t('project:places.list.topics')}</div>
             {rows.topics.map((t) => (
               <PlaceLink
                 key={t.key}
@@ -200,7 +204,7 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
             onClick={(e) => onSwitch(e.currentTarget)}
           >
             <UserGroupIcon className="dev-ws-place-glyph" aria-hidden="true" />
-            <span className="dev-ws-place-label">Switch community</span>
+            <span className="dev-ws-place-label">{t('project:places.list.switchCommunity')}</span>
           </button>
         </div>
       ) : null}

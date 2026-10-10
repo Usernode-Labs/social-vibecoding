@@ -1331,30 +1331,6 @@
     "text": "That did not go through. Try asking again.",
     "description": "Error shown under a proposal on the Needs you feed when a question the person asked the AI about that proposal could not be answered and the server gave no reason of its own."
   },
-  "band.label": {
-    "text": "Project",
-    "description": "Accessible name of the row of four tabs at the top of a project's page (Hub, Discussion, Needs you, Workshop). A noun: the project those tabs belong to."
-  },
-  "band.tab.hub": {
-    "text": "Hub",
-    "description": "First of the four tabs on a project's page: the overview with who is here, what is new and what waits on you."
-  },
-  "band.tab.discussion": {
-    "text": "Discussion",
-    "description": "Second of the four tabs on a project's page: the project's chat channel, where members talk. A noun."
-  },
-  "band.tab.needsYou": {
-    "text": "Needs you",
-    "description": "Third of the four tabs on a project's page: the proposals waiting for this person's vote and the requests nobody has picked up. A number badge may follow it."
-  },
-  "band.tab.workshop": {
-    "text": "Workshop",
-    "description": "Fourth of the four tabs on a project's page: the build tab, listing the changes being worked on, proposals and requests. A noun, the name of a place, not a class or event."
-  },
-  "band.filtered": {
-    "text": "(filtered)",
-    "description": "Read by screen readers only, right after the word Workshop on that tab, while a search or filter is narrowing the list of items under it. Keep the parentheses."
-  },
   "plan.step": {
     "text": "Step {{step}} of {{total}}",
     "description": "Line under the title of the read-only plan page for a project's first version: how far the assistant's work on it has come. {{step}} is the current step's number and {{total}} how many steps there are, for example Step 3 of 7."
@@ -4326,5 +4302,101 @@
   "diagram.decision.secretChanged": {
     "text": "A secret setting, value not shown",
     "description": "Note beside the setting's name in a group decision's \"What changes\" diagram on a Needs-you card, when the decision sets a secret setting (an API key or password the project keeps hidden); its new value is never shown."
+  },
+  "places.list.hub": {
+    "text": "Hub",
+    "description": "First entry in a project's list of places (beside the page on a wide window, in the tray on a phone): the project's overview, with who is here, what is new and what waits on you. A noun, the name of the place."
+  },
+  "places.list.needsYou": {
+    "text": "Needs you",
+    "description": "Second entry in a project's list of places: the feed of decisions waiting on this person (changes to vote on, requests nobody has taken). A count may follow it."
+  },
+  "places.list.workshop": {
+    "text": "Workshop",
+    "description": "Third entry in a project's list of places: the build page, listing the work going on, the requests and the changes. A noun, the name of the place."
+  },
+  "places.list.channels": {
+    "text": "Channels",
+    "description": "Small upper-case heading in a project's list of places, over the project's own chat channel (#general)."
+  },
+  "places.list.topics": {
+    "text": "Topics",
+    "description": "Small upper-case heading in a project's list of places, over its topics: the categories its members set up, each a chat channel of its own."
+  },
+  "places.list.switchCommunity": {
+    "text": "Switch community",
+    "description": "Last entry of a project's list of places in the tray on a phone: opens the list of the person's communities to go to another one."
+  },
+  "places.list.name": {
+    "text": "{{project}}'s places",
+    "description": "Accessible name of a project's list of places (its Hub, Needs you, Workshop and channels). {{project}} is the project's name."
+  },
+  "places.list.nameUnnamed": {
+    "text": "Places",
+    "description": "Accessible name of a project's list of places (its Hub, Needs you, Workshop and channels) when the project's name is not known yet."
+  },
+  "places.list.filtered": {
+    "text": "(filtered)",
+    "description": "Read only by screen readers, right after Workshop in a project's list of places, while a search or filter is narrowing the project's All items page. Keep the parentheses."
+  },
+  "places.list.countAloud": {
+    "text": "({{phrase}})",
+    "description": "Read only by screen readers after an entry in a project's list of places that shows a number: says what the number counts. {{phrase}} is that, already worded, for example \"29 to vote\" or \"3 unread\". Keep the parentheses."
+  },
+  "places.count.toVote_one": {
+    "text": "{{count}} to vote",
+    "description": "What the number beside Needs you in a project's list of places counts, read by screen readers: changes waiting for this person's vote. {{count}} is that number."
+  },
+  "places.count.toVote_other": {
+    "text": "{{count}} to vote",
+    "description": "What the number beside Needs you in a project's list of places counts, read by screen readers: changes waiting for this person's vote. {{count}} is that number."
+  },
+  "places.count.unread_one": {
+    "text": "{{count}} unread",
+    "description": "What the number beside a channel in a project's list of places counts, read by screen readers: messages there this person has not read. {{count}} is that number."
+  },
+  "places.count.unread_other": {
+    "text": "{{count}} unread",
+    "description": "What the number beside a channel in a project's list of places counts, read by screen readers: messages there this person has not read. {{count}} is that number."
+  },
+  "places.bar.hub": {
+    "text": "Hub",
+    "description": "Title of the bar at the top of a project's page while its Hub (or the plan under it) is on show: names the place you are on. A noun, the name of the place."
+  },
+  "places.bar.needsYou": {
+    "text": "Needs you",
+    "description": "Title of the bar at the top of a project's page while its Needs you place is on show: the feed of decisions waiting on this person."
+  },
+  "places.bar.workshop": {
+    "text": "Workshop",
+    "description": "Title of the bar at the top of a project's page while its Workshop (or the All items page under it) is on show: names the place you are on. A noun, the name of the place."
+  },
+  "places.bar.button": {
+    "text": "{{project}}'s places",
+    "description": "Accessible name of the button on the bar at the top of a project's page that opens the list of the project's places (its Hub, Needs you, Workshop and channels). {{project}} is the project's name."
+  },
+  "places.bar.buttonUnnamed": {
+    "text": "Places",
+    "description": "Accessible name of the button on the bar at the top of a project's page that opens the list of the project's places, when the project's name is not known yet."
+  },
+  "places.bar.waitingAloud": {
+    "text": "({{waiting}})",
+    "description": "Read only by screen readers after the name of the places button at the top of a project's page, while something in the project waits for this person (a dot is shown). {{waiting}} is what waits, already worded, for example \"29 to vote, 4 unread\". Keep the parentheses."
+  },
+  "places.bar.toVote_one": {
+    "text": "{{count}} to vote",
+    "description": "One thing that waits for this person, read by screen readers on the places button at the top of a project's page: changes waiting for their vote. {{count}} is how many."
+  },
+  "places.bar.toVote_other": {
+    "text": "{{count}} to vote",
+    "description": "One thing that waits for this person, read by screen readers on the places button at the top of a project's page: changes waiting for their vote. {{count}} is how many."
+  },
+  "places.bar.unread_one": {
+    "text": "{{count}} unread",
+    "description": "One thing that waits for this person, read by screen readers on the places button at the top of a project's page: messages in the project's channels they have not read. {{count}} is how many."
+  },
+  "places.bar.unread_other": {
+    "text": "{{count}} unread",
+    "description": "One thing that waits for this person, read by screen readers on the places button at the top of a project's page: messages in the project's channels they have not read. {{count}} is how many."
   }
 }

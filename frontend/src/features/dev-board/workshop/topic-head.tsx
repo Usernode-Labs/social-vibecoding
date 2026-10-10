@@ -15,12 +15,10 @@
 
 import type { MouseEvent, ReactNode } from 'react';
 
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { t as translate } from '../../../lib/i18n/runtime';
 import type { PlaceChannel } from './community-card';
 import { channelPlace, placeHref } from './places';
-
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
 /** The words of the line, for a topic as its record has it. Pure. */
 export function topicLine(topic: Pick<PlaceChannel, 'about' | 'state' | 'requests'>, survivor: string | null = null): {
@@ -28,14 +26,19 @@ export function topicLine(topic: Pick<PlaceChannel, 'about' | 'state' | 'request
   link: string | null;
 } {
   if (topic.state === 'merged') {
-    return { about: survivor ? `Merged into #${survivor}. Read only.` : 'Merged into another topic. Read only.', link: null };
+    return {
+      about: survivor
+        ? translate('project:places.topicHead.mergedInto', { channel: survivor })
+        : translate('project:places.topicHead.mergedUnnamed'),
+      link: null,
+    };
   }
-  if (topic.state === 'archived') return { about: 'Archived. Read only.', link: null };
+  if (topic.state === 'archived') return { about: translate('project:places.topicHead.archived'), link: null };
   // No requests yet says nothing: a zero is not a door (AGENTS.md).
   const n = Number(topic.requests);
   return {
     about: String(topic.about || '').trim(),
-    link: Number.isFinite(n) && n > 0 ? `${plural(n, 'request', 'requests')} ›` : null,
+    link: Number.isFinite(n) && n > 0 ? translate('project:places.topicHead.requests', { count: n }) : null,
   };
 }
 
@@ -49,6 +52,8 @@ export function TopicHead({ slug, topic, survivor = null, onRequests, onSurvivor
   /** A merged topic: open the topic it joined. */
   onSurvivor?: () => void;
 }): ReactNode {
+  // The line is worded by topicLine, read as it renders; subscribe it.
+  useMessages('project');
   const line = topicLine(topic, survivor);
   const press = (event: MouseEvent<HTMLAnchorElement>, run?: () => void) => {
     const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
@@ -57,28 +62,35 @@ export function TopicHead({ slug, topic, survivor = null, onRequests, onSurvivor
     event.preventDefault();
     run();
   };
+  const requestsLink = (children?: ReactNode) => (
+    <a
+      className="dev-ws-topic-head-link"
+      data-ws-topic-requests={topic.handle}
+      href={`/app/${encodeURIComponent(slug)}/board`}
+      onClick={(e) => press(e, onRequests)}
+    >
+      {children}
+    </a>
+  );
   return (
     <p className="dev-ws-topic-head" data-ws-topic-head={topic.handle}>
       {topic.state === 'merged' && survivor && onSurvivor ? (
-        <>
-          {'Merged into '}
-          <a className="dev-ws-topic-head-link" href={placeHref(slug, channelPlace(survivor))} onClick={(e) => press(e, onSurvivor)}>
-            {`#${survivor}`}
-          </a>
-          {'. Read only.'}
-        </>
+        <RichMessage
+          id="project:places.topicHead.mergedIntoLink"
+          values={{ channel: survivor }}
+          components={[
+            <a className="dev-ws-topic-head-link" href={placeHref(slug, channelPlace(survivor))} onClick={(e) => press(e, onSurvivor)} />,
+          ]}
+        />
+      ) : line.about && line.link ? (
+        // What the topic is for, then its requests: one line, one message.
+        <RichMessage
+          id="project:places.topicHead.aboutThenRequests"
+          values={{ about: line.about, requests: line.link }}
+          components={[requestsLink()]}
+        />
       ) : line.about}
-      {line.about && line.link ? ' · ' : null}
-      {line.link ? (
-        <a
-          className="dev-ws-topic-head-link"
-          data-ws-topic-requests={topic.handle}
-          href={`/app/${encodeURIComponent(slug)}/board`}
-          onClick={(e) => press(e, onRequests)}
-        >
-          {line.link}
-        </a>
-      ) : null}
+      {line.link && !line.about ? requestsLink(line.link) : null}
     </p>
   );
 }

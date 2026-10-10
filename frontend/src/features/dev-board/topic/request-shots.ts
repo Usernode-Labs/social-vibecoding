@@ -22,6 +22,7 @@
  * exactly as it came in, so a request with neither is drawn as it always was.
  */
 
+import { t as translate } from '../../../lib/i18n/runtime';
 import { readPins, type PinData } from '../../comment-pin/pin-data';
 
 /** Where the platform keeps a request's screenshots (src/routes/feedback.js `buildScreenshotsEmbed`). */
@@ -54,8 +55,8 @@ export function pinPlacement(pin: Pick<PinData, 'x' | 'y'>): PinPlacement {
 
 /** What the corner button says while the comments are shown, and while they are not. */
 export function pinToggleLabel(shown: boolean, many = false): string {
-  const what = many ? 'comments' : 'comment';
-  return shown ? `Hide ${what}` : `Show ${what}`;
+  if (shown) return many ? translate('project:topic.request.shots.hideComments') : translate('project:topic.request.shots.hideComment');
+  return many ? translate('project:topic.request.shots.showComments') : translate('project:topic.request.shots.showComment');
 }
 
 export interface RequestShots {

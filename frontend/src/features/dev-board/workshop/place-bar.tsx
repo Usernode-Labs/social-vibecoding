@@ -25,14 +25,16 @@ import type { ReactNode, Ref } from 'react';
 
 import { SidebarIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
+import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { placeHandle, placeName, type PlaceKey } from './places';
 
 /** What waits for you, aloud: "29 to vote, 4 unread", or null for nothing. Pure. */
 export function waitingPhrase(owed: number, unread: number): string | null {
   const parts: string[] = [];
-  if (owed > 0) parts.push(`${owed} to vote`);
-  if (unread > 0) parts.push(`${unread} unread`);
-  return parts.length ? parts.join(', ') : null;
+  if (owed > 0) parts.push(translate('project:places.bar.toVote', { count: owed }));
+  if (unread > 0) parts.push(translate('project:places.bar.unread', { count: unread }));
+  return parts.length ? listText(parts) : null;
 }
 
 export function PlaceBar({ name, place, owed, unread, open, trayId, onToggle, barRef, buttonRef }: {
@@ -48,6 +50,7 @@ export function PlaceBar({ name, place, owed, unread, open, trayId, onToggle, ba
   barRef?: (el: HTMLElement | null) => void;
   buttonRef?: Ref<HTMLButtonElement>;
 }): ReactNode {
+  const t = useMessages('project');
   const handle = placeHandle(place);
   const waiting = waitingPhrase(owed, unread);
   return (
@@ -58,7 +61,7 @@ export function PlaceBar({ name, place, owed, unread, open, trayId, onToggle, ba
           type="button"
           className="dev-ws-places-btn"
           data-places-btn=""
-          aria-label={name ? `${name}'s places` : 'Places'}
+          aria-label={name ? t('project:places.bar.button', { project: name }) : t('project:places.bar.buttonUnnamed')}
           aria-expanded={open}
           aria-controls={open ? trayId : undefined}
           onClick={onToggle}
@@ -67,7 +70,7 @@ export function PlaceBar({ name, place, owed, unread, open, trayId, onToggle, ba
           {waiting ? (
             <>
               <span className="dev-ws-places-dot" data-places-waiting="" aria-hidden="true" />
-              <span className="sr-only">{` (${waiting})`}</span>
+              <span className="sr-only">{` ${t('project:places.bar.waitingAloud', { waiting })}`}</span>
             </>
           ) : null}
         </button>
