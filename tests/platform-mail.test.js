@@ -542,6 +542,10 @@ test('the release mail promises the code only on the arm that sends one (#1548)'
   // The figure must track OTP_TTL_MS, so pin it rather than the sentence.
   assert.match(fresh.text, /expires in 10 minutes/);
   assert.match(fresh.html, /emails you a 6-digit code/);
+  // The code goes to the address the link names, so the mail does not ask
+  // which address they joined with.
+  assert.doesNotMatch(fresh.text, /joined the waitlist with/);
+  assert.doesNotMatch(fresh.html, /joined the waitlist with/);
 
   // Somebody who already has an account is sent to #login and never asked
   // for a code, so promising one there would be a plain lie.
@@ -552,18 +556,21 @@ test('the release mail promises the code only on the arm that sends one (#1548)'
   assert.doesNotMatch(returning.html, /6-digit code/);
 });
 
-test('the release mail with a one-time sign-in link says so, and tracking leaves that link alone (#4594)', () => {
+test('the release mail with a one-time sign-in link explains nothing, and tracking leaves that link alone (#4594)', () => {
   const linked = templates.buildMessage('waitlist_released', {
     url: 'https://x.invalid/?signup=1&t=tok&key=k', hasAccount: false, signInLink: true,
   });
+  // The button signs them in, and the screen its fallback opens says itself
+  // that a code was sent, so no note under it. The link is bound to the
+  // released address, so no line asking which address they joined with.
   for (const part of [linked.text, linked.html]) {
-    assert.match(part, /signs you in once/);
-    // The figure must track RELEASE_LINK_TTL_MS in services/release-links.js.
-    assert.match(part, /works for 7 days/);
-    assert.match(part, /emails you a 6-digit code/, 'and says what happens after');
+    assert.doesNotMatch(part, /signs you in once|works for 7 days/);
+    assert.doesNotMatch(part, /6-digit code/);
+    assert.doesNotMatch(part, /joined the waitlist with/);
   }
-  const { RELEASE_LINK_TTL_MS } = require('../src/services/release-links');
-  assert.equal(RELEASE_LINK_TTL_MS, 7 * 24 * 60 * 60 * 1000);
+  assert.match(linked.html, />Create my account<\/a>/);
+  // The text part has no button, so it names the action over the link.
+  assert.ok(linked.text.includes('Create my account:\nhttps://x.invalid/?signup=1&t=tok&key=k'));
 
   // Click tracking stores each destination URL; one carrying a sign-in
   // credential is never rewritten, so its token is never stored.
