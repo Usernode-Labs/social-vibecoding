@@ -631,12 +631,10 @@
           }
           if (window.App && window.App.user) {
             window.App.user.needsCommunitiesChoice = false;
-            if (!body.alreadyDone) window.App.user.showGettingStarted = true;
             try { window.App.saveSessionSnapshot?.(window.App.user); } catch (_) {}
           }
           dismiss();
-          // Home re-reads the pins the joins just made, and the Getting
-          // started card appears (features/home/getting-started.tsx).
+          // Home re-reads the pins the joins just made.
           document.dispatchEvent(new CustomEvent('sv:communities-joined', {
             detail: { joined: body.joined || [] },
           }));

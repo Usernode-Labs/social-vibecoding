@@ -127,10 +127,10 @@
  *
  * Only when somebody asks (#3240). It used to open by itself on the first
  * sign-in that reached Home, straight after "What communities do you want to
- * join?", and the two screens said the same things back to back. Now the
- * first row of Home's Getting started card, "Take the 1-minute tour"
- * (../getting-started.tsx), and Settings' "Replay the tour" are the ways in,
- * and both ask through ./tour-request.ts. That path ignores whether the
+ * join?", and the two screens said the same things back to back. Now
+ * Settings' "Replay the tour" is the way in (the card's first row, which
+ * also asked through here, left with the card in #4635), and both ask
+ * through ./tour-request.ts. That path ignores whether the
  * tour was finished before and waits only for Home to be on screen, which is
  * where every step points. Nothing opens it on the `?shot=`, `?demo=` and
  * `?token=` routes except a press, so the platform's declared checks never

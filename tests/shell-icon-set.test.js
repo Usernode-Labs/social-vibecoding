@@ -243,9 +243,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // GlobeIcon (#4405): the hub's Custom domain row, drawn only for
     // whoever manages the project.
     'M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3M3.6 9h16.8M3.6 15h16.8',
-    // LockOpenIcon: Getting started's done card, "7 challenges unlocked"
-    // (2026-10-01), which shows only once the list is finished.
-    'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zM8 11V7a4 4 0 017.75-1.4',
+    // LockOpenIcon LEFT this list with #4635: it was Getting started's done
+    // card ("7 challenges unlocked"), and the card is gone. LockIcon stays
+    // for the Challenges tab's locked card, which keeps its own gating.
     // LockIcon and UserGroupIcon LEFT this list with communities, stage 3:
     // the create dialog's first step (who it is for) draws them on its
     // "A group" and "A community" rows, and the dialog prerenders every step.

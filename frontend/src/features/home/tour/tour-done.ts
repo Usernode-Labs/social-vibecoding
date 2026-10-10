@@ -28,8 +28,8 @@
  *   * THE WRITE IS FIRE-AND-FORGET. A failure costs an unticked row and
  *     nothing else: it never throws out of this module and never logs a
  *     console.error, which fails proposal checks on any route. A write that
- *     lands says so on `document` (`sv:tour-done`), which is how the card
- *     on the same screen learns to tick the row without a reload.
+ *     lands says so on `document` (`sv:tour-done`), so anything on the same
+ *     screen that wants to know can listen without a reload.
  */
 
 export const TOUR_DONE_PATH = '/api/me/tour-done';

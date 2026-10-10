@@ -19,8 +19,8 @@
  *
  * ONE RHYTHM: every band in the column is a 14px step from the one above it.
  * The heading ends on `pb-1.5`, so each band here opens on `pt-2` and closes
- * on `pb-1.5` (6px + 8px). Inside the rows list the cards, the headers and the
- * locked placeholder sit `gap-2.5` (10px) apart, the same step as the featured
+ * on `pb-1.5` (6px + 8px). Inside the rows list the cards and the headers sit
+ * `gap-2.5` (10px) apart, the same step as the featured
  * apps rail (`.home-discover-rail` in app.css). Nothing is inset: the season line, the headers, the cards
  * and the footer all start where the heading's label starts.
  *
@@ -58,26 +58,6 @@
  * the season progress and the body. The Done header alone carries a class of
  * its own, `home-challenge-done-head`, which the #2490 check selects on.
  *
- * ── While Getting started gates the season ────────────────────────────
- *
- * Only a NEW account's season is gated (2026-10-01): until its Getting
- * started list (the tour and the First challenges) is done, the server sends
- * only the First challenges, plus how many it holds back and the first few of
- * their names. That list is the card on top of Home (../getting-started.tsx),
- * so this block does not draw it again: it draws ONE dashed locked card, "6
- * challenges unlock after Getting started", "Make a proposal, Invite a friend
- * and 4 more", and nothing else (`view.locked`). The card sits inside
- * `.home-panel-rows`, where the cards it stands in for would, but it is not a
- * `.home-challenge-card`: the declared checks and the tests count and select
- * real cards. Every existing member, and every account once its list is done,
- * gets the normal groups below.
- *
- * The unlock note is what is left of the old arrangement: a closed gate with
- * nothing hidden to count (a season of First challenges only) draws those
- * cards as before, with the note UNDER them, after `.home-panel-body`, which
- * keeps `.home-panel-season + .home-panel-body` adjacent: "Finish Getting
- * started to unlock the rest of the season." Once unlocked there is no note.
- *
  * ── The standings preview is GONE ─────────────────────────────────────
  *
  * A block of leaderboard rows used to sit under the challenges. It is
@@ -97,32 +77,11 @@ import { Fragment } from 'react';
 
 import { ChallengeCard } from '../../leaderboard/challenge-card';
 import { GroupHeader } from '../../leaderboard/group-header';
-import { LockedChallengesCard } from '../../leaderboard/locked-challenges-card';
 import { SeasonProgress } from '../../leaderboard/season-progress';
 import type { ChallengeGroupView, ChallengesView } from '../panels-store';
 import { PanelFooter, PanelShell, panels } from './ui';
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
-  if (view.locked) {
-    // While Getting started gates the season: the one locked card, alone.
-    // Inside `.home-panel-rows` like the cards it stands in for, so it keeps
-    // their place and the column's rhythm, but it is not a
-    // `.home-challenge-card` and `data-rows` stays 0: the declared checks and
-    // the tests count real cards.
-    return (
-      <PanelShell panelKey={view.key} expanded={false} plate="none" stamps={{ rows: 0 }}>
-        <div className="home-panel-body pt-2">
-          <div className="home-panel-rows flex flex-col gap-2.5">
-            <LockedChallengesCard
-              count={view.lockedCount ?? 0}
-              names={view.lockedNames}
-              className="home-challenge-locked"
-            />
-          </div>
-        </div>
-      </PanelShell>
-    );
-  }
   if (!view.rows.length) {
     // The line's hover is a text colour, not a tint: with no plate and no
     // inset a background would fill a square box starting at the first glyph,
@@ -155,9 +114,6 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
   const groups: ChallengeGroupView[] = view.groups
     ?? [{ key: 'all', heading: null, meta: null, rows: view.rows }];
   const hasFooter = view.expandable !== false;
-  // The locked card is the `view.locked` branch above, alone; here the note
-  // is the only thing a closed gate adds.
-  const hasNote = !!view.onboardingNote;
 
   return (
     <PanelShell
@@ -170,11 +126,10 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       ) : null}
     >
       {view.season ? <SeasonProgress view={view.season} className="home-panel-season pt-2 pb-1.5" /> : null}
-      {/* The body closes on `pb-1.5` only when a band follows it (the footer or
-          the note), as the first half of their 14px step. A block that ends at
-          its last card ends there, on the section's own bottom padding, as
-          Discover does. */}
-      <div className={hasFooter || hasNote ? 'home-panel-body pt-2 pb-1.5' : 'home-panel-body pt-2'}>
+      {/* The body closes on `pb-1.5` only when the footer follows it, as the
+          first half of its 14px step. A block that ends at its last card ends
+          there, on the section's own bottom padding, as Discover does. */}
+      <div className={hasFooter ? 'home-panel-body pt-2 pb-1.5' : 'home-panel-body pt-2'}>
         <div className="home-panel-rows flex flex-col gap-2.5">
           {groups.map((g) => (
             <Fragment key={g.key}>
@@ -198,14 +153,6 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
           ))}
         </div>
       </div>
-      {/* #1915 kept this line off its neighbours. It still is, by the column's
-          one rhythm (`pt-2 pb-1.5`, see the header) rather than by a padding
-          of its own against a hairline that is gone. It follows the cards. */}
-      {hasNote ? (
-        <p className="pt-2 pb-1.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">
-          {view.onboardingNote}
-        </p>
-      ) : null}
     </PanelShell>
   );
 }

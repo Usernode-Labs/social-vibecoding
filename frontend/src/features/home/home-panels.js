@@ -156,11 +156,11 @@ const HomePanels = {
   // order: `display_order`, then `id`. A payload whose rows do not all carry a
   // `display_order` (the staging demo, or a cache written before the field)
   // keeps the server's sequence for that last key instead. Stable, and the
-  // input is not mutated. `onboarding` is the payload's gate summary, which
-  // decides whether the First challenges group is finished (setupFinished).
-  orderRows(rows, onboarding) {
+  // input is not mutated. `setupFinished` decides from the rows whether the
+  // First challenges group is finished.
+  orderRows(rows) {
     const list = (rows || []).slice();
-    const finished = HomePanels.setupFinished(list, onboarding);
+    const finished = HomePanels.setupFinished(list);
     const byOrder = list.length > 0 && list.every((c) => c && c.display_order != null
       && c.display_order !== '' && Number.isFinite(Number(c.display_order)));
     return list
@@ -214,7 +214,7 @@ const HomePanels = {
   // `link` stays in the return shape as a compatibility flag for anything
   // still reading it, but it is always false: the footer owns overflow.
   visibleSlots(panel, opts) {
-    const rows = HomePanels.orderRows(panel && panel.challenges, panel && panel.onboarding);
+    const rows = HomePanels.orderRows(panel && panel.challenges);
     const total = Number(panel && panel.total) || 0;
     const key = panel && panel.key;
     const slots = Number(opts && opts.slots) > 0
@@ -505,42 +505,11 @@ const HomePanels = {
   // four-row budget is now simply THE budget.
   challengesView(panel) {
     const total = Number(panel.total) || 0;
-    // WHILE GETTING STARTED IS LOCKED, ONE LOCKED CARD (2026-10-01). A new
-    // account's season waits on its Getting started list, and that list IS
-    // the First challenges, drawn in full by the card on top of Home
-    // (./getting-started.tsx). So the block does not draw them a second time:
-    // it draws one dashed card saying how many challenges unlock after
-    // Getting started and naming a few, and nothing else, no season progress
-    // over it (the card counts the list) and no footer under it. The rows the
-    // server still sends are the gate's own, and wait for it to open. With
-    // nothing hidden to count (a season of First challenges only) there is no
-    // card to draw, and the block falls back to drawing them, as it always has.
-    //
-    // Only while that card IS on Home (`App.user.showGettingStarted`). An
-    // account its first session brought in has no card (first-session.js:
-    // communities_onboarded_at stays unset), and a locked card pointing at a
-    // list it cannot see said nothing; the block draws the First challenges
-    // itself instead, done or not, with the unlock note under them.
-    const locked = HomePanels.gettingStartedOnHome() ? HomePanels.lockedOnboarding(panel) : null;
-    if (locked) {
-      if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
-      return {
-        key: panel.key,
-        title: panel.title || 'Challenges',
-        summary: HomePanels.summaryLine(panel),
-        season: null,
-        onboardingNote: null,
-        lockedCount: locked.count,
-        lockedNames: locked.names,
-        locked: true,
-        total,
-        allTotal: total,
-        expandable: false,
-        expanded: false,
-        rows: [],
-        groups: [],
-      };
-    }
+    // The season's First challenges draw here as ordinary challenge cards,
+    // in the organiser's order, gated like any other challenge by its own
+    // unlock state. There is no Getting started card any more (#4635): a new
+    // account lands on ordinary Home and its First challenges are simply the
+    // first cards the block draws.
     const expanded = !!HomePanels._expanded[panel.key];
     const empty = !total
       || !Array.isArray(panel.challenges)
@@ -588,17 +557,6 @@ const HomePanels = {
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
       season,
-      // The unlock note, only while Getting started gates the season, in the
-      // Challenges tab's words (its grid `notice`). A closed gate with a count
-      // took the locked branch above, whose card says it, so this is the gate
-      // with nothing to count (an older server, or a season of First
-      // challenges only), drawn as before: the cards, then the note. Once
-      // unlocked there is nothing to say: no note.
-      onboardingNote: panel.onboarding && !panel.onboarding.unlocked
-        ? 'Finish Getting started to unlock the rest of the season.'
-        : null,
-      // Always 0 here: a count above 0 is the locked branch above.
-      lockedCount: 0,
       total,
       allTotal,
       expandable,
@@ -610,28 +568,6 @@ const HomePanels = {
       rows: views,
       groups,
     };
-  },
-
-  // The closed gate's locked card, or null: how many challenges Getting
-  // started still hides from this viewer and the first few of their names
-  // (the server's additive `hidden_count` and `hidden_names`). Null once
-  // unlocked, for a viewer the gate does not apply to (whose payload has no
-  // `onboarding` at all), and when there is nothing hidden to count.
-  // Whether Home draws the Getting started card (./getting-started.tsx reads
-  // the same flag).
-  gettingStartedOnHome() {
-    return !!(typeof window !== 'undefined' && window.App && App.user && App.user.showGettingStarted === true);
-  },
-
-  lockedOnboarding(panel) {
-    const o = panel && panel.onboarding;
-    if (!o || o.unlocked) return null;
-    const count = Math.floor(Number(o.hidden_count) || 0);
-    if (count < 1) return null;
-    const names = (Array.isArray(o.hidden_names) ? o.hidden_names : [])
-      .map((n) => String(n == null ? '' : n).trim())
-      .filter(Boolean);
-    return { count, names };
   },
 
   // ── The groups ─────────────────────────────────────────────────────
@@ -684,11 +620,11 @@ const HomePanels = {
   },
 
   // Whether setup is behind the viewer, which decides where the First challenges group sits.
-  // The tab's rule (TopochainChallenges._setupFinished): with an onboarding
-  // summary the server's gate says so (`unlocked === true`); without one, the
-  // rows must hold at least one setup card and every one of them must be done.
-  setupFinished(rows, onboarding) {
-    if (onboarding) return onboarding.unlocked === true;
+  // The tab's rule (TopochainChallenges._setupFinished), the rows half of it:
+  // the rows must hold at least one setup card and every one of them must be
+  // done. (The tab also reads a gate summary on its own payload; Home's has
+  // none since #4635.)
+  setupFinished(rows) {
     const setup = (Array.isArray(rows) ? rows : [])
       .filter((c) => c && HomePanels.groupOf(c).key === 'setup');
     return setup.length > 0 && setup.every((c) => HomePanels.orderDone(c));
@@ -1008,10 +944,9 @@ const HomePanels = {
       && Number(panel.all_total) > 0;
     const total = hasAll ? Number(panel.all_total) : open;
     if (!total) return null;
-    // The points line (#4565), carried into the summary on both branches: the
-    // server's pair already covers the scope the branch names (the gate's
-    // First challenges while it is closed, the season's whole set after).
-    // Absent (an older payload) or nothing on offer, no line.
+    // The points line (#4565), carried into the summary: the server's pair
+    // covers the season's whole set. Absent (an older payload) or nothing on
+    // offer, no line.
     const pointsTotal = Number(panel && panel.points_total);
     const points = Number.isFinite(pointsTotal) && pointsTotal > 0
       ? {
@@ -1019,16 +954,6 @@ const HomePanels = {
         total: pointsTotal,
       }
       : null;
-    const gate = panel.onboarding;
-    if (gate && !gate.unlocked && Number(gate.total) > 0) {
-      const t = Number(gate.total);
-      return {
-        done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
-        total: t,
-        caption: 'done in First challenges',
-        ...(points ? { points } : {}),
-      };
-    }
     const name = panel.season && typeof panel.season.name === 'string'
       ? panel.season.name.trim() : '';
     return {
@@ -1137,18 +1062,6 @@ const HomePanels = {
 // Home calls this module through the legacy global. Guard the
 // publication for the shell's server-side prerender, where window is absent.
 if (typeof window !== 'undefined') window.HomePanels = HomePanels;
-
-// A boot paints from the device's snapshot of the session and verifies it
-// afterwards (App._reconcileSession). Repaint once the verified user lands,
-// so `showGettingStarted` (HomePanels.gettingStartedOnHome) is the server's
-// current answer rather than the snapshot's: the card can have been closed
-// between two visits. Only once there is something to paint; before the
-// first read, render() would mark the sections settled with nothing in them.
-if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-  document.addEventListener('sv:session', () => {
-    if (HomePanels._data) HomePanels.render();
-  });
-}
 
 // A join or a leave has landed: Home.setMembership's `sv:membership-changed`
 // (Discover's Join pill and detail page, the join-required prompt, the

@@ -118,11 +118,6 @@ const buttonVariants = cva('', {
       // width and centred in it, which is what makes it read as the panel's
       // one primary action rather than as another list row.
       fullIconRow: 'w-full inline-flex items-center justify-center gap-2',
-      // The Getting started card's step buttons (features/home/
-      // getting-started.tsx): a verb and an arrow (the tour's play glyph and
-      // its verb) on one line at the row's trailing edge, never wrapping and
-      // never squeezed by the step's words beside it.
-      step: 'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap',
     },
     /** Radius + surface. Radius leads the box in every shell button. */
     variant: {
@@ -183,16 +178,6 @@ const buttonVariants = cva('', {
       pillDanger: 'rounded-full bg-red-500/10 hover:bg-red-500/15',
       // #settings-remove — the bordered destructive button.
       destructive: 'rounded-lg border border-red-400 dark:border-red-700',
-      // The Getting started card's step buttons (features/home/
-      // getting-started.tsx). evan: "buttons must look like buttons". A
-      // list row's trailing pill read as a label on Home, so these are a
-      // squarer 10px box with depth: `step` is the NEXT step's, the accent
-      // filled with a drop and a darker lower lip; `stepOutline` is every
-      // other step's, the card's own plane inside a 1.5px accent ring, so
-      // the eye goes to the next thing to do and the rest still read as
-      // pressable. Both sink a pixel when pressed.
-      step: 'rounded-[10px] bg-violet-600 hover:bg-violet-500 shadow-[0_1px_2px_rgba(0,0,0,0.22),inset_0_-2px_0_rgba(0,0,0,0.16)] active:translate-y-px',
-      stepOutline: 'rounded-[10px] bg-[color:var(--dc-sheet-solid)] hover:bg-violet-50 dark:hover:bg-violet-950 shadow-[0_1px_2px_rgba(0,0,0,0.08)] ring-[1.5px] ring-inset ring-violet-600 dark:ring-violet-400 active:translate-y-px',
       // Buttons that carry no box of their own (header icon buttons, text
       // links); they bring their own utilities through className.
       unstyled: '',
@@ -248,9 +233,6 @@ const buttonVariants = cva('', {
       // primary button.
       pill: 'px-5 py-2.5 text-[15px] font-semibold',
       pillLg: 'px-5 py-3 text-[17px] font-semibold',
-      // The Getting started card's step buttons: a fixed 36px, the same
-      // height on every row whatever the row's words beside it wrap to.
-      step: 'h-9 px-3.5 text-sm font-[650]',
       // #more-submit.
       xl: 'px-6 py-2 text-sm font-medium',
       // Icon buttons carry their own sizing from the surrounding layout.
@@ -295,8 +277,8 @@ const buttonVariants = cva('', {
         'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',
       // Danger ink on the danger-tint pill, whose hover is the pill's own.
       dangerTint: 'text-red-700 dark:text-red-400 transition-colors',
-      // The accent as ink, on `stepOutline`: the ring's own colour, a step
-      // lighter in dark mode as the ring is.
+      // The accent as ink, on a tint-free pill surface (the app status
+      // bar's raised pill).
       accent: 'text-violet-600 dark:text-violet-400 transition-colors',
     },
   },

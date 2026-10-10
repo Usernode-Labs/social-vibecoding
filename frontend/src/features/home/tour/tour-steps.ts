@@ -102,13 +102,11 @@ export interface TourStep {
  * The tour used to start by itself right after "What communities do you want
  * to join?" (../../auth/communities-first-run.js), and the two said the same
  * things back to back: a welcome, then Discover, then where communities live.
- * It starts only when asked now, from the first row of Home's Getting started
- * card (../getting-started.tsx) or from Settings, and it keeps the four stops
+ * It starts only when asked now, from Settings, and it keeps the four stops
  * nothing else on the first run covers: the shortcuts on Home, the mark that
  * opens the menu inside every app, the two actions in that menu, and where to
  * find the tour again. Welcome, Workshop, Discover and Getting started left:
- * the join screen and the card already say each of them, and the card is the
- * thing the viewer has just pressed.
+ * the join screen already says each of them.
  */
 /*
  * ── #3567: a fifth stop, first: what a community is ─────────────────────

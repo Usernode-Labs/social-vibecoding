@@ -287,8 +287,9 @@ function makeApp(counts = [0, 0, 0, 0], credits = {}, { viewer = NEWCOMER, user 
       // The totals statement counts the open scope and the whole catalog in one
       // pass (#1824), so `AS all_total` is what identifies it now. Nothing here
       // models completion or scheduling windows, so both counts are the same.
-      // The row query narrows its WHERE by the gate ($4); the totals statement
-      // gates each aggregate ($3) and, only while locked, adds `hidden_count`.
+      // #4635: the home-panels queries gate nothing (the row query takes no
+      // id list and the totals statement adds no hidden_count); the lists'
+      // queries below keep their gate.
       if (sql.includes('my_activity_count') || sql.includes('AS all_total')) {
         const totals = sql.includes('AS all_total');
         const allowed = totals
@@ -477,29 +478,26 @@ test('weekly-event selection and nested seasons cannot skip onboarding', async (
   });
 });
 
-test('home counts and expanded lists respect the same gate and existing lifetime credits', async () => {
+test('home shows the whole season whatever the gate does, and the lists keep it', async () => {
+  // #4635: Home no longer opens on the Getting started card, and its
+  // challenges block no longer carries the gate — a new account lands on
+  // ordinary Home, where the First challenges are ordinary cards. The tab's
+  // and the mobile lists' own gating keeps the lock (the last block below).
   const { app, state } = makeApp([2, 1, 1, 1]);
   await withServer(app, async (get) => {
     for (const path of ['/api/home-panels', '/api/home-panels?expand=challenges']) {
       const panel = (await get(path)).panels.find((p) => p.key === 'challenges');
-      assert.equal(panel.total, 4);
+      assert.equal(panel.total, 9, `${path}: every challenge, gated or not`);
       assert.equal(panel.done, 3);
-      assert.equal(panel.points_remaining, 500);
-      assert.deepEqual(panel.challenges.map((c) => c.id).sort(), [1, 2, 3, 4]);
-      assert.equal(panel.onboarding.hidden_count, 5, path);
+      assert.deepEqual(panel.challenges.map((c) => c.id).sort(), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      assert.equal('onboarding' in panel, false, `${path}: no gate summary on Home`);
+      assert.deepEqual(panel.challenges.find((c) => c.id === 1).progress,
+        { done: false, current: 2, target: 3 }, 'partial credit still shows on the counted step');
     }
     state.counts = [3, 1, 1, 1];
-    let panel = (await get('/api/home-panels?expand=challenges')).panels.find((p) => p.key === 'challenges');
-    assert.equal(panel.total, 9);
+    const panel = (await get('/api/home-panels?expand=challenges')).panels.find((p) => p.key === 'challenges');
     assert.equal(panel.done, 4);
-    assert.equal(panel.onboarding.unlocked, true, 'the opening read still says so');
-    assert.equal('hidden_count' in panel.onboarding, false);
     assert.equal(panel.challenges.find((c) => c.id === 5).label, 'PERSISTENT');
-    assert.equal(panel.challenges.find((c) => c.id === 1).progress.done, true);
-    panel = (await get('/api/home-panels')).panels.find((p) => p.key === 'challenges');
-    assert.equal('onboarding' in panel, false, 'and after it, no gate at all');
-    assert.equal(panel.challenges.find((c) => c.id === 1).progress.done, true,
-      'the lifetime answer still holds for the First challenges');
   });
 });
 

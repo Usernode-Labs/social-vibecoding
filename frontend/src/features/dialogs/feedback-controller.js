@@ -2248,9 +2248,8 @@ export function init() {
         if (!modal.classList.contains('hidden') && !bountyCheckbox.checked) resetBountyRow();
       }).catch(() => { /* budget unavailable — row stays as painted */ });
       applyTargetAvailability(canTargetApp, appData);
-      // A caller whose own button already named the app opens on it: the
-      // Getting started card's Suggest ("Suggest a change to City garden",
-      // features/home/getting-started.tsx) opens that app, then this with
+      // A caller whose own button already named the app opens on it: a
+      // caller that opened that app, then hands over with
       // `target: 'app'`. That press was the choice #2707 asks for, not a
       // guess about intent, so asking again would only be a second tap.
       // Only when "This app" is really there to choose.

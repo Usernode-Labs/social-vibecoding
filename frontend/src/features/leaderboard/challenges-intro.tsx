@@ -39,7 +39,8 @@
  *
  * ── The language ───────────────────────────────────────────────────────
  *
- * The Getting started card's shape (../home/getting-started.tsx): a
+ * The Getting started card's shape, which this intro panel shared (the
+ * card left in #4635): a
  * GroupedList in the plane tone, its header (a 15px title in sentence case,
  * the round ✕), and rows that are ListRows, 15 over 13 beside an IconTile.
  * The rows' lines are sentences, so they wrap rather than truncate. The

@@ -101,8 +101,10 @@ test('the two rank rules agree for every group, setup unfinished and finished', 
     'finished: only First challenges moves, to the end');
 });
 
-test('the two "setup finished" rules agree, each fed rows in its own shape', () => {
-  // [label, done] per card; each surface gets the same challenges in its shape.
+test('Home reads the rows alone; the tab still reads the gate as well', () => {
+  // [label, done] per card; each surface gets the same challenges in its
+  // shape. #4635: Home's payload carries no gate summary, so its rule is the
+  // rows half only; the tab's payload still can, and its rule reads it.
   const cases = [
     { name: 'no setup cards, no summary', cards: [['WEEKLY', true]], onboarding: null },
     { name: 'setup half done, no summary', cards: [['ONBOARDING', true], ['ONBOARDING', false]], onboarding: null },
@@ -114,7 +116,12 @@ test('the two "setup finished" rules agree, each fed rows in its own shape', () 
   for (const { name, cards, onboarding } of cases) {
     const tabList = cards.map(([label, done], i) => ({ id: i + 1, card_preview: { label }, progress: { done } }));
     const homeRows = cards.map(([label, done], i) => ({ id: i + 1, label, progress: { done } }));
-    assert.equal(HOME.setupFinished(homeRows, onboarding), TAB._setupFinished(tabList, onboarding), name);
+    const setup = cards.filter(([label]) => label.toLowerCase() === 'onboarding');
+    const rowsAnswer = setup.length > 0 && setup.every(([, done]) => done);
+    assert.equal(HOME.setupFinished(homeRows), rowsAnswer, `${name}: the rows alone`);
+    assert.equal(TAB._setupFinished(tabList, onboarding),
+      onboarding ? onboarding.unlocked === true : rowsAnswer,
+      `${name}: the tab also reads the gate when it has one`);
   }
 });
 
@@ -154,21 +161,23 @@ test('Home orders the same challenges in the tab\'s sequence, each fed its real 
       TAB._onboarding = null;
     }
   };
-  const homeIds = (list, onboarding) => plain([...HOME.orderRows(
+  const homeIds = (list) => plain([...HOME.orderRows(
     list.slice().reverse().map(([id, label, display_order, done, completed, featured]) => ({
       id, label, display_order, featured, completed, progress: { done, current: null, target: null },
     })),
-    onboarding,
   )].map((c) => c.id));
 
+  // #4635: the locked case is NOT the same order any more — the tab hides
+  // the season behind its gate; Home draws everything, gate or not. The tab's
+  // gated order is its own (pinned on the tab's suite); parity holds where
+  // both surfaces draw the whole season.
   const setupOpen = publicOrder.map((c) => (c[0] === 2 ? [c[0], c[1], c[2], false, c[4], c[5]] : c));
   for (const [name, list, onboarding] of [
     ['unlocked summary', publicOrder, { unlocked: true }],
-    ['locked summary', publicOrder, { unlocked: false }],
     ['no summary, setup all done', publicOrder, null],
     ['no summary, setup half done', setupOpen, null],
   ]) {
-    assert.deepEqual(homeIds(list, onboarding), tabIds(list, onboarding), name);
+    assert.deepEqual(homeIds(list), tabIds(list, onboarding), name);
   }
   assert.deepEqual(tabIds(publicOrder, { unlocked: true }), [4, 8, 3, 9, 6, 5, 7, 1, 2],
     "the viewer's own progress decides on every card: a finished card sinks inside its group and "

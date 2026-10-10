@@ -89,7 +89,6 @@ import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
-import { GettingStarted } from './getting-started';
 import { ChallengesSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
@@ -188,8 +187,8 @@ export function HomeScreen() {
             because it was the thing a first-time viewer needed before the
             grid meant anything. #2255 replaced it with the welcome tour,
             which goes on to POINT at the places the banner could only name;
-            since #3240 it runs when asked, from the first row of the
-            Getting started card or from Settings. The tour is a fixed
+            since #3240 it runs when asked, from Settings (Replay the tour)
+            and on a new account's first visit. The tour is a fixed
             overlay mounted from Shell.tsx (features/home/tour), not a block
             in this column, so nothing takes its place here: Home opens on
             the widget strip and the grid.
@@ -204,15 +203,6 @@ export function HomeScreen() {
             component took over from Home._wireWidgetStrip and what it left
             there.
         */}
-        {/*
-            GETTING STARTED (communities, stage 5): the tour and the season's
-            First challenges, for a new account that has just come through
-            "What communities do you want to join?", on top of everything
-            until it is done and closed (the one list, 2026-10-01). Ships
-            empty and hidden, like the widget strip below it: whether to draw
-            it is known only after the session is read (./getting-started.tsx).
-        */}
-        <GettingStarted />
         <WidgetStrip />
         {/*
             ── AREA 1 of 4: YOUR APPS ─────────────────────────────────

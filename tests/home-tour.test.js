@@ -44,8 +44,8 @@
 //   - THE REPLAY. Settings clears the flag, asks, and navigates home.
 //   - DONE ON THE ACCOUNT (#3237). A browser that has the flag copies it to
 //     the account once, never for an account whose join screen is due; the
-//     write tells the Getting started card, whose tour row ticks. Executed
-//     against a stubbed App, fetch and storage, not grepped.
+//     write announces itself on the document. Executed against a stubbed
+//     App, fetch and storage, not grepped.
 //
 // Run with: node --test tests/home-tour.test.js
 'use strict';
@@ -78,11 +78,11 @@ const spotlight = loadTsx(`${TOUR_DIR}/spotlight.ts`);
 
 test('the six steps are the ones the design settled on, in order', () => {
   assert.equal(steps.TOUR_LENGTH, 6);
-  // #3240: the tour runs when asked, from the first row of Home's Getting
-  // started card, so it keeps only what nothing else on the first run says:
+  // #3240: the tour runs when asked, so it keeps only what nothing else on
+  // the first run says:
   // your apps -> the menu -> what is in it (feedback and a new change, one
   // step, one well) -> where to replay it. The welcome, Workshop, Discover
-  // and Getting started steps repeated the join screen and the card.
+  // and Getting started steps repeated the join screen.
   // #3567 put one stop in front: what a community is, which the join screen
   // asks about without explaining and every later step takes for granted.
   // #4604 put one before the last: Homeroom bot, in Messages, so nobody
@@ -848,7 +848,7 @@ test('nothing opens the tour by itself: a request, or a reload under one in prog
     /firstRunRev/, /TermsFirstRun/]) {
     assert.doesNotMatch(OVERLAY_SRC, gone);
   }
-  // A request (Getting started's first row, Settings' Replay) opens it at
+  // A request (Settings' Replay) opens it at
   // once, whatever was finished before, once Home is on screen.
   const replay = OVERLAY_SRC.slice(OVERLAY_SRC.indexOf('const request = useTourRequest();'));
   const asked = replay.slice(0, replay.indexOf('}, [request, start]);'));
@@ -1057,8 +1057,6 @@ test('the tour never reads or writes the challenge-based onboarding gate', () =>
     assert.doesNotMatch(src, /HomePanels/);
   }
   // Communities, stage 5: the tour no longer points at Challenges at all.
-  // Its first steps are the Getting started card's, which it points at
-  // instead.
   assert.ok(!steps.TOUR_STEPS.some((s) => s.id === 'challenges'));
 });
 
@@ -1153,7 +1151,7 @@ test('Finish and Skip record done on the account: one POST, and App.user and the
   } finally { shell.restore(); }
 });
 
-test('a write that lands tells the Getting started card, whose tour row ticks', async () => {
+test('a write that lands announces sv:tour-done on the document', async () => {
   const shell = withShell({ user: { id: 7 } });
   const events = [];
   const before = { document: globalThis.document, CustomEvent: globalThis.CustomEvent };
@@ -1177,9 +1175,8 @@ test('a write that lands tells the Getting started card, whose tour row ticks', 
     globalThis.document = before.document;
     globalThis.CustomEvent = before.CustomEvent;
   }
-  const CARD = read('frontend/src/features/home/getting-started.tsx');
-  assert.match(CARD, /document\.addEventListener\(TOUR_DONE_EVENT, onChange\);/);
 });
+
 
 test('a replay finished on a verified session sets done again, on the account too', async () => {
   // Settings' Replay clears only this browser's flag and asks: the account's
