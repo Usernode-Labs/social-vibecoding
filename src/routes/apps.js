@@ -1815,6 +1815,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         icon_url: appRow.icon_image_id ? `/app-icons/${appRow.icon_image_id}` : null,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
+        retryLimit: MAX_RETRY_COUNT,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,
         url,
@@ -3705,8 +3706,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
 
       if (appRow.retry_count >= MAX_RETRY_COUNT && !req.user.canAdminWrite) {
+        // The caller passed canManageApp, the same audience that may read
+        // lastFailure, so the panel can explain the limit from this reply.
         return res.status(429).json({
           error: `Retry limit reached (${MAX_RETRY_COUNT}). Ask an admin to investigate.`,
+          code: 'retry_limit',
+          retryCount: appRow.retry_count,
+          retryLimit: MAX_RETRY_COUNT,
+          lastFailure: (appRow.last_failure && typeof appRow.last_failure === 'object')
+            ? appRow.last_failure : null,
         });
       }
 

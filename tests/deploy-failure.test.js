@@ -169,3 +169,27 @@ test('containerLogs still win over stderr when the container did boot', () => {
     'Error: connect ECONNREFUSED 127.0.0.1:5432'
   );
 });
+
+test('record() says whose problem a failure looks like (origin)', () => {
+  const hc = new Error('Healthcheck failed');
+  hc.healthcheckFailed = true;
+  hc.containerLogs = 'Error: Cannot find module x';
+  assert.equal(deployFailure.record(hc).origin, 'app');
+
+  const pg = new Error('Healthcheck failed');
+  pg.healthcheckFailed = true;
+  pg.infrastructure = true;
+  assert.equal(deployFailure.record(pg).origin, 'platform');
+
+  const clone = new Error('clone timed out');
+  clone.cloneFailed = true;
+  assert.equal(deployFailure.record(clone).origin, 'platform');
+
+  const build = new Error('x');
+  build.buildFailed = true;
+  build.buildLog = 'error: nope';
+  assert.equal(deployFailure.record(build).origin, 'app');
+
+  assert.equal(deployFailure.record(new Error('mystery')).origin, null);
+  assert.equal(deployFailure.syntheticRecord('other', 'watchdog').origin, null);
+});

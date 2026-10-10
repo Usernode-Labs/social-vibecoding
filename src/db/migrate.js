@@ -5736,13 +5736,15 @@ async function seedStagingFailedApp(pool, config) {
       stage: 'healthcheck',
       reason: "[exited (exit=1)] Error: Cannot find module './lib/dapp-server'",
       log: logLines,
+      origin: 'app',
       at: new Date().toISOString(),
       sha: null,
     };
+    // retry_count 3 is the retry limit, so the panel shows its limit banner.
     await pool.query(
       `INSERT INTO apps (name, slug, status, view_visibility, created_by, retry_count, last_failure)
        SELECT 'Staging demo failed app', 'staging-demo-failed-app', 'error', 'public',
-              id, 0, $1::jsonb
+              id, 3, $1::jsonb
          FROM users WHERE username = 'staging-demo-user'
        ON CONFLICT (slug) DO UPDATE
          SET name = EXCLUDED.name,
