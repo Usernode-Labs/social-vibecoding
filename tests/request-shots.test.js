@@ -412,7 +412,8 @@ test('the page folds the words and always shows the screenshots after the fold (
 test('the words lift the screenshots for everyone, take the toggle\'s click, and keep the viewer\'s scope', () => {
   const src = read(HEAD);
   assert.doesNotMatch(src, /suggest-settings'|suggestShortcutEnabled/, 'no device switch decides where the screenshots go');
-  assert.match(src, /const \{ words, shots \} = useMemo\(\(\) => requestShots\(html\), \[html\]\);/);
+  assert.match(src, /const \{ words, shots \} = useMemo\(\(\) => requestShots\(html\), \[html, t\]\);/,
+    'lifted again only when the words or the language change');
   assert.match(src, /const inner = useInnerHtml\(words\);\n\s+const shotsInner = useInnerHtml\(shots\);/,
     'the same wrapper while the string is the same, so a hidden comment stays hidden');
   assert.match(src, /if \(togglePinShot\(event\.target, event\.currentTarget\)\) event\.preventDefault\(\);/);

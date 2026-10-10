@@ -118,7 +118,9 @@ function reducedMotion(): boolean {
 export function RequestWords({ html }: { html: string }): ReactNode {
   const t = useMessages('project');
   const text = useRef<HTMLDivElement>(null);
-  const { words, shots } = useMemo(() => requestShots(html), [html]);
+  // `t` is the language on screen's: a switch lifts the pictures again, so
+  // their "Hide comment" buttons are in its words.
+  const { words, shots } = useMemo(() => requestShots(html), [html, t]);
   // Memoised on the strings, so a re-render keeps the nodes, and with them
   // a comment someone hid.
   const inner = useInnerHtml(words);

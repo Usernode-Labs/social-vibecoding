@@ -4398,5 +4398,57 @@
   "places.bar.unread_other": {
     "text": "{{count}} unread",
     "description": "One thing that waits for this person, read by screen readers on the places button at the top of a project's page: messages in the project's channels they have not read. {{count}} is how many."
+  },
+  "places.mergedCard.text": {
+    "text": "#{{channel}} was merged into this topic",
+    "description": "Card in a topic's chat history at the point where another topic was merged into it. {{channel}} is the merged topic's handle, written after its #, for example signup. Keep the # before it."
+  },
+  "places.mergedCard.read": {
+    "text": "Read #{{channel}} ›",
+    "description": "Link on the card in a topic's chat history that marks where another topic was merged into it: opens the merged topic's old channel, which can still be read. {{channel}} is that topic's handle, written after its #. Keep the # and the arrow."
+  },
+  "places.topicHead.mergedInto": {
+    "text": "Merged into #{{channel}}. Read only.",
+    "description": "Line at the top of a topic's chat channel once the topic was merged into another one: its channel can be read but not written in. {{channel}} is the handle of the topic it joined, written after its #. Keep the #."
+  },
+  "places.topicHead.mergedIntoLink": {
+    "text": "Merged into <0>#{{channel}}</0>. Read only.",
+    "description": "Line at the top of a topic's chat channel once the topic was merged into another one: its channel can be read but not written in. {{channel}} is the handle of the topic it joined, written after its #; <0></0> makes it a link that opens that topic. Keep the #."
+  },
+  "places.topicHead.mergedUnnamed": {
+    "text": "Merged into another topic. Read only.",
+    "description": "Line at the top of a topic's chat channel once the topic was merged into another one that cannot be named: its channel can be read but not written in."
+  },
+  "places.topicHead.archived": {
+    "text": "Archived. Read only.",
+    "description": "Line at the top of a topic's chat channel once the topic was archived: its channel can be read but not written in."
+  },
+  "places.topicHead.requests_one": {
+    "text": "{{count}} request ›",
+    "description": "Link at the top of a topic's chat channel: opens the project's All items page narrowed to the open requests filed under this topic. {{count}} is how many there are. Keep the arrow."
+  },
+  "places.topicHead.requests_other": {
+    "text": "{{count}} requests ›",
+    "description": "Link at the top of a topic's chat channel: opens the project's All items page narrowed to the open requests filed under this topic. {{count}} is how many there are. Keep the arrow."
+  },
+  "places.topicHead.aboutThenRequests": {
+    "text": "{{about}} · <0>{{requests}}</0>",
+    "description": "Line at the top of a topic's chat channel. {{about}} is what the topic is for, as its members wrote it; <0></0> is a link to the requests filed under it, and {{requests}} its words, already worded, for example \"14 requests ›\"."
+  },
+  "topic.request.shots.hideComment": {
+    "text": "Hide comment",
+    "description": "Small button on the corner of a screenshot in a request, while the comment pinned to the picture is drawn over it: hides the comment."
+  },
+  "topic.request.shots.hideComments": {
+    "text": "Hide comments",
+    "description": "Small button on the corner of a screenshot in a request, while the several comments pinned to the picture are drawn over it: hides them."
+  },
+  "topic.request.shots.showComment": {
+    "text": "Show comment",
+    "description": "Small button on the corner of a screenshot in a request, while the comment pinned to the picture is hidden: draws it over the picture again."
+  },
+  "topic.request.shots.showComments": {
+    "text": "Show comments",
+    "description": "Small button on the corner of a screenshot in a request, while the several comments pinned to the picture are hidden: draws them over the picture again."
   }
 }

@@ -84,16 +84,16 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
 }
 
 /** Where a chip goes: the screen it names. */
-type ChipKey = 'Messages' | 'Workshop' | 'All items';
+type ChipKey = 'messages' | 'workshop' | 'allItems';
 
 /**
  * The chip's words by destination, as message ids. The key names the
  * destination and is never shown.
  */
 const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
-  Messages: { label: 'project:topic.back.messages', name: 'project:topic.back.toMessages' },
-  Workshop: { label: 'project:topic.back.workshop', name: 'project:topic.back.toWorkshop' },
-  'All items': { label: 'project:topic.back.allItems', name: 'project:topic.back.toAllItems' },
+  messages: { label: 'project:topic.back.messages', name: 'project:topic.back.toMessages' },
+  workshop: { label: 'project:topic.back.workshop', name: 'project:topic.back.toWorkshop' },
+  allItems: { label: 'project:topic.back.allItems', name: 'project:topic.back.toAllItems' },
 };
 
 /**
@@ -104,22 +104,22 @@ const CHIP_TEXT: Record<ChipKey, { label: string; name: string }> = {
  * the Workshop. Read as state, so the chip never compares its own words.
  */
 function chipFor(href: string, workshopTab: string | null): ChipKey {
-  if (href.startsWith('#messages')) return 'Messages';
-  return workshopTab === 'all' && /\/workshop$/.test(href) ? 'All items' : 'Workshop';
+  if (href.startsWith('#messages')) return 'messages';
+  return workshopTab === 'all' && /\/workshop$/.test(href) ? 'allItems' : 'workshop';
 }
 
 /** One chip: the destination's name behind the chevron. */
-function TopicChip({ href, label }: { href: string; label: ChipKey }): ReactNode {
+function TopicChip({ href, to }: { href: string; to: ChipKey }): ReactNode {
   const t = useMessages('project');
   return (
     <a
       className="dev-topic-back un-touch-target"
       href={href}
-      aria-label={t(CHIP_TEXT[label].name)}
+      aria-label={t(CHIP_TEXT[to].name)}
       onClick={onBackClick}
     >
       <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
-      <span>{t(CHIP_TEXT[label].label)}</span>
+      <span>{t(CHIP_TEXT[to].label)}</span>
     </a>
   );
 }
@@ -134,14 +134,14 @@ export function TopicBack(): ReactNode {
   // the item was opened from.
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
   const workshopTab = av && typeof av._workshopTab === 'function' ? av._workshopTab() : null;
-  const back = <TopicChip href={href} label={chipFor(href, workshopTab)} />;
+  const back = <TopicChip href={href} to={chipFor(href, workshopTab)} />;
   // #3691: and offers its project's Workshop beside that, styled the same.
   const workshop = topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin });
   if (!workshop) return back;
   return (
     <div className="dev-topic-backs">
       {back}
-      <TopicChip href={workshop} label="Workshop" />
+      <TopicChip href={workshop} to="workshop" />
     </div>
   );
 }
