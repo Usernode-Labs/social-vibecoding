@@ -4618,14 +4618,15 @@ async function restartedBuildsBefore(pool, { appId, issueNumber, runId }) {
  * cleared, and what the spec turn cost stays on the run for the build to
  * carry. True when the run was put back; never throws.
  */
-async function resumeLiveBuildFromSpec(pool, { runId, appId, specMd, costUsd = null }) {
+async function resumeLiveBuildFromSpec(pool, { runId, appId, specMd, specHtml = null, costUsd = null }) {
   try {
     const { rows } = await pool.query(
       `UPDATE homeroom_bot_runs
-          SET build_spec_md = $2, build_cost_usd = $3, build_session_id = NULL, live_build_waiting_at = NOW()
+          SET build_spec_md = $2, build_cost_usd = $3, build_session_id = NULL, live_build_waiting_at = NOW(),
+              build_spec_html = $4
         WHERE id = $1 AND mode = 'live' AND build_ok IS NULL AND proposal_session_id IS NULL
         RETURNING id`,
-      [runId, specMd, Number.isFinite(costUsd) ? costUsd : null],
+      [runId, specMd, Number.isFinite(costUsd) ? costUsd : null, specHtml || null],
     );
     if (!rows.length) return false;
   } catch (err) {
@@ -4639,9 +4640,10 @@ async function resumeLiveBuildFromSpec(pool, { runId, appId, specMd, costUsd = n
 /** The plan a live run kept from an earlier build (resumeLiveBuildFromSpec), or null. Never throws. */
 async function keptRunSpec(pool, runId) {
   const { rows: [r] = [] } = await pool.query(
-    'SELECT build_spec_md FROM homeroom_bot_runs WHERE id = $1', [Number(runId)],
+    'SELECT build_spec_md, build_spec_html FROM homeroom_bot_runs WHERE id = $1', [Number(runId)],
   ).catch(() => ({ rows: [] }));
-  return r?.build_spec_md || null;
+  if (!r?.build_spec_md) return null;
+  return { md: r.build_spec_md, html: r.build_spec_html || null };
 }
 
 /** The live run a session is the build of, while it has no proposal or recorded outcome yet. */
@@ -4909,7 +4911,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
   pendingLive.delete(Number(sessionId));
   try {
     const { rows: [session] } = await pool.query(
-      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md, cs.agent_model,
+      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md, cs.spec_html, cs.agent_model,
               (SELECT MAX(version) FROM chat_session_specs WHERE session_id = cs.id) AS spec_version
          FROM chat_sessions cs WHERE cs.id = $1`,
       [sessionId],
@@ -4983,10 +4985,11 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
         // only once its spec turn finished with one (homeroom-bot-live.js
         // draftSpec publishes it after the turn), so a spec turn cut short
         // has none to carry on from.
-        const keptSpec = specRead?.ok ? specRead.specMd
-          : session.spec_md || await keptRunSpec(pool, plan.runId);
-        if (keptSpec && await resumeLiveBuildFromSpec(pool, {
-          runId: plan.runId, appId: plan.appId, specMd: keptSpec, costUsd,
+        const keptSpec = specRead?.ok ? { md: specRead.specMd, html: specRead.specHtml || null }
+          : session.spec_md ? { md: session.spec_md, html: session.spec_html || null }
+          : await keptRunSpec(pool, plan.runId);
+        if (keptSpec?.md && await resumeLiveBuildFromSpec(pool, {
+          runId: plan.runId, appId: plan.appId, specMd: keptSpec.md, specHtml: keptSpec.html, costUsd,
         })) {
           log.info('homeroom-bot', 'Kept the plan of a live build a restart interrupted; its build goes on from it', {
             app: app.slug, issueNumber: plan.issueNumber, sessionId, why: what,
@@ -7746,9 +7749,12 @@ async function buildLive({
         specGuidance: guidance?.spec || null,
         buildGuidance: guidance?.build || null,
       } : {}),
+      // #4662: a kept plan's screens ride along whatever the build: a
+      // recovered build publishes its plan whole, as a fresh one does.
+      ...(presetSpecHtml ? { presetSpecHtml } : {}),
       // #4488: a complicated change's review, whatever builds later changes;
-      // its spec's screens; and its description says it was checked first.
-      ...(checkFirst ? { review, presetSpecHtml, checkedFirst: !!presetSpec } : {}),
+      // and its description says it was checked first.
+      ...(checkFirst ? { review, checkedFirst: !!presetSpec } : {}),
     });
     buildMs = Date.now() - buildStartedMs;
   } finally {
@@ -8144,7 +8150,7 @@ async function liveBuildCandidates(pool, { scope: given = null, liveSlugs = [], 
   if (live.scopeIsEmpty(scope)) return [];
   const { rows } = await pool.query(
     `SELECT r.id, r.app_id, r.issue_number, r.build_note, r.live_build_waiting_at, r.created_at,
-            r.build_spec_md, r.build_cost_usd, r.charged, r.payer_user_id, r.complicated, r.plan,
+            r.build_spec_md, r.build_spec_html, r.build_cost_usd, r.charged, r.payer_user_id, r.complicated, r.plan,
             COALESCE(q.user_id, i.created_by) AS person_id
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -8384,10 +8390,15 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     carriedCostUsd: run.build_spec_md ? Number(run.build_cost_usd) || 0 : 0,
     // #4488: a complicated change, planned with its requester first; once
     // they said Build it, built from exactly the spec they were shown (its
-    // markdown above, its screens read back here).
+    // markdown above, its screens read back here). A plan kept from a build
+    // a restart interrupted carries its own HTML beside it (#4662): a
+    // complicated plan still prefers the exact version its requester
+    // approved, and falls back to the run's when that cannot be read.
     complicated: run.complicated === true && !requester?.firstVersion,
     plan: run.plan && typeof run.plan === 'object' ? run.plan : null,
-    presetSpecHtml: run.build_spec_md && run.complicated === true ? await approvedSpecHtml(pool, run.plan) : null,
+    presetSpecHtml: run.build_spec_md
+      ? ((run.complicated === true ? await approvedSpecHtml(pool, run.plan) : null) || run.build_spec_html || null)
+      : null,
   };
   log.info('homeroom-bot', 'Live build started', {
     app: app.slug, issueNumber, runId: run.id, ...(run.build_spec_md ? { fromKeptPlan: true } : {}),
@@ -10031,6 +10042,8 @@ module.exports = {
   isRecoveredBotSession,
   settleReapedTurn,
   completeRecoveredLive,
+  // #4662: put a live run back in line with its kept plan, markdown and HTML.
+  resumeLiveBuildFromSpec,
   reviewRecoveredBuild,
   liveSayer,
   announceBuilt,

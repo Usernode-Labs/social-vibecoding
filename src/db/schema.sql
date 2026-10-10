@@ -10172,6 +10172,9 @@ ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_attempts INTEGER NO
 -- text is the build session's spec doc; kept here for the dashboard and the
 -- export, since a shadow build's session is archived and nobody opens it.
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_spec_md TEXT;
+-- The HTML document of the kept plan (#3699), when it was written as one, so
+-- a build that carries on from it publishes it whole.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_spec_html TEXT;
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_build_queue
   ON homeroom_bot_runs(app_id, build_queued_at)
   WHERE build_queued_at IS NOT NULL AND build_ok IS NULL;
