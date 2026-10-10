@@ -990,11 +990,25 @@ test('the board card and the running badge carry the live count', () => {
   assert.doesNotMatch(badge, /12\/523/);
   assert.match(badge, />Checks<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="523" aria-valuenow="12" aria-label="12 of 523 checks done"><span class="checks-chip-bar-fill" style="width:2%"><\/span><\/span><\/span>$/);
   assert.match(badge, /title="12 of 523 checks done\. Automated tests/);
+  // #4628: while the run is in flight but does not know its total yet — the
+  // build and prepare phase — the bar is there from the start, pulsing, in
+  // the ARIA indeterminate form: no valuenow, no valuemax, no fill. The
+  // build phase keeps its words ("Checks starting…", which a declared check
+  // reads on the board) beside its bar.
+  const startingBadge = AppView.checksBadgeHtml({ status: 'promoted' });
+  assert.match(startingBadge, />Checks starting…<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>$/, 'the build phase: words and the busy bar');
   const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
-  assert.match(quiet, /Checks running…</, 'no count before the first frame');
-  assert.doesNotMatch(quiet, /checks-chip-bar/, 'no bar before the total is known');
+  assert.match(quiet, />Checks<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="Checks starting"><\/span><\/span>$/, 'the bar shows from the start');
+  assert.doesNotMatch(quiet, /aria-valuenow/, 'indeterminate: no valuenow');
+  assert.doesNotMatch(quiet, /aria-valuemax/, 'indeterminate: no valuemax');
+  assert.match(quiet, /title="Checks starting\. Automated tests/);
   const noTotal = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } });
-  assert.match(noTotal, /Checks running…\s7</, 'without a total the words carry the count');
+  assert.match(noTotal, /checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="7 checks done so far"/, 'the words carry the count while there is no total');
+  assert.match(noTotal, /title="7 checks done so far\. Automated tests/);
+  // A deferred run is nothing in flight: today's words, no bar.
+  const deferred = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', check_phase: 'deferred' });
+  assert.match(deferred, /Checks running…</);
+  assert.doesNotMatch(deferred, /checks-chip-bar/, 'no bar over nothing running');
 
   // The status-band chip the cards, the Workshop's rows and All items share.
   const tag = (pr) => AppView.statusTagSpecs(pr, {}).find((t) => t.key === 'tag-checks-running');
@@ -1005,17 +1019,23 @@ test('the board card and the running badge carry the live count', () => {
   assert.equal(running.spinner, true);
   const starting = tag({ status: 'promoted', check_state: null, console_check_state: null });
   assert.equal(starting.label, 'Checks starting…');
-  assert.equal(starting.progress, undefined);
+  assert.deepEqual({ ...starting.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks starting' });
   const early = tag({ status: 'promoted', check_state: 'pending', checks_progress: null });
-  assert.equal(early.label, 'Checks running…');
-  assert.equal(early.progress, undefined);
+  assert.equal(early.label, 'Checks');
+  assert.deepEqual({ ...early.progress }, { done: 0, total: 0, indeterminate: true, text: 'Checks starting' });
+  const earlyRan = tag({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 7, passed: 7, failed: 0 } });
+  assert.deepEqual({ ...earlyRan.progress }, { done: 0, total: 0, indeterminate: true, text: '7 checks done so far' });
 
-  // Both React renderers draw the bar from the spec.
+  // Both React renderers draw the bar from the spec, the busy one included.
   const card = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(card, /\{b\.progress \? <ChecksBar progress=\{b\.progress\} \/> : null\}/);
   assert.match(card, /role="progressbar"[\s\S]*aria-label=\{progress\.text\}/);
+  assert.match(card, /checks-chip-bar checks-chip-bar-busy/);
   const row = read('frontend/src/features/dev-board/workshop/work-row.tsx');
   assert.match(row, /\{t\.progress \? <ChecksBar progress=\{t\.progress\} \/> : null\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.checks-chip-bar-busy \{[\s\S]*?dev-ledger-progress-pulse/, 'the pulse is the ledger bar\'s own');
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.checks-chip-bar-busy \{ animation: none; \}/, 'still under reduced motion');
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {
