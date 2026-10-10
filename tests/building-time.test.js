@@ -106,7 +106,7 @@ test('the card: how much is used, when it resets, each request\'s share and wher
 
 test('the shell prerenders only an empty marker, so hydration has nothing to disagree with', () => {
   const { BuildingTime } = loadTsx(CARD);
-  assert.equal(renderToHtml(createElement(BuildingTime)), '<div aria-hidden="true" class="h-px"></div>');
+  assert.equal(renderToHtml(createElement(BuildingTime)), '<div aria-hidden="true" class="h-0"></div>');
   const usage = read('frontend/src/features/settings/sections/usage.tsx');
   assert.ok(usage.indexOf('<AiBudgetRow />') < usage.indexOf('<BuildingTime />') && usage.indexOf('<BuildingTime />') < usage.indexOf('id="settings-spend"'),
     'under the AI allowance, above the own-key spend');

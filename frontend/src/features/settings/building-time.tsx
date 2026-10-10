@@ -20,9 +20,9 @@
  *   └───────────────────────────────────────────────┘
  *
  * Shares of the week, never money (GET /api/me/building-time words nothing
- * else). It is read when the section first shows, not when the shell loads,
- * and nothing renders until it arrives: the shell's prerender has only an
- * empty marker here, so hydration has nothing to disagree with.
+ * else). It is read when the section shows, not when the shell loads, and
+ * nothing renders until it arrives: the shell's prerender has only an empty
+ * marker here, so hydration has nothing to disagree with.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -165,9 +165,9 @@ export function BuildingTimeView({ week, reset }: {
 }
 
 /**
- * The card as the page mounts it: an empty marker until the section first
- * shows (the page keeps every section in the shell and hides the ones not
- * open), then the week, read once per showing.
+ * The card as the page mounts it: an empty marker until the section shows
+ * (the page keeps every section in the shell and hides the ones not open),
+ * then the week, read each time it shows.
  */
 export function BuildingTime(): ReactNode {
   const marker = useRef<HTMLDivElement>(null);
@@ -176,8 +176,9 @@ export function BuildingTime(): ReactNode {
 
   useEffect(() => {
     const el = marker.current;
-    if (!el || typeof IntersectionObserver !== 'function') return undefined;
+    if (!el || typeof ResizeObserver !== 'function') return undefined;
     let ctl: AbortController | null = null;
+    let shown = false;
     const load = () => {
       ctl?.abort();
       ctl = typeof AbortController === 'function' ? new AbortController() : null;
@@ -191,21 +192,25 @@ export function BuildingTime(): ReactNode {
         })
         .catch(() => { /* no card: the page reads the same without it */ });
     };
-    // The section is display:none until it is opened, so the marker comes
-    // into view exactly when it is.
-    const seen = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) load();
+    // The section is display:none until it is opened, so the marker has no
+    // width until then. It takes one the moment the section shows, wherever
+    // the page is scrolled (a deep link to a later part of the page scrolls
+    // past this one), and the week is read each time it does.
+    const sized = new ResizeObserver((entries) => {
+      const visible = entries.some((e) => e.contentRect.width > 0);
+      if (visible && !shown) load();
+      shown = visible;
     });
-    seen.observe(el);
+    sized.observe(el);
     return () => {
-      seen.disconnect();
+      sized.disconnect();
       ctl?.abort();
     };
   }, []);
 
   return (
     <>
-      <div ref={marker} aria-hidden="true" className="h-px" />
+      <div ref={marker} aria-hidden="true" className="h-0" />
       {week ? <BuildingTimeView week={week} reset={reset} /> : null}
     </>
   );
