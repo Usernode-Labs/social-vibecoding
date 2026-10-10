@@ -1396,13 +1396,14 @@ function shapeNextStep(session, checks, viewerId = null) {
 
 // Will the error lane run this stored 'error' again on its own? The row is
 // one findStuckCheckSessions picks up, a retry is scheduled, and the streak
-// is under CHECK_MAX_AUTO_RETRIES. A row that does not say answers no, so a
-// rerun is never promised that will not come.
+// is under CHECK_MAX_AUTO_RETRIES or the error is the platform's own inside
+// its day (staging-recovery.errorWithinAutoRetries). A row that does not say
+// answers no, so a rerun is never promised that will not come.
 function erroredRunWillRetry(session) {
   if (!session || session.check_state !== 'error' || !session.branch_name) return false;
   const recovery = require('./staging-recovery');
   if (!recovery.isStuckCheckRecoveryScope(session) || session.check_next_retry_at == null) return false;
-  return (Number(session.consecutive_check_failures) || 0) < recovery.checkMaxAutoRetries();
+  return recovery.errorWithinAutoRetries(session);
 }
 
 // The 'error' a red run that overlapped a platform rollout was recorded as

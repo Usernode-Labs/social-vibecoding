@@ -33,9 +33,10 @@
 //     on and is green, so a failure the proposal's older branch carried may
 //     well be main's (10 Oct 2026: five challenge tests failed every weekend
 //     until #4648; two approved Homeroom bot proposals cut before it stayed
-//     red on them, with nobody able to sync them). Once per proposal, as for
-//     any check: if the suite still fails on a head containing main, the
-//     failure is the proposal's own;
+//     red on them, with nobody able to sync them), or has passed on main's
+//     tip as it stands, which the proposal is behind (mainGreenAtTip). Once
+//     per proposal, as for any check: if the suite still fails on a head
+//     containing main, the failure is the proposal's own;
 //   - it is behind main and merges with it cleanly (services/integration.js);
 //   - at most once per head, and at most once per check: a check it was
 //     synced for that still fails once it contains main is its own failure
@@ -138,16 +139,22 @@ async function openVerdicts(pool, appId) {
 }
 
 // Main watch's latest verdict for the app (services/main-watch.js): whether
-// the unit suite last passed on main, and when. { passing, at } or null.
+// the unit suite last passed on main, when, on which commit, and main's tip
+// now. { passing, at, sha, tip } or null.
 async function mainWatchVerdict(pool, appId) {
   const { rows } = await pool.query(
-    'SELECT main_check_state, main_check_at FROM apps WHERE id = $1',
+    'SELECT main_check_state, main_check_at, main_check_sha, main_sha FROM apps WHERE id = $1',
     [appId]
   );
   const row = rows[0];
   if (!row) return null;
   const at = row.main_check_at ? Date.parse(row.main_check_at) : NaN;
-  return { passing: row.main_check_state === 'passing', at: Number.isFinite(at) ? at : null };
+  return {
+    passing: row.main_check_state === 'passing',
+    at: Number.isFinite(at) ? at : null,
+    sha: row.main_check_sha || null,
+    tip: row.main_sha || null,
+  };
 }
 
 // The unit suite's own key, as fixed_check_sync_keys records it.
@@ -159,6 +166,18 @@ function mainGreenSince(row, mainWatch) {
   if (!mainWatch || !mainWatch.passing || !mainWatch.at) return false;
   const ran = row.checks_checked_at ? Date.parse(row.checks_checked_at) : NaN;
   return Number.isFinite(ran) && mainWatch.at > ran;
+}
+
+// Main watch passed on main's tip as it stands. A proposal behind that tip
+// (syncOne measures it, and leaves one level with main alone) lacks commits
+// of a main that is green, whenever its own run was: the other way a
+// failure its older branch carried may be main's. On 10 Oct 2026 five
+// approved proposals failed one unit test that #4720 had fixed on main. Main
+// watch passed on the fix's release at 21:32 and their re-runs ended at
+// 21:43, with nothing ready to merge after them, so the rule above alone
+// left them red until somebody synced each by hand.
+function mainGreenAtTip(mainWatch) {
+  return !!mainWatch && mainWatch.passing && sameSha(mainWatch.sha, mainWatch.tip);
 }
 
 /**
@@ -199,7 +218,7 @@ function select(rows, passes, mainWatch = null) {
       const unitBlocks = (row.failing || []).some((f) => !f.advisory && isUnitSuiteRow(f));
       if (!unitBlocks) { skipped[id] = 'nothing_fixed'; continue; }
       if (tried.has(UNIT_KEY)) { skipped[id] = 'already_tried'; continue; }
-      if (!mainGreenSince(row, mainWatch)) { skipped[id] = 'unit_suite_only'; continue; }
+      if (!mainGreenSince(row, mainWatch) && !mainGreenAtTip(mainWatch)) { skipped[id] = 'unit_suite_only'; continue; }
       candidates.push({ id, head, keys: [UNIT_KEY] });
       continue;
     }

@@ -216,9 +216,17 @@ test('a shard runs the pretest, then test:shard; without TEST_SHARD, npm test as
   try {
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'x', 'test:shard': 'y' } }));
     const tail = unitSuite.RUN_SCRIPT.slice(unitSuite.RUN_SCRIPT.indexOf('TEST_CMD='));
-    const run = (shard) => spawnSync('bash', ['-c',
-      `set -eu\nWS="${dir}"\ncd "${dir}"\nnpm() { echo "npm $*"; }\n${tail}`],
-    { encoding: 'utf8', env: { ...process.env, ...(shard ? { TEST_SHARD: shard } : {}) } });
+    // The environment this test runs in may be a shard's own: a split suite
+    // sets TEST_SHARD on every Job, and the "whole suite" case below must
+    // not inherit it (10 Oct 2026: main went red on exactly that).
+    const run = (shard) => {
+      const env = { ...process.env };
+      delete env.TEST_SHARD;
+      if (shard) env.TEST_SHARD = shard;
+      return spawnSync('bash', ['-c',
+        `set -eu\nWS="${dir}"\ncd "${dir}"\nnpm() { echo "npm $*"; }\n${tail}`],
+      { encoding: 'utf8', env });
+    };
     const sharded = run('2/3');
     assert.equal(sharded.status, 0);
     assert.deepEqual(sharded.stdout.trim().split('\n'), ['npm run pretest --if-present', 'npm run test:shard']);
@@ -266,6 +274,49 @@ test('a unit shard\'s Job: suffixed name, shard label, its requests', async (t) 
   assert.equal(resources.requests.cpu, '1500m');
   assert.equal(resources.limits.cpu, '8');
   assert.equal(resources.limits.memory, '3Gi');
+});
+
+test('the shards of a run with a UUID id each get an input Secret of their own (10 Oct 2026)', async (t) => {
+  // Cut from the Job's name, `-input` pushed the shard's suffix off the end
+  // of the 63-character limit, every shard asked for the same Secret, and
+  // only the first could start: every proposal's split unit suite was a
+  // suite that could not run.
+  const secrets = [];
+  const jobs = [];
+  kubernetes._setClientsForTest({
+    batch: {
+      createNamespacedJob: async ({ body }) => { jobs.push(body); return { metadata: { uid: `u${jobs.length}` } }; },
+      readNamespacedJob: async () => ({ status: { succeeded: 1 } }),
+      deleteNamespacedJob: async () => {},
+    },
+    core: {
+      createNamespacedSecret: async ({ body }) => {
+        if (secrets.includes(body.metadata.name)) throw Object.assign(new Error('already exists'), { code: 409 });
+        secrets.push(body.metadata.name);
+        return body;
+      },
+      readNamespacedSecret: async () => ({ metadata: {} }),
+      replaceNamespacedSecret: async () => ({}),
+      deleteNamespacedSecret: async () => {},
+      listNamespacedPod: async () => ({ items: [{ metadata: { name: 'p' }, status: {} }] }),
+      readNamespacedPodLog: async () => '',
+    },
+  });
+  t.after(() => kubernetes._setClientsForTest(null));
+  const config = { kubernetes: { captureImage: 'c@sha256:a', workerImage: 'w@sha256:b', workerNamespace: 'w', workerServiceAccount: 's' } };
+  const runId = '3e9bc660-fd0a-4ed4-9bb0-a07942694a33';
+  for (const namePrefix of [null, 'sv-unit-early']) {
+    secrets.length = 0;
+    jobs.length = 0;
+    await Promise.all([1, 2, 3].map((k) => kubernetes.runUnitSuiteJob(config, {
+      sessionId: 7736, env: { TEST_SHARD: `${k}/3` }, cmd: ['true'], previewRunId: runId,
+      ...(namePrefix ? { namePrefix } : {}), nameSuffix: k === 1 ? null : `u${k}`, unitShard: `${k}-of-3`,
+    })));
+    assert.equal(new Set(secrets).size, 3, `${namePrefix || 'sv-unit-suite'}: ${secrets.join(', ')}`);
+    assert.ok(secrets.every((n) => n.length <= 63 && n.endsWith('-input')));
+    const shardSecret = (job) => job.spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name;
+    assert.equal(new Set(jobs.map(shardSecret)).size, 3, 'each Job reads its own');
+  }
 });
 
 test('findCheckJobs: every unit shard, and how many the run had', async (t) => {
