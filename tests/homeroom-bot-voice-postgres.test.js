@@ -346,4 +346,38 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     await voice.dropAsks(pool, change.id);
     assert.equal(await voice.asksWaiting(pool, change.id), false);
   });
+
+  await t.test('admins read its week in counts and codes, never anybody\'s words', async () => {
+    // A turn that failed, with what failed on the way.
+    await pool.query(
+      `INSERT INTO homeroom_bot_voice_turns (app_id, place_type, place_ref, place_key, outcome, error, failures, rounds, finished_at)
+       VALUES ($1, 'issue', 12, $2, 'failed', 'no_key', ARRAY['v1:rate_limited:429'], 1, NOW())`,
+      [app.id, `${app.id}:issue:12`],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_change_asks (app_id, session_id, issue_number, instruction, source) VALUES ($1, $2, 12, 'Make the logo bigger', 'chat')`,
+      [app.id, change.id],
+    );
+    const summary = await voice.voiceSummary(pool);
+    assert.ok(summary.turns >= 3);
+    assert.ok(summary.replied >= 2, 'the change\'s reply and the chat\'s');
+    assert.equal(summary.failed, 1);
+    assert.ok(summary.byPlace.session.replied >= 1);
+    assert.ok(summary.byPlace.chat.replied >= 1);
+    assert.equal(summary.byPlace.issue.failed, 1);
+    assert.ok(summary.people >= 2);
+    const failure = summary.recentFailures.find((f) => f.place === 'issue');
+    assert.deepEqual({ ...failure, at: null }, {
+      at: null, app: 'todo-list', place: 'issue', ref: 12, outcome: 'failed', error: 'no_key', failures: ['v1:rate_limited:429'], rounds: 1,
+    });
+    assert.equal(summary.asks.byStatus.queued, 1);
+    assert.ok(summary.asks.byStatus.done >= 2);
+    assert.equal(summary.asks.bySource.chat, 1);
+    assert.deepEqual(summary.asks.waiting.map((w) => [w.change, w.status, w.asks]), [[change.id, 'queued', 1]]);
+    assert.deepEqual(summary.offers.file_request, { done: 1 });
+    assert.doesNotMatch(JSON.stringify(summary), /logo|header|due date|Sort the list/, 'never the words');
+    // And it rides with the console's payload, which the connector reads.
+    const payload = await require('../src/services/homeroom-bot').adminPayload(pool, {}, {});
+    assert.equal(payload.voice.turns, summary.turns);
+  });
 });
