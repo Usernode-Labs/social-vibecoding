@@ -75,11 +75,11 @@ import { devWorkshopStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
-import { callAppView, openHref, voteSpecs } from '../card/fold';
+import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
 import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
-import { VoteButton, VotePicker } from '../card/dev-card';
+import { VotePicker } from '../card/dev-card';
 import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity, openSwitcher } from '../../workshop/community-scope';
 import { registerLevel } from '../../workshop/tab-ladder';
@@ -88,7 +88,6 @@ import {
   ApprovalLine, CommunityCard, ShareItCard, canLeave, canMakePrivate, canMakePublic, confirmMakePrivate, confirmMakePublic,
   leaveCommunity, useCommunity,
 } from './community-card';
-import { WorkshopNotices } from './notices';
 import { FirstVersionCard, ForYouCard, RecentlyLive, hubAlone, hubWorkEmpty, owesVote } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
 import {
@@ -4373,35 +4372,11 @@ export function DevWorkshop(): ReactNode {
     setNeedsLanding(`vote:${row.card.key}`);
     openTab('needs');
   };
-  // Your work's and New for you's rows: lit while their page is open beside
-  // the list, as WorkList lights its own.
+  // New for you's rows: lit while their page is open beside the list, as
+  // WorkList lights its own.
   const rowOn = (r: WorkCardRow): boolean => {
     const ref = topicRef(r.card);
     return !!sideKey && !!ref && sideKey === `${ref.kind}:${ref.id}`;
-  };
-  // Where a row of your own work stands, in words, leading its line: what
-  // its card's state says, never a second guess at it (AppView._workshopBrief).
-  const workState = (r: WorkCardRow): string => {
-    const b = r.brief!;
-    const pill = r.card.pill?.state || null;
-    if (pill && (pill.key === 'merging' || pill.key === 'deploying' || pill.key === 'delivery_pending')) {
-      return t('project:workRow.state.goingLive');
-    }
-    if (b.stage === 'vote') return t('project:workRow.state.waitingForVotes');
-    if (b.stage === 'request') return t('project:workRow.state.pickedUp');
-    if (b.stage === 'live') return t('project:workRow.state.live');
-    return t('project:workRow.state.inProgress');
-  };
-  // #4486: a session of yours nobody else can see says so ("Only you"), its
-  // card's own words, beside where it stands.
-  const onlyYou = (r: WorkCardRow): string[] => r.brief!.tags.filter((tag) => tag.glyph === 'lock').map((tag) => tag.label);
-  // Your work's one next step: a change's own Vote while it is up for one,
-  // else the card's own act (./work-row.tsx primaryAct), else nothing.
-  const workAct = (r: WorkCardRow): ReactNode => {
-    const specs = r.brief && r.brief.vote ? voteSpecs(r.card) : null;
-    if (specs) return <VoteButton yes={specs.yes} no={specs.no} />;
-    const a = primaryAct(r.card);
-    return a ? <ActButton a={a} /> : null;
   };
   // New for you's: Vote, into Needs you; or Build it, the request card's own
   // act when that act is building it (asking Homeroom bot, or yourself).
@@ -4661,13 +4636,6 @@ export function DevWorkshop(): ReactNode {
           {slug ? <ApprovalLine slug={slug} /> : null}
         </section>
       ) : null}
-      {/* ── Lately in this project ──
-          What changed about the project itself — this week's card, and
-          settings changed in the last week — which used to be lines in its
-          channel. Only when there is something to say (./notices.tsx).
-          Straight under the Overview card, where a change to the rule its
-          last line states is reported. */}
-      {slug ? <WorkshopNotices slug={slug} /> : null}
 
       {/* ── WHAT'S HAPPENING ── what is yours, then what is new for you. */}
       {(v.mine && (v.mine.rows.length || v.mine.viewer)) || freshRows.length ? (
@@ -4676,10 +4644,9 @@ export function DevWorkshop(): ReactNode {
       {/* ── Your work ──
           A returning member's own work in flight: their requests, their
           changes and their votes, never what has merged (AppView
-          ._workshopView). One row each (./work-row.tsx ActRow): the title,
-          where it stands in words, and its one next step, the card's own:
-          its Vote, Build it with the bot, Ask for approval. A request your
-          change addresses is drawn as that change. Its first
+          ._workshopView), in the shared work rows (./work-row.tsx WorkRow):
+          the title, the board's words, its tags and its vote, and its ☰. A
+          request your change addresses is drawn as that change. Its first
           WORKSHOP_WORK_FIRST, the rest behind Show N more. */}
       {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <section className="dev-ws-strip" data-ws-mine="">
@@ -4702,21 +4669,13 @@ export function DevWorkshop(): ReactNode {
                     : t('project:workshop.mine.emptyBuild')}
               </p>
             ) : null}
-            <div className="dev-ws-wlist">
-              {v.mine.rows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST)
-                .filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief)
-                .map((r) => (
-                  <ActRow
-                    key={r.key}
-                    row={r}
-                    slug={slug}
-                    sub={rowWords(r.brief!, { lead: [workState(r), ...onlyYou(r)], by: !r.brief!.mine })}
-                    act={workAct(r)}
-                    on={rowOn(r)}
-                    onOpen={openItem}
-                  />
-                ))}
-            </div>
+            <WorkList
+              rows={v.mine.rows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST)
+                .filter((r): r is WorkCardRow => r.t === 'card')}
+              slug={slug}
+              openKey={sideKey}
+              onOpen={openItem}
+            />
             {v.mine.rows.length > WORKSHOP_WORK_FIRST ? (
               <button
                 type="button"

@@ -2175,7 +2175,7 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
   // "yours", because the bot made it. #4486: in the board's words, with its
   // PR number and its age.
   assert.match(lane, /Dark mode toggle/);
-  assert.match(lane, /<span class="dev-ws-wrow-sub">Waiting for votes · PR #212 · Homeroom bot · for #208 · [^<]+ ago<\/span>/);
+  assert.match(lane, /<span class="dev-ws-wrow-sub">PR #212 · Homeroom bot · for #208 · [^<]+ ago<\/span>/);
   assert.ok(!lane.includes('yours'), 'the bot made it, so the line does not say yours');
   // The other bot change keeps working as somebody's owed vote.
   assert.match(workshopHtml(AppView, 'needs'), /Theirs by the bot/,
@@ -2275,25 +2275,26 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   assert.doesNotMatch(rowWords(b), /yours/);
   assert.doesNotMatch(rowWords({ ...plain(claimed.brief), mine: true, by: 'evan' }), /yours/);
 
-  // Drawn (After-Workshop-B): one hairline list, the row a link to the
-  // item's page, then where it stands in words — a session nobody else can
-  // see says Only you (#4486) — and no card chrome: no edge, no coloured
-  // glyph, no @ chip, no 💬, no fold, no tags line and no ☰.
+  // Drawn: the shared work rows (./work-row.tsx WorkRow), as before
+  // After-Workshop-B and again since its follow-up: the row a link to the
+  // item's page, the board's words, its tags line and its ☰, and none of
+  // the card's chrome: no edge, no coloured glyph, no @ chip, no fold.
   const html = workshopHtml(AppView, 'workshop');
   const from = html.indexOf('data-ws-lane="mine"');
   const lane = html.slice(from, html.indexOf('</section>', from));
-  assert.match(lane, /<div class="dev-ws-wlist"><div class="dev-ws-wrow dev-ws-arow" data-ws-row="mine:/);
-  assert.match(lane, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><span class="dev-ws-wrow-sub">In progress · Only you · Change · for #12 · [^<]+ ago<\/span><\/span><\/div>/,
-    'where it stands, that only you can see it, then the board\'s words, less your own name');
-  assert.ok(!lane.includes('dev-ws-wrow-status') && !lane.includes('dev-ws-wrow-menu'), 'no tags line and no menu');
-  // A request you picked up offers the card's own next step, its own words.
+  assert.match(lane, /<div class="dev-ws-wlist"><div class="dev-ws-wrow" data-ws-row="mine:/);
+  assert.match(lane, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><span class="dev-ws-wrow-sub">Change(?: · [^<·]+)? · for #12 · [^<]+ ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-tag" data-tone=/,
+    'the board\'s words, then its tags line');
+  assert.ok(lane.includes('dev-ws-wrow-menu'), 'and its ☰');
+  assert.ok(!lane.includes('dev-ws-arow'), 'not the one-line row with a single act');
   assert.ok(!lane.includes('data-ws-row="mine:issue:12"'), 'the request is drawn as the change, not beside it');
+  // A request you picked up is a row of its own, its tag saying who is on it.
   const Picked = makeAppView();
   seed(Picked);
   Picked._ghIssues[0].in_progress = AppView._ghIssues[0].in_progress;
   const picked = workshopHtml(Picked, 'workshop');
   const pickedRow = picked.slice(picked.indexOf('data-ws-row="mine:issue:12"'));
-  assert.match(pickedRow, /^data-ws-row="mine:issue:12"[^>]*>[\s\S]*?<span class="dev-ws-wrow-sub">Picked up · #12 · alice · 2d ago<\/span><\/span><span class="dev-ws-arow-act"><button type="button" data-act="chooseIssueWork" title="Start an agent session on this request" class="[^"]*">Build it now<\/button><\/span><\/div>/);
+  assert.match(pickedRow, /^data-ws-row="mine:issue:12"[^>]*>[\s\S]*?<span class="dev-ws-wrow-sub">#12 · [^<]+<\/span><span class="dev-ws-wrow-status">[\s\S]*?Picked up · you/);
   assert.ok(!/<span class="dev-ws-wrow-sub">[^<]*yours/.test(lane), 'no "yours" on Your work (#4485)');
   assert.ok(!/data-edge=|dev-card-icon|dev-fold-mark|aria-expanded|data-issue-row|data-session-chip/.test(lane),
     'none of the card\'s chrome, and none of the hooks the Board\'s handler opens a card on');
@@ -2478,7 +2479,7 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   // #4457: on the Workshop tab your work is a list of rows that open the
   // item's page, the change's for a session of yours, never the session.
   const tabRow = workshopHtml(AppView, 'workshop');
-  assert.match(tabRow, /<div class="dev-ws-wrow dev-ws-arow" data-ws-row="mine:my-session:51" data-ws-kind="change" data-ws-open="proposal:51">[\s\S]*?<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a>/);
+  assert.match(tabRow, /<div class="dev-ws-wrow" data-ws-row="mine:my-session:51" data-ws-kind="change" data-ws-open="proposal:51">[\s\S]*?<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a>/);
   assert.ok(!tabRow.includes('/dev/sessions/51'), 'the session is linked from nowhere on the tab');
 
   // On the hub, For you's Your work row names it and opens the Workshop
@@ -3212,15 +3213,14 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   // The staging demo's mock categories hold its mock requests, which are open.
   assert.match(read('src/routes/workshop-themes.js'), /items: \['issue:900001', 'issue:900004', 'issue:900008'\]/);
   // THE PAGE'S ORDER (After-Workshop-B): the Overview label, All items with
-  // the approval rule as its last line, the notices panel straight under
-  // it, then What's happening. A plain chain only steps forward, so the
-  // notices ride this check as the sibling after All items. The staging
-  // demo gives them a Friday card and a setting changed
-  // (services/app-notices.js).
+  // the approval rule as its last line, then What's happening, straight
+  // after it: the Lately in this project panel that sat between them is
+  // gone (#4698 follow-up), and the plain chain says nothing else does.
   const rules = byName(/The Workshop tab opens on its Overview: All items with the approval rule as its last line/);
   assert.ok(rules, 'the order is a declared check');
   assert.match(rules.expectSelector,
-    /> \.dev-ws-tabbody > \[data-ws-part="overview"\]:first-child \+ \[data-ws-dashboard\]:has\(> \[data-ws-approval-rules\]:last-child > \[data-ws-community-rule\]\) \+ \[data-ws-notices\] \+ \[data-ws-part="happening"\]$/);
+    /> \.dev-ws-tabbody > \[data-ws-part="overview"\]:first-child \+ \[data-ws-dashboard\]:has\(> \[data-ws-approval-rules\]:last-child > \[data-ws-community-rule\]\) \+ \[data-ws-part="happening"\]$/);
+  assert.doesNotMatch(rules.expectSelector, /data-ws-notices/);
   // The rule in one sentence, in both its wordings.
   assert.equal(rules.expectText, 'goes live when its checks pass', 'and the rule itself is on the page');
   assert.ok(message('project:communityCard.line.anyOf').toLowerCase().includes(rules.expectText)

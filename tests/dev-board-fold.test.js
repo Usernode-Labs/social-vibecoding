@@ -249,7 +249,7 @@ test('the board unfolds nothing in place: ?cards=open draws the fold’s open sh
   // longer imports the fold's row at all; `openHref` rides the same import
   // since the Needs-you feed, and `voteSpecs` since Your work's rows carry
   // a change's own Vote (After-Workshop-B).
-  assert.match(WORKSHOP, /import \{ callAppView, openHref, voteSpecs \} from '\.\.\/card\/fold';/);
+  assert.match(WORKSHOP, /import \{ callAppView, openHref \} from '\.\.\/card\/fold';/);
   assert.ok(!/CardRowView/.test(WORKSHOP), 'By category unfolds nothing in place');
   for (const fn of ['function FoldedRow', 'function UnfoldedRow', 'function CardRowView', 'function RowBand']) {
     assert.ok(FOLD.includes(fn), `${fn} lives in fold.tsx`);

@@ -699,26 +699,6 @@
     "text": "{{count}} comments",
     "description": "One fact on a Workshop row's line, after who made it: how many comments the item has. {{count}} is that number."
   },
-  "workRow.state.inProgress": {
-    "text": "In progress",
-    "description": "First fact on a row of Your work on a project's Workshop tab: the viewer's change or request is being worked on."
-  },
-  "workRow.state.waitingForVotes": {
-    "text": "Waiting for votes",
-    "description": "First fact on a row of Your work on a project's Workshop tab: the viewer's change is up for a vote."
-  },
-  "workRow.state.pickedUp": {
-    "text": "Picked up",
-    "description": "First fact on a row of Your work on a project's Workshop tab: the viewer has picked up this request."
-  },
-  "workRow.state.goingLive": {
-    "text": "Going live",
-    "description": "First fact on a row of Your work on a project's Workshop tab: the change was approved and is rolling out."
-  },
-  "workRow.state.live": {
-    "text": "Live",
-    "description": "First fact on a row of Your work on a project's Workshop tab: the change is live."
-  },
   "workRow.state.yourVote": {
     "text": "Waiting on your vote",
     "description": "First fact on a row of the \"New for you\" card on a project's Workshop tab: the proposal waits on the viewer's vote."
@@ -1294,30 +1274,6 @@
   "discussion.closeThread": {
     "text": "Close thread",
     "description": "Accessible name and tooltip of the X button on the panel of replies to one message, beside a project's discussion. Close is a verb: it hides the panel of replies."
-  },
-  "notices.title": {
-    "text": "Lately in this project",
-    "description": "Heading of a panel at the top of a project's Workshop tab that lists what changed about the project itself in the last week: its weekly summary and changed settings."
-  },
-  "notices.week": {
-    "text": "<0>This week.</0> {{summary}}",
-    "description": "First row of the \"Lately in this project\" panel: the weekly summary. The words in <0></0> are a bold lead-in, with their full stop. {{summary}} is a sentence the server wrote about what went live and what waits on votes."
-  },
-  "notices.meta.byWhen": {
-    "text": "by @{{username}} · {{when}}",
-    "description": "The whole small grey line beside a changed setting in the \"Lately in this project\" panel of a project's Workshop tab, shown alone in its own element: who changed the setting and how long ago. {{username}} is that person's username; keep the @ before it. {{when}} is a short relative time such as 2d ago."
-  },
-  "notices.meta.by": {
-    "text": "by @{{username}}",
-    "description": "The whole small grey line beside a changed setting in the \"Lately in this project\" panel of a project's Workshop tab, shown alone in its own element, when the time is unknown: who changed the setting. {{username}} is that person's username; keep the @ before it."
-  },
-  "notices.meta.votedWhen": {
-    "text": "through a voted change · {{when}}",
-    "description": "The whole small grey line beside a changed setting in the \"Lately in this project\" panel of a project's Workshop tab, shown alone in its own element, when nobody changed the setting by hand: a proposal the members voted in changed it. {{when}} is a short relative time such as 2d ago."
-  },
-  "notices.meta.voted": {
-    "text": "through a voted change",
-    "description": "The whole small grey line beside a changed setting in the \"Lately in this project\" panel of a project's Workshop tab, shown alone in its own element, when nobody changed the setting by hand and the time is unknown: a proposal the members voted in changed it."
   },
   "invite.from.isMaking": {
     "text": "{{name}} is making it and invited you",

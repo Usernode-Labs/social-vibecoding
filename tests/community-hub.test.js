@@ -136,17 +136,19 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.match(LANDER, /\{isChannelPlace\(tab\) \? \(\s*<ProjectDiscussion\s+slug=\{slug\}/);
   // The Workshop tab, in three titled parts (After-Workshop-B): OVERVIEW,
   // All items with See all, where the open work is and the approval rule as
-  // its last line, then the notices panel; WHAT'S HAPPENING, your work (its
+  // its last line (no notices panel since the #4698 follow-up); WHAT'S
+  // HAPPENING, your work (its
   // first three, #852 review) and what is new for you; WHAT HAPPENED, this
   // week and a row for each week before it.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' && !weekUp ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
   // #4457: a week's page replaces the tab's body.
-  const wsOrder = ['data-ws-part="overview"', 'data-ws-dashboard=""', '<OpenTopics', '<ApprovalLine', '<WorkshopNotices', 'data-ws-part="happening"',
+  const wsOrder = ['data-ws-part="overview"', 'data-ws-dashboard=""', '<OpenTopics', '<ApprovalLine', 'data-ws-part="happening"',
     'data-ws-mine=""', 'data-ws-fresh=""', 'data-ws-happened-head=""', 'data-ws-part="happened"', 'data-ws-happened=""', '<ThisWeek', '<WeekRow'].map(w);
   assert.ok(wsOrder.every((n) => n >= 0), `every section is on the tab: ${JSON.stringify(wsOrder)}`);
   assert.deepEqual([...wsOrder].sort((a, b) => a - b), wsOrder,
-    'Overview (All items, its chips and the rule), the notices panel, What\'s happening (your work, then what is new for you), then What happened');
+    'Overview (All items, its chips and the rule), What\'s happening (your work, then what is new for you), then What happened');
+  assert.ok(!/<WorkshopNotices|data-ws-notices/.test(ws), 'and no Lately in this project panel');
   assert.ok(!/data-ws-since=""|data-ws-weeks=""|<ApprovalRules/.test(ws), 'Since your last visit, Week by week and the rules card are gone');
   assert.match(ws, /\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
