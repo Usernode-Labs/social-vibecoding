@@ -508,12 +508,16 @@ function authRoutes(config) {
   });
 
   router.post('/api/auth/otp/set-password', otpVerifyLimiter, async (req, res) => {
-    // #4595: the password is optional ("Skip for now"). Absent or empty in
-    // both fields means none; the service holds a password that IS sent to
-    // the usual rule.
+    // #4595: the password is optional ("Skip for now"). Absent or empty
+    // means none; the service holds a password that IS sent to the usual
+    // rule. The confirmation is checked only when a client asks for one: the
+    // sign-in sheet asks for the password once (a mistyped one is reset by
+    // email) and sends no `passwordConfirmation`; the sign-in screen still
+    // asks twice and sends both.
     const blank = (v) => (v === undefined || v === null || v === '' ? null : v);
     const password = blank(req.body?.password);
-    if (password !== blank(req.body?.passwordConfirmation)) {
+    if (req.body?.passwordConfirmation !== undefined
+        && password !== blank(req.body.passwordConfirmation)) {
       return res.status(422).json({ error: 'Passwords do not match.', code: 'password_mismatch' });
     }
     try {

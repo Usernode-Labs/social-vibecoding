@@ -603,6 +603,8 @@ test('the release mail is the "you\'re in" welcome, with its list and sign-off',
     assert.match(part, /Make an app for your group/);
     assert.match(part, /Suggest, preview and vote on changes/);
     assert.match(part, /Evan from Homeroom/);
+    // Three points, not four (Evan, 10 Oct 2026): no challenges line.
+    assert.doesNotMatch(part, /challenges/i);
   }
   assert.ok(m.text.includes('https://x.invalid/?signup=1&t=tok'), 'the link is in the text part');
   // The preview line is hidden and comes before the logo, whose alt text
