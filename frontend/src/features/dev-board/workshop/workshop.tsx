@@ -4644,10 +4644,12 @@ export function DevWorkshop(): ReactNode {
       {/* ── Your work ──
           A returning member's own work in flight: their requests, their
           changes and their votes, never what has merged (AppView
-          ._workshopView), in the shared work rows (./work-row.tsx WorkRow):
-          the title, the board's words, its tags and its vote, and its ☰. A
-          request your change addresses is drawn as that change. Its first
-          WORKSHOP_WORK_FIRST, the rest behind Show N more. */}
+          ._workshopView), in the shared work rows (./work-row.tsx WorkRow)
+          as one-line rows with a tags line under each (#4716, variant
+          `line`): the title and the board's words and its vote on the first
+          line, its tags under. A request your change addresses is drawn as
+          that change. Its first WORKSHOP_WORK_FIRST, the rest behind Show N
+          more. */}
       {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <section className="dev-ws-strip" data-ws-mine="">
           <div className="dev-ws-head">
@@ -4675,6 +4677,7 @@ export function DevWorkshop(): ReactNode {
               slug={slug}
               openKey={sideKey}
               onOpen={openItem}
+              variant="line"
             />
             {v.mine.rows.length > WORKSHOP_WORK_FIRST ? (
               <button

@@ -2282,9 +2282,9 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   const html = workshopHtml(AppView, 'workshop');
   const from = html.indexOf('data-ws-lane="mine"');
   const lane = html.slice(from, html.indexOf('</section>', from));
-  assert.match(lane, /<div class="dev-ws-wlist"><div class="dev-ws-wrow" data-ws-row="mine:/);
-  assert.match(lane, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><span class="dev-ws-wrow-sub">Change(?: · [^<·]+)? · for #12 · [^<]+ ago<\/span><span class="dev-ws-wrow-status"><span class="dev-ws-tag" data-tone=/,
-    'the board\'s words, then its tags line');
+  assert.match(lane, /<div class="dev-ws-wlist"><div class="dev-ws-wrow dev-ws-lrow" data-ws-row="mine:/);
+  assert.match(lane, /<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a><span class="dev-ws-wrow-sub">Change(?: · [^<·]+)? · for #12 · [^<]+ ago<\/span><\/span><span class="dev-ws-wrow-status"><span class="dev-ws-tag" data-tone=/,
+    'the board\'s words on the one line, then the tags line under it (#4716)');
   assert.ok(lane.includes('dev-ws-wrow-menu'), 'and its ☰');
   assert.ok(!lane.includes('dev-ws-arow'), 'not the one-line row with a single act');
   assert.ok(!lane.includes('data-ws-row="mine:issue:12"'), 'the request is drawn as the change, not beside it');
@@ -2294,7 +2294,7 @@ test('#4457: Your work is rows in words, and a request your change addresses is 
   Picked._ghIssues[0].in_progress = AppView._ghIssues[0].in_progress;
   const picked = workshopHtml(Picked, 'workshop');
   const pickedRow = picked.slice(picked.indexOf('data-ws-row="mine:issue:12"'));
-  assert.match(pickedRow, /^data-ws-row="mine:issue:12"[^>]*>[\s\S]*?<span class="dev-ws-wrow-sub">#12 · [^<]+<\/span><span class="dev-ws-wrow-status">[\s\S]*?Picked up · you/);
+  assert.match(pickedRow, /^data-ws-row="mine:issue:12"[^>]*>[\s\S]*?<span class="dev-ws-wrow-sub">#12 · [^<]+<\/span><\/span><span class="dev-ws-wrow-status">[\s\S]*?Picked up · you/);
   assert.ok(!/<span class="dev-ws-wrow-sub">[^<]*yours/.test(lane), 'no "yours" on Your work (#4485)');
   assert.ok(!/data-edge=|dev-card-icon|dev-fold-mark|aria-expanded|data-issue-row|data-session-chip/.test(lane),
     'none of the card\'s chrome, and none of the hooks the Board\'s handler opens a card on');
@@ -2342,6 +2342,38 @@ test('#4457, #4485, #4486: a change up for a vote keeps its vote at the end of t
   assert.deepEqual(plain(topicRef({ attrs: { 'data-session-chip': '51' } })), { kind: 'proposal', id: 51 });
   assert.deepEqual(plain(topicRef({ attrs: { 'data-gov-row': '7' } })), { kind: 'gov', id: 7 });
   assert.equal(topicRef({ attrs: {} }), null);
+});
+
+test('#4716: Your work\'s row is one line, its vote on it, its tags under it', () => {
+  const { WorkRow } = loadTsx('frontend/src/features/dev-board/workshop/work-row.tsx');
+  const AppView = makeAppView();
+  seed(AppView);
+  const v = AppView._workshopView();
+  const row = [...v.votes.rows, ...(v.since ? v.since.rows : [])].find((r) => r.t === 'card' && r.card.attrs['data-proposal-row']);
+  assert.ok(row, 'a proposal row');
+  const brief = { kind: 'change', noun: 'Change', n: 34, by: 'bob', mine: false, category: '', replies: 0, linked: [], closed: [], stage: 'vote', at: 0,
+    tags: [{ label: 'Checks running…', tone: 'run' }, { label: 'Preview ready', tone: 'plain', glyph: 'eye' }], vote: { yes: 1, need: 3, ask: true } };
+  const html = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app', variant: 'line' }));
+  // The row is This week's one-line row: its glyph, no tile.
+  assert.match(html, /class="dev-ws-wrow dev-ws-lrow" data-ws-row=/);
+  assert.match(html, /<span class="dev-ws-hrow-glyph" data-kind="change" aria-hidden="true">/);
+  assert.ok(!html.includes('dev-ws-wrow-tile'), 'no tile: the glyph is This week’s');
+  // The first line holds the link, the board's words, then the vote — the
+  // approval pill to the left of Vote (evan, on #4716) — and no tag.
+  assert.match(html, /<span class="dev-ws-lrow-line"><a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/34"[^>]*>[^<]*<\/a><span class="dev-ws-wrow-sub">PR #34 · bob<\/span><span class="dev-ws-wvote" data-ws-vote=""><span class="dev-ws-row-state dev-ws-row-state-[a-z]+ dev-ws-wvote-state"[^>]*>[^<]*<\/span><span class="dev-ws-wvote-btn">/,
+    'the line: link, words, then pill and Vote');
+  const status = html.slice(html.indexOf('dev-ws-wrow-status'));
+  assert.ok(status.includes('Checks running…') && status.includes('Preview ready'), 'the tags sit on the line under it');
+  assert.ok(!status.includes('dev-ws-wvote'), 'and the vote is not on the tags line');
+  // The default variant is untouched: the vote still ends the tags' line.
+  const list = renderToHtml(createElement(WorkRow, { row: { ...row, brief }, slug: 'demo-app' }));
+  assert.match(list, /<span class="dev-ws-tag" data-tone="plain"><svg[^>]*>.*?<\/svg>Preview ready<\/span><span class="dev-ws-wvote" data-ws-vote="">/);
+  // Pinned where it is drawn: Your work passes the variant, and the CSS
+  // keeps the title to one line and wraps the line on a narrow card.
+  assert.match(WORKSHOP, /onOpen=\{openItem\}\s*variant="line"/);
+  assert.match(CSS, /\.dev-ws-lrow \.dev-ws-wrow-link \{[^}]*white-space: nowrap;/);
+  assert.match(CSS, /\.dev-ws-strip\[data-ws-mine\] \{ container-type: inline-size; \}/);
+  assert.match(CSS, /@container \(max-width: 520px\) \{\s*\.dev-ws-lrow-line \{ flex-wrap: wrap; row-gap: 4px; \}/);
 });
 
 test('#4457: a row opens its page beside the list on a wide window, and that page is the topic page itself', () => {
@@ -2479,7 +2511,7 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   // #4457: on the Workshop tab your work is a list of rows that open the
   // item's page, the change's for a session of yours, never the session.
   const tabRow = workshopHtml(AppView, 'workshop');
-  assert.match(tabRow, /<div class="dev-ws-wrow" data-ws-row="mine:my-session:51" data-ws-kind="change" data-ws-open="proposal:51">[\s\S]*?<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a>/);
+  assert.match(tabRow, /<div class="dev-ws-wrow dev-ws-lrow" data-ws-row="mine:my-session:51" data-ws-kind="change" data-ws-open="proposal:51">[\s\S]*?<a class="dev-ws-wrow-link" href="#app\/demo-app\/dev\/proposals\/51">Bottom tabs<\/a>/);
   assert.ok(!tabRow.includes('/dev/sessions/51'), 'the session is linked from nowhere on the tab');
 
   // On the hub, For you's Your work row names it and opens the Workshop
@@ -4930,7 +4962,7 @@ test('#4457: the weeks before this one open on two rows, and Earlier weeks adds 
   const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
   for (const cls of ['dev-ws-wlist', 'dev-ws-wrow', 'dev-ws-wrow-tile', 'dev-ws-wrow-main', 'dev-ws-wrow-link', 'dev-ws-wrow-sub',
     'dev-ws-wrow-status', 'dev-ws-wrow-chev', 'dev-ws-tag', 'dev-ws-wvote', 'dev-ws-wvote-state', 'dev-ws-wvote-btn',
-    'dev-ws-wrow-menu', 'dev-ws-wrow-live', 'dev-ws-brow', 'dev-ws-arow', 'dev-ws-arow-act', 'dev-ws-head-sub',
+    'dev-ws-wrow-menu', 'dev-ws-wrow-live', 'dev-ws-brow', 'dev-ws-lrow', 'dev-ws-lrow-line', 'dev-ws-arow', 'dev-ws-arow-act', 'dev-ws-head-sub',
     'dev-ws-week', 'dev-ws-week-main', 'dev-ws-week-head', 'dev-ws-week-fresh', 'dev-ws-week-n',
     'dev-ws-weekpage', 'dev-ws-week-meta', 'dev-ws-week-lead', 'dev-ws-none', 'dev-ws-since-clear', 'dev-ws-parthead',
     'dev-ws-hweek', 'dev-ws-hweek-head', 'dev-ws-hlist', 'dev-ws-hrow', 'dev-ws-hrow-dot', 'dev-ws-hrow-glyph', 'dev-ws-hrow-main',

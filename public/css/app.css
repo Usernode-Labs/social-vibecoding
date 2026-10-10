@@ -22840,6 +22840,33 @@ html.in-side-panel body {
   .dev-ws-arow-act { flex-basis: 100%; padding-left: 40px; }
 }
 
+/* Your work's one-line row (#4716, workshop/work-row.tsx `line`): This
+   week's row (.dev-ws-hrow) plus a tags line under it. The title is one
+   line, cut off with "…" when long; the words and the vote take the line's
+   right end, the approval pill to the left of Vote; the tags sit under. On
+   a narrow card the title wraps onto its own line and the rest follows,
+   the tags line last. The hairline, hover and open-row rules are the
+   shared .dev-ws-wrow's. */
+.dev-ws-lrow { gap: 10px; padding: 8px 2px; }
+.dev-ws-lrow > .dev-ws-hrow-glyph { margin-top: 4px; }
+.dev-ws-lrow > .dev-ws-wrow-main { gap: 6px; }
+.dev-ws-lrow-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dev-ws-lrow .dev-ws-wrow-link {
+  flex: 1 1 auto; min-width: 8em; font-weight: 400; display: block;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: unset;
+}
+.dev-ws-lrow .dev-ws-wrow-sub { flex: 0 1 auto; min-width: 0; }
+.dev-ws-lrow .dev-ws-wvote { flex: none; margin-left: 0; }
+.dev-ws-lrow .dev-ws-wrow-status { margin-top: 0; }
+.dev-ws-lrow > .dev-ws-wrow-menu { margin-top: 0; }
+.dev-ws-lrow:has(.dev-ws-wrow-link:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-ws-strip[data-ws-mine] { container-type: inline-size; }
+@container (max-width: 520px) {
+  .dev-ws-lrow-line { flex-wrap: wrap; row-gap: 4px; }
+  .dev-ws-lrow .dev-ws-wrow-link { flex-basis: 100%; white-space: normal; }
+  .dev-ws-lrow .dev-ws-wvote { margin-left: auto; }
+}
+
 /* What happened (workshop/week-pages.tsx): this week's head and its rows,
    one line each, then a row for every week before it. A row's title is a
    link stretched over it; on a narrow card the title wraps and the rest

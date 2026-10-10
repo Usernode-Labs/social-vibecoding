@@ -69,8 +69,10 @@ export type CardRow = Extract<ListRow, { t: 'card' }>;
  * Which surface draws the row. `list`: the Workshop tab's lists, with the
  * tile and the bar beside Vote on the tags line. `board`: All items' columns
  * and By category's lanes, with no tile and the card's bar across the row.
+ * `line`: Your work (#4716), This week's one-line row (./week-pages.tsx
+ * HappenedRow) plus a tags line under it.
  */
-export type RowVariant = 'list' | 'board';
+export type RowVariant = 'list' | 'board' | 'line';
 
 /** Which page a row opens: the kind `AppView.openTopic` takes, and its id. */
 export interface TopicRef {
@@ -231,6 +233,51 @@ export function WorkRow({
   const status = live || hasChip || hasChat || tags.length > 0 || !!votes;
   const menuKey = card.rail && card.rail.menuKey ? card.rail.menuKey : '';
   const specs = board && !live ? voteSpecs(card) : null;
+  if (variant === 'line') {
+    // #4716: Your work's row is This week's one-line row (./week-pages.tsx
+    // HappenedRow) plus a tags line. The glyph, the title on one line, the
+    // board's words, then the vote at the line's right end — the approval
+    // pill to the left of Vote, as evan asked — and under it the tags. A row
+    // with nothing to say underneath has no second line. The hooks, the
+    // stretched link and ☰ are the list row's, unchanged.
+    const tagStatus = live || hasChip || hasChat || tags.length > 0;
+    return (
+      <div
+        className="dev-ws-wrow dev-ws-lrow"
+        data-ws-row={row.key}
+        data-ws-kind={b.kind}
+        data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
+        data-on={on ? '1' : undefined}
+      >
+        <span className="dev-ws-hrow-glyph" data-kind={b.kind} aria-hidden="true"><Tile aria-hidden="true" /></span>
+        <span className="dev-ws-wrow-main">
+          <span className="dev-ws-lrow-line">
+            {href ? (
+              <a
+                className="dev-ws-wrow-link"
+                href={href}
+                aria-current={on ? 'true' : undefined}
+                onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
+              >
+                {card.title.text}
+              </a>
+            ) : <span className="dev-ws-wrow-link">{card.title.text}</span>}
+            <span className="dev-ws-wrow-sub">{rowWords(b)}</span>
+            {votes}
+          </span>
+          {tagStatus ? (
+            <span className="dev-ws-wrow-status">
+              {live && pill ? <StatePill s={pill} className="dev-ws-wrow-live" /> : null}
+              {chip}
+              {chat}
+              {tags.map((t) => <Tag key={`${t.label}:${t.tone}`} t={t} />)}
+            </span>
+          ) : null}
+        </span>
+        {menuKey ? <span className="dev-ws-wrow-menu"><MenuTrigger menuKey={menuKey} /></span> : null}
+      </div>
+    );
+  }
   return (
     <div
       className={board ? 'dev-ws-wrow dev-ws-brow' : 'dev-ws-wrow'}
