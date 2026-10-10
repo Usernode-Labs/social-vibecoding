@@ -1562,6 +1562,140 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
   }
 }
 
+// ── For admins ───────────────────────────────────────────────────────────
+
+const OUTCOMES = Object.freeze(['replied', 'quiet', 'fallback', 'failed']);
+const ASK_STATUSES = Object.freeze(['queued', 'taken', 'done', 'failed', 'dropped']);
+const OFFER_STATUSES = Object.freeze(['open', 'deciding', 'done', 'declined', 'failed']);
+const CODE_RE = /^[A-Za-z0-9_:+.-]{1,80}$/;
+
+/** Pure: a failure as admins read it: a code, never a message or anybody's words. */
+function codeOnly(value) {
+  const text = String(value || '').trim();
+  return CODE_RE.test(text) ? text : (text ? 'error' : null);
+}
+
+/**
+ * The voice this week, for admins (homeroom-bot.js adminPayload, and through
+ * it the console and the connector's get_homeroom_bot), as dmChatSummary is
+ * the DM's: its turns by place and how they ended, what they cost and how
+ * many people it answered; the last week's turns that failed or recovered,
+ * with their codes; the changes asked of it by status, and those still
+ * waiting on each change; and its offers by kind and how they were decided.
+ * Never the words. Never throws.
+ */
+async function voiceSummary(pool) {
+  const empty = {
+    turns: 0, replied: 0, quiet: 0, fallback: 0, failed: 0, people: 0, costUsd: 0,
+    byPlace: {}, recentFailures: [], asks: { byStatus: {}, bySource: {}, waiting: [] }, offers: {},
+  };
+  try {
+    const [{ rows: [week] = [] }, { rows: byPlace }, { rows: recent }, { rows: asks }, { rows: waiting }, { rows: offers }] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::int AS turns,
+                COUNT(*) FILTER (WHERE outcome = 'replied')::int AS replied,
+                COUNT(*) FILTER (WHERE outcome = 'quiet')::int AS quiet,
+                COUNT(*) FILTER (WHERE outcome = 'fallback')::int AS fallback,
+                COUNT(*) FILTER (WHERE outcome = 'failed')::int AS failed,
+                COUNT(DISTINCT speaker_id)::int AS people,
+                COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+           FROM homeroom_bot_voice_turns
+          WHERE started_at >= date_trunc('week', NOW()) AND finished_at IS NOT NULL`,
+      ),
+      pool.query(
+        `SELECT place_type, outcome, COUNT(*)::int AS n
+           FROM homeroom_bot_voice_turns
+          WHERE started_at >= date_trunc('week', NOW()) AND finished_at IS NOT NULL
+          GROUP BY place_type, outcome`,
+      ),
+      pool.query(
+        `SELECT t.started_at, t.place_type, t.place_ref, t.outcome, t.error, t.failures, t.rounds, a.slug AS app_slug
+           FROM homeroom_bot_voice_turns t LEFT JOIN apps a ON a.id = t.app_id
+          WHERE t.started_at >= NOW() - INTERVAL '7 days' AND t.finished_at IS NOT NULL
+            AND (t.outcome IN ('failed', 'fallback') OR t.error IS NOT NULL OR cardinality(t.failures) > 0)
+          ORDER BY t.id DESC
+          LIMIT 20`,
+      ),
+      pool.query(
+        `SELECT status, source, COUNT(*)::int AS n
+           FROM homeroom_bot_change_asks
+          WHERE created_at >= date_trunc('week', NOW()) OR status IN ('queued', 'taken')
+          GROUP BY status, source`,
+      ),
+      pool.query(
+        `SELECT k.session_id, a.slug AS app_slug, k.issue_number, k.status, COUNT(*)::int AS n,
+                MIN(k.created_at) AS since, MAX(k.tries)::int AS tries
+           FROM homeroom_bot_change_asks k LEFT JOIN apps a ON a.id = k.app_id
+          WHERE k.status IN ('queued', 'taken')
+          GROUP BY k.session_id, a.slug, k.issue_number, k.status
+          ORDER BY since
+          LIMIT 20`,
+      ),
+      pool.query(
+        `SELECT kind, status, COUNT(*)::int AS n
+           FROM homeroom_bot_voice_offers
+          WHERE created_at >= date_trunc('week', NOW())
+          GROUP BY kind, status`,
+      ),
+    ]);
+    const w = week || {};
+    const iso = (at) => (at ? new Date(at).toISOString() : null);
+    const places = {};
+    for (const r of byPlace) {
+      if (!PLACE_TYPES.includes(r.place_type) || !OUTCOMES.includes(r.outcome)) continue;
+      places[r.place_type] = places[r.place_type] || { replied: 0, quiet: 0, fallback: 0, failed: 0 };
+      places[r.place_type][r.outcome] += r.n;
+    }
+    const byStatus = {};
+    const bySource = {};
+    for (const r of asks) {
+      if (ASK_STATUSES.includes(r.status)) byStatus[r.status] = (byStatus[r.status] || 0) + r.n;
+      const source = /^[a-z_]{1,20}$/.test(String(r.source || '')) ? r.source : 'other';
+      bySource[source] = (bySource[source] || 0) + r.n;
+    }
+    const offersBy = {};
+    for (const r of offers) {
+      if (!OFFER_WORDS[r.kind] || !OFFER_STATUSES.includes(r.status)) continue;
+      offersBy[r.kind] = offersBy[r.kind] || {};
+      offersBy[r.kind][r.status] = (offersBy[r.kind][r.status] || 0) + r.n;
+    }
+    return {
+      turns: w.turns || 0,
+      replied: w.replied || 0,
+      quiet: w.quiet || 0,
+      fallback: w.fallback || 0,
+      failed: w.failed || 0,
+      people: w.people || 0,
+      costUsd: Number(w.cost_usd) || 0,
+      byPlace: places,
+      recentFailures: recent.map((f) => ({
+        at: iso(f.started_at),
+        app: f.app_slug || null,
+        place: PLACE_TYPES.includes(f.place_type) ? f.place_type : null,
+        ref: f.place_ref == null ? null : Number(f.place_ref),
+        outcome: OUTCOMES.includes(f.outcome) ? f.outcome : null,
+        error: codeOnly(f.error),
+        failures: (f.failures || []).map(codeOnly).filter(Boolean).slice(0, 10),
+        rounds: Number(f.rounds) || 0,
+      })),
+      asks: {
+        byStatus,
+        bySource,
+        // What waits on each change now, oldest first: a change whose asks
+        // wait long is one whose follow-up is not running.
+        waiting: waiting.map((r) => ({
+          app: r.app_slug || null, change: Number(r.session_id), issueNumber: Number(r.issue_number) || null,
+          status: r.status, asks: r.n, since: iso(r.since), tries: r.tries || 0,
+        })),
+      },
+      offers: offersBy,
+    };
+  } catch (err) {
+    log.warn('homeroom-bot-voice', 'Voice summary failed', { err: err.message });
+    return empty;
+  }
+}
+
 module.exports = {
   SETTLE_MS,
   SETTLE_CAP_MS,
@@ -1598,5 +1732,7 @@ module.exports = {
   mustSay,
   plainReport,
   reportFollowUp,
+  voiceSummary,
+  codeOnly,
   _pendingForTests() { return pending.size; },
 };
