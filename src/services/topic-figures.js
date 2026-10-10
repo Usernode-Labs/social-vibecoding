@@ -246,9 +246,11 @@ const BOT_SPEND_SQL = `
              AND ($3::boolean OR (cs.app_id = ANY($4::int[])) = $5::boolean))::int AS merged`;
 
 // Check runs (merge_debug_runs kind 'checks', kept 30 days): the ones that
-// reached a verdict, how long they took, and the ones that ended without
-// one ('error': the change could not be built or started, or the checks
-// never answered; the change page says they couldn't run).
+// reached a verdict, how long they took (from the start of the preview build
+// the run followed, when it followed one: visuals.captureForSession), and the
+// ones that ended without one ('error': the change could not be built or
+// started, or the checks never answered; the change page says they couldn't
+// run).
 const CHECKS_SQL = `
   SELECT COUNT(*) FILTER (WHERE r.status IN ('passing', 'failing', 'error'))::int AS total,
          COUNT(*) FILTER (WHERE r.status = 'error')::int AS errors,

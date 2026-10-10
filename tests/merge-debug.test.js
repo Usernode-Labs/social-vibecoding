@@ -139,8 +139,19 @@ test("a kind='checks' run round-trips its kind and trigger", async () => {
     appId: 1, sessionId: 2951, prNumber: 914, kind: 'checks', trigger: 'capture',
   });
   const ins = pool.calls.find((c) => /INSERT INTO merge_debug_runs/.test(c.sql));
-  assert.deepEqual(ins.params, [1, 2951, 914, 'checks', 'capture']);
+  assert.deepEqual(ins.params, [1, 2951, 914, 'checks', 'capture', null]);
   assert.equal(runId, 1);
+});
+
+test('a run can start at work it covers that began before it was opened (#4696)', async () => {
+  const pool = makePool();
+  await md.startRun(pool, { kind: 'checks', startedAt: new Date('2026-10-10T17:40:00Z') });
+  const ins = pool.calls.find((c) => /INSERT INTO merge_debug_runs/.test(c.sql));
+  assert.match(ins.sql, /COALESCE\(\$6::timestamptz, NOW\(\)\)/);
+  assert.equal(ins.params[5], '2026-10-10T17:40:00.000Z');
+  const bad = makePool();
+  await md.startRun(bad, { kind: 'checks', startedAt: new Date('not a date') });
+  assert.equal(bad.calls[0].params[5], null, 'an invalid start is now');
 });
 
 test('a checks step carries its durationMs through to the stored detail', async () => {
