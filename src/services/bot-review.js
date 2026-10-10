@@ -107,7 +107,8 @@ function progressLine(round, maxRounds) {
  * (bench/grading.js RUBRICS.taste, TASTE_INSTRUCTIONS), turned from a grade
  * into a list of fixes, scoped to the request and the spec. Pure.
  */
-function reviewerSystemPrompt() {
+function reviewerSystemPrompt(locale = null) {
+  const live = require('./homeroom-bot-live');
   const { RUBRICS } = require('./bench/grading');
   const criteria = RUBRICS.taste.criteria.map((c) => `- ${c.text}`).join('\n');
   return [
@@ -126,7 +127,7 @@ function reviewerSystemPrompt() {
     'Answer "ship" when nothing blocker or major is left; minor issues alone are not a reason to ask for another pass.',
     'When PREVIOUS ISSUES are given, they are the ones you raised last round: list in "previousFixed" the ids of those now fixed, do not raise a fixed one again, and keep the id of one still open.',
     '',
-    'Write `screen`, `problem` and `fix` in English.',
+    `Write \`screen\`, \`problem\` and \`fix\` in plain words. ${live.localeRule(locale)}`,
     'Reply with ONLY a JSON object, no prose and no code fence:',
     '{"verdict":"ship"|"fix","issues":[{"id":"short-kebab-id","severity":"blocker"|"major"|"minor","screen":"which screen or state","problem":"what is wrong","fix":"what to change, and to what"}],"previousFixed":["id"]}',
   ].join('\n');
@@ -259,7 +260,7 @@ function bootIssue(capture) {
  * request, the issues, the spec, where the app's look is recorded, and the
  * in-loop check to run. Pure apart from the shared rule text.
  */
-function fixPrompt({ seed = '', spec = '', issues = [], round = 1, maxRounds = 1, readsImages = false, platformRepo = false }) {
+function fixPrompt({ seed = '', spec = '', issues = [], round = 1, maxRounds = 1, readsImages = false, platformRepo = false, locale = null }) {
   const live = require('./homeroom-bot-live');
   const buildContract = require('./build-contract');
   const list = issues.map((it, i) => `${i + 1}. [${it.severity}] ${it.screen}: ${it.problem}\n   Fix: ${it.fix}`).join('\n');
@@ -288,7 +289,7 @@ function fixPrompt({ seed = '', spec = '', issues = [], round = 1, maxRounds = 1
     ...(platformRepo ? live.PLATFORM_TEST_NOTE : []),
     ...live.browserLines({ readsImages }),
     '',
-    'End with two or three sentences, in English, saying what you changed. Do not write a DESCRIPTION block: the proposal\'s description',
+    `End with two or three sentences saying what you changed. ${live.localeRule(locale)} Do not write a DESCRIPTION block: the proposal's description`,
     'is the build\'s own.',
   ].filter((l) => l !== null).join('\n');
 }
@@ -364,6 +365,8 @@ async function callReviewer({
 async function reviewCapture({
   pool, config, userId, model, seed, spec, capture, previousIssues = null, round, maxRounds,
   appId = null, sessionId = null, timeoutMs = null, deps = {},
+  // #4645: the requester's locale, for the reviewer's language rule.
+  locale = null,
 }) {
   if (!capture || capture.booted !== true) {
     return { ok: true, verdict: 'fix', issues: [bootIssue(capture)], previousFixed: [], costUsd: 0, ms: 0, by: 'platform' };
@@ -387,7 +390,7 @@ async function reviewCapture({
     brief: seed, spec, shots, identical: picked.identical, signals: grading.tasteSignals(capture), previousIssues, round, maxRounds,
   });
   const call = await (deps.callReviewer || callReviewer)({
-    pool, config, userId, model, system: reviewerSystemPrompt(), content, appId, sessionId, timeoutMs, deps,
+    pool, config, userId, model, system: reviewerSystemPrompt(locale), content, appId, sessionId, timeoutMs, deps,
   });
   if (!call.ok) return { ok: false, error: call.error, costUsd: call.costUsd ?? null, ms: call.ms };
   const parsed = parseReview(call.text);
