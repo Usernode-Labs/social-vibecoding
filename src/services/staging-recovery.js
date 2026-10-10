@@ -246,6 +246,24 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
   return true;
 }
 
+// Is the preview of a session whose checks keep erroring still inside the
+// retry its last failure scheduled? storeChecks bumps
+// consecutive_check_failures on every 'error' verdict, a preview that failed
+// to build or boot included (recordStagingBootFailure), and schedules
+// check_next_retry_at two minutes on, doubling to thirty. A rebuild nobody
+// asked for waits that out: every platform boot used to rebuild each such
+// preview at once (recoverSessions), and so did the live heal once its
+// in-memory cooldown, which a restart forgets, ran out. On 10 Oct 2026 a
+// restart rebuilt one to twelve of them, the same ones each time: one
+// proposal's preview had failed 860 times, a child app's 375. A Preview
+// click and a re-run of the checks still rebuild at once.
+function previewRetryPending(session, now = Date.now()) {
+  if (!session || session.check_state !== 'error') return false;
+  if (!(Number(session.consecutive_check_failures) > 0)) return false;
+  const at = session.check_next_retry_at ? new Date(session.check_next_retry_at).getTime() : NaN;
+  return Number.isFinite(at) && at > now;
+}
+
 // Shape 4 above. Only a KNOWN mismatch counts: a missing build commit (a
 // preview from before the column) or a missing head is "cannot tell", which
 // keeps the old answer rather than sweeping every legacy preview at once.
@@ -963,6 +981,7 @@ async function recheckSessionChecks({ config, pool, session, reason, queuedSince
 }
 
 module.exports = {
+  previewRetryPending,
   markInterruptedBuilds,
   DEFAULT_CHECKS_STALE_MS,
   checksStaleMs,

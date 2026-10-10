@@ -2461,8 +2461,13 @@ async function recoverSessions(config) {
        AND cs.user_id NOT IN (SELECT id FROM users WHERE username = 'homeroom_bench' AND is_synthetic = TRUE)`
   );
 
+  let backedOff = 0;
   for (const session of rows) {
     try {
+      // A preview that keeps failing waits out its retry, as the live heal
+      // does: a boot is not a reason to try it again
+      // (stagingRecovery.previewRetryPending).
+      if (stagingRecovery.previewRetryPending(session)) { backedOff += 1; continue; }
       if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
       // Boot is when the old leader's runs are being harvested. A rebuild
       // would replace the preview under one and abort its harvest, so a
@@ -2474,6 +2479,9 @@ async function recoverSessions(config) {
     } catch (err) {
       log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
     }
+  }
+  if (backedOff) {
+    log.info('server', 'Left failing previews to their retry backoff at boot', { count: backedOff });
   }
 }
 
@@ -5560,6 +5568,9 @@ function startSessionAutoPauseSweeper(config) {
         // and this pass would start a second, concurrent build of the same
         // commit. hasInFlightBuild() is the flag that build sets.
         if (stagingSvc.hasInFlightBuild(session.id)) continue;
+        // The retry its last failure scheduled, which outlives a restart as
+        // the cooldown below does not (stagingRecovery.previewRetryPending).
+        if (stagingRecovery.previewRetryPending(session)) continue;
         if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
         const last = stagingHealAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
