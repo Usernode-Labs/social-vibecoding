@@ -119,6 +119,27 @@ function joinCaptures(results) {
   };
 }
 
+// A run's unit-suite shards, collected, read as one Job: the outputs joined
+// as the live run joins them (unit-suite.joinUnitShardOutputs). Null, a
+// suite that contributes no row, when a shard is missing: part of a suite
+// is not the suite. One shard gone or aborted is the suite's state; it
+// succeeded only if every shard did.
+function joinUnitResults(results, expectedShards = 1) {
+  const list = (results || []).filter(Boolean);
+  if (list.length <= 1 && expectedShards <= 1) return list[0] || null;
+  if (list.length < expectedShards) return null;
+  const worst = ['gone', 'aborted'].find((state) => list.some((r) => r.state === state));
+  const failed = list.find((r) => r.state !== 'succeeded');
+  const joined = require('./unit-suite').joinUnitShardOutputs(list);
+  return {
+    state: worst || (failed ? (list.some((r) => r.state === 'timeout') ? 'timeout' : 'failed') : 'succeeded'),
+    stdout: joined.stdout,
+    stderr: joined.stderr,
+    timedOut: list.some((r) => r.timedOut),
+    exitCode: failed ? failed.exitCode : 0,
+  };
+}
+
 function describeRow(row, reason) {
   const manifest = row.manifest || {};
   return {
@@ -257,8 +278,15 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     // own run id (services/early-unit-suite.js).
     if (manifest.unitRunId) {
       const early = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: manifest.unitRunId });
-      if (early.unitSuite) jobs.unitSuite = early.unitSuite;
+      if (early.unitSuite) {
+        jobs.unitSuite = early.unitSuite;
+        jobs.unitSuites = early.unitSuites;
+        jobs.unitShards = early.unitShards;
+      }
     }
+    // One unit-suite Job, or one per shard of a split suite.
+    const unitJobs = Array.isArray(jobs.unitSuites) && jobs.unitSuites.length
+      ? jobs.unitSuites : (jobs.unitSuite ? [jobs.unitSuite] : []);
     const captureJobs = Array.isArray(jobs.captures) ? jobs.captures : (jobs.capture ? [jobs.capture] : []);
     // A deferred verdict on a range with no frontend files launches no
     // capture container at all (visuals: shotsOnly && !media) — its stamp is
@@ -301,12 +329,17 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
           timeoutMs: visuals.RUN_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: visuals.RUN_MAX_BUFFER,
           onStdoutLine: progress.observeCapture, signal: controller.signal,
         }))).then(joinCaptures) : Promise.resolve(null),
-        jobs.unitSuite ? kubernetes.collectCheckJob(config, {
-          name: jobs.unitSuite.name, kind: 'unit-suite',
+        unitJobs.length ? Promise.all(unitJobs.map((job) => kubernetes.collectCheckJob(config, {
+          name: job.name, kind: 'unit-suite',
           timeoutMs: unitSuite.UNIT_SUITE_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: unitSuite.UNIT_SUITE_MAX_BUFFER,
-          onStdoutLine: (line) => { if (unitTracker.feed(line)) progress.observeUnit(unitTracker.snapshot()); },
+          // Shards' summaries would replace one another here; the joined
+          // output's, added up, is fed when the outcome is read.
+          onStdoutLine: (line) => {
+            if (unitJobs.length > 1 && /^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) return;
+            if (unitTracker.feed(line)) progress.observeUnit(unitTracker.snapshot());
+          },
           signal: controller.signal,
-        }) : Promise.resolve(null),
+        }))).then((results) => joinUnitResults(results, Number(jobs.unitShards) || 1)) : Promise.resolve(null),
       ]);
     } finally {
       progress.close();
@@ -671,4 +704,5 @@ module.exports = {
   stillCurrent,
   loadSession,
   joinCaptures,
+  joinUnitResults,
 };

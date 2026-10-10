@@ -230,10 +230,10 @@ is no replay plan to write and nothing to verify locally.
   `community-scope.ts`). A project's page wears its community's colour
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
   icon) and is navigated by one list of **places**
-  (`features/dev-board/workshop/project-places.tsx`): **Hub** (who is here
-  and who it is for, the actions, a 14-day trend, since your last visit,
-  votes owed, the chat's last lines, your work), **Needs you** and
-  **Workshop**, a line, then **Channels** (**#general**) and **Topics**
+  (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
+  for and who was active this week, the actions, For you: votes owed, your
+  work and the chat's last line, then Recently live; no charts),
+  **Needs you** and **Workshop**, a line, then **Channels** (**#general**) and **Topics**
   (each topic's channel), each group under its heading. Place keys are
   `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
@@ -261,9 +261,11 @@ is no replay plan to write and nothing to verify locally.
   (`services/homeroom-bot-voice.js`), never unprompted and never in the
   channel's own stream.
   App-wide state is shown where it lives: merges paused and a stalled release
-  are banners on the project page, and settings changed lately and the
-  Friday card are the Workshop's notices panel (`services/app-notices.js`,
-  read from `events` — record a new kind there, not a chat line).
+  are banners on the project page. Settings changed lately and the Friday
+  card are recorded in `events` and read back by `services/app-notices.js`
+  (`GET /api/apps/:slug/notices`); record a new kind there, not a chat line.
+  No screen draws them since the Workshop's "Lately in this project" panel
+  was removed.
   `migrate.clearAutomatedChannelLines` clears the lines written before. A
   door to a project's hub (a link that says so) calls
   `AppView._landOnHub(slug)` first, so it opens on the hub rather than the

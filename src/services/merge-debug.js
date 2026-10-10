@@ -42,12 +42,15 @@ function resolvePool(poolOrConfig) {
 // simply pass it to step()/endRun(), which no-op on a null runId). Cheap
 // single INSERT; the two top-level entry points (checkAndMerge and the
 // resolver's per-PR resolve) await it once to obtain the id to thread.
-async function startRun(poolOrConfig, { appId, sessionId, prNumber, kind, trigger } = {}) {
+// `startedAt` (a Date) backdates the run to work it covers that began before
+// it was opened: a checks run's preview build (#4696). Absent, it is now.
+async function startRun(poolOrConfig, { appId, sessionId, prNumber, kind, trigger, startedAt } = {}) {
   try {
     const pool = resolvePool(poolOrConfig);
+    const from = startedAt instanceof Date && Number.isFinite(startedAt.getTime()) ? startedAt.toISOString() : null;
     const { rows } = await pool.query(
-      `INSERT INTO merge_debug_runs (app_id, session_id, pr_number, kind, trigger, status)
-       VALUES ($1, $2, $3, $4, $5, 'running')
+      `INSERT INTO merge_debug_runs (app_id, session_id, pr_number, kind, trigger, status, started_at)
+       VALUES ($1, $2, $3, $4, $5, 'running', COALESCE($6::timestamptz, NOW()))
        RETURNING id`,
       [
         appId ?? null,
@@ -55,6 +58,7 @@ async function startRun(poolOrConfig, { appId, sessionId, prNumber, kind, trigge
         prNumber ?? null,
         kind || 'merge',
         trigger || null,
+        from,
       ]
     );
     const runId = rows[0]?.id != null ? Number(rows[0].id) : null;

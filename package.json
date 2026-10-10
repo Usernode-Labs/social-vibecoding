@@ -14,6 +14,7 @@
     "dev": "node --watch server.js",
     "pretest": "node scripts/ensure-shell-artifacts.js --html-only",
     "test": "node --require ./tests/lib/test-net.js --test --test-force-exit --test-timeout=180000 tests/*.test.js",
+    "test:shard": "node --require ./tests/lib/test-net.js --test --test-force-exit --test-timeout=180000 --test-shard=${TEST_SHARD:-1/1} tests/*.test.js",
     "pretest:changed": "node scripts/ensure-shell-artifacts.js --html-only",
     "test:changed": "node scripts/test-changed.js",
     "shots:dry-run": "node scripts/shots-dry-run.js",

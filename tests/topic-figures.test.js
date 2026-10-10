@@ -51,6 +51,8 @@ const TOPIC_IDS = {
 const byId = (payload) => Object.fromEntries(payload.figures.map((f) => [f.id, f]));
 // A split figure's sides as [key, state, value, detail].
 const sidesOf = (f) => f.sides.map((side) => [side.key, side.state, side.value, side.detail]);
+// The day a record began, as a figure's line says it: "10 Oct" (UTC).
+const utcDay = (at) => new Date(at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
 // ── 1. Rounding and wording ──────────────────────────────────────────────
 
@@ -116,6 +118,25 @@ test('a figure off its target says so; on target it is grey; nothing to count sa
   assert.deepEqual([unread.state, unread.value], ['error', 'Couldn’t load']);
   const merged = figures.present('bot.merged', { rate: 0.58, n: 24, other: 0.64 });
   assert.deepEqual([merged.state, merged.value, merged.sub], ['calm', '58%', 'people’s rate 64%']);
+});
+
+test('a record that began inside the window says when, so a new one never reads as none (#4697)', () => {
+  const since = '2026-10-10T16:55:00Z';
+  const fresh = figures.present('infra.merge-to-live', { homeroom: { secs: null, n: 0, since }, others: { secs: 20, n: 50 } });
+  assert.deepEqual(sidesOf(fresh), [['homeroom', 'empty', 'None yet', 'Counting since 10 Oct'], ['others', 'ok', '20 s', '']]);
+  const timed = figures.present('infra.merge-to-live', { homeroom: { secs: 400, n: 3, since: new Date(since) }, others: { secs: 20, n: 50 } });
+  assert.deepEqual(sidesOf(timed)[0], ['homeroom', 'ok', '7 min', 'since 10 Oct'], 'a median of less than the week says so');
+  assert.equal(timed.sub, 'median · target 15 min', 'the target line is unchanged');
+  const opens = figures.present('infra.apps-up', { hits: 0, total: 0, since });
+  assert.deepEqual([opens.state, opens.value, opens.sub], ['empty', 'None yet', 'Counting since 10 Oct']);
+  const some = figures.present('infra.apps-up', { hits: 95, total: 100, since });
+  assert.equal(some.sub, '95 of 100 opens since 10 Oct · below 99% target');
+  // A record older than the window (the query sends no `since`) reads as before.
+  assert.deepEqual(sidesOf(figures.present('infra.merge-to-live', { homeroom: { secs: null, n: 0 }, others: { secs: 20, n: 50 } }))[0],
+    ['homeroom', 'empty', 'None yet', '']);
+  const src = read('src/services/topic-figures.js');
+  assert.match(src, /WHERE s\.key = 'platform_live_tracked_since' AND s\.value::timestamptz > \$1::timestamptz\) AS since/);
+  assert.match(src, /WHERE s\.key = 'app_outages_tracked_since' AND s\.value::timestamptz > \$1::timestamptz\) AS since/);
 });
 
 test('a split figure shows Homeroom beside the other projects, each with its verdict, and the target once', () => {
@@ -199,6 +220,17 @@ test('which figures split: the bot\'s cost and speed, the whole pipeline, merge 
   assert.deepEqual(reads('bot.answered'), [[null, 'botAnswers', 'all']]);
   assert.deepEqual(reads('infra.deploys-failed'), [[null, 'mergeLive', 'all']]);
   assert.equal(figures.FIGURES['pipeline.checks-time'].target.atMost, 120, 'a checks verdict in 2 minutes');
+});
+
+test('Time to a checks verdict counts the preview build a run followed (#4696)', () => {
+  assert.match(figures.FIGURES['pipeline.checks-time'].tip, /including the build/);
+  // The build records when it began, and the checks run that follows opens
+  // its trace there, so ended_at - started_at spans the build too.
+  assert.match(read('src/services/staging.js'), /const timings = \{ startedAt: buildStartedAt \};/);
+  const capture = read('src/services/visuals.js');
+  assert.match(capture, /const builtFrom = Number\(stagingResult\?\.timings\?\.startedAt\);/);
+  assert.match(capture, /startedAt: Number\.isFinite\(builtFrom\) && builtFrom <= runStartedAt \? new Date\(builtFrom\) : null,/,
+    'a run on a live preview, with no build, starts when it is opened');
 });
 
 test('a daily window ends at the start of today (UTC) and covers the days before it', () => {
@@ -589,11 +621,15 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     assert.deepEqual(rows.map((r) => [r.event_type, r.count]), [['app_unavailable', null], ['app_restarted', '2'], ['app_restarted', '1']]);
 
     const got = byId(await figures.figuresFor(pool, TOPIC_IDS.infra));
-    assert.deepEqual(sidesOf(got['infra.merge-to-live']), [['homeroom', 'warn', '20 min', ''], ['others', 'ok', '6 min', '']]);
+    // Both records began a day ago, inside the week, so their lines say so
+    // (#4697); the projects' deploys were always recorded.
+    const { rows: [began] } = await pool.query(`SELECT value FROM platform_settings WHERE key = 'platform_live_tracked_since'`);
+    const day = utcDay(began.value);
+    assert.deepEqual(sidesOf(got['infra.merge-to-live']), [['homeroom', 'warn', '20 min', `since ${day}`], ['others', 'ok', '6 min', '']]);
     assert.deepEqual([got['infra.deploys-failed'].value, got['infra.deploys-failed'].sub, got['infra.deploys-failed'].state],
       ['50%', '1 of 2 project merges · over 5% target', 'warn']);
     assert.deepEqual([got['infra.apps-up'].value, got['infra.apps-up'].sub, got['infra.apps-up'].state],
-      ['67%', '2 of 3 opens · below 99% target', 'warn'], 'an open from before the records began is not counted');
+      ['67%', `2 of 3 opens since ${day} · below 99% target`, 'warn'], 'an open from before the records began is not counted');
     assert.deepEqual([got['infra.restarts'].value, got['infra.restarts'].sub], ['3 times', 'in 1 project']);
     assert.deepEqual([got['infra.limits-filled'].value, got['infra.limits-filled'].state], ['1 time', 'warn']);
   });
@@ -641,7 +677,8 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     assert.equal(one.status, 200);
     assert.deepEqual([one.body.topic, one.body.demo, one.body.figures.map((f) => f.id)], ['infra', undefined, ['infra.merge-to-live']],
       'outside staging ?demo=1 changes nothing');
-    assert.deepEqual(sidesOf(one.body.figures[0]), [['homeroom', 'warn', '20 min', ''], ['others', 'ok', '6 min', '']]);
+    const { rows: [began] } = await pool.query(`SELECT value FROM platform_settings WHERE key = 'platform_live_tracked_since'`);
+    assert.deepEqual(sidesOf(one.body.figures[0]), [['homeroom', 'warn', '20 min', `since ${utcDay(began.value)}`], ['others', 'ok', '6 min', '']]);
     assert.equal('scope' in one.body, false);
     assert.deepEqual((await get('/quiet/figures')).body, { topic: 'quiet', figures: [] });
     assert.equal((await get('/nowhere/figures')).status, 404);
