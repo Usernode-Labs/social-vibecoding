@@ -56,6 +56,7 @@ const IDS = Object.freeze({
   botRequest: 990868,
   awaitingProposal: 990869,
   firstVersionApp: 990870,
+  accessApp: 990871,
 });
 const RESERVED_RANGE = Object.freeze([990840, 990895]);
 
@@ -99,6 +100,12 @@ const STANDINGS_CHALLENGES = Object.freeze([
 ]);
 const FIRST_VERSION_SLUG = 'shots-demo-member-book-club';
 const FIRST_VERSION_NAME = '[shots fixture] Book club';
+// A project of the member's with a GitHub repository, so App settings'
+// Access section is live on it. Its fake repository address: the same
+// staging-demo owner the seeds' own fake URLs use.
+const ACCESS_APP_SLUG = 'shots-demo-member-walking-club';
+const ACCESS_APP_NAME = '[shots fixture] Walking club';
+const ACCESS_APP_REPO_URL = 'https://github.com/staging-demo/shots-demo-member-walking-club';
 // The staging mock request the Homeroom bot offers to close (src/routes/
 // issues.js stagingMockIssues), which no other state marks.
 const CLOSE_OFFER_REQUEST = Object.freeze({ number: 900001, title: '[Mock] Dark mode toggle resets after refresh' });
@@ -1348,6 +1355,45 @@ const STATES = [
         shows: [{
           state: `Your chat with Homeroom bot, at the bottom: your message asking for a request, and the bot's reply quoting it with the drafted request under it, ${name}, new request: ${title}, and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
           path: `/#messages/${IDS.botConversation}`,
+        }],
+      };
+    },
+  },
+  {
+    // A project of the member's with a GitHub repository (#4664): App
+    // settings' Access section is live only on an app its viewer manages
+    // that has a repository, and the member's fixture apps have none, so
+    // the shots of a change to that section (e.g. #4660) found only the
+    // read-only line everywhere they looked.
+    id: 'shots-demo-member-app-access-v1',
+    persona: 'member',
+    needs: {
+      apps: ['id', 'name', 'slug', 'status', 'created_by', 'collab_visibility', 'view_visibility',
+        'repo_url', 'self_hosted', 'created_at'],
+      app_collaborators: ['app_id', 'user_id', 'status', 'accepted_at'],
+    },
+    free: async (client) => {
+      const taken = await client.query('SELECT 1 FROM apps WHERE slug = $1', [ACCESS_APP_SLUG]);
+      return taken.rowCount === 0 && await idsFree(client, 'apps', [IDS.accessApp]);
+    },
+    async install(client, ctx) {
+      // As the create route makes a project: Just you, its maker a member.
+      // The repository address is well formed but fake: a copy has no
+      // GitHub, and the settings dialog only checks that a link is there.
+      await client.query(
+        `INSERT INTO apps (id, name, slug, status, created_by, collab_visibility, view_visibility, repo_url, created_at)
+         VALUES ($1, $2, $3, 'running', $4, 'private', 'private', $5, NOW() - INTERVAL '3 days')`,
+        [IDS.accessApp, ACCESS_APP_NAME, ACCESS_APP_SLUG, ctx.member.id, ACCESS_APP_REPO_URL]
+      );
+      await client.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+         VALUES ($1, $2, 'member', NOW() - INTERVAL '3 days')`,
+        [IDS.accessApp, ctx.member.id]
+      );
+      return {
+        shows: [{
+          state: 'A project of yours (Just you) with a GitHub repository: on its page, ⋯ then App settings shows Access with the levels you can pick, Propose access change and the hint under it (these copies have no GitHub, so do not press Propose access change).',
+          path: `/#app/${ACCESS_APP_SLUG}/dev`,
         }],
       };
     },
