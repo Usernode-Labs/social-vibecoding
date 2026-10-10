@@ -99,7 +99,7 @@ import { MergeStatusPill } from '../dev-chat/session-header';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { useDevViewMode } from '../dev-board/view-mode-store';
 import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope';
-import { HeaderPlaceName, usePhoneHeader } from '../dev-board/workshop/place-bar';
+import { HeaderPlaceName } from '../dev-board/workshop/place-bar';
 
 // The one string that means "this is naming the platform, not an app". It is
 // header-title-store.js's INITIAL, which is why the prerendered document and
@@ -114,11 +114,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const { screen } = useStoreState(navStore);
   const { life } = useStoreState(sessionHeaderStore);
   const viewMode = useDevViewMode();
-  // #4703: on a phone the merged header names the place after the switcher.
-  // The flag is settled in an effect (initial false, place-bar.tsx), so the
-  // prerender and the first client render draw none.
-  const phoneHeader = usePhoneHeader();
-  // "Your communities" (features/workshop/community-switcher.tsx): the
+    // "Your communities" (features/workshop/community-switcher.tsx): the
   // app's name opens it, and so does the Communities screen's All chip.
   const { switcher } = useStoreState(communityScopeStore);
   const switcherOpen = !!switcher;
@@ -239,7 +235,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                 page (onCard) has its own way back and draws none. Hidden
                 from screen readers: the heading is named by the switcher's
                 drawing already. */}
-            {onWorkshop && phoneHeader ? <HeaderPlaceName slug={slug} /> : null}
+            {onWorkshop ? <HeaderPlaceName slug={slug} /> : null}
           </>
         ) : (
           <span className="min-w-0 flex items-baseline gap-1.5">

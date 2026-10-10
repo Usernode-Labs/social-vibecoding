@@ -128,8 +128,10 @@ export function HeaderPlace({ slug, name }: { slug: string | null; name: string 
  * #4703: THE PLACE'S NAME in the merged header, beside the switcher — the
  * words the place bar's title showed ("Workshop", "# homeroom-bot"), hidden
  * from screen readers because the heading they sit in is already named.
- * Drawn only while the mounted page is this route's project; `slug` is the
- * route's, from the header's own store.
+ * Drawn while the mounted page is this route's project; `slug` is the
+ * route's, from the header's own store. It carries no width query of its
+ * own (#3271's rule for the header): app.css shows it only on a phone,
+ * where the place bar's second row is gone.
  */
 export function HeaderPlaceName({ slug }: { slug: string | null }): ReactNode {
   const { slug: mounted, place } = useStoreState(placeStore);

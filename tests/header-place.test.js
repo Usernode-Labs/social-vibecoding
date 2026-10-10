@@ -109,7 +109,8 @@ test('the page publishes what the header\'s button draws and how its tray opens'
 test('the prerendered header emits none of the merged row, so hydration is safe', () => {
   // The phone flag and the mounted place are both settled after hydration,
   // so the server render — and the first client render — draw neither the
-  // button nor the name, whatever the stores hold.
+  // button nor the name, whatever the stores hold (the name's phone-ness
+  // itself is app.css's, so the header's code carries no width query).
   const ph = loadTsx('tests/fixtures/platform-header-api.ts');
   const initial = { ...ph.improveStore.get() };
   ph.improveStore.set({
@@ -148,6 +149,12 @@ test('the header\'s merged controls are the bar\'s, sized to the header\'s row',
     'the dot rides the smaller box');
   assert.match(CSS, /#platform-header \.header-place-name \{[^}]*flex-shrink: 0; min-width: 0; max-width: 45%;/,
     'the place name holds its ground');
+  // The name is phone-only by CSS, not a width query in the header's code
+  // (#3271): hidden at every width, shown inside the phone block alone.
+  assert.match(CSS, /#platform-header \.header-place-name \{ display: none; \}/,
+    'the name paints nowhere by default');
+  assert.match(CSS, /@media \(max-width: 767\.98px\) \{[^@]*?#platform-header \.header-place-name \{\n    display: inline-block;/,
+    'and only a phone shows it');
   assert.match(CSS, /#platform-header \.header-place-name \{[^}]*font-size: 16px; font-weight: 600; color: #fff;/,
     'in the header\'s white ink');
   // The dot's ring is the community tint it sits on, as the band's was.

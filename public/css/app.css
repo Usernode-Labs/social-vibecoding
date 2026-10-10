@@ -18737,6 +18737,10 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    second row did not show. On Homeroom's own pages that name is the
    wordmark drawing, which has no shorten-with-ellipsis of its own: it scales
    into the room left instead of clipping mid-letter. */
+/* The name is phone-only, and the phone-ness is CSS, not a width query in
+   the header's code (#3271): hidden at every width, shown on a phone only,
+   where the band's row is collapsed. */
+#platform-header .header-place-name { display: none; }
 @media (max-width: 767.98px) {
   .dev-ws-tabs.dev-ws-band { background: none; pointer-events: none; }
   .dev-ws-placebar .dev-ws-tabtrack { height: 0; overflow: hidden; }
@@ -18747,6 +18751,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
     width: 100%; height: auto;
   }
   #platform-header .header-place-name {
+    display: inline-block;
     flex-shrink: 0; min-width: 0; max-width: 45%; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
     font-size: 16px; font-weight: 600; color: #fff;
