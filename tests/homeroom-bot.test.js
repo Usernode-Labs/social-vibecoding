@@ -232,6 +232,9 @@ test('settings default to off and clamp their numbers', () => {
     // Live work, 12 at once and 3 per person (raised from 6 and 2 when every
     // project went live); a DM is read.
     liveAtOnce: 12, perPerson: 3, dmChat: true,
+    // Its voice answers in changes', requests' and chats' discussions, each
+    // until an admin turns it off there (homeroom-bot-voice.js).
+    voiceSession: true, voiceIssue: true, voiceChat: true,
     // Reading a request again continues the conversation it was read in.
     continueReads: true,
     // The moment it went on for everyone is schema.sql's to write (readSettings
@@ -1369,7 +1372,7 @@ test('the everyone moment: what the bot never read live before it went on for ev
   assert.match(SRC, /function everyoneSinceOf\(settings\) \{\n  return settings\?\.everyoneSince \|\| null;\n\}/);
 });
 
-test('a new request on a live app gets its card when it is queued, under the key its read starts from', async () => {
+test('a new first version on a live app gets its card when it is queued, under the key its read starts from; any other request is followed in the tray', async () => {
   const started = [];
   const pool = {
     async query(sql, params) {
@@ -1391,7 +1394,9 @@ test('a new request on a live app gets its card when it is queued, under the key
     },
   };
   const dm = {
-    async recordRequester(_pool, { issueNumber }) { return { userId: 7, username: 'maya', issueTitle: `#${issueNumber}`, hasPlatformAccess: true }; },
+    async recordRequester(_pool, { issueNumber }) {
+      return { userId: 7, username: 'maya', issueTitle: `#${issueNumber}`, hasPlatformAccess: true, firstVersion: firstVersion === issueNumber };
+    },
     hasBot: () => true,
     requestLine: () => 'line',
     async requestStart() { return null; },
@@ -1399,6 +1404,12 @@ test('a new request on a live app gets its card when it is queued, under the key
   };
   const app = { id: 9, slug: 'todo', name: 'Todo', repo_url: 'https://github.com/usernode-bot/todo' };
   const capRoom = { proposals_per_app: 5, proposals_total: 50, question_tripwire: 10 };
+  // A request filed on the board, not in the DM: no card; the tray follows it.
+  let firstVersion = null;
+  await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
+  assert.equal(started.length, 0);
+  // A project's first version always has one.
+  firstVersion = 1;
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
   assert.equal(started.length, 1);
   assert.equal(started[0].idempotencyKey, 'hrbot-activity-401', 'the key runTriage starts the card under');
@@ -2164,7 +2175,8 @@ test('runTriage on a live app: announces the first look, posts the question, rec
   deps.domain = 'app.onhomeroom.com';
   const out = await bot.runTriage(pool, {}, {
     bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps,
-    settings: { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000 },
+    // The bot's voice off in requests' discussions: the fixed notes it had.
+    settings: { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000, voiceIssue: false },
   });
   assert.equal(out.verdict, 'question');
   assert.equal(out.acted, 'question');
@@ -2176,6 +2188,37 @@ test('runTriage on a live app: announces the first look, posts the question, rec
   assert.equal(insert.params[3], 'live', 'the ledger says which runs spoke');
   assert.ok(calls.queries.some((q) => /UPDATE homeroom_bot_runs\s+SET thread_seen_at = GREATEST/.test(q.s)),
     'and what it has seen moves past its own comments');
+});
+
+test('with the bot\'s voice on in requests\' discussions, a first look is recorded but not announced', async () => {
+  const { pool, deps } = triageHarness({
+    sessionId: 922,
+    verdictText: 'Read the feed code.\n```json\n{"verdict":"question","determined":false,"missing_fact":"which feed","question":"Which feed?","default":"All of them"}\n```',
+  });
+  const posts = [];
+  const realQuery = pool.query;
+  pool.query = async (sql, params) => {
+    if (/INSERT INTO homeroom_bot_posts/.test(String(sql))) { posts.push(params[3]); return { rows: [{ id: posts.length }] }; }
+    return realQuery(sql, params);
+  };
+  const comments = [];
+  deps.github.createIssueComment = async (owner, repo, n, body) => {
+    comments.push(body);
+    return { id: comments.length, created_at: new Date(Date.now() + 1000).toISOString() };
+  };
+  const thread = [];
+  deps.ws = { async sendSystemMessage(_p, appId, content) { thread.push(content); return { id: thread.length }; } };
+  deps.sessionLifecycle = {};
+  deps.domain = 'app.onhomeroom.com';
+  const out = await bot.runTriage(pool, {}, {
+    bot: BOT, app: APP, item: ITEM, mode: 'shadow', deps,
+    settings: { mode: 'shadow', turnSeconds: 1200, turnInputTokens: 10_000_000 },
+  });
+  assert.equal(out.verdict, 'question');
+  assert.deepEqual(posts, ['looking', 'question'], 'the look is still recorded');
+  assert.equal(comments.length, 1, 'only what it found is said');
+  assert.match(comments[0], /Which feed\?/);
+  assert.ok(!thread.some((m) => /looking at this request/.test(m)));
 });
 
 test('runTriage on a staging copy stays silent', async (t) => {

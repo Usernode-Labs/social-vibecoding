@@ -223,7 +223,9 @@ const EVENT_TYPES = Object.freeze({
   // Something on the platform that should not happen, kept for admins
   // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
   // kind names the incident ('build_interrupted': a bot build a restart or
-  // a lost worker cut short; { runId, issueNumber, why, outcome }).
+  // a lost worker cut short; { runId, issueNumber, why, outcome }.
+  // 'checks_not_change': a bot change's red check that its fix turn found the
+  // change did not cause; { runId, issueNumber, prNumber, head, failing, why }).
   PLATFORM_INCIDENT: 'platform_incident',
   // The Homeroom bot's build turns that quit early, and their nudges
   // (homeroom-bot-live.js recordNoChange), so a weekly query can read the

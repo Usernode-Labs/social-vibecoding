@@ -300,7 +300,9 @@ async function continueCard(pool, card, { userId, lookAt = null, dm }) {
  * throws: a card that could not be sent costs the work nothing. Resolves
  * what sendDm did, or null.
  */
-async function startCard(pool, { app, issueNumber, requester, bot, jobKey, settings = null, filed = false, queued = false, deps = {} }) {
+async function startCard(pool, {
+  app, issueNumber, requester, bot, jobKey, settings = null, filed = false, queued = false, inDm = false, deps = {},
+}) {
   try {
     const n = Number(issueNumber);
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !jobKey) return null;
@@ -308,6 +310,19 @@ async function startCard(pool, { app, issueNumber, requester, bot, jobKey, setti
     const s = settings || await settingsModule(deps).readSettings(pool);
     if (!dm.hasBot(s, requester)) return null;
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
+    // A DM card is for work they started there (`inDm`), or a project's
+    // first version. A request filed anywhere else (the Suggest form, the
+    // request's page, a project's chat, its board) is followed in the tray
+    // above the DM, and the DM says something only when it needs them: a
+    // question, a plan, a change to approve, a stop (relayIssuePost). On 9
+    // October 2026 one person's DM got 45 cards in an afternoon for requests
+    // they had filed through the Suggest form.
+    if (!existing && !inDm && !requester.firstVersion) {
+      log.info('homeroom-bot-activity', 'Followed in the tray, no DM card', {
+        app: app.slug, issueNumber: n, userId: requester.userId,
+      });
+      return null;
+    }
     if (existing) {
       // WP1 (#9): a build still waiting its turn or running is what the card
       // follows until it ends, whatever look began after it.

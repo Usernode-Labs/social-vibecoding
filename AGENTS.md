@@ -256,6 +256,10 @@ is no replay plan to write and nothing to verify locally.
   or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
   new platform line names the proposal's, request's or decision's own thread
   (`{ type: 'session' | 'issue' | 'governance', ref }`) or is not written.
+  Homeroom bot answering somebody who mentioned it there is conversation,
+  not activity: it replies in a reply thread under their message
+  (`services/homeroom-bot-voice.js`), never unprompted and never in the
+  channel's own stream.
   App-wide state is shown where it lives: merges paused and a stalled release
   are banners on the project page, and settings changed lately and the
   Friday card are the Workshop's notices panel (`services/app-notices.js`,

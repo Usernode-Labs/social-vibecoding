@@ -168,7 +168,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
   await t.test('starting work sends the requester one card, live, quoting nothing they did not start here', async () => {
     const job = await claim(seeds, 3);
     const from = events.length;
-    first = await activity.startCard(pool, {
+    first = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 3, requester: requester(ada, 'Sort by date'), bot, jobKey: job, settings,
     });
     assert.ok(first?.messageId, 'sent');
@@ -182,7 +182,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     assert.ok(events.slice(from).some((e) => e.payload.type === 'conversation_message_created'
       && e.payload.messageId === first.messageId && e.memberIds.includes(ada.id)), 'it reaches their open DM at once');
 
-    const again = await activity.startCard(pool, {
+    const again = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 3, requester: requester(ada, 'Sort by date'), bot, jobKey: job, settings,
     });
     assert.equal(again.messageId, first.messageId, 'the same piece of work started again keeps its card');
@@ -240,7 +240,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
   });
 
   await t.test('B4: a question ends a look; the next look at the request carries on in the same card', async () => {
-    const asking = await activity.startCard(pool, {
+    const asking = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 4, requester: requester(ada, 'Dark mode'), bot, jobKey: await claim(seeds, 4), settings,
     });
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 4', [seeds.id]);
@@ -255,7 +255,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     // Answered: the bot looks again, and the same card follows it, where it
     // first appeared, from when this look began. Nothing new is sent.
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const again = await activity.startCard(pool, {
+    const again = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 4, requester: requester(ada, 'Dark mode'), bot, jobKey: await claim(seeds, 4), settings,
     });
     assert.equal(again.messageId, asking.messageId);
@@ -270,7 +270,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     assert.equal(card.startedAt, asked.startedAt, 'its time counts from the first look');
 
     // A look that ended with nothing recorded (its row gone, no run): stopped.
-    const lost = await activity.startCard(pool, {
+    const lost = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 5, requester: requester(ada, 'Export'), bot, jobKey: await claim(seeds, 5), settings,
     });
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 5', [seeds.id]);
@@ -286,7 +286,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 8, $2, 'Watering log')`,
       [seeds.id, ada.id],
     );
-    const card = await activity.startCard(pool, {
+    const card = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 8, requester: requester(ada, 'Watering log'), bot, jobKey: await claim(seeds, 8), settings,
     });
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 8', [seeds.id]);
@@ -297,7 +297,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     );
     // A second look at the same request begins: B4, the same card, which
     // goes on following the build until it ends.
-    const second = await activity.startCard(pool, {
+    const second = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 8, requester: requester(ada, 'Watering log'), bot, jobKey: await claim(seeds, 8), settings,
     });
     assert.equal(second.messageId, card.messageId);
@@ -331,7 +331,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     // A build that ended with nothing recorded is not working for ever: its
     // session put away, the card stopped. B4: the look that started it
     // carried on in the same card, which reads from that look's start.
-    const third = await activity.startCard(pool, {
+    const third = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 8, requester: requester(ada, 'Watering log'), bot, jobKey: 'wp1-third', settings,
     });
     assert.equal(third.messageId, card.messageId);
@@ -411,13 +411,13 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
   });
 
   await t.test('nobody else\'s cards, never an app they cannot view, and none for somebody the bot does not DM', async () => {
-    const samsCard = await activity.startCard(pool, {
+    const samsCard = await activity.startCard(pool, { inDm: true,
       app: samsApp, issueNumber: 9, requester: requester(sam, 'Sam\'s secret'), bot, jobKey: await claim(samsApp, 9), settings,
     });
-    const hiddenCard = await activity.startCard(pool, {
+    const hiddenCard = await activity.startCard(pool, { inDm: true,
       app: hidden, issueNumber: 2, requester: requester(ada, 'Hidden thing'), bot, jobKey: await claim(hidden, 2), settings,
     });
-    const notOnList = await activity.startCard(pool, {
+    const notOnList = await activity.startCard(pool, { inDm: true,
       app: seeds, issueNumber: 6, requester: requester(lee, 'Lee\'s idea'), bot, jobKey: await claim(seeds, 6), settings,
     });
     assert.equal(notOnList, null, 'lee is not somebody the bot talks to in a DM');

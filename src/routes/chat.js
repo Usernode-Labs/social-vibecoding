@@ -1196,6 +1196,36 @@ function chatRoutes(config) {
       }
     });
 
+  //   POST /api/apps/:slug/messages/:id/bot-offer  { choice: 'yes' | 'no' }
+  //     → a tap under one of Homeroom bot's offers in a thread
+  //       (homeroom-bot-voice.js decideOffer): File it, Withdraw it or
+  //       Propose to close, or Not now / Keep it. Only the person it was
+  //       offered to, once, and every gate the offer met is read again.
+  //       Members only, from the person's own browser.
+  router.post('/api/apps/:slug/messages/:id/bot-offer', groupChatWriteLimiter, sameOriginBrowserOnly,
+    communities.requireAppMembership(pool), async (req, res) => {
+      res.set('Cache-Control', 'private, no-store');
+      if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+      const choice = req.body?.choice;
+      if (choice !== 'yes' && choice !== 'no') return res.status(400).json({ error: 'Choose yes or no.' });
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'Message not found' });
+      try {
+        const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS);
+        if (!app) return res.status(404).json({ error: 'App not found' });
+        const out = await require('../services/homeroom-bot-voice').decideOffer(pool, config, {
+          app, user: req.user, messageId: id, choice,
+        });
+        if (!out.ok) {
+          return res.status(out.status || 400).json({ error: out.error || 'That didn\'t work.', said: out.said || null });
+        }
+        return res.json({ ok: true, decision: out.decision || null, said: out.said || null });
+      } catch (err) {
+        log.error('chat', 'Failed to decide a Homeroom bot offer', { slug: req.params.slug, message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
   // ── Group-chat file attachments (#694) ───────────────────────────
   //
   // Upload happens BEFORE send, mirroring dev-chat (#450,

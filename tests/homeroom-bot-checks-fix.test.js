@@ -263,6 +263,32 @@ test('a turn that cannot fix them hands over with its reason, once', async (t) =
   assert.equal(insertOf(h).params[21], HEAD);
 });
 
+test('red checks the change did not cause go to admins as an incident; the change\'s discussion hears one line, and nobody else', async (t) => {
+  const h = harness({
+    result: { lastResultText: '```json\n{"action":"person","cause":"not_change","reply":"The check fails on main too: the platform\'s sign-in step times out."}\n```', pushOk: true, sha: HEAD },
+  });
+  const out = await run(t, h);
+  assert.equal(out.acted, 'checks_not_change');
+  assert.equal(h.calls.reconciled.length, 0);
+  assert.equal(h.calls.posts.length, 0, 'nothing on the request, on GitHub or in the DM');
+  assert.equal(h.calls.onProposal.length, 1);
+  assert.equal(h.calls.onProposal[0].kind, 'checks_not_change');
+  assert.equal(h.calls.onProposal[0].text, followup.checksNotChangeText({ failingCount: 1 }));
+  assert.match(h.calls.onProposal[0].text, /not caused by it/);
+  // An incident is an event admins read (platform-incidents.js record).
+  const incident = h.calls.queries.find((q) => /INSERT INTO events/.test(q.s) && /checks_not_change/.test(JSON.stringify(q.params)));
+  assert.ok(incident, 'recorded for admins');
+  assert.equal(incident.params[2], 5001, 'on the change');
+  assert.equal(insertOf(h).params[21], HEAD, 'and not looked at again for the same head');
+});
+
+test('a person the change needs is still a person: only cause not_change goes to admins', () => {
+  assert.equal(followup.parseFollowUp('```json\n{"action":"person","cause":"not_change","reply":"x"}\n```').cause, 'not_change');
+  assert.equal(followup.parseFollowUp('```json\n{"action":"person","cause":"bogus","reply":"x"}\n```').cause, null);
+  assert.equal(followup.parseFollowUp('```json\n{"action":"person","reply":"x"}\n```').cause, null);
+  assert.match(followup.checksFixPrompt({ seed: 'SEED', prNumber: 82, failing: [], total: 0 }), /"cause"/);
+});
+
 test('a "revise" that moved nothing is a failed run, said once', async (t) => {
   const h = harness({ result: { lastResultText: '```json\n{"action":"revise","reply":"Done."}\n```', pushOk: true, sha: HEAD } });
   const out = await run(t, h);

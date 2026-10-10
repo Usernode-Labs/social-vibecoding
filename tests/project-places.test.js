@@ -297,6 +297,15 @@ test('a topic\'s door carries the place in the channel its address names, for th
     store.channelRead('homeroom', 11);
     store.channelRead('homeroom', 12, true);
     assert.deepEqual(reloads, ['homeroom', 'homeroom'], '#onboarding showed 3; a "Mark unread" always');
+    // #4647: #general's read is the record's too — `ref` null names it.
+    reloads.length = 0;
+    store.channelRead('homeroom', null);
+    assert.deepEqual(reloads, [], '#general showed none');
+    store.channelRead('homeroom', null, true);
+    assert.deepEqual(reloads, ['homeroom'], 'a "Mark unread" always, at 0 as well');
+    record = { places: { ...PLACES_PAYLOAD, channels: PLACES_PAYLOAD.channels.map((c) => (c.kind === 'general' ? { ...c, unread: 4 } : c)) } };
+    store.channelRead('homeroom', null);
+    assert.deepEqual(reloads, ['homeroom', 'homeroom'], '#general showed 4');
   } finally {
     if (had) globalThis.window = was; else delete globalThis.window;
   }

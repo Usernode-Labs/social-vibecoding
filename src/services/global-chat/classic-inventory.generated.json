@@ -4811,6 +4811,21 @@
     {
       "source": "src/routes/chat.js",
       "method": "POST",
+      "path": "/api/apps/:slug/messages/:id/bot-offer",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "messages.post.apps.item.messages.item.bot.offer.29fd15b2",
+      "domain": "messages",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "conversation",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#messages"
+    },
+    {
+      "source": "src/routes/chat.js",
+      "method": "POST",
       "path": "/api/apps/:slug/chat-attachments",
       "expression": null,
       "status": "mapped",

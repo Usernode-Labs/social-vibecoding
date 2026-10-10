@@ -3,7 +3,8 @@
 // B5: Homeroom bot's name, face and first hello.
 //
 //   - the bot is "Homeroom bot" wherever Messages names it, with the Homeroom
-//     mark for its picture and an "AI" badge; people keep their @handles;
+//     mark for its picture and an "AI" badge; people keep their @handles,
+//     except in a direct message, where they are named bare (#4655);
 //   - its DM is the first row of the list, whatever was said last;
 //   - it says hello once per person, ever, with questions to tap: a maker
 //     with their first project, anybody else with their first request.
@@ -28,6 +29,10 @@ test('B5: the bot is named by its name, a person by their handle', () => {
   assert.equal(senderName({ id: 2, username: 'homeroom_bot', bot: true, displayName: 'Homeroom bot' }), 'Homeroom bot');
   assert.equal(senderName({ id: 3, username: 'ada' }), '@ada');
   assert.equal(senderName({ id: 3, username: 'ada', displayName: 'Ada L' }), '@ada', 'a person keeps their handle');
+  // #4655: bare, as a direct message names a person.
+  assert.equal(senderName({ id: 3, username: 'ada' }, { bare: true }), 'ada');
+  assert.equal(senderName({ id: 2, username: 'homeroom_bot', bot: true, displayName: 'Homeroom bot' }, { bare: true }), 'Homeroom bot', 'the bot keeps its name');
+  assert.equal(senderName({ id: 3, username: 'ada' }, { bare: false }), '@ada');
   assert.equal(senderName({ id: 0, username: 'Deleted user' }), 'Deleted user');
   assert.equal(senderName(null), '');
   const face = renderToHtml(createElement(UserAvatar, { user: { id: 2, username: 'homeroom_bot', bot: true }, shape: 'square' }));
@@ -44,19 +49,19 @@ test('B5: the bot is named by its name, a person by their handle', () => {
 test('B5: every place Messages names the bot names it, with an AI badge beside it', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.equal(message('messages:row.aiBadge'), 'AI');
-  assert.match(row, /\{senderName\(message\.sender\)\}<\/span>\{message\.sender\.bot \? <span className="messages-bot-badge">\{t\('messages:row\.aiBadge'\)\}<\/span> : null\}/);
+  assert.match(row, /\{senderName\(message\.sender, \{ bare \}\)\}<\/span>\{message\.sender\.bot \? <span className="messages-bot-badge">\{t\('messages:row\.aiBadge'\)\}<\/span> : null\}/);
   assert.doesNotMatch(row, />Bot<\/span>/);
-  assert.match(row, /<span>\{senderName\(message\.reply\.sender\)\}<\/span>/, 'the quote');
-  assert.match(row, /preview=\{\{ who: senderName\(message\.sender\)/, 'the action sheet');
+  assert.match(row, /<span>\{senderName\(message\.reply\.sender, \{ bare \}\)\}<\/span>/, 'the quote');
+  assert.match(row, /preview=\{\{ who: senderName\(message\.sender, \{ bare \}\)/, 'the action sheet');
   assert.equal(message('messages:row.reportLabel', { name: 'Homeroom bot' }), 'Message from Homeroom bot');
-  assert.match(row, /: t\('messages:row\.reportLabel', \{ name: senderName\(message\.sender\) \}\), userId/, 'the report');
+  assert.match(row, /: t\('messages:row\.reportLabel', \{ name: senderName\(message\.sender, \{ bare \}\) \}\), userId/, 'the report');
   assert.doesNotMatch(row, /'@' : ''\}\{message\.(reply\.)?sender\.username\}/);
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.equal(message('messages:inbox.aiBadge'), 'AI');
-  assert.match(screen, /conversation\.kind === 'direct' && peer \? senderName\(peer\) : conversation\.title\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge">\{t\('messages:inbox\.aiBadge'\)\}<\/span> : null\}/, 'the list row');
+  assert.match(screen, /conversation\.kind === 'direct' && peer \? senderName\(peer, \{ bare: true \}\) : conversation\.title\}\{conversation\.kind === 'direct' && peer\?\.bot \? <span className="messages-bot-badge">\{t\('messages:inbox\.aiBadge'\)\}<\/span> : null\}/, 'the list row');
   assert.equal(message('messages:header.aiBadge'), 'AI');
-  assert.match(screen, /active\.kind === 'direct' && person \? senderName\(person\)[^\n]*person\?\.bot \? <span className="messages-bot-badge">\{t\('messages:header\.aiBadge'\)\}<\/span>/, 'the header');
-  assert.match(read('frontend/src/features/messages/composer.tsx'), /t\('messages:composer\.replyingTo', \{ name: senderName\(reply\.sender\) \}\)/);
+  assert.match(screen, /active\.kind === 'direct' && person \? senderName\(person, \{ bare: true \}\)[^\n]*person\?\.bot \? <span className="messages-bot-badge">\{t\('messages:header\.aiBadge'\)\}<\/span>/, 'the header');
+  assert.match(read('frontend/src/features/messages/composer.tsx'), /t\('messages:composer\.replyingTo', \{ name: senderName\(reply\.sender, \{ bare: active\.kind === 'direct' \}\) \}\)/);
   assert.equal(message('messages:composer.replyingTo', { name: 'Homeroom bot' }), 'Replying to Homeroom bot');
   assert.match(read('frontend/src/features/messages/store.ts'), /state\.active\.peer\.displayName/, 'the typing line');
 });
@@ -230,7 +235,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
          ($1, 4, $2, 'Sunday host reminder', 'Remind the host on Sunday'), ($1, 5, $2, 'Menu', 'A menu page')`,
       [supper.id, ben.id],
     );
-    const card = await activity.startCard(pool, {
+    const card = await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 4, requester: await dm.requesterOf(pool, supper.id, 4), bot, jobKey: 'hello-1', settings, queued: true,
     });
     const { rows: [msg] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [card.messageId]);
@@ -239,7 +244,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.equal(meta.kind, 'activity');
     assert.equal(meta.hello, 'Hi, I\'m Homeroom bot. I build the changes people in Supper Club ask for. Here\'s yours:');
     assert.deepEqual(meta.actions.map((a) => a.label), ['What else can I ask for?', 'How long will this take?']);
-    const next = await activity.startCard(pool, {
+    const next = await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 5, requester: await dm.requesterOf(pool, supper.id, 5), bot, jobKey: 'hello-2', settings, queued: true,
     });
     const { rows: [plain] } = await pool.query('SELECT content, metadata FROM conversation_messages WHERE id = $1', [next.messageId]);
@@ -251,7 +256,7 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 6, $2, 'Sides')`,
       [supper.id, maya.id],
     );
-    const own = await activity.startCard(pool, {
+    const own = await activity.startCard(pool, { inDm: true,
       app: supper, issueNumber: 6, requester: await dm.requesterOf(pool, supper.id, 6), bot, jobKey: 'hello-3', settings, queued: true,
     });
     const { rows: [ownMsg] } = await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [own.messageId]);
