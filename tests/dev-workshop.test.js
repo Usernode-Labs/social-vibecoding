@@ -2234,7 +2234,13 @@ test('#4457: a row opens its page beside the list on a wide window, and that pag
   assert.match(PANEL, /callAppView\('openTopic', item\.kind, item\.id\)/, 'Open as a page is the page\'s own route');
   const open = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('async openTopicInPanel(kind, id) {'), APP_VIEW_SRC.indexOf('closeTopicPanel(kind, id) {'));
   assert.match(open, /AppView\._devTopic = \{ kind, id \};/);
-  assert.match(open, /AppView\._mountTopicThread\(\);\s*AppView\._renderTopicHead\(\);/, 'the full page\'s own mount and paint');
+  // #4640: a request's or governance discussion mounts on the ref alone,
+  // before the item fetch (as the full page's _renderTopicSubView mounts
+  // them); the after-fetch mount is guarded by "not mounted yet", still
+  // followed by _renderTopicHead.
+  assert.match(open, /let threadMounted = false;\s*if \(\(kind === 'issue' \|\| kind === 'gov'\) && current\(\)\) \{\s*threadMounted = true;\s*AppView\._mountTopicThread\(\);\s*\}/,
+    'the discussion mounts on the ref alone, before the item fetch');
+  assert.match(open, /if \(!threadMounted\) AppView\._mountTopicThread\(\);\s*AppView\._renderTopicHead\(\);/, 'the full page\'s own mount and paint');
   assert.match(APP_VIEW_SRC, /if \(subTab !== 'topic'\) \{ AppView\._devTopic = null; AppView\._devTopicInPanel = false; \}/,
     'a move to another sub-view lets it go');
   // A plain click on a wide window; anything else is the row's own link.
