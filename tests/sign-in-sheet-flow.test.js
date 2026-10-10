@@ -237,9 +237,11 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
 
 test('the account step\'s password is optional (#4595)', () => {
   const src = read(SHEET);
-  assert.match(src, /data-sign-in-sheet-skip-password=""[^>]*onClick=\{\(\) => \{ void finishAccount\(true\); \}\}>\{t\('auth:signInSheet\.account\.skip'\)\}<\/button>/);
-  assert.equal(message('auth:signInSheet.account.skip'), 'Skip for now');
-  // Skipped, or the field empty: no password in the request.
+  // No "Skip for now" (Evan, 10 Oct 2026): beside the username, which cannot
+  // be skipped, it read as skipping the step. The field left empty is how
+  // the password is skipped: no password in the request.
+  assert.doesNotMatch(src, /skip-password|signInSheet\.account\.skip|finishAccount\(true\)/);
+  assert.equal(message('auth:signInSheet.account.passwordLabel'), 'Password (optional)');
   assert.match(src, /\.\.\.\(password \? \{ password \} : \{\}\),/);
   assert.match(src, /if \(password && password\.length < 8\) \{ setError\(translate\('auth:signInSheet\.account\.passwordTooShort'\)\); return; \}/);
   // Asked once (Evan, 10 Oct 2026): no "Password again", and so no

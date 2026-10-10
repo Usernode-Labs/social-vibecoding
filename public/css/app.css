@@ -20685,6 +20685,21 @@ html.un-kb #platform-tabs {
     }
   }
 }
+/* THE SIGN-IN SHEET RUNS TO THE FOOT OF THE SCREEN (Evan, 10 Oct 2026,
+   iPhone Safari). Stood on the small viewport's foot (above), the panel ended
+   over a band of the dim, and under that the page showed undimmed beneath
+   Safari's toolbar: a card floating over the screen's foot rather than a
+   sheet rising from it. Its own fill now carries on below it to past the
+   foot of the screen, as a shadow (the panel scrolls, and a scroller clips
+   anything drawn inside it, but not its own shadow): offset 20px down so
+   the rounded corners stay round, and spread wide enough to clear the screen
+   below and at both sides. Nothing in the panel moves. The hairline is drawn
+   along the top only, where the sheet meets the dim. Phone only, as above. */
+@media (max-width: 767px) {
+  [data-sign-in-sheet] > .platform-kb-sheet {
+    box-shadow: inset 0 1px 0 var(--app-sheet-line), 0 calc(50vh + 20px) 0 50vh var(--dc-sheet-solid);
+  }
+}
 
 /* A FULL-SCREEN SURFACE THAT LEAVES THE PLATFORM HEADER SHOWING (#4195).
    The make and made screens opened from Create are `fixed` from the header's
@@ -20701,6 +20716,25 @@ html.un-kb #platform-tabs {
 @media (max-width: 767px) {
   html.platform-kb-open .platform-kb-surface.platform-under-header {
     padding-top: max(0px, calc(var(--platform-vv-top, 0px) - var(--browser-banner-h, 0px) - var(--platform-header-h) - var(--platform-safe-top)));
+  }
+}
+/* THE MAKE AND MADE SCREENS RUN ON UNDER SAFARI'S TOOLBAR (Evan, 10 Oct
+   2026, iPhone Safari). Both are `fixed` boxes with their own scroller, and
+   with Safari's toolbar showing such a box ends above it: what scrolled was
+   cut off there, Make it in half, with the page's plain ground below. Now
+   the box runs to the large viewport's foot, the foot of the screen, so what
+   scrolls carries on under the toolbar as a page does, and the scroller
+   keeps the toolbar's height (the large viewport less the small, as the
+   story does) after its last line, so Make it scrolls clear of it. In a
+   phone browser on iOS, with the keys down: the keyboard surface measures
+   its padding against the box as it was. Elsewhere the two viewports are
+   one and nothing moves. */
+@media (max-width: 767px) {
+  html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make], [data-first-session-made]) {
+    bottom: min(0px, calc(100% - 100lvh));
+  }
+  html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make-scroll], [data-first-session-made]) {
+    padding-bottom: max(0px, calc(100lvh - 100svh));
   }
 }
 

@@ -51,8 +51,28 @@ export function fitStyle(fit: number) {
 }
 
 // Safari's toolbar comes and goes as a page scrolls (about 98px). A screen
-// that grows by less than this keeps its step; anything more starts again.
+// that changes height by less than this keeps its step; anything more, or a
+// new width, starts again.
 const TOOLBAR_SLACK = 120;
+
+// The space under the foot is the story's to use, all but this much. Under
+// "Sign in" the page keeps its own bottom air and, in iPhone Safari, room
+// for the toolbar (the story's padding, css/app.css). Counting all of it as
+// out of bounds dropped the third example on an iPhone 13 mini with about
+// 100px left empty above the toolbar (Evan, 10 Oct 2026). So the story may
+// run into that space, scrolling a little if it must, as long as "Sign in"
+// keeps its own 12px and this much more above the bottom of the screen.
+const FOOT_AIR = 18;
+
+// The step a fit settles on, once step `fit` is the first that fits with
+// `room` to spare above and below its group: the earliest step whose story
+// (`heights`, one per step taken) is no taller than that room plus the space
+// under the foot it may use (`under`, less FOOT_AIR).
+export function settledStep(heights: number[], fit: number, room: number, under: number) {
+  const tallest = heights[fit] + 2 * room + Math.max(0, under - FOOT_AIR);
+  const best = heights.findIndex((h) => h <= tallest);
+  return best >= 0 && best < fit ? best : fit;
+}
 
 export function Story({ primaryClass, onStart, onSignIn }: {
   primaryClass: string;
@@ -62,37 +82,56 @@ export function Story({ primaryClass, onStart, onSignIn }: {
   const t = useMessages('auth');
   const storyRef = useRef<HTMLDivElement>(null);
   const groupRef = useRef<HTMLDivElement>(null);
-  const fittedAt = useRef<{ width: number; height: number } | null>(null);
+  const footRef = useRef<HTMLDivElement>(null);
+  // One fit: the screen it was made for, the story's height at each step
+  // taken so far, and whether it has settled.
+  const fitting = useRef<{ width: number; height: number; heights: number[]; settled: boolean } | null>(null);
   const [fit, setFit] = useState(0);
   const [measure, setMeasure] = useState(0);
   // Measured before the browser paints, so the steps are never seen. The
   // group is centred by auto margins in the room the story fills; while the
   // story is taller than that room the margins are zero, and that is the cue
-  // for the next step. The first render (the prerender's) is step 0.
+  // for the next step. At the first step that fits, `settledStep` may go
+  // back to one it passed on the way, using the space under the foot. The
+  // first render (the prerender's) is step 0.
   useLayoutEffect(() => {
     const story = storyRef.current;
     const group = groupRef.current;
-    if (!story || !group || !story.offsetHeight) return;
-    if (fit === 0) fittedAt.current = { width: window.innerWidth, height: window.innerHeight };
+    const foot = footRef.current;
+    if (!story || !group || !foot || !story.offsetHeight) return;
+    if (!fitting.current) fitting.current = { width: window.innerWidth, height: window.innerHeight, heights: [], settled: false };
+    const f = fitting.current;
+    if (f.settled) return;
+    f.heights[fit] = group.offsetHeight + foot.offsetHeight;
     const room = group.getBoundingClientRect().top - story.getBoundingClientRect().top;
-    if (room < 1 && fit < FIT_STEPS) setFit(fit + 1);
-  }, [fit, measure, t]);
-  // A new screen: a turned phone or a resized window starts again from full
-  // size; a screen only a little shorter takes another step if it needs one.
-  // A story first laid out while its screen was hidden is measured once it
-  // shows.
+    if (room < 1) {
+      if (fit < FIT_STEPS) setFit(fit + 1);
+      else f.settled = true;
+      return;
+    }
+    const under = parseFloat(getComputedStyle(story).paddingBottom)
+      + (story.parentElement ? parseFloat(getComputedStyle(story.parentElement).paddingBottom) : 0);
+    f.settled = true;
+    const best = settledStep(f.heights, fit, room, under);
+    if (best !== fit) setFit(best);
+  }, [fit, measure]);
+  // A new screen (a turned phone, a resized window) starts again from full
+  // size. A story first laid out while its screen was hidden is measured
+  // once it shows.
   useEffect(() => {
     const story = storyRef.current;
     if (!story) return undefined;
     const onResize = () => {
-      const at = fittedAt.current;
-      if (!at) return;
-      if (window.innerWidth !== at.width || window.innerHeight - at.height >= TOOLBAR_SLACK) setFit(0);
+      const f = fitting.current;
+      if (!f) return;
+      if (window.innerWidth === f.width && Math.abs(window.innerHeight - f.height) < TOOLBAR_SLACK) return;
+      fitting.current = null;
+      setFit(0);
       setMeasure((n) => n + 1);
     };
     window.addEventListener('resize', onResize);
     const shown = typeof ResizeObserver === 'function'
-      ? new ResizeObserver(() => { if (!fittedAt.current && story.offsetHeight) setMeasure((n) => n + 1); })
+      ? new ResizeObserver(() => { if (!fitting.current && story.offsetHeight) setMeasure((n) => n + 1); })
       : null;
     shown?.observe(story);
     return () => {
@@ -135,7 +174,7 @@ export function Story({ primaryClass, onStart, onSignIn }: {
           </ul>
         </div>
       </div>
-      <div className={`w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-3 ${s.foot} pb-3`}>
+      <div ref={footRef} className={`w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-3 ${s.foot} pb-3`}>
         <a href="#signup" data-landing-story-start="" className={primaryClass} onClick={(e) => { e.preventDefault(); onStart(); }}>
           {t('auth:story.start')}
         </a>
