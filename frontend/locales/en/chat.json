@@ -2206,5 +2206,9 @@
   "group.topicChannel.empty": {
     "text": "Nothing said here yet.",
     "description": "Line shown in a topic's channel of a project's discussion when nobody has written in it yet. A topic is one of a project's own named channels, such as #onboarding."
+  },
+  "group.botOffer.failed": {
+    "text": "That didn’t work just now.",
+    "description": "Toast when pressing Yes or No under one of Homeroom bot's offers in a chat could not be sent, and the server gave no reason of its own."
   }
 }

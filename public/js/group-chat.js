@@ -1251,9 +1251,9 @@ const GroupChat = {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ choice }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok && !data.said && window.PlatformUI) PlatformUI.toast(data.error || 'That didn’t work just now.');
+      if (!res.ok && !data.said && window.PlatformUI) PlatformUI.toast(data.error || PlatformI18n.t('chat:group.botOffer.failed'));
     } catch {
-      if (window.PlatformUI) PlatformUI.toast('That didn’t work just now.');
+      if (window.PlatformUI) PlatformUI.toast(PlatformI18n.t('chat:group.botOffer.failed'));
     }
   },
 
