@@ -323,10 +323,13 @@ const MERGE_LIVE_SQL = `
 // Merges into Homeroom in the window, from the merge to the first
 // production process serving a build that carries it
 // (chat_sessions.platform_live_at, services/platform-release.js). One
-// still waiting for its release is not counted yet.
+// still waiting for its release is not counted yet. `since`: when that
+// record began, while that is inside the window (#4697).
 const HOMEROOM_LIVE_SQL = `
   SELECT COUNT(*)::int AS n,
-         (percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM cs.platform_live_at - cs.merged_at)))::float8 AS median_secs
+         (percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM cs.platform_live_at - cs.merged_at)))::float8 AS median_secs,
+         (SELECT s.value::timestamptz FROM platform_settings s
+           WHERE s.key = 'platform_live_tracked_since' AND s.value::timestamptz > $1::timestamptz) AS since
     FROM chat_sessions cs
     JOIN apps ap ON ap.id = cs.app_id AND ap.self_hosted = TRUE
    WHERE cs.status = 'merged'
@@ -339,7 +342,8 @@ const HOMEROOM_LIVE_SQL = `
 // (services/app-outages.js keeps one row per app per minute, stamped at the
 // minute's start, so a page shown seconds after the open can carry a time
 // up to a minute before it). Only opens since those rows began are counted,
-// so a week from before them does not read as perfect.
+// so a week from before them does not read as perfect, and `since` says when
+// that was while it is inside the window (#4697).
 const APP_OPENS_SQL = `
   WITH since AS (
     SELECT GREATEST($1::timestamptz, COALESCE(
@@ -351,7 +355,9 @@ const APP_OPENS_SQL = `
            SELECT 1 FROM events d
             WHERE d.event_type = 'app_unavailable' AND d.app_id = o.app_id
               AND d.created_at > o.created_at - interval '2 minutes'
-              AND d.created_at < o.created_at + interval '2 minutes'))::int AS hits
+              AND d.created_at < o.created_at + interval '2 minutes'))::int AS hits,
+         (SELECT s.value::timestamptz FROM platform_settings s
+           WHERE s.key = 'app_outages_tracked_since' AND s.value::timestamptz > $1::timestamptz) AS since
     FROM events o
     JOIN apps ap ON ap.id = o.app_id AND ap.self_hosted IS NOT TRUE
    WHERE o.event_type = 'dapp_opened'
@@ -611,7 +617,7 @@ const FIGURES = Object.freeze({
     kind: 'duration', covers: 'split', sources: { homeroom: 'homeroomLive', others: 'mergeLive' }, label: 'Merge → live',
     tip: 'How long from a change merging to it running in production. Half are faster. A project deploys as part of the merge; Homeroom goes out in its next release, so its changes wait for one.',
     target: { atMost: 900 },
-    measure: (r) => ({ secs: r.median_secs, n: r.n }),
+    measure: (r) => ({ secs: r.median_secs, n: r.n, since: r.since }),
   },
   'infra.deploys-failed': {
     source: 'mergeLive', kind: 'rate', covers: 'others', label: 'Deploys that failed', noun: 'project merges',
@@ -623,7 +629,7 @@ const FIGURES = Object.freeze({
     source: 'appOpens', kind: 'rate', covers: 'others', label: 'App opens that worked', noun: 'opens',
     tip: 'Of the times someone opened a project’s app in Homeroom, the share that loaded instead of showing the page that says the app is restarting. Homeroom itself is not counted.',
     target: { atLeast: 0.99 },
-    measure: (r) => ({ hits: r.hits, total: r.total }),
+    measure: (r) => ({ hits: r.hits, total: r.total, since: r.since }),
   },
   'infra.restarts': {
     source: 'restarts', kind: 'count', covers: 'others', label: 'Apps restarted',
@@ -679,6 +685,8 @@ function targetLine(target, kind, off) {
 }
 
 const joinLine = (...parts) => parts.filter(Boolean).join(' · ');
+// Words of one part of a line: "median since 10 Oct".
+const joinWords = (...parts) => parts.filter(Boolean).join(' ');
 
 const verdict = (off) => (off == null ? 'calm' : (off ? 'warn' : 'ok'));
 
@@ -700,15 +708,33 @@ function sharpen(def, kind, raw, text, off) {
 }
 
 /**
+ * The day a record began, "10 Oct" (UTC), from a measure's `since`: set
+ * only while that day is inside the window. '' without one. Pure.
+ */
+function sinceDay(since) {
+  if (!since) return '';
+  const at = since instanceof Date ? since : new Date(since);
+  if (Number.isNaN(at.getTime())) return '';
+  return at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+}
+
+/**
  * What one measure of a figure reads. Pure.
- *   { state, value, detail, off, final }
+ *   { state, value, detail, off, final, since }
  * `detail` is the line's own part (a rate's "13 of 412 runs", a count's
  * "in 3 projects"); `final` marks a reading whose detail is its whole line
  * (nothing to count yet, a group too small to say more, not read).
+ * #4697: a record that began inside the window (`measure.since`) says so,
+ * "Counting since 10 Oct" with nothing yet and "since 10 Oct" beside what
+ * it has, so a week not recorded yet reads as new rather than as none or as
+ * a whole week. `since` is that day, or ''.
  */
 function reading(def, measure) {
-  if (!measure) return { state: 'error', value: 'Couldn’t load', detail: 'Try again later', off: null, final: true };
-  const empty = (detail) => ({ state: 'empty', value: 'None yet', detail, off: null, final: true });
+  if (!measure) return { state: 'error', value: 'Couldn’t load', detail: 'Try again later', off: null, final: true, since: '' };
+  const since = sinceDay(measure.since);
+  const empty = (detail) => ({
+    state: 'empty', value: 'None yet', detail: since ? `Counting since ${since}` : detail, off: null, final: true, since,
+  });
   const calm = (value, detail) => ({ state: 'calm', value, detail, off: null, final: true });
 
   if (def.kind === 'rate') {
@@ -723,8 +749,8 @@ function reading(def, measure) {
     }
     if (!total) return empty(`No ${def.noun || 'runs'} yet`);
     const off = offTarget(def.target, hits / total);
-    return { state: verdict(off), value: sharpen(def, 'rate', hits / total, formatPercent(hits / total), off), off, final: false,
-      detail: `${hits.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} ${def.noun || ''}`.trim() };
+    return { state: verdict(off), value: sharpen(def, 'rate', hits / total, formatPercent(hits / total), off), off, final: false, since,
+      detail: joinWords(`${hits.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} ${def.noun || ''}`.trim(), since && `since ${since}`) };
   }
 
   if (def.kind === 'duration') {
@@ -739,7 +765,8 @@ function reading(def, measure) {
     }
     if (!n || secs == null) return empty('Nothing timed yet');
     const off = offTarget(def.target, secs);
-    return { state: verdict(off), value: sharpen(def, 'duration', secs, formatDuration(secs), off), detail: 'median', off, final: false };
+    return { state: verdict(off), value: sharpen(def, 'duration', secs, formatDuration(secs), off),
+      detail: joinWords('median', since && `since ${since}`), off, final: false, since };
   }
 
   if (def.kind === 'usd') {
@@ -802,8 +829,10 @@ function present(id, measure) {
     const sides = SIDES.map((side) => {
       const read = reading(def, measure ? measure[side.key] : null);
       // A side's own part of the line: a rate's count. Nothing to count, or
-      // not read, says so in its value alone.
-      const detail = !read.final && def.kind === 'rate' ? read.detail : '';
+      // not read, says so in its value alone, unless its record is new
+      // (#4697): then when counting began.
+      const detail = !read.final && def.kind === 'rate' ? read.detail
+        : read.since ? (read.final ? read.detail : `since ${read.since}`) : '';
       return { key: side.key, name: side.name, state: read.state, value: read.value, detail };
     });
     const state = SPLIT_STATE_ORDER.find((st) => sides.some((side) => side.state === st)) || 'error';
