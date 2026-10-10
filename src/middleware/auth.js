@@ -21,6 +21,12 @@ const PUBLIC_PATHS = [
   // Email-code signup uses an HttpOnly continuation and creates the ordinary
   // web session only after password setup; all three steps are pre-login.
   '/api/auth/otp/',
+  // The waitlist release mail one-time sign-in link (#4594,
+  // services/release-links.js) stands in for that code and is pre-login by
+  // the same definition: the page that spends it is signed out, and the link
+  // is the only credential. Missing here, every signed-out visitor got 401
+  // and the sign-in sheet fell back to emailing a code.
+  '/api/auth/release-link',
   '/api/auth/wallet-check',
   '/api/auth/wallet-verify',
   // Self-service wallet password reset is pre-login by definition — the
