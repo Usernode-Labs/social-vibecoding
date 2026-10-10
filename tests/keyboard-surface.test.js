@@ -342,20 +342,13 @@ test('app.css pads a surface into the band, puts a sheet\'s foot on it, and clea
   assert.doesNotMatch(rules, /\b(44|48|50)px/);
   // The story's foot: Safari's toolbar is the large viewport less the small.
   assert.match(APP_CSS, /html\.un-ios\[data-browser-scroller="auth-landing-scroll"\] \[data-landing-story\] \{\s*padding-bottom: max\(0px, calc\(100lvh - 100svh\)\);\s*\}/);
-  assert.match(read('frontend/src/features/auth/story.tsx'), /<div data-landing-story="" className=/);
-  // Evan, 10 Oct 2026: Get started stays on screen while the story scrolls
-  // (it sat under Safari's toolbar, below the fold): its foot is sticky to
-  // the bottom of whatever scrolls the page, on the page's own ground, and
-  // still inside [data-landing-story], where the declared checks find it.
   const story = read('frontend/src/features/auth/story.tsx');
-  assert.match(story, /<div ref=\{footRef\} data-landing-story-foot=\{over \? 'over' : ''\} className="sticky bottom-0 z-10 -mx-4 px-4 pt-6 pb-3">\s+<div className="w-full max-w-sm md:max-w-md mx-auto flex flex-col gap-3">\s+<a href="#signup" data-landing-story-start=""/);
-  assert.ok(story.indexOf('<div data-landing-story=""') < story.indexOf('data-landing-story-foot={'), 'inside the story, where the declared checks look');
-  // Its ground only while the story passes under it: at rest it is the
-  // wallpaper, as before. The first render (the prerender's) has none.
-  assert.match(story, /const \[over, setOver\] = useState\(false\);/);
-  assert.match(story, /\(\[entry\]\) => setOver\(!entry\.isIntersecting\),\s+\{ rootMargin: `0px 0px -\$\{foot\.offsetHeight\}px 0px` \},/);
-  assert.match(APP_CSS, /\[data-landing-story-foot="over"\] \{\s*background: linear-gradient\(to top,\s*color-mix\(in srgb, var\(--home-ground, #f4f2e4\) 92%, transparent\) 70%,/);
-  assert.doesNotMatch(APP_CSS, /\[data-landing-story-foot\] \{/, 'never a ground at rest');
+  assert.match(story, /<div ref=\{storyRef\} data-landing-story="" className=/);
+  // Evan, 10 Oct 2026: a foot pinned over the story looked wrong. The story
+  // shrinks to fit its screen instead (tests/story-fit.test.js), so the foot
+  // is in the flow again, with no ground of its own.
+  assert.doesNotMatch(story, /\bsticky\b/);
+  assert.doesNotMatch(APP_CSS, /data-landing-story-foot/);
   // #4593: with the keys down, the sheet's foot stands on the small viewport's
   // foot, clear of Safari's toolbar, and its height is capped to that
   // viewport; the keyboard rule above is more specific, so it still wins.
