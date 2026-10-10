@@ -510,12 +510,23 @@ test('visibleSlots: finished rows fill only the slots unfinished ones leave, and
   assert.equal(open.doneFrom, null, 'and there is no finished fill to head');
 });
 
+// This week's clock is the earlier of a card's end and the end of the week
+// (Monday 00:00 UTC, #3869). A card ending 71 hours out reads "3d left" on a
+// weekday and less from Saturday 00:00 UTC on, so a This week expectation is
+// worked out the same way rather than written down: hard-coded, these failed
+// every weekend (first on Saturday 10 Oct 2026, pausing main's merges).
+function weekClock(HP, raw) {
+  const weekEnd = HP.weekEnd();
+  return HP.timeLeft(Date.parse(weekEnd) < Date.parse(raw) ? weekEnd : raw);
+}
+
 test('challengesView: the finished fill sits last under one Done header, with no clock', () => {
   const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
   const { HP } = makeHomePanels({ slots: [] });
   const done = { done: true, current: null, target: null };
+  const seasonEnd = inHours(71);
   const view = HP.challengesView(panel({
-    season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
+    season: { id: 1, name: 'Season 1', ends_at: seasonEnd },
     total: 5,
     challenges: [
       challenge({ id: 1, label: 'WEEKLY', display_order: 1, progress: done }),
@@ -527,7 +538,7 @@ test('challengesView: the finished fill sits last under one Done header, with no
   }));
   const groups = [...view.groups];
   assert.deepEqual(groups.map((g) => [g.key, g.heading, g.meta, [...g.rows].map((r) => r.id)]), [
-    ['week', 'This week', '3d left', ['3']],
+    ['week', 'This week', weekClock(HP, seasonEnd), ['3']],
     ['always', 'Always open', 'no deadline', ['4']],
     ['done', 'Done', null, ['1', '2']],
   ], 'the unfinished cards under their own headers, then the finished fill under Done');
@@ -932,6 +943,7 @@ test('cards from several groups are headed in board order, with clocks and no co
   const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
   const { HP } = makeHomePanels({ slots: [] });
   HP._expanded.challenges = true;
+  const weekSoonest = inHours(71);
   const view = HP.challengesView(panel({
     season: { id: 1, name: 'Season 1', ends_at: inHours(9.5 * 24) },
     total: 8,
@@ -940,7 +952,7 @@ test('cards from several groups are headed in board order, with clocks and no co
       challenge({ id: 2, label: 'PERSISTENT', ends_at: inHours(47) }),
       challenge({ id: 3, label: 'WEEKLY', ends_at: inHours(95) }),
       challenge({ id: 4, label: 'ONBOARDING', ends_at: inHours(5) }),
-      challenge({ id: 5, label: 'WEEKLY', ends_at: inHours(71) }),
+      challenge({ id: 5, label: 'WEEKLY', ends_at: weekSoonest }),
       challenge({ id: 6, label: 'WEEKLY', ends_at: inHours(7), open: false }),
       challenge({ id: 7, label: 'WEEKLY', ends_at: inHours(2), progress: DONE }),
       challenge({ id: 8, label: 'ONBOARDING', progress: DONE }),
@@ -952,7 +964,7 @@ test('cards from several groups are headed in board order, with clocks and no co
   assert.deepEqual(groups.map((g) => [...g.rows].map((r) => r.id)),
     [['4', '8'], ['3', '5', '6', '7'], ['2'], ['1']],
     'contiguous groups, each in the orderRows sequence (unfinished first)');
-  assert.deepEqual(groups.map((g) => g.meta), [null, '3d left', 'no deadline', '10d left'],
+  assert.deepEqual(groups.map((g) => g.meta), [null, weekClock(HP, weekSoonest), 'no deadline', '10d left'],
     'First challenges has no clock; This week is its soonest open unfinished card (a closed and a done '
     + 'card ending sooner do not count); Always open has none; the rest fall back to the season');
   for (const g of groups) {
@@ -987,10 +999,11 @@ test('cards from several groups are headed in board order, with clocks and no co
 
 test('render: the group headers sit inside the rows list, before their cards, with no toggle', () => {
   const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
+  const seasonEnd = inHours(71);
   const { html } = renderWith({
     registry: [], hidden: [],
     panels: [panel({
-      season: { id: 1, name: 'Season 1', ends_at: inHours(71) },
+      season: { id: 1, name: 'Season 1', ends_at: seasonEnd },
       total: 3,
       challenges: [
         challenge({ id: 1, label: 'WEEKLY' }),
@@ -1011,7 +1024,7 @@ test('render: the group headers sit inside the rows list, before their cards, wi
     '>Always open</span>', 'data-challenge-id="2"'].map(at);
   assert.deepEqual(order, [...order].sort((a, b) => a - b), 'each header opens its own group, in board order');
   assert.match(rows, /<h3[^>]*><div[^>]*>/, 'a static row, not a disclosure button');
-  assert.match(rows, />3d left<\/span>/, "This week's clock is on its header");
+  assert.ok(rows.includes(`>${weekClock(makeHomePanels({ slots: [] }).HP, seasonEnd)}</span>`), "This week's clock is on its header");
   assert.match(rows, />no deadline<\/span>/, 'and Always open says it has none');
   assert.match(rows, />5h left</, 'a First challenges card keeps its own deadline');
   assert.equal((rows.match(/\d+[dh] left/g) || []).length, 2,
