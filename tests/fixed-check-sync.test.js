@@ -153,6 +153,48 @@ test('a proposal failing only the unit suite is synced once main watch has passe
   assert.equal(subject.select([mixed], new Set([key(PICKER)]), greenAfter).skipped[7630], 'own_failure');
 });
 
+// 10 Oct 2026, the same evening: #4720 fixed a unit test (TEST_SHARD leaking
+// into a nested run) and shipped at 21:26; main watch passed on that release
+// at 21:32. Six approved proposals cut before it were re-run after an outage
+// and five ended red on that one test at 21:40-21:45. Main had not moved
+// since, and nothing was ready to merge, so "green since its run" never came.
+// Main green on the tip they are behind is the same evidence: syncOne still
+// measures that the proposal is behind main and leaves one level with it.
+test('a proposal failing only the unit suite is synced when main watch passed on main\'s tip, whenever its run was', () => {
+  const TIP = 'c'.repeat(40);
+  const row = verdict(7732, [UNIT], { checks_checked_at: '2026-10-10T21:40:48.000Z' });
+  const greenTip = { passing: true, at: Date.parse('2026-10-10T21:32:20Z'), sha: TIP, tip: TIP };
+
+  assert.deepEqual(subject.select([row], new Set(), greenTip).candidates,
+    [{ id: 7732, head: HEAD, keys: [subject.UNIT_KEY] }]);
+  assert.deepEqual(subject.select([row], new Set(), { ...greenTip, tip: TIP.toUpperCase() }).candidates.map((c) => c.id), [7732],
+    'shas compare whatever their case');
+
+  for (const [watch, why] of [
+    [{ ...greenTip, tip: 'd'.repeat(40) }, 'main moved past the green commit and is not judged yet'],
+    [{ ...greenTip, passing: false }, 'main is red itself'],
+    [{ ...greenTip, sha: null }, 'no commit recorded'],
+  ]) {
+    const out = subject.select([row], new Set(), watch);
+    assert.deepEqual(out.candidates, [], why);
+    assert.equal(out.skipped[7732], 'unit_suite_only', why);
+  }
+  const synced = verdict(7732, [UNIT], { fixed_check_sync_head: NEW_HEAD, fixed_check_sync_keys: [subject.UNIT_KEY] });
+  assert.equal(subject.select([synced], new Set(), greenTip).skipped[7732], 'already_tried', 'once per proposal, as before');
+});
+
+test('main watch\'s verdict carries the commit it judged and main\'s tip', async () => {
+  const TIP = 'c'.repeat(40);
+  let sql = null;
+  const pool = { query: async (q) => {
+    sql = q;
+    return { rows: [{ main_check_state: 'passing', main_check_at: '2026-10-10T21:32:20Z', main_check_sha: TIP, main_sha: TIP }] };
+  } };
+  assert.deepEqual(await subject.mainWatchVerdict(pool, 5),
+    { passing: true, at: Date.parse('2026-10-10T21:32:20Z'), sha: TIP, tip: TIP });
+  assert.match(sql, /SELECT main_check_state, main_check_at, main_check_sha, main_sha FROM apps WHERE id = \$1/);
+});
+
 test('a check a proposal was already synced for is never a reason to sync it again', () => {
   // It contains a main that passes the check and still fails it: its own.
   const rows = [

@@ -120,12 +120,14 @@ async function findStuckCheckSessions({
                  AND (cs.checks_checked_at IS NULL
                       OR cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
              OR (cs.check_state = 'error'
-                 AND cs.consecutive_check_failures < $2
+                 AND (cs.consecutive_check_failures < $2
+                      OR (cs.check_error_platform
+                          AND cs.first_check_failure_at > NOW() - make_interval(secs => $4::double precision / 1000.0)))
                  AND cs.check_next_retry_at IS NOT NULL
                  AND cs.check_next_retry_at < NOW()))
       ORDER BY COALESCE(cs.promoted_at, cs.last_activity_at, cs.created_at) ASC
       LIMIT $3`,
-    [staleMs, maxAutoRetries, boundedLimit]
+    [staleMs, maxAutoRetries, boundedLimit, PLATFORM_FAULT_RETRY_MS]
   );
   // The SQL is the efficient filter; this is the executable invariant that
   // keeps a future query refactor from widening recovery to ordinary sessions.
@@ -135,7 +137,8 @@ async function findStuckCheckSessions({
 // #237: how many 'error' verdicts in a row the error lane above re-runs on
 // its own. storeChecks bumps consecutive_check_failures on every 'error'
 // (and schedules check_next_retry_at, 2m → 4m → … → 30m); past this count
-// the row is left 'error' until a new commit or a person re-runs it.
+// the row is left 'error' until a new commit or a person re-runs it, unless
+// the error is the platform's own (PLATFORM_FAULT_RETRY_MS below).
 // Tunable via CHECK_MAX_AUTO_RETRIES.
 const DEFAULT_CHECK_MAX_AUTO_RETRIES = 6;
 
@@ -145,6 +148,46 @@ function checkMaxAutoRetries() {
     10
   );
   return Number.isFinite(configured) ? configured : DEFAULT_CHECK_MAX_AUTO_RETRIES;
+}
+
+// A platform fault (chat_sessions.check_error_platform: the unit suite's Job
+// refused or lost before any of the proposal's code ran) is not held to
+// that cap. On 10 Oct 2026 every split unit suite failed to start for three
+// hours (two shards' input Secrets took the same name, fixed by #4720); six
+// approved proposals spent their six retries on it by 20:08 and waited for
+// a person after the fix shipped. Nothing about the proposal decides when
+// such a fault clears, so the lane keeps retrying it, 30 minutes apart once
+// the backoff tops out, for this long after the streak's first failure.
+const PLATFORM_FAULT_RETRY_MS = 24 * 60 * 60 * 1000;
+
+// Does the error lane still run this stored 'error' again on its own, as far
+// as the streak goes? Under the cap, or a platform fault inside its day: the
+// same rule as findStuckCheckSessions' SQL. The connector reads it to say
+// whether a re-run is coming (mcp-tools.erroredRunWillRetry).
+function errorWithinAutoRetries(session, { maxAutoRetries = checkMaxAutoRetries(), now = Date.now() } = {}) {
+  if (!session) return false;
+  if ((Number(session.consecutive_check_failures) || 0) < maxAutoRetries) return true;
+  if (session.check_error_platform !== true) return false;
+  const first = session.first_check_failure_at ? new Date(session.first_check_failure_at).getTime() : NaN;
+  return Number.isFinite(first) && first > now - PLATFORM_FAULT_RETRY_MS;
+}
+
+// A boot makes every platform fault inside its day due now, rather than at
+// its scheduled retry up to 30 minutes on: the release that boots is most
+// often what fixed it. server.js runs it before the boot's stuck-checks
+// reconcile, which picks them up. Returns the sessions it made due.
+async function rearmPlatformFaults(pool) {
+  const { rows } = await pool.query(
+    `UPDATE chat_sessions
+        SET check_next_retry_at = NOW()
+      WHERE check_state = 'error'
+        AND check_error_platform
+        AND check_next_retry_at > NOW()
+        AND first_check_failure_at > NOW() - make_interval(secs => $1::double precision / 1000.0)
+      RETURNING id`,
+    [PLATFORM_FAULT_RETRY_MS]
+  );
+  return rows.map((r) => Number(r.id));
 }
 
 // What a red run that overlapped a platform rollout used to record instead
@@ -990,6 +1033,9 @@ module.exports = {
   findStuckCheckSessions,
   DEFAULT_CHECK_MAX_AUTO_RETRIES,
   checkMaxAutoRetries,
+  PLATFORM_FAULT_RETRY_MS,
+  errorWithinAutoRetries,
+  rearmPlatformFaults,
   ROLLOUT_RETRY_DETAIL,
   stagingNeedsRebuild,
   previewIsOfAnotherCommit,

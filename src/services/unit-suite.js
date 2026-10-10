@@ -53,7 +53,7 @@ const log = require('./logger');
 const {
   UNIT_CHECK_NAME, UNIT_CHECK_PATH, UNIT_CHECK_INDEX, FAILURE_DETAIL_MAX, isUnitSuiteRow,
   MAX_TEST_EXCERPT_CHARS, MAX_UNIT_EXCERPTS, MAX_UNIT_DETAILS_BYTES,
-  MAX_EXCERPT_PRECEDING_LINES, MAX_EXCERPT_LINE_CHARS, MAX_STACK_LINES,
+  MAX_EXCERPT_PRECEDING_LINES, MAX_EXCERPT_LINE_CHARS, MAX_STACK_LINES, NOT_RUN_LEAD,
 } = require('./unit-suite-row');
 // The same scrubbing the check logs and the logger use: an excerpt is
 // persisted in test_results and read back by agents, so a credential a test
@@ -578,11 +578,8 @@ function failureOutcomeParts(stdout, stderr, { timedOut = false } = {}) {
 // Output this cannot place, such as a log that lost its start and holds no
 // test line, keeps the failing verdict it had before.
 
-const NOT_RUN_LEAD = Object.freeze({
-  start: 'The unit suite could not start',
-  run: 'The unit suite could not run',
-  setup: 'The unit suite stopped before any test ran',
-});
+// NOT_RUN_LEAD (services/unit-suite-row.js) opens each sentence: the
+// error lane reads it to tell the platform's faults from the rest.
 // The card caps check_error_detail at 280 characters, and so does this.
 const NOT_RUN_DETAIL_MAX = 280;
 const NOT_RUN_RAW_MAX = 400;
