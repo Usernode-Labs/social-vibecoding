@@ -2900,12 +2900,14 @@ const GroupChat = {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ message_id: newest, ...GroupChat._cursorScope(channel) }),
       });
-      // A topic's channel counts its unread in the project's places list
-      // (dev-board/workshop/place-store.ts); #general in Messages' list.
+      // A channel's unread count lives in the project's places list
+      // (dev-board/workshop/place-store.ts): a topic's by its ref, #general
+      // by `ref` null. Messages' list re-reads #general's count besides.
       if (channel) {
         if (res && res.ok) window.UsernodeReact?.places?.channelRead?.(slug, channel.ref);
       } else {
         window.UsernodeReact?.messages?.refresh?.();
+        if (res && res.ok) window.UsernodeReact?.places?.channelRead?.(slug, null);
       }
       // Drained, so the request ends: an answer nobody reads stays open in
       // the browser, and a page that reads its channel never went idle.
@@ -2957,7 +2959,10 @@ const GroupChat = {
     GroupChat._unreadHold = slug;
     GroupChat._readUpTo = 0;
     if (channel) window.UsernodeReact?.places?.channelRead?.(slug, channel.ref, true);
-    else window.UsernodeReact?.messages?.refresh?.();
+    else {
+      window.UsernodeReact?.messages?.refresh?.();
+      window.UsernodeReact?.places?.channelRead?.(slug, null, true);
+    }
   },
 
   _paintBookmark(messageId, on) {

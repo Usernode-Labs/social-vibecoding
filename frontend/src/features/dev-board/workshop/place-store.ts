@@ -136,11 +136,16 @@ export async function openTopicRef(slug: string, ref: number, target: ChannelTar
  * group chat's pane (public/js/group-chat.js markRead / markUnread). The
  * places list's count for it is the project's record, read again when it
  * showed one, or when the reader asked for one back (`unread`).
+ * #4647: `ref` null names #general, matched by its `kind: 'general'` row in
+ * the same record.
  */
-export function channelRead(slug: string, ref: number, unread = false): void {
+export function channelRead(slug: string, ref: number | null, unread = false): void {
   if (!slug) return;
   const record = cachedCommunity(slug);
-  const channel = channelsOf(record?.places).find((c) => c.kind === 'topic' && Number(c.id) === Number(ref)) || null;
+  const channels = channelsOf(record?.places);
+  const channel = ref == null
+    ? channels.find((c) => c.kind === 'general') || null
+    : channels.find((c) => c.kind === 'topic' && Number(c.id) === Number(ref)) || null;
   if (unread || (channel && Number(channel.unread) > 0)) void reloadCommunity(slug);
 }
 
