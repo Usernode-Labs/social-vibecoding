@@ -1376,10 +1376,16 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // starter rather than the empty scaffold. On the row, like the rule
       // above, because app-creator scaffolds from the row: a Retry after a
       // failed create writes the same starter.
+      // A ready-made starter's icon is its own (template.js writes it into
+      // the new dapp.json, and nothing is sketched), so it is on the record
+      // from the start: Home's tile shows it while the app is still being
+      // set up, not a letter until the first deploy reads dapp.json back
+      // (Evan, 10 Oct 2026). That reconcile then finds nothing to change.
       if (template !== appTemplates.DEFAULT_TEMPLATE) {
+        const readyIcon = appTemplates.isReadyMade(template) ? appTemplates.get(template).icon || null : null;
         const { rows: templated } = await pool.query(
-          `UPDATE apps SET template = $1 WHERE id = $2 RETURNING *`,
-          [template, appRow.id]
+          `UPDATE apps SET template = $1, icon_emoji = COALESCE($3, icon_emoji) WHERE id = $2 RETURNING *`,
+          [template, appRow.id, readyIcon]
         );
         appRow = templated[0] || appRow;
       }

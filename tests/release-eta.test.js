@@ -1,7 +1,8 @@
 // When a merged change of the platform's own app goes live (#4309
 // follow-up).
 //
-// Since #4309 main releases at most once every RELEASE_MIN_GAP_MINUTES (10),
+// Since #4309 main releases at most once every RELEASE_MIN_GAP_MINUTES (10,
+// and 4 since 10 Oct 2026),
 // and a release also takes its image build and its rollout, so a merge into
 // Homeroom itself read a bare "Going live" for ten to twenty minutes. Every
 // surface now says why and when, in one sentence:
@@ -130,15 +131,15 @@ test('the words follow the copy rules: no em dash, no "deploy"', () => {
 
 const ETA = (release) => (release && release.etaAt ? Date.parse(release.etaAt) - NOW : null);
 
-test('the gap pending: the running release went out 3 minutes ago, so the next one is 8 minutes off', () => {
-  // ready = max(released + gap, merged + build) = max(+7, +4); + rollout.
-  const release = releaseWatch.estimate({ releasedAt: at(NOW - 3 * MIN), newestMergedAt: at(NOW - MIN) });
+test('the gap pending: the running release went out a minute ago, so the next one is 4 minutes off', () => {
+  // ready = max(released + gap, merged + build) = max(+3, +2); + rollout.
+  const release = releaseWatch.estimate({ releasedAt: at(NOW - MIN), newestMergedAt: at(NOW - 3 * MIN) });
   assert.equal(release.state, 'next');
-  assert.equal(ETA(release), 8 * MIN);
-  assert.equal(words.releaseSentence(release, NOW), 'Merged; goes live in the next release (about 8 minutes)');
+  assert.equal(ETA(release), 4 * MIN);
+  assert.equal(words.releaseSentence(release, NOW), 'Merged; goes live in the next release (about 4 minutes)');
   // The staging demo is exactly this.
   assert.deepEqual(releaseWatch.demoRelease(NOW), release);
-  assert.equal(releaseWatch.RELEASE_MIN_GAP_MS, 10 * MIN);
+  assert.equal(releaseWatch.RELEASE_MIN_GAP_MS, 4 * MIN);
   assert.equal(releaseWatch.RELEASE_BUILD_MS, 5 * MIN);
   assert.equal(releaseWatch.RELEASE_ROLLOUT_MS, MIN);
 });
@@ -192,8 +193,8 @@ test('a failed run, or a recorded stall, promises nothing', () => {
 });
 
 test('no Actions access (no run recorded): the merge and the gap alone', () => {
-  const release = releaseWatch.estimate({ releasedAt: at(NOW - 2 * MIN), newestMergedAt: at(NOW - 2 * MIN), run: null });
-  assert.equal(ETA(release), 9 * MIN, 'gap: 8 more minutes, then the rollout');
+  const release = releaseWatch.estimate({ releasedAt: at(NOW - MIN), newestMergedAt: at(NOW - 4 * MIN), run: null });
+  assert.equal(ETA(release), 4 * MIN, 'gap: 3 more minutes, then the rollout');
   // Nothing at all to time it from: no time, still the next release.
   assert.deepEqual(releaseWatch.estimate({}), { state: 'next', etaAt: null });
 });
@@ -205,10 +206,11 @@ test('releaseOf: a release rolling out now carries what merged before it', () =>
   };
   assert.deepEqual(releaseWatch.releaseOf(view, { mergedAt: at(NOW - 8 * MIN), id: 38 }), { state: 'rolling', etaAt: null });
   assert.deepEqual(releaseWatch.releaseOf(view, { mergedAt: at(NOW - 6 * MIN), id: 40 }), { state: 'rolling', etaAt: null });
-  // Merged after the release's commit: the release after it, the gap from this one.
+  // Merged after the release's commit: the release after it. With a gap of
+  // four minutes, its build from the newest merge is what it waits for.
   const later = releaseWatch.releaseOf(view, { mergedAt: at(NOW - 30 * 1000), id: 41 });
   assert.equal(later.state, 'next');
-  assert.equal(Date.parse(later.etaAt) - NOW, -MIN + 10 * MIN + MIN);
+  assert.equal(Date.parse(later.etaAt) - NOW, -30 * 1000 + releaseWatch.RELEASE_BUILD_MS + MIN);
   // A release no merge made (a direct push): what merged before its migration.
   const pushed = { ...view, through: null };
   assert.equal(releaseWatch.releaseOf(pushed, { mergedAt: at(NOW - 2 * MIN), id: 41 }).state, 'rolling');
@@ -253,7 +255,7 @@ test('releasesFor: only the merged, not-live changes of the platform\'s own app 
   const pool = selfPool({ pending: [{ id: 7, merged_at: new Date(NOW - MIN) }] });
   const out = await releaseWatch.releasesFor(pool, [7, 8, '7', 0, null, 'x'], { now: NOW, runningSha: RUNNING });
   assert.deepEqual([...out.keys()], [7]);
-  assert.deepEqual(out.get(7), { state: 'next', etaAt: at(NOW + 8 * MIN) });
+  assert.deepEqual(out.get(7), { state: 'next', etaAt: at(NOW + 5 * MIN) });
   const changes = pool.queries.find((q) => /cs\.id = ANY/.test(q.sql));
   assert.deepEqual(changes.params, [[7, 8]], 'ids are whole and once each');
 

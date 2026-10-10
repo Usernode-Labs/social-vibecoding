@@ -186,10 +186,17 @@ test('a step draws only its own target, measured before its card is painted', ()
   assert.match(src, /const box = boxForStep\(measured, index\);\s+const pressBox = pressForStep\(measured, index\);/);
   // Measured in a layout effect when the step changes, so the first paint of
   // a step is its own target (or no ring at all), never the last one's.
-  assert.match(src, /useLayoutEffect\(\(\) => \{\s+setMeasured\(measure\(index, step\)\);\s+\}, \[index, step\]\);/);
+  // Into a step in the menu from the step before it, that step's ring is kept
+  // until the menu's sheet has settled (Evan, 10 Oct 2026: the ring rode up
+  // with the sheet); any other step is measured at once.
+  assert.match(src, /useLayoutEffect\(\(\) => \{\s+const before = measuredRef\.current;\s+if \(step\.inMenu && before\.step === index - 1 && before\.box\) \{\s+settleRef\.current = \{ at: index, since: performance\.now\(\), key: '', still: 0 \};\s+setSettling\(true\);\s+setMeasured\(\{ \.\.\.before, step: index, instead: false \}\);\s+return;\s+\}\s+settleRef\.current = null;\s+setSettling\(false\);\s+setMeasured\(measure\(index, step\)\);\s+\}, \[index, step\]\);/);
+  // It moves once, when the target has held still on screen (or the cap has
+  // passed), over 200ms, and the card shows only then.
+  assert.match(src, /if \(settle\.still >= SETTLE_FRAMES \|\| performance\.now\(\) - settle\.since > SETTLE_CAP_MS\) \{\s+settleRef\.current = null;\s+last = key;\s+setMoving\(true\);\s+setSettling\(false\);\s+setMeasured\(m\);/);
+  assert.match(src, /const MOVE = 'motion-safe:transition-\[left,top,width,height\] motion-safe:duration-200 motion-safe:ease-out';/);
   // The per-frame follow tags what it measures with the step, and survives a
   // frame that throws rather than leaving the ring where it was.
-  assert.match(src, /const m = measure\(at, stepRef\.current\);\s+(?:\/\/[^\n]*\n\s*)*const key = `\$\{at\}:\$\{boxKey\(m\.box\)\}:\$\{boxKey\(m\.press\)\}:\$\{m\.instead \? 1 : 0\}`;\s+if \(key !== last\) \{ last = key; setMeasured\(m\); \}/,
+  assert.match(src, /const m = measure\(at, stepRef\.current\);\s+(?:\/\/[^\n]*\n\s*)*const key = `\$\{at\}:\$\{boxKey\(m\.box\)\}:\$\{boxKey\(m\.press\)\}:\$\{m\.instead \? 1 : 0\}`;\s+const settle = settleRef\.current;\s+if \(settle && settle\.at === at\) \{[\s\S]{0,900}?\} else if \(key !== last\) \{ last = key; setMeasured\(m\); \}/,
     'the per-frame follow keeps the words with the box: the plan arriving in the chat moves no box');
   assert.match(src, /\} catch \{ \/\* measured again next frame \*\/ \}\s+raf = requestAnimationFrame\(tick\);/);
   assert.doesNotMatch(src, /setBox\(/);
@@ -1060,7 +1067,7 @@ test('the maker\'s tour ends on the plan: "working on it" until it is in the cha
   // frame loop measures every frame and keeps a new reading whenever
   // `instead` flips, even though no box moved.
   assert.match(src, /const m = measure\(at, stepRef\.current\);/);
-  assert.match(src, /const key = `\$\{at\}:\$\{boxKey\(m\.box\)\}:\$\{boxKey\(m\.press\)\}:\$\{m\.instead \? 1 : 0\}`;\s*if \(key !== last\) \{ last = key; setMeasured\(m\); \}/);
+  assert.match(src, /const key = `\$\{at\}:\$\{boxKey\(m\.box\)\}:\$\{boxKey\(m\.press\)\}:\$\{m\.instead \? 1 : 0\}`;[\s\S]{0,900}?\} else if \(key !== last\) \{ last = key; setMeasured\(m\); \}/);
 });
 
 test('#4391/#4393: the tour says it is running while it is up, so nothing else asks for the plan', () => {

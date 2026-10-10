@@ -68,6 +68,7 @@ const DDL = `
     checks_base_sha TEXT, consecutive_check_failures INTEGER NOT NULL DEFAULT 0,
     first_check_failure_at TIMESTAMPTZ, last_check_failure_at TIMESTAMPTZ,
     check_error_detail TEXT, check_error_notified_at TIMESTAMPTZ,
+    check_error_platform BOOLEAN NOT NULL DEFAULT false,
     handoff_head_sha TEXT, handoff_uploaded_sha TEXT, handoff_upload_checked_sha TEXT,
     imported_pr_head_sha TEXT, active_turn JSONB, staging_url TEXT,
     promoted_at TIMESTAMPTZ, last_activity_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT NOW()

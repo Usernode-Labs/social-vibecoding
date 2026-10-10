@@ -124,9 +124,9 @@ test('a record that began inside the window says when, so a new one never reads 
   const since = '2026-10-10T16:55:00Z';
   const fresh = figures.present('infra.merge-to-live', { homeroom: { secs: null, n: 0, since }, others: { secs: 20, n: 50 } });
   assert.deepEqual(sidesOf(fresh), [['homeroom', 'empty', 'None yet', 'Counting since 10 Oct'], ['others', 'ok', '20 s', '']]);
-  const timed = figures.present('infra.merge-to-live', { homeroom: { secs: 400, n: 3, since: new Date(since) }, others: { secs: 20, n: 50 } });
-  assert.deepEqual(sidesOf(timed)[0], ['homeroom', 'ok', '7 min', 'since 10 Oct'], 'a median of less than the week says so');
-  assert.equal(timed.sub, 'median · target 15 min', 'the target line is unchanged');
+  const timed = figures.present('infra.merge-to-live', { homeroom: { secs: 100, n: 3, since: new Date(since) }, others: { secs: 20, n: 50 } });
+  assert.deepEqual(sidesOf(timed)[0], ['homeroom', 'ok', '2 min', 'since 10 Oct'], 'a median of less than the week says so');
+  assert.equal(timed.sub, 'median · target 2 min', 'the target line is unchanged');
   const opens = figures.present('infra.apps-up', { hits: 0, total: 0, since });
   assert.deepEqual([opens.state, opens.value, opens.sub], ['empty', 'None yet', 'Counting since 10 Oct']);
   const some = figures.present('infra.apps-up', { hits: 95, total: 100, since });
@@ -162,15 +162,16 @@ test('a split figure shows Homeroom beside the other projects, each with its ver
   const half = figures.present('pipeline.shots', { homeroom: { hits: 0, total: 0 }, others: null });
   assert.deepEqual(sidesOf(half), [['homeroom', 'empty', 'None yet', ''], ['others', 'error', 'Couldn’t load', '']]);
   assert.equal(half.state, 'empty');
-  const calm = figures.present('infra.merge-to-live', { homeroom: { secs: 600, n: 3 }, others: { secs: 120, n: 9 } });
+  const calm = figures.present('infra.merge-to-live', { homeroom: { secs: 110, n: 3 }, others: { secs: 45, n: 9 } });
   assert.equal(calm.state, 'ok');
+  assert.equal(figures.FIGURES['infra.merge-to-live'].target.atMost, 120, 'live within 2 minutes of merging');
 });
 
 test('a number off its target never reads as the target itself', () => {
   const shots = figures.present('pipeline.shots', { homeroom: { hits: 30, total: 32 }, others: { hits: 26, total: 29 } });
   assert.deepEqual(sidesOf(shots)[1], ['others', 'warn', '89.6%', '26 of 29 runs'], '89.7% is below 90%, so it is not "90%"');
-  const late = figures.present('infra.merge-to-live', { homeroom: { secs: 905, n: 4 }, others: { secs: 60, n: 4 } });
-  assert.equal(late.sides[0].value, '15 min 5 s');
+  const late = figures.present('infra.merge-to-live', { homeroom: { secs: 125, n: 4 }, others: { secs: 60, n: 4 } });
+  assert.equal(late.sides[0].value, '2 min 5 s');
   const dear = figures.present('bot.merged-cost', { homeroom: { value: 5.003, n: 4 }, others: { value: 2, n: 4 } });
   assert.equal(dear.sides[0].value, '$5.01');
   const failing = figures.present('infra.deploys-failed', { hits: 1008, total: 20000 });
@@ -319,8 +320,8 @@ test('a split cell: Homeroom over Other projects, the side off target marked, th
   assert.deepEqual([...cell.matchAll(/data-fig-side="([^"]+)" data-fig-state="([^"]+)"><span class="dev-ws-fig-side-name">([^<]+)</g)].map((m) => [m[1], m[2], m[3]]),
     [['homeroom', 'warn', 'Homeroom'], ['others', 'ok', 'Other projects']]);
   assert.match(cell, /class="dev-ws-fig-side-value dev-ws-fig-side-value-warn"><svg class="dev-ws-fig-warn"[^>]*>[\s\S]*?<\/svg>19 min</);
-  assert.match(cell, /class="dev-ws-fig-side-value">3 min</);
-  assert.match(cell, /class="dev-ws-fig-sub">median · target 15 min</, 'the line is not the warning: the side is');
+  assert.match(cell, /class="dev-ws-fig-side-value">1 min</);
+  assert.match(cell, /class="dev-ws-fig-sub">median · target 2 min</, 'the line is not the warning: the side is');
   assert.doesNotMatch(cell, /class="dev-ws-fig-value/, 'the sides stand in for the one number');
   const pipeline = strip('proposal-pipeline');
   assert.match(pipeline, /data-fig-side="homeroom" data-fig-state="warn">[\s\S]*?2\.1%<\/span><span class="dev-ws-fig-side-detail">3 of 143 runs</);
@@ -625,7 +626,7 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     // (#4697); the projects' deploys were always recorded.
     const { rows: [began] } = await pool.query(`SELECT value FROM platform_settings WHERE key = 'platform_live_tracked_since'`);
     const day = utcDay(began.value);
-    assert.deepEqual(sidesOf(got['infra.merge-to-live']), [['homeroom', 'warn', '20 min', `since ${day}`], ['others', 'ok', '6 min', '']]);
+    assert.deepEqual(sidesOf(got['infra.merge-to-live']), [['homeroom', 'warn', '20 min', `since ${day}`], ['others', 'warn', '6 min', '']]);
     assert.deepEqual([got['infra.deploys-failed'].value, got['infra.deploys-failed'].sub, got['infra.deploys-failed'].state],
       ['50%', '1 of 2 project merges · over 5% target', 'warn']);
     assert.deepEqual([got['infra.apps-up'].value, got['infra.apps-up'].sub, got['infra.apps-up'].state],
@@ -678,7 +679,7 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
     assert.deepEqual([one.body.topic, one.body.demo, one.body.figures.map((f) => f.id)], ['infra', undefined, ['infra.merge-to-live']],
       'outside staging ?demo=1 changes nothing');
     const { rows: [began] } = await pool.query(`SELECT value FROM platform_settings WHERE key = 'platform_live_tracked_since'`);
-    assert.deepEqual(sidesOf(one.body.figures[0]), [['homeroom', 'warn', '20 min', `since ${utcDay(began.value)}`], ['others', 'ok', '6 min', '']]);
+    assert.deepEqual(sidesOf(one.body.figures[0]), [['homeroom', 'warn', '20 min', `since ${utcDay(began.value)}`], ['others', 'warn', '6 min', '']]);
     assert.equal('scope' in one.body, false);
     assert.deepEqual((await get('/quiet/figures')).body, { topic: 'quiet', figures: [] });
     assert.equal((await get('/nowhere/figures')).status, 404);
