@@ -5832,11 +5832,12 @@ test('#3651: on All items one header pins, the tabs and the head, in the pane\'s
   assert.ok(!/data-ws-pagebar|dev-ws-pagebar/.test(WORKSHOP), 'no back bar');
   assert.ok(!/dev-ws-pagebar/.test(decls), 'and no rule styles one');
 
-  // 3. UNDER 768px THE HEAD RESTS ON THE BAND'S FOOT. The coloured band is
-  //    opaque and draws no sheet behind it, so the measured offset's column
-  //    gap would show the cards; a phone's head rests the same way (58px).
-  assert.match(decls, /@media \(max-width: 767\.98px\) \{\s*#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-pin-top, 0px\) - 15px \+ 58px\); \}\s*\}/);
-  assert.ok(decls.indexOf('- 15px + 58px') > decls.indexOf('#dev-workshop .dev-ws-pane-head {'),
+  // 3. UNDER 768px THE HEAD RESTS ON THE BAND'S FOOT. The band is its 18px
+  //    tuck now (#4703: the row it held lives in the header), so the measured
+  //    offset's column gap would show the cards; a phone's head rests the
+  //    same way (18px).
+  assert.match(decls, /@media \(max-width: 767\.98px\) \{\s*#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-pin-top, 0px\) - 15px \+ 18px\); \}\s*\}/);
+  assert.ok(decls.indexOf('- 15px + 18px') > decls.indexOf('#dev-workshop .dev-ws-pane-head {'),
     'after the measured offset it overrides, which has the same specificity');
 
   // 4. ONE COLOUR. The head keeps the pane's while pinned, and the band

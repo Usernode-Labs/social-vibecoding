@@ -18486,24 +18486,22 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   outline: 1.5px solid rgba(255, 255, 255, .55);
   outline-offset: -1.5px;
 }
-/* ON ITS OWN, THE BAR'S ROW IS CENTRED (#4237). From 768px the band under
-   the bar is the page's own ink, so the tinted bar ends at its own 52px
-   foot, and its pt-2/pb-4 (8px over the row, 16px under) put every control
-   in it 4px above its middle. The same 52px, split 12 and 12. Below 768px
-   the band continues the colour and the 16px is part of one taller block,
-   so the shared split stays. The top keeps the safe-area inset, and the
-   browser-tab clamp (#2509) keeps its zero inset. */
-@media (min-width: 768px) {
-  html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
-    padding-bottom: 0.75rem;
+/* ON ITS OWN, THE BAR'S ROW IS CENTRED (#4237). The band under the bar is
+   the page's own ink at every width now (#4703: on a phone the band is gone
+   and the header is the one coloured row), so the tinted bar ends at its own
+   52px foot everywhere, and its pt-2/pb-4 (8px over the row, 16px under) put
+   every control in it 4px above its middle. The same 52px, split 12 and 12.
+   The top keeps the safe-area inset, and the browser-tab clamp (#2509) keeps
+   its zero inset. */
+html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
+  padding-bottom: 0.75rem;
+}
+@supports (padding: env(safe-area-inset-top)) {
+  html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
+    padding-top: calc(0.75rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
   }
-  @supports (padding: env(safe-area-inset-top)) {
-    html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
-      padding-top: calc(0.75rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
-    }
-    html.web-browser-chrome[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
-      padding-top: 0.75rem !important;
-    }
+  html.web-browser-chrome[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header.un-safe-top-extend {
+    padding-top: 0.75rem !important;
   }
 }
 /* THE BAND: the place bar (#4417, place-bar.tsx; it held the four tabs,
@@ -18578,7 +18576,10 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
     top: var(--ws-band-top);
     z-index: 29;
   }
-  #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-band-top) + 58px); }
+  /* #4703: the band is 18px on a phone now — its tuck, with the row it held
+     gone into the header — so the head comes to rest right under the
+     header's foot (the band's bottom edge, where its box still ends). */
+  #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-band-top) + 18px); }
 }
 /* A PULL TO REFRESH MOVES ONLY THE PAGE UNDER THE TABS (pull-to-refresh
    under the tabs, evan, 2026-10-01). "When you pull down on a community
@@ -18720,6 +18721,36 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   @media (hover: hover) { .dev-ws-places-btn:hover { background: var(--bg-secondary); color: var(--text-primary); } }
   .dev-ws-places-dot { box-shadow: 0 0 0 2px var(--bg-primary); }
   .dev-ws-place-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+}
+
+/* THE MERGED HEADER (#4703): on a phone the place bar's contents live in the
+   platform header, and the second coloured row is gone. The band keeps its
+   box — the margin, the padding and the 18px tuck the pinned head and the
+   pull to refresh are measured against — but it paints nothing and takes no
+   taps: its track is collapsed to nothing, the h2 stays in the DOM for
+   screen readers and the declared checks, and the band's button is hidden.
+   The header draws its own button (place-bar.tsx HeaderPlace), 28px like the
+   header's other controls, and the place's name beside the switcher; the
+   tint they sit on and the dot's ring are the community's, as the band's
+   were. The place name holds its ground (`flex-shrink: 0`, capped) so a long
+   community name shortens in the switcher first, which is the name the old
+   second row did not show. On Homeroom's own pages that name is the
+   wordmark drawing, which has no shorten-with-ellipsis of its own: it scales
+   into the room left instead of clipping mid-letter. */
+@media (max-width: 767.98px) {
+  .dev-ws-tabs.dev-ws-band { background: none; pointer-events: none; }
+  .dev-ws-placebar .dev-ws-tabtrack { height: 0; overflow: hidden; }
+  .dev-ws-placebar .dev-ws-places-btn { display: none; }
+  #platform-header .header-places-btn { width: 28px; height: 28px; margin-left: 0; }
+  #platform-header .header-places-btn .dev-ws-places-dot { top: 1px; right: 0; }
+  #platform-header:has(.header-place-name) #header-title-name > svg {
+    width: 100%; height: auto;
+  }
+  #platform-header .header-place-name {
+    flex-shrink: 0; min-width: 0; max-width: 45%; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+    font-size: 16px; font-weight: 600; color: #fff;
+  }
 }
 
 /* THE TRAY (places-tray.tsx): the list, slid in from the left over a
@@ -19417,13 +19448,12 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
     top: calc(var(--ws-pin-top, 0px) + var(--dev-ws-head-top, 0px));
     z-index: 31;
   }
-  /* Under 768px the tabs are the coloured band: opaque, and with no band of
-     sheet behind them (that is the row's, from 768px), so the column gap the
-     measured offset leaves under them would have nothing in it but the cards
-     going by. The head rests on the band's foot instead, as a phone's does:
-     where the band pins, plus its 58px (the 18px tuck and the 40px row). */
+  /* In the tablet window between 700px and the wide layout, as on a phone
+     (#4703): the band is its 18px tuck, the row it held gone into the
+     header, so the head rests on the band's foot: where the band pins, plus
+     its 18px. */
   @media (max-width: 767.98px) {
-    #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-pin-top, 0px) - 15px + 58px); }
+    #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-pin-top, 0px) - 15px + 18px); }
   }
   .dev-ws-tabs {
     order: 0;
@@ -21537,6 +21567,11 @@ html.un-kb #platform-parked {
      is there room for it  → the media query
      has the group anything→ `:has(> #back-btn.hidden)` plus the two above
 
+   #4703 adds a fourth thing the group can hold: the merged header's places
+   button, on a phone, on a project page — where the back slot is empty and
+   the group used to be gone with it. A group holding it is not empty, so
+   the `:not(:has(...))` asks.
+
    THE GROUP GOES WHEN IT IS EMPTY, and that is not cosmetic: an
    empty-but-present flex item still reserves the header's own `gap-4`, which
    put the wordmark 16px in from the edge of every root screen the first time
@@ -21544,7 +21579,7 @@ html.un-kb #platform-parked {
    reach — the group carries Tailwind's `flex`, app.css loads BEFORE
    tailwind.css, and the utilities win every equal-specificity conflict in
    this file (#938). */
-#platform-header .platform-header-left:has(> #back-btn.hidden) {
+#platform-header .platform-header-left:has(> #back-btn.hidden):not(:has(> .header-places-btn)) {
   display: none;
 }
 @media (min-width: 768px) {

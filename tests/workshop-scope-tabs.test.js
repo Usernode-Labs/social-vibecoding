@@ -367,10 +367,13 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
     assert.doesNotMatch(renderHeader({ subTab }), /header-app-switch/);
   }
 
-  // No width anywhere in it now: the Communities screen's "All" is the
-  // bar's at every width too (#852).
+  // No width anywhere in the switcher now: the Communities screen's "All" is
+  // the bar's at every width too (#852). The one width left in the file is
+  // #4703's place name, which is the header's only on a phone — and it adds
+  // nothing to the switcher button itself.
   assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
-  assert.doesNotMatch(header, /PHONE_QUERY|usePhone/);
+  assert.doesNotMatch(header, /PHONE_QUERY/);
+  assert.match(header, /onWorkshop && phoneHeader \? <HeaderPlaceName slug=\{slug\} \/> : null/);
 });
 
 test('#3497: on Homeroom\'s own pages the switcher names it with the logotype, not the word', () => {
