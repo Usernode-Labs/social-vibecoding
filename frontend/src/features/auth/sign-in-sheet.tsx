@@ -154,12 +154,13 @@ import {
   HANDLE_FIELD,
   legacy,
   type NativeLoginFailureDetails,
+  ONE_TIME_CODE_FIELD,
   passwordSignIn,
   sessionMintFailureMessage,
 } from './shared';
 import { RecaptchaLine, TermsNotice } from './waitlist-shared';
 
-type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'phone' | 'phone-code';
+type Step = 'choose' | 'email' | 'code' | 'account' | 'username' | 'password' | 'phone' | 'phone-code' | 'link';
 
 export type SignInProvider = 'apple' | 'google';
 
@@ -403,10 +404,12 @@ export type ReleaseSpend = {
 /**
  * Spend the release mail's one-time sign-in link (src/services/release-links.js)
  * with a POST, never on the GET that opened the page, so a mail scanner's
- * prefetch cannot use it up. Null on anything else (expired, used, unknown,
- * offline): the sheet then falls back to the address and a code.
+ * prefetch cannot use it up. 'refused' when the server says the link is
+ * expired, used or unknown; null on anything else (offline, a server
+ * error). Either way the sheet falls back to the address and a code, and a
+ * refused link says why.
  */
-export async function spendReleaseLink(key: string): Promise<ReleaseSpend | null> {
+export async function spendReleaseLink(key: string): Promise<ReleaseSpend | 'refused' | null> {
   try {
     const res = await fetchSessionMint('/api/auth/release-link', {
       method: 'POST',
@@ -415,6 +418,7 @@ export async function spendReleaseLink(key: string): Promise<ReleaseSpend | null
       body: JSON.stringify({ token: key }),
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 422 && data.code === 'invalid_release_link') return 'refused';
     if (!res.ok || !data.ok || typeof data.email !== 'string') return null;
     if (data.next !== 'signed-in' && data.next !== 'set-password') return null;
     return {
@@ -531,6 +535,9 @@ export function SignInSheet({
   const [needsUsername, setNeedsUsername] = useState(false);
   // The address a release link signed in (#4594), for the account step's welcome.
   const [welcome, setWelcome] = useState<string | null>(null);
+  // The release link was refused (used, or expired): the code step says so,
+  // since that is why a code was sent instead.
+  const [linkRefused, setLinkRefused] = useState(false);
   // The handle the account step's field arrives holding (#4596): made from
   // the address by the server, or '' for an empty field.
   const [suggestedUsername, setSuggestedUsername] = useState('');
@@ -607,6 +614,7 @@ export function SignInSheet({
     if (!open) return;
     setStep(resume === 'username' ? 'username' : firstStepRef.current);
     setWelcome(null);
+    setLinkRefused(false);
     if (resume === 'username') setUsernameVia('oauth');
     setError(resumeError(resume));
     setDetails(null);
@@ -708,16 +716,22 @@ export function SignInSheet({
   // #4594: a link that also carries its one-time sign-in spends that first.
   // Spent, it is a proven mailbox, like a right code: the account step, with
   // "Welcome <address>", or straight in for an account with nothing to set
-  // up. Expired, used or unknown, it is the prefill and the code as before.
+  // up. Expired, used or unknown, it is the prefill and the code as before,
+  // and the code step says the link was used (Evan, 10 Oct 2026: a second
+  // open, in another browser, asked for a code with no reason given).
+  //
+  // While it is spent the sheet says "Signing you in…" (the `link` step),
+  // not the email step with its Send code button, which the first open
+  // used to show for the length of the request.
   const finishRef = useRef<(kind: 'existing' | 'new') => Promise<void>>(async () => {});
   useEffect(() => {
     const seen = releaseSignIn || releaseToken;
     if (!open || !seen || releaseSeen.current === seen) return undefined;
     releaseSeen.current = seen;
     let live = true;
-    setStep('email');
+    setStep(releaseSignIn ? 'link' : 'email');
     const prefill = () => {
-      if (!releaseToken) return;
+      if (!releaseToken) { setStep('email'); return; }
       void releaseArrival(releaseToken).then(arrive);
     };
     if (releaseSignIn) {
@@ -726,7 +740,8 @@ export function SignInSheet({
       // either way, so its answer must land.
       void spendReleaseLink(releaseSignIn).then(async (spent) => {
         setBusy(false);
-        if (!spent) { prefill(); return; }
+        if (spent === 'refused') setLinkRefused(true);
+        if (!spent || spent === 'refused') { prefill(); return; }
         setEmail(spent.email);
         if (spent.next === 'signed-in') { await finishRef.current('existing'); return; }
         setWelcome(spent.email);
@@ -739,7 +754,8 @@ export function SignInSheet({
       prefill();
     }
     function arrive(arrival: ReleaseArrival | null) {
-      if (!live || !arrival) return;
+      if (!live) return;
+      if (!arrival) { setStep('email'); return; }
       setEmail(arrival.address);
       if (firstField.current) firstField.current.value = arrival.address;
       if (!arrival.send) {
@@ -1085,6 +1101,7 @@ export function SignInSheet({
 
   const waitLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const heading = step === 'choose' || step === 'email' || step === 'phone' ? title
+    : step === 'link' ? t('auth:signInSheet.link.title')
     : step === 'code' ? t('auth:signInSheet.code.title')
       : step === 'phone-code' ? t('auth:signInSheet.phoneCode.title')
         : step === 'password' ? t('auth:signInSheet.password.title')
@@ -1102,8 +1119,10 @@ export function SignInSheet({
       ? t('auth:signInSheet.email.lead')
       : step === 'phone-code'
         ? t('auth:signInSheet.phoneCode.lead', { lastDigits: phoneNumber.slice(-4) })
+      : step === 'link'
+        ? ''
       : step === 'code'
-        ? t('auth:signInSheet.code.lead', { email })
+        ? (linkRefused ? t('auth:signInSheet.code.leadLinkUsed', { email }) : t('auth:signInSheet.code.lead', { email }))
         : step === 'password'
           ? t('auth:signInSheet.password.lead')
           : step === 'username'
@@ -1217,7 +1236,7 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-phone-code" className={LABEL}>{t('auth:signInSheet.phoneCode.label')}</label>
-                <input ref={phoneCodeField} id="sign-in-sheet-phone-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+                <input ref={phoneCodeField} id="sign-in-sheet-phone-code" {...ONE_TIME_CODE_FIELD} enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
             <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('auth:signInSheet.phoneCode.autofill')}</p>
@@ -1248,12 +1267,12 @@ export function SignInSheet({
             <div className={FIELD_GROUP}>
               <div className={FIELD}>
                 <label htmlFor="sign-in-sheet-code" className={LABEL}>{t('auth:signInSheet.code.label')}</label>
-                <input ref={codeField} id="sign-in-sheet-code" inputMode="numeric" autoComplete="one-time-code" enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
+                <input ref={codeField} id="sign-in-sheet-code" {...ONE_TIME_CODE_FIELD} enterKeyHint="go" maxLength={6} className={`${INPUT} tracking-[0.4em]`} />
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.code.checking') : t('auth:signInSheet.code.submit')}</button>
             <div className="flex items-center justify-between">
-              <button type="button" className={QUIET} onClick={() => { setError(null); setStep('email'); }}>{t('auth:signInSheet.code.changeEmail')}</button>
+              <button type="button" className={QUIET} onClick={() => { setError(null); setLinkRefused(false); setStep('email'); }}>{t('auth:signInSheet.code.changeEmail')}</button>
               <button type="button" className={`${QUIET} disabled:text-zinc-500 disabled:dark:text-zinc-400 disabled:no-underline`} disabled={busy || waitLeft > 0} onClick={() => { void requestCode(email); }}>
                 {waitLeft > 0 ? t('auth:signInSheet.code.resendIn', { count: waitLeft }) : t('auth:signInSheet.code.resend')}
               </button>

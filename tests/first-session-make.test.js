@@ -374,8 +374,15 @@ test('"Make it" looks pale only while making: a press with an answer missing goe
   }
   assert.match(read(`${DIR}/import-repo.tsx`), /aria-describedby=\{missing === 'name' \? 'make-import-name-hint' : undefined\}/);
   // The placeholder reads as an example, not as a name already given.
-  assert.match(src, /placeholder=\{t\('onboarding:firstSession\.make\.namePlaceholder'\)\}/);
-  assert.equal(message('onboarding:firstSession.make.namePlaceholder'), 'For example, Hiking Tier List');
+  // An example of the picked idea's kind (Evan, 10 Oct 2026: a game, and
+  // an idea of their own, were offered "Hiking Tier List").
+  assert.match(src, /placeholder=\{t\(template \? template\.namePlaceholder : 'onboarding:firstSession\.make\.namePlaceholderOwn'\)\}/);
+  const { TEMPLATES } = loadTsx(`${DIR}/examples.ts`);
+  const placeholderOf = (key) => message(TEMPLATES.find((x) => x.key === key).namePlaceholder);
+  assert.equal(placeholderOf('tier'), 'For example, Hiking Tier List');
+  assert.equal(placeholderOf('game'), 'For example, My Game');
+  assert.equal(placeholderOf('organizer'), 'For example, Camping Gear List');
+  assert.equal(message('onboarding:firstSession.make.namePlaceholderOwn'), 'For example, My New App');
   assert.doesNotMatch(src, /placeholder="Hiking Tier List"/);
   // Drawn: the button is live before anything is typed.
   const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { who: 'Jordan', onMade() {}, onLookAround() {} });

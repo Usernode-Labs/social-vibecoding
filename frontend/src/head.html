@@ -248,24 +248,37 @@
     }());
   </script>
   <script>
-    // "What do you want to make?" across a reload, with no Home before it.
+    // No Home before the first screen of a first run: the "You're in"
+    // mail's link, and "What do you want to make?" across a reload.
     //
-    // The story's sign-in sheet sets the first session's make flag
-    // (features/first-session, MAKE_FLAG) before it finishes a new account's
-    // sign-in, and that sign-in can reload the page onto the live build
-    // (App._moveToLiveShell, from AuthScreens.finishLogin). The new
-    // document's prerendered markup is Home, and it paints before any script
-    // has run, so the make screen used to come up after a beat of Home. A
-    // document that opens with the flag still set holds the body hidden
-    // instead, from before that first paint, and shows the page ground until
-    // the shell has drawn its first signed-in screen: App._liftFirstSessionBoot
-    // in public/js/app.js, called once enterAuthed has drawn it, and when the
-    // shell boots signed out or into the waiting room. The timer is the floor
-    // under all of that: whatever happens, the page shows within 8 seconds.
+    // The prerendered markup is Home, and it paints before any script has
+    // run. Two documents are about to show something else, so they hold the
+    // body hidden from before that first paint, and the page ground shows:
+    //
+    //   - A waitlist "You're in" link (`?signup=1` / `?login=1`, the shapes
+    //     sendWaitlistReleaseMail writes). It opens signed out, on the
+    //     landing with the sign-in sheet over it (AuthScreens.enter). Evan,
+    //     10 Oct 2026: arriving from the phone app, Home showed first.
+    //   - The story's sign-in sheet sets the first session's make flag
+    //     (features/first-session, MAKE_FLAG) before it finishes a new
+    //     account's sign-in, and that sign-in can reload the page onto the
+    //     live build (App._moveToLiveShell, from AuthScreens.finishLogin).
+    //
+    // The shell lifts the hold once it has drawn its first screen:
+    // App._liftFirstSessionBoot in public/js/app.js, called once enterAuthed
+    // has drawn it, and when the shell boots signed out or into the waiting
+    // room. The timer is the floor under all of that: whatever happens, the
+    // page shows within 8 seconds.
     (function () {
+      var hold = false;
+      try { hold = sessionStorage.getItem('usernode:first-session:make') === '1'; } catch (_) {}
       try {
-        if (sessionStorage.getItem('usernode:first-session:make') !== '1') return;
-      } catch (_) { return; }
+        if (!hold && !location.hash) {
+          var query = new URLSearchParams(location.search);
+          hold = query.has('signup') || query.has('login');
+        }
+      } catch (_) {}
+      if (!hold) return;
       var root = document.documentElement;
       root.classList.add('first-session-boot');
       setTimeout(function () { root.classList.remove('first-session-boot'); }, 8000);

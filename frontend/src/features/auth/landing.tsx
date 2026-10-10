@@ -1083,16 +1083,24 @@ export function LandingScreen() {
 
   const landingOnShow = useCallback(() => {
     refreshHeader();
-    // Arrived by a waitlist "you're in" link: the sheet, open over the story
-    // at the step the link asked for. Read once, so a reload now would lose
-    // it; a sign-in has begun, so the shell does not swap the build in under
-    // it (App.noteSignInBegun).
+    // Arrived by a waitlist "you're in" link. Read once, so a reload now
+    // would lose it; a sign-in has begun, so the shell does not swap the
+    // build in under it (App.noteSignInBegun).
+    //
+    // A new account's link waits for Get started (Evan, 10 Oct 2026): the
+    // story first, then the sheet, which only then spends the one-time
+    // sign-in (./sign-in-sheet.tsx, "Signing you in…" and the username). A
+    // link spent on load was used up by whatever loaded it: the phone app's
+    // own browser before it handed the link to Safari, or a mail scanner
+    // that runs the page. Nothing else changes: Get started passes the link
+    // to the sheet while `release` holds it. An existing account's link
+    // opens Sign in, as before.
     const link = takeReleaseLink();
     if (link) {
       noteSignInBegun();
       setRelease(link);
       setResume(null);
-      setSheet(link.route === 'signup' ? 'start' : 'signin');
+      if (link.route !== 'signup') setSheet('signin');
     }
     if (!st.appsLoaded) {
       st.appsLoaded = true;

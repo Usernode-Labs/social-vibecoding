@@ -259,6 +259,10 @@
     "text": "A game",
     "description": "Title of one of three examples of what a group can make (a game), in the list on the signed-out welcome page."
   },
+  "firstSession.template.game.namePlaceholder": {
+    "text": "For example, My Game",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the game idea is picked: an example of a game project's name."
+  },
   "firstSession.template.game.line": {
     "text": "A new one, built and played together",
     "description": "Line under the example titled \"A game\" on the signed-out welcome page: what it is for."
@@ -378,6 +382,10 @@
   "firstSession.template.organizer.title": {
     "text": "An organizer",
     "description": "Title of one of three examples of what a group can make (an organizer), in the list on the signed-out welcome page."
+  },
+  "firstSession.template.organizer.namePlaceholder": {
+    "text": "For example, Camping Gear List",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the organizer idea is picked: an example of an organizer project's name."
   },
   "firstSession.template.organizer.line": {
     "text": "Groceries, chores, a shared library",
@@ -538,6 +546,10 @@
   "firstSession.make.namePlaceholder": {
     "text": "For example, Hiking Tier List",
     "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen, where a member describes a new project: an example of a project name."
+  },
+  "firstSession.make.namePlaceholderOwn": {
+    "text": "For example, My New App",
+    "description": "Placeholder in the empty name field on the \"What do you want to make?\" screen while the member is describing an idea of their own (not a tier list, game or organizer): an example of a project name."
   },
   "firstSession.make.needed.blank": {
     "text": "Fill in the blank first.",
