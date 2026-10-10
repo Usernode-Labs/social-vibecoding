@@ -34,6 +34,7 @@ export const EMPTY_WORKSHOP_VIEW: DevWorkshopView = {
   emptyNote: null,
   votes: { count: 0, rows: [] },
   since: null,
+  week: null,
   dashboard: null,
   nextUp: null,
   discussion: null,

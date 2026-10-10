@@ -699,6 +699,25 @@ export interface DevWorkshopView {
      */
     seen: { total: number; rows: ListRow[] };
   } | null;
+  /**
+   * The week whose page is open on the Workshop tab, filled from the board's
+   * own data — everything in the week's range over ALL loaded entries,
+   * uncapped, split on the same baseline `since` uses — or null while no
+   * week page is open. `loading` and `failed` are the fetch's
+   * (AppView.openWorkshopWeek): the page says "Loading this week…" while it
+   * runs and names a part-load when it fails, and the empty line shows only
+   * once loading finished with no rows.
+   */
+  week: {
+    startMs: number;
+    endMs: number;
+    loading: boolean;
+    failed: boolean;
+    /** In the week and moved since the viewer's last visit, newest first. */
+    fresh: ListRow[];
+    /** In the week, from before it — which they have seen. */
+    seen: ListRow[];
+  } | null;
   /** First-visit orientation: the board's shape in numbers. */
   /**
    * The app's state in numbers, every visit rather than only the first —

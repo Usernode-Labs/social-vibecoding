@@ -156,9 +156,25 @@ function Group({ group, slug, openKey, onOpen }: {
   );
 }
 
+/**
+ * The week's own rows, fetched when the page opened (AppView.openWorkshopWeek,
+ * filed in _workshopView's `week`), or null where there is no AppView to ask.
+ * The page groups these through the unchanged weekGroups() rather than the
+ * capped since-list rows, so a week the board had already dropped still
+ * reads whole; `loading` and `failed` are the fetch's own states.
+ */
+export interface FetchedWeek {
+  loading: boolean;
+  failed: boolean;
+  fresh: CardRow[];
+  seen: CardRow[];
+}
+
 /** A week's own page inside the Workshop tab, with the way back. */
-export function WeekPage({ week, slug, openKey, onOpen, onBack }: {
+export function WeekPage({ week, fetched, slug, openKey, onOpen, onBack }: {
   week: SinceWeek;
+  /** The page's own fetched rows, when AppView supplied them. */
+  fetched?: FetchedWeek | null;
   slug: string;
   openKey: string | null;
   onOpen: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
@@ -166,7 +182,10 @@ export function WeekPage({ week, slug, openKey, onOpen, onBack }: {
 }): ReactNode {
   const t = useMessages('project');
   const live = weekLive(week);
-  const groups = weekGroups(week);
+  const full = fetched ? { ...week, fresh: fetched.fresh, seen: fetched.seen } : week;
+  const groups = weekGroups(full);
+  const loading = !!fetched && fetched.loading;
+  const failed = !!fetched && fetched.failed;
   const liveBold = [<b className="dev-ws-week-live" />];
   const start = weekDate(week.startMs);
   const end = weekDate(week.endMs - 86400000);
@@ -190,7 +209,9 @@ export function WeekPage({ week, slug, openKey, onOpen, onBack }: {
           )}
         </p>
         {week.line ? <p className="dev-ws-week-lead" data-ws-week-line="">{week.line}</p> : null}
-        {!groups.length ? <p className="dev-ws-none">{t('project:weekPage.none')}</p> : null}
+        {loading ? <p className="dev-ws-none" data-ws-week-loading="">{t('project:weekPage.loading')}</p> : null}
+        {failed ? <p className="dev-ws-none" data-ws-week-failed="">{t('project:weekPage.failed')}</p> : null}
+        {!groups.length && !loading && !failed ? <p className="dev-ws-none">{t('project:weekPage.none')}</p> : null}
       </section>
       {groups.map((g) => <Group key={g.key} group={g} slug={slug} openKey={openKey} onOpen={onOpen} />)}
     </div>
