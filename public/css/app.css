@@ -16600,21 +16600,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: grid; place-items: center;
   font-variant-numeric: tabular-nums;
 }
-/* The pane's lead paragraph: what the open work is about. It was the first
-   card of the week walk, which put the one line the pane always shows
-   inside a control about history. */
-/* The lead block's heading — the one the walk's first card wore while that
-   line was a window in it. Same size and weight as a window's heading, so
-   the pane reads as headings-and-their-lines all the way down; no rule
-   above it and no dates beside it, which is what keeps it from reading as
-   one of the windows. */
-.dev-ws-lead-head { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; }
-.dev-ws-lead-title { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-primary); }
-.dev-ws-open-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
-/* What moved, in words, under the heading that gives it an antecedent. It
-   was a `N shipped since` pill on the dashboard's head four blocks up — a
-   fragment with its object missing, beside numbers about the board. */
-.dev-ws-since-sum { margin: -2px 0 2px; font-size: 12.5px; line-height: 1.4; color: var(--text-muted); }
+/* A heading's count in words, muted, beside it ("1 open", "2 since your
+   last visit"): a phrase, not a pill (After-Workshop-B). */
+.dev-ws-head-sub { font-size: 13px; color: var(--text-muted); }
 /* ── The general discussion, at the foot of the dashboard pane ───────────
    No pill and no card. A rounded capsule on a rounded pane is a shape
    inside a shape, and this pane already has an internal rhythm — hairline,
@@ -16789,13 +16777,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
   background: var(--bg-secondary); color: var(--text-muted);
   font-size: 11px; font-variant-numeric: tabular-nums;
-}
-
-/* ── Where the summary came from ─────────────────────────────
-   Two clauses of the category footnote, moved onto the tab that holds the
-   summary they are about. */
-.dev-ws-digest-note {
-  margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-muted);
 }
 
 /* ── The three destinations ──────────────────────────────────
@@ -17302,57 +17283,82 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-needs-scroll { scroll-behavior: smooth; }
 }
-/* ── The item ─────────────────────────────────────────────────────────
-   A column: progress line and eyebrow, title, summary, then the picture
-   (or the air where one would go), then the caption at the floor. The
-   title, summary and caption all keep the rail's width (74px) free at their
-   right, and the picture stops short of the rail, so nothing the rail covers
-   is text — the title and summary used to keep only 20px, and on a phone a
-   long summary ran under the buttons (#2345). The tint
-   alternates so a swipe reads as a new item, not the same one with new
-   words; the pair is soft enough that the pastel ground shows through. */
+/* ── The item: a reel ─────────────────────────────────────────────────
+   ONE DARK CARD, in the light theme and the dark alike, as a short video's
+   frame is: the picture fills it, and the caption is laid over its foot in
+   white on a scrim (workshop.tsx FeedItem). The card is a scheme of its
+   own: the tokens are redefined for everything inside it, to the dark
+   palette's own values, so the pictures (lib/diagram, What it touches, the
+   shots' switch) and the facts draw light on dark without a second copy of
+   their rules. The tint pair still
+   alternates, as a faint wash over the dark, so a swipe reads as a new
+   item. On a phone the rail stands over the card's right edge, so the
+   caption keeps its lane (80px) free; nothing else does, because the rail
+   floats over the picture the way a reel's buttons do. The end card is an
+   item too, and keeps the page's own scheme. */
 .dev-ws-item {
   position: relative;
   height: 100%; box-sizing: border-box;
   scroll-snap-align: start; scroll-snap-stop: always;
   display: flex; flex-direction: column;
-  padding: 20px 16px 10px;
+  padding: 0;
   border-radius: 22px;
   overflow: hidden;
   background-color: var(--dc-sheet-fill);
 }
-.dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(244, 114, 182, .08)); }
-.dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .10), rgba(255, 255, 255, 0) 55%, rgba(251, 191, 36, .08)); }
-.dark .dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(244, 114, 182, .10)); }
-.dark .dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(0, 0, 0, 0) 55%, rgba(251, 191, 36, .08)); }
+.dev-ws-item:not(.dev-ws-needs-done) {
+  --text-primary: #fff;
+  --text-secondary: rgba(255, 255, 255, .88);
+  --text-muted: rgba(255, 255, 255, .68);
+  --text-faint: rgba(255, 255, 255, .5);
+  --state-neutral-bg: rgba(255, 255, 255, .14);
+  --app-sheet-line: rgba(255, 255, 255, .14);
+  --accent: #5aa9ff;
+  --accent-tint: rgba(90, 169, 255, .14);
+  --accent-wash-ink: #85bcff;
+  --state-ok: #34d399;
+  --state-progress: #a78bfa;
+  --state-attention: #fbbf24;
+  --state-blocked: #f87171;
+  background-color: #14171f;
+  color: var(--text-primary);
+}
+.dev-ws-item[data-ws-tint="a"] { background-image: linear-gradient(165deg, rgba(139, 92, 246, .16), rgba(20, 23, 31, 0) 55%, rgba(244, 114, 182, .10)); }
+.dev-ws-item[data-ws-tint="b"] { background-image: linear-gradient(165deg, rgba(59, 130, 246, .16), rgba(20, 23, 31, 0) 55%, rgba(251, 191, 36, .08)); }
+/* The progress line: one segment an item, lit up to the one in view. The
+   gaps are a mask, so the count is a number on the line (`--ws-n`) rather
+   than an element an item. */
 .dev-ws-item-progress {
-  position: absolute; left: 22px; right: 22px; top: 9px; height: 3px;
-  border-radius: 2px; background: var(--state-neutral-bg);
+  position: absolute; left: 12px; right: 12px; top: 10px; height: 3px; z-index: 2;
+  border-radius: 3px; background: rgba(255, 255, 255, .25);
+  -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--ws-n, 1) - 4px), transparent calc(100% / var(--ws-n, 1) - 4px) calc(100% / var(--ws-n, 1)));
+  mask-image: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--ws-n, 1) - 4px), transparent calc(100% / var(--ws-n, 1) - 4px) calc(100% / var(--ws-n, 1)));
 }
-.dev-ws-item-progress > i { display: block; height: 100%; border-radius: 2px; background: var(--accent); min-width: 8px; }
+.dev-ws-item-progress > i { display: block; height: 100%; background: #fff; }
 .dev-ws-item-top {
+  position: relative; z-index: 2;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  min-height: 20px;
+  min-height: 20px; margin: 22px 14px 0;
 }
+.dev-ws-item-top > .dev-ws-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: .09em; color: rgba(255, 255, 255, .7); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dev-ws-item-of {
-  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; color: rgba(255, 255, 255, .7);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 /* #3517: the way back on a phone, beside the counter (workshop.tsx draws it
-   there only, from the second item on). A small frosted round, the rail's
-   own fill and line, drawn at 26px but held to the row's 20px by negative
-   margins, so the title under it sits where it does on the first card,
-   which has none: a swipe from one to the next must not nudge the text.
-   `margin-left: auto` takes the row's free space, so it rides beside the
-   counter rather than in the middle of the row; the tap target is the 44px
-   square around it. */
+   there only, from the second item on). A small round, the rail's own fill,
+   drawn at 26px but held to the row's 20px by negative margins, so the
+   counter under it sits where it does on the first card, which has none: a
+   swipe from one to the next must not nudge it. `margin-left: auto` takes
+   the row's free space, so it rides beside the counter rather than in the
+   middle of the row; the tap target is the 44px square around it. */
 .dev-ws-item-prev {
   position: relative; flex: none;
   width: 26px; height: 26px; margin: -3px -4px -3px auto; padding: 0;
   display: grid; place-items: center;
-  border: 1px solid var(--app-sheet-line); border-radius: 9999px;
-  background-color: var(--dc-sheet-fill);
-  color: var(--text-secondary); cursor: pointer;
+  border: 0; border-radius: 9999px;
+  background-color: rgba(255, 255, 255, .16);
+  color: #fff; cursor: pointer;
 }
 .dev-ws-item-prev::after { content: ''; position: absolute; inset: -9px; }
 .dev-ws-item-prev-icon { width: 16px; height: 16px; }
@@ -17364,74 +17370,130 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-item-tick {
   width: 18px; height: 18px; flex: none; padding: 3px; box-sizing: border-box;
-  border-radius: 9999px; background: var(--state-ok); color: #fff;
+  border-radius: 9999px; background: var(--state-ok); color: #14171f;
 }
 /* A no vote (#4568): the confirmation, and its tick, in the blocked red
    instead of the ok green. Yes keeps the rules above. */
 .dev-ws-item-done[data-ws-voted="no"] { color: var(--state-blocked); }
 .dev-ws-item-done[data-ws-voted="no"] .dev-ws-item-tick { background: var(--state-blocked); }
+/* THE PICTURE takes the card from under the counter to its foot, edge to
+   edge; the scrim and the caption are laid over its lower part. */
+.dev-ws-item-spacer { flex: 1 1 auto; min-height: 0; }
+/* What keeps the caption legible over any picture: a fade up from the
+   card's foot. Open, the caption has the whole card, and the picture is
+   dimmed under it. Taps go through to the picture. */
+.dev-ws-item-scrim {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 1;
+  height: 300px; max-height: 75%;
+  background: linear-gradient(to top, rgba(0, 0, 0, .8), rgba(0, 0, 0, .5) 45%, rgba(0, 0, 0, 0));
+  pointer-events: none;
+}
+.dev-ws-item[data-ws-open] > .dev-ws-item-scrim { top: 0; height: auto; max-height: none; background: rgba(0, 0, 0, .62); }
+/* THE CAPTION, bottom-left, as on a reel. Open ("more") it grows up the
+   card and scrolls once it meets the counter. */
+.dev-ws-item-caption {
+  position: absolute; left: 14px; right: 80px; bottom: 16px; z-index: 2;
+  max-height: calc(100% - 64px); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.dev-ws-item[data-ws-open] > .dev-ws-item-caption {
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
+}
+.dev-ws-item-by {
+  display: flex; align-items: center; gap: 8px; margin: 0; min-width: 0;
+  font-size: 13px; color: var(--text-muted);
+}
+.dev-ws-item-by-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-ws-item-by b { color: var(--text-primary); font-size: 14.5px; font-weight: 700; }
+.dev-ws-item-avatar {
+  width: 30px; height: 30px; border-radius: 9999px; flex: none;
+  display: grid; place-items: center;
+  color: #fff; font-size: 12.5px; font-weight: 700;
+}
+.dev-ws-item-caption .dev-ws-item-avatar { box-shadow: 0 0 0 2px rgba(255, 255, 255, .9); }
 .dev-ws-item-title {
-  margin: 18px 74px 0 0;
-  font-size: 26px; line-height: 1.18; font-weight: 700; letter-spacing: -.016em;
+  margin: 0;
+  font-size: 18px; line-height: 1.22; font-weight: 750; letter-spacing: -.01em;
   color: var(--text-primary);
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
   text-wrap: balance;
 }
 .dev-ws-item-title > a { color: inherit; text-decoration: none; }
 .dev-ws-item-title > a:hover { text-decoration: underline; text-underline-offset: 3px; }
-.dev-ws-item-summary {
-  margin: 10px 74px 0 0;
-  font-size: 18px; line-height: 1.42; color: var(--text-secondary);
-  white-space: pre-line;
-  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+.dev-ws-item[data-ws-open] .dev-ws-item-title { display: block; overflow: visible; }
+/* THE SUMMARY in two lines, its "more" at the end of the second. The
+   button floats right, first in the paragraph, held down to the last line
+   by a float as tall as the paragraph less one line (the paragraph is a
+   flex item, so its height is definite for the float's percentage), and
+   the clamp's ellipsis falls just before it. Short, it sits at the end of
+   the text. */
+.dev-ws-item-summary { display: flex; margin: 0; }
+.dev-ws-item-summary-text {
+  margin: 0; min-width: 0;
+  font-size: 14px; line-height: 1.4; color: var(--text-secondary);
+  white-space: pre-line; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.dev-ws-item-nosummary { color: var(--text-muted); font-style: italic; font-size: 16px; }
-.dev-ws-item-spacer { flex: 1 1 auto; min-height: 0; }
-.dev-ws-item-caption {
-  display: flex; flex-direction: column; gap: 9px;
-  padding: 12px 74px 0 0;
+.dev-ws-item-summary-text::before { content: ''; float: right; height: calc(100% - 1.4em); }
+.dev-ws-item-more {
+  margin: 0 0 0 6px; padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-style: normal; font-weight: 700; color: var(--text-primary);
 }
-.dev-ws-item-by {
-  display: flex; align-items: center; gap: 8px; margin: 0;
-  font-size: 13px; color: var(--text-muted);
+.dev-ws-item-more-end { float: right; clear: both; }
+.dev-ws-item-nosummary { font-style: italic; color: var(--text-muted); }
+.dev-ws-item-summary-open { display: block; }
+.dev-ws-item-summary-open > .dev-ws-item-summary-text { display: block; overflow: visible; }
+.dev-ws-item-summary-open > .dev-ws-item-summary-text::before { content: none; }
+.dev-ws-item-words { font-size: 14px; line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-ws-item-words > * { margin: 0 0 8px; }
+.dev-ws-item-words > :last-child { margin-bottom: 0; }
+.dev-ws-item-words :is(h1, h2, h3, h4, h5, h6) { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.dev-ws-item-words :is(ul, ol) { padding-left: 20px; }
+.dev-ws-item-words a { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
+.dev-ws-item-words code { padding: 0 4px; border-radius: 4px; background: rgba(255, 255, 255, .12); font-size: 13px; }
+/* A CHANGE WITH NO PICTURE AT ALL (workshop.tsx `pictureless`): the card is
+   its words. The caption takes the card from under the counter to its foot
+   and sits in the middle of it (auto margins, which give way to the top
+   when the words run long), in a larger size, and the summary runs to eight
+   lines before "more" is offered. No art stands in for the picture. */
+.dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: 56px; }
+.dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :first-child { margin-top: auto; }
+.dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption > :last-child { margin-bottom: auto; }
+.dev-ws-item[data-ws-picture="none"] .dev-ws-item-title { font-size: 22px; line-height: 1.2; -webkit-line-clamp: 4; }
+.dev-ws-item[data-ws-picture="none"] .dev-ws-item-summary-text { font-size: 16px; line-height: 1.45; -webkit-line-clamp: 8; }
+.dev-ws-item[data-ws-picture="none"] .dev-ws-item-summary-text::before { height: calc(100% - 1.45em); }
+/* What "more" adds under the summary: the declared changes, numbered as
+   the picture's outlines are, and what the change touches. */
+.dev-ws-item-part { display: flex; flex-direction: column; gap: 6px; }
+.dev-ws-item-part-head { margin: 2px 0 0; font-size: 13px; font-weight: 650; color: var(--text-primary); }
+.dev-ws-shot-changes.dev-ws-item-changes { margin: 0; }
+.dev-ws-item-changes .dev-ws-shot-change { font-size: 14px; font-weight: 500; line-height: 1.45; color: var(--text-secondary); }
+.dev-ws-item-touched { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-muted); }
+.dev-ws-item-less {
+  align-self: flex-start; margin: 0; padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 14px; font-weight: 700; color: var(--text-primary);
 }
-.dev-ws-item-by b { color: var(--text-primary); font-weight: 600; }
-.dev-ws-item-avatar {
-  width: 24px; height: 24px; border-radius: 9999px; flex: none;
-  display: grid; place-items: center;
-  color: #fff; font-size: 11px; font-weight: 700;
-}
-.dev-ws-item-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* A request's number on a change's page (topic-head.tsx) is a chip. */
 .dev-ws-chip {
   display: inline-flex; align-items: center; height: 24px; padding: 0 9px;
   border-radius: 9999px; font-size: 12px; font-weight: 600; white-space: nowrap;
   background: var(--state-neutral-bg); color: var(--text-secondary);
 }
-.dev-ws-chip-ok { background: var(--state-ok-bg); color: var(--state-ok); }
-.dev-ws-chip-progress { background: var(--state-progress-bg); color: var(--state-progress); }
-.dev-ws-chip-warn { background: var(--state-attention-bg); color: var(--state-attention); }
-.dev-ws-chip-blocked { background: var(--state-blocked-bg); color: var(--state-blocked); }
 .dev-ws-chip-info { background: var(--accent-tint); color: var(--accent-wash-ink); }
-/* WHO sits over the title (workshop.tsx ItemBy): at the foot, its round
-   avatar read as one more numbered change beside the picture's. */
-.dev-ws-item > .dev-ws-item-by { margin: 14px 74px 0 0; }
-.dev-ws-item > .dev-ws-item-by + .dev-ws-item-title { margin-top: 8px; }
-/* On a phone the rail sits at the item's foot. What ends above it takes the
-   full width (workshop.tsx measures): the by-line and title, and the summary
-   too when it clears the rail as well. */
-.dev-ws-item[data-ws-head] > .dev-ws-item-by,
-.dev-ws-item[data-ws-head] > .dev-ws-item-title,
-.dev-ws-item[data-ws-head="all"] > .dev-ws-item-summary { margin-right: 0; }
-/* The facts, ONE line at the foot: where the vote stands first, then the
-   status and the category, cut short rather than wrapped. It opens the
-   Description sheet, which has them in full. */
+/* THE FACTS: where the vote stands, "your yes puts it live", the status and
+   the topic. A line that does not fit wraps to a second one rather than
+   losing its end (the topic is last). On a phone the whole line is one quiet
+   pill with the people glyph; on a wide window the vote's words are the pill
+   and the topic follows it (the wide block). */
 .dev-ws-item-facts {
-  display: block; max-width: 100%; margin: 0; padding: 0; border: 0; background: none; cursor: pointer;
-  font: inherit; font-size: 13px; line-height: 1.4; text-align: left; color: var(--text-muted);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: block; align-self: flex-start; max-width: 100%; box-sizing: border-box; margin: 2px 0 0;
+  padding: 4px 10px; border-radius: 12px; background: rgba(255, 255, 255, .16);
+  font-size: 12px; font-weight: 600; line-height: 16px; color: var(--text-primary);
+  white-space: normal; overflow-wrap: anywhere;
 }
-.dev-ws-fact:first-child { font-weight: 600; color: var(--text-secondary); }
-.dev-ws-fact + .dev-ws-fact::before { content: " · "; font-weight: 400; color: var(--text-muted); }
+.dev-ws-item-facts-icon { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -2px; }
+.dev-ws-fact + .dev-ws-fact::before,
+.dev-ws-item-facts-vote + .dev-ws-fact::before { content: " · "; font-weight: 400; color: var(--text-muted); }
 .dev-ws-fact.dev-ws-fact-ok { color: var(--state-ok); }
 .dev-ws-fact.dev-ws-fact-progress { color: var(--state-progress); }
 .dev-ws-fact.dev-ws-fact-warn { color: var(--state-attention); }
@@ -17550,7 +17612,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   display: inline-flex; align-items: center; gap: 8px; min-width: 0;
   font-size: 13px; font-weight: 650; color: var(--text-primary); text-decoration: none;
 }
-.dev-ws-item > .workshop-reel-app { align-self: flex-start; max-width: calc(100% - 74px); margin: 12px 0 2px; }
+.dev-ws-item-caption > .workshop-reel-app { align-self: flex-start; max-width: 100%; color: var(--text-primary); }
 .workshop-reel-tile {
   width: 26px; height: 26px; flex: none; border-radius: 8px; overflow: hidden;
   display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
@@ -17562,77 +17624,78 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   border-color: transparent; background: var(--accent); color: #fff; text-decoration: none;
 }
 /* ── THE PROJECT HUB'S OWN CARDS (features/dev-board/workshop/hub-cards.tsx) ──
-   The channel, Needs you, and Members & activity, on the hub tab under the
-   hero. They are `.dev-ws-strip` cards with the tab's one heading, and what
-   is new here is only what they hold: a few messages, a door, a count. */
+   Under the hero, each part under its small-caps label (SectionHeader):
+   For you and Recently live. They are `.dev-ws-strip` cards, and what is
+   new here is only what they hold: doors and three pictures. */
 .dev-ws-head-end, .dev-ws-hub-head-end { margin-left: auto; }
 .dev-ws-hub-head-end { display: inline-flex; align-items: center; gap: 8px; }
-.dev-ws-hub-handle {
-  font-size: 12px; font-weight: 600; color: var(--text-muted);
-  padding: 1px 7px; border-radius: 999px; background: var(--state-neutral-bg);
-}
-/* A number that asks for the viewer: the accent, in words. */
-.dev-ws-hub-new {
-  height: 19px; padding: 0 7px; border-radius: 999px;
-  display: inline-grid; place-items: center;
-  background: var(--accent); color: #fff;
-  font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
-}
 .dev-ws-hub-open {
   display: inline-flex; align-items: center; gap: 2px;
   font-size: 13px; font-weight: 600; color: var(--accent);
   background: none; border: 0; padding: 0; cursor: pointer;
 }
-.dev-ws-hub-msgs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.dev-ws-hub-msg { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
-.dev-ws-hub-avatar {
-  width: 26px; height: 26px; border-radius: 9999px; flex: none;
-  display: grid; place-items: center;
-  color: #fff; font-size: 11.5px; font-weight: 700;
-}
-.dev-ws-hub-msg-head { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }
-.dev-ws-hub-msg-by { font-weight: 650; color: var(--text-primary); }
-.dev-ws-hub-msg-head time { font-size: 12px; color: var(--text-muted); }
-.dev-ws-hub-msg-text {
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  font-size: 14px; line-height: 1.4; color: var(--text-primary); overflow-wrap: anywhere;
-}
-/* The composer: one line that sends from here, into the room's own write
-   route. A pill with a hairline, the send disc inside its right end, lit
-   only when there is something to send. */
-.dev-ws-hub-compose {
-  position: relative; display: flex; align-items: center; flex-wrap: wrap;
-  margin-top: 2px; border-radius: 999px;
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
-}
-.dev-ws-hub-compose:focus-within { box-shadow: 0 0 0 1.5px var(--accent) inset; }
-.dev-ws-hub-compose-input {
-  flex: 1 1 0; min-width: 0; height: 42px; padding: 0 6px 0 14px;
-  border: 0; outline: 0; background: transparent;
-  font-size: 15px; color: var(--text-primary);
-}
-.dev-ws-hub-compose-input::placeholder { color: var(--text-muted); }
-.dev-ws-hub-compose-send {
-  flex: none; width: 32px; height: 32px; margin-right: 5px; border-radius: 999px;
-  display: grid; place-items: center; border: 0; cursor: pointer;
-  background: var(--accent); color: #fff;
-}
-.dev-ws-hub-compose-send:disabled { background: var(--state-neutral-bg); color: var(--text-muted); cursor: default; }
-.dev-ws-hub-compose-error {
-  flex-basis: 100%; margin: 0; padding: 0 14px 8px;
-  font-size: 12.5px; color: var(--state-blocked);
-}
-/* Needs you is one door: the whole card opens the queue. */
-.dev-ws-hub-row {
-  display: flex; flex-direction: column; gap: 6px; width: 100%;
-  text-align: left; background: none; border: 0; padding: 0; color: inherit; cursor: pointer;
-}
-.dev-ws-hub-row:disabled { cursor: default; }
-.dev-ws-hub-chev { width: 16px; height: 16px; margin-left: auto; color: var(--text-muted); }
-.dev-ws-hub-needs-first { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.dev-ws-hub-needs-title { font-size: 15px; font-weight: 650; color: var(--text-primary); }
-.dev-ws-hub-needs-sub { font-size: 13px; color: var(--text-muted); }
 .dev-ws-hub-needs-join { margin: 0; font-size: 12.5px; color: var(--text-muted); }
+/* A part of the hub: its label over its card. A label with a door beside
+   it ("All in Workshop") is one row, the door at its far end. */
+.dev-ws-hub-section { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dev-ws-hub-sechead { display: flex; align-items: center; gap: 8px; padding-right: 4px; }
+.dev-ws-hub-sechead > .dev-ws-hub-open { margin-left: auto; padding-top: 8px; }
+/* FOR YOU (ForYouCard): one card of doors, a hairline between them. Each
+   door is the grouped list's row (ListRow, 15 over 13) laid on the card's
+   own padding, with at most one pill: a number that asks for you, in the
+   accent, or a count in words, muted. */
+.dev-ws-strip.dev-ws-foryou { gap: 0; padding: 2px 14px; }
+.dev-ws-foryou > * + * { border-top: 1px solid var(--app-sheet-line); }
+.dev-ws-foryou .dev-ws-foryou-row { gap: 12px; padding: 12px 2px; background: transparent; }
+/* No vote owed: the quiet line in the Needs you row's place, at a row's
+   second-line size, from the rows' own edge. */
+.dev-ws-foryou > .dev-ws-week-note { margin: 0; padding: 14px 2px; font-size: 13px; text-align: left; }
+.dev-ws-foryou-item > .dev-ws-hub-needs-join { padding: 0 2px 12px 46px; margin-top: -6px; }
+.dev-ws-foryou-pill {
+  flex: none; height: 22px; padding: 0 9px; border-radius: 999px;
+  display: inline-grid; place-items: center; white-space: nowrap;
+  background: var(--accent); color: #fff;
+  font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.dev-ws-foryou-count { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.dev-ws-foryou-handle { font-weight: 500; color: var(--text-muted); }
+/* RECENTLY LIVE (RecentlyLive): three picture cards, each a door to its
+   change: its after shot (or a plain tile), its title, who and when. A row
+   that scrolls sideways on a phone, three across on a wide window. */
+.dev-ws-strip.dev-ws-recent { padding: 14px 0; }
+.dev-ws-recent-list {
+  list-style: none; margin: 0; padding: 0 14px;
+  display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x proximity;
+  scrollbar-width: none; overscroll-behavior-x: contain;
+}
+.dev-ws-recent-list::-webkit-scrollbar { display: none; }
+.dev-ws-recent-item { flex: 0 0 210px; min-width: 0; scroll-snap-align: start; }
+@media (min-width: 768px) {
+  .dev-ws-recent-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; }
+  .dev-ws-recent-item { flex: none; }
+}
+.dev-ws-recent-card {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent;
+}
+.dev-ws-recent-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 12px; }
+.dev-ws-recent-pic {
+  position: relative; display: grid; place-items: center; aspect-ratio: 16 / 10; overflow: hidden;
+  border-radius: 12px; background: var(--bg-tertiary);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.dev-ws-recent-pic > img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; object-position: top center;
+}
+.dev-ws-recent-glyph { width: 26px; height: 26px; color: var(--text-muted); opacity: .6; }
+.dev-ws-recent-title {
+  font-size: 14px; font-weight: 650; line-height: 1.3; color: var(--text-primary);
+  display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.dev-ws-recent-meta { font-size: 12.5px; color: var(--text-muted); }
+.dev-ws-recent-going { color: var(--lit-ink); }
 /* ── A page's head: the way back, and the page's name ──────────────────
    workshop.tsx's PageBack, in the bar a page leads with (the Workshop,
    Needs you, All items; the hub has none). The back is the header's own
@@ -17659,45 +17722,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   letter-spacing: -.01em; color: var(--text-primary);
 }
 
-/* ── The hub's doors (hub-cards.tsx) ──────────────────────────────────
-   Needs you and the Workshop are a row each that opens its page: a
-   picture of where it goes, its name and a line, and a chevron. The row
-   is `.dev-ws-hub-row` laid out across rather than down. */
-.dev-ws-hub-row.dev-ws-hub-door { flex-direction: row; align-items: center; gap: 12px; }
-.dev-ws-hub-door-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.dev-ws-hub-door .dev-ws-hub-chev { flex: none; margin-left: 0; }
-.dev-ws-hub-door-tile {
-  width: 44px; height: 44px; flex: none;
-  display: grid; place-items: center;
-  border-radius: 12px; background: var(--bg-tertiary); color: var(--text-primary);
-}
-.dev-ws-hub-door-glyph { width: 22px; height: 22px; }
-/* The reel: a phone-shaped card with its progress segments and a second
-   card behind it, the shape of the feed Needs you opens. Drawn, not an
-   image, so it takes the theme; decoration only. */
-.dev-ws-reel { position: relative; width: 44px; height: 58px; flex: none; }
-.dev-ws-reel-back {
-  position: absolute; left: 8px; top: 0; width: 34px; height: 50px;
-  border-radius: 7px; background: var(--brand-tint); transform: rotate(6deg);
-}
-.dev-ws-reel-front {
-  position: absolute; left: 0; top: 6px; width: 36px; height: 52px; box-sizing: border-box;
-  display: flex; flex-direction: column; gap: 4px; padding: 4px 4px 5px; overflow: hidden;
-  border-radius: 7px; background: #1c1c1e; box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
-}
-.dark .dev-ws-reel-front { background: #3a3a3c; }
-.dev-ws-reel-bars { display: flex; gap: 2px; }
-.dev-ws-reel-bars > span { flex: 1 1 0; height: 2px; border-radius: 1px; background: rgba(255, 255, 255, .35); }
-.dev-ws-reel-bars > span:first-child { background: #fff; }
-.dev-ws-reel-line { width: 70%; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .85); }
-.dev-ws-reel-line-short { width: 50%; background: rgba(255, 255, 255, .5); }
-.dev-ws-reel-pic { width: 22px; height: 18px; border-radius: 4px; background: var(--accent); }
 /* #2915: a search or filter left on in All items, said where it is out of
    sight (the Workshop's door, All items' See all): the accent, a 6px round. */
 .dev-ws-filter-dot { flex: none; width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
 .dev-ws-hub-open .dev-ws-filter-dot { margin: 0 2px; }
-/* Your work's "Show N more" turns its caret over once it reads "Show less". */
-.dev-ws-hub-work-more { margin-top: 2px; }
 /* First version (hub-cards.tsx FirstVersionCard, #4045): the project's
    thumbnail drawn small (sketch-card.tsx ThumbRow: its icon on its colour,
    its name and one line), with "See the plan" as a quiet link at the row's
@@ -17712,13 +17740,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 #dev-plus-menu[data-plus-view="settings"] > :not(.dev-plus-settings) { display: none; }
 #dev-plus-menu[data-plus-view="settings"] > .dev-plus-settings { display: block; }
 
-/* The hub's discussion preview with nothing said yet (#4045): one quiet
-   line in the accent that opens the Discussion tab. */
-.dev-ws-hub-say-hi {
-  align-self: flex-start; display: inline-flex; align-items: center; min-height: 44px; padding: 0;
-  border: 0; background: none; cursor: pointer;
-  font: inherit; font-size: 15px; font-weight: 500; color: var(--accent);
-}
 .dev-ws-hub-first-see {
   flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 2px;
   border: 0; background: none; cursor: pointer;
@@ -17757,37 +17778,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px;
   border: 0; background: none; cursor: pointer;
   font: inherit; font-size: 15px; font-weight: 500; color: var(--accent);
-}
-
-/* ── What landed since you were last here (since-summary-card.tsx) ─────
-   The hub's first card: the window as the heading, and at the far end Week
-   by week with its arrow (#3510) and the ×; then the sentence at the reading
-   size, or the titles when there are three or fewer; then the count, and
-   "AI summary" under a model's line. */
-.dev-ws-since-card { gap: 6px; }
-.dev-ws-since-card .dev-ws-head-title { white-space: nowrap; }
-.dev-ws-since-card-foot {
-  margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px;
-  font-size: 12px; line-height: 16px; color: var(--text-muted);
-}
-.dev-ws-since-card-n { white-space: nowrap; }
-.dev-ws-since-card-tag { white-space: nowrap; }
-.dev-ws-since-card-n + .dev-ws-since-card-tag::before { content: '·'; margin-right: 6px; }
-.dev-ws-since-card-x {
-  width: 28px; height: 28px; margin: -4px -6px -4px 0; flex: none; padding: 0;
-  display: grid; place-items: center;
-  border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); cursor: pointer;
-}
-.dev-ws-since-card-x-glyph { width: 14px; height: 14px; stroke-width: 2.25; }
-.dev-ws-since-card-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-@media (hover: hover) {
-  .dev-ws-since-card-x:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-}
-.dev-ws-since-card-text { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
-.dev-ws-since-card-list {
-  margin: 0; padding: 0 0 0 18px;
-  display: flex; flex-direction: column; gap: 2px;
-  font-size: 14px; line-height: 20px; color: var(--text-primary);
 }
 
 /* ── Since your last visit, week by week (the Workshop page) ──────────
@@ -17893,20 +17883,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    The view is the box the still is placed in; the still keeps its natural
    size and is moved and scaled with a transform (workshop.tsx computes the
    crop), so the outline can sit on the changed region in the same
-   coordinates. It takes the height the text leaves, stops short of the
-   rail, and never scrolls. */
+   coordinates. It fills the card from under its switch to its foot, edge
+   to edge, under the caption, and never scrolls. */
 .dev-ws-media {
   position: relative;
   flex: 1 1 auto; min-height: 120px;
-  margin: 14px 0 0;
+  margin: 12px 0 0;
   display: flex; flex-direction: column;
 }
 .dev-ws-media-view {
   position: relative; flex: 1 1 auto; min-height: 0;
-  margin-right: 74px;
-  border-radius: 16px; overflow: hidden;
+  overflow: hidden;
   background: #111114;
-  box-shadow: 0 8px 24px rgba(24, 39, 75, .18);
 }
 .dev-ws-media-img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; display: block; }
 .dev-ws-media-spot {
@@ -17919,11 +17907,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   background: linear-gradient(90deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .10), rgba(255, 255, 255, .04));
 }
 /* The switch and the way out sit in a bar ABOVE the picture, never on it:
-   laid over the still they covered the corner a change often is. The bar
-   keeps the rail's lane free on a phone, like everything else in the item. */
+   laid over the still they covered the corner a change often is. */
 .dev-ws-media-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  margin: 0 74px 8px 0; min-height: 30px;
+  margin: 0 14px 8px; min-height: 30px;
 }
 .dev-ws-media-full {
   flex: none; padding: 6px 11px; border: 0; border-radius: 9999px; cursor: pointer;
@@ -17939,7 +17926,7 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font: inherit; font-size: 12px; font-weight: 700;
   background: none; color: var(--text-secondary);
 }
-.dev-ws-seg-btn[aria-pressed="true"] { background: var(--dc-sheet-solid, #fff); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, .14); }
+.dev-ws-seg-btn[aria-pressed="true"] { background: #fff; color: #14171f; box-shadow: 0 1px 2px rgba(0, 0, 0, .14); }
 .dev-ws-seg-one { padding: 5px 12px; font-size: 12px; font-weight: 700; color: var(--text-secondary); }
 /* With a run's outlines the switch wears their colours: red where it was,
    green where it is now. */
@@ -17974,21 +17961,21 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   position: absolute; left: -9px; top: -9px; box-shadow: 0 0 0 2px #111114;
 }
 .dev-ws-media-shots[data-side="before"] .dev-ws-shot-n { background: #dc2626; }
-/* Under the picture: the changes it shows, a line or two each. The full
-   words are in the Description sheet. */
-.dev-ws-shot-changes { list-style: none; margin: 10px 74px 0 0; padding: 0; display: grid; gap: 6px; }
+/* The changes its outlines are numbered by: the caption's "more" lists
+   them. */
+.dev-ws-shot-changes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .dev-ws-shot-change { display: flex; align-items: flex-start; gap: 8px; font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary); }
 .dev-ws-shot-change > .dev-ws-shot-n { margin-top: 1px; }
 .dev-ws-shot-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ── A change's diagram and "What it touches" (#4490, lib/diagram) ──
-   The picture a change shows when it has no before & after shots: the same
-   place under the summary and the same rounded sheet as the shots, the
-   card's type scale (15 over 13, small caps for the one label) and the one
-   accent. The new word or step is in the accent blue, the old one muted and
-   struck through; nothing is filled green or red. A long word wraps; the
-   picture never scrolls inside the card. */
-.dev-ws-item-summary.dev-ws-item-summary-short { -webkit-line-clamp: 3; }
+   The picture a change shows when it has no before & after shots: a
+   rounded sheet on a change's page, the card's type scale (15 over 13,
+   small caps for the one label) and the one accent. The new word or step is
+   in the accent blue, the old one muted and struck through; nothing is
+   filled green or red. A long word wraps; the picture never scrolls inside
+   the card. On a Needs-you card it is drawn straight on the dark, larger,
+   from the top of the picture's space down (the caption covers the foot). */
 .dev-ws-diagram {
   display: flex; flex-direction: column; gap: 12px; min-width: 0;
   padding: 16px; border-radius: 18px;
@@ -17997,8 +17984,13 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   color: var(--text-primary); overflow-wrap: anywhere;
 }
 .dev-ws-item > .dev-ws-diagram {
-  flex: 1 1 auto; min-height: 0; margin: 16px 74px 0 0; overflow: hidden;
+  flex: 1 1 auto; min-height: 0; margin: 16px 0 0; padding: 0 24px 16px; overflow: hidden;
+  gap: 14px; border-radius: 0; background: none; box-shadow: none;
 }
+.dev-ws-item > .dev-ws-diagram .dev-ws-diagram-src { margin: 2px 0 0; font-size: 12.5px; }
+.dev-ws-item > .dev-ws-diagram .dev-ws-diagram-rows { gap: 12px; }
+.dev-ws-item > .dev-ws-touches .dev-ws-diagram-what { font-size: 16px; font-weight: 700; }
+.dev-ws-item > .dev-ws-touches .dev-ws-diagram-bar { height: 9px; }
 .dev-ws-item > .dev-ws-diagram[role="button"] { cursor: pointer; }
 .dev-ws-diagram[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-ws-diagram-kicker {
@@ -18069,51 +18061,38 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-change-diagram-failed > p { margin: 0 0 4px; }
 .dev-change-diagram-failed pre { margin: 6px 0 0; padding: 10px; border-radius: 10px; font-size: 12px; white-space: pre-wrap; background: var(--state-neutral-bg); color: var(--text-secondary); }
 
-/* ── The Description sheet ── */
-.dev-ws-desc-title { margin: 0; font-size: 18px; font-weight: 700; line-height: 1.3; color: var(--text-primary); text-wrap: balance; }
-.dev-ws-desc-part { display: flex; flex-direction: column; gap: 6px; }
-.dev-ws-desc-head { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
-.dev-ws-desc-changes { margin: 0; }
-.dev-ws-desc-changes .dev-ws-shot-change { font-size: 14px; font-weight: 500; line-height: 1.45; color: var(--text-secondary); }
-.dev-ws-desc-body { font-size: 14px; line-height: 1.5; color: var(--text-secondary); }
-.dev-ws-desc-open { align-self: flex-start; font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
-.dev-ws-desc-open:hover { text-decoration: underline; text-underline-offset: 3px; }
-
 /* ── The rail ─────────────────────────────────────────────────────────
    One column of round buttons at the right edge, bottom-aligned with the
-   caption, over the item. Frosted so it reads on a picture as well as on
-   the tint. Vote is filled in the accent: it is the thing to press. */
+   caption. On a phone it stands over the dark card, as a reel's buttons
+   do: white glyphs on translucent rounds, the words under them shadowed so
+   they read on any picture. Vote is filled in the accent: it is the thing
+   to press. Beside the card on a wide window (the wide block) it is drawn
+   on the page instead. */
 .dev-ws-rail {
   position: absolute; right: 8px; bottom: 10px; z-index: 3;
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
 }
 .dev-ws-rail-btn {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   width: 60px; margin: 0; padding: 0; border: 0; background: none;
-  color: var(--text-primary); font: inherit; cursor: pointer;
+  color: #fff; font: inherit; cursor: pointer;
 }
 .dev-ws-rail-btn:disabled { opacity: .4; cursor: default; }
 .dev-ws-rail-ic {
-  width: 46px; height: 46px; border-radius: 9999px;
+  width: 44px; height: 44px; border-radius: 9999px;
   display: grid; place-items: center;
-  background-color: var(--dc-sheet-fill);
-  border: 1px solid var(--app-sheet-line);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
-  backdrop-filter: var(--dc-frost); -webkit-backdrop-filter: var(--dc-frost);
+  background-color: rgba(255, 255, 255, .16);
+  color: #fff;
 }
-.dev-ws-rail-ic > svg { width: 24px; height: 24px; }
-.dev-ws-rail-lab { font-size: 11px; font-weight: 600; line-height: 1; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.dev-ws-rail-key { display: none; }
-.dev-ws-rail-vote .dev-ws-rail-ic,
-.dev-ws-rail-take .dev-ws-rail-ic { background-color: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 2px 10px rgba(10, 110, 224, .3); }
-.dev-ws-rail-vote .dev-ws-rail-lab,
-.dev-ws-rail-take .dev-ws-rail-lab { color: var(--accent); }
+.dev-ws-rail-ic > svg { width: 23px; height: 23px; }
+.dev-ws-rail-lab { font-size: 11.5px; font-weight: 650; line-height: 1; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .4); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dev-ws-rail-vote .dev-ws-rail-ic { width: 48px; height: 48px; background-color: var(--accent); color: #fff; box-shadow: 0 2px 12px rgba(10, 110, 224, .45); }
 .dev-ws-rail-vote.is-on .dev-ws-rail-ic { background-color: var(--state-ok); border-color: var(--state-ok); box-shadow: 0 2px 8px rgba(21, 128, 61, .28); }
-.dev-ws-rail-vote.is-on .dev-ws-rail-lab { color: var(--state-ok); }
 /* The same no vote (#4568): the rail button red, with the red glow. */
 .dev-ws-rail-vote.is-on[data-ws-voted="no"] .dev-ws-rail-ic { background-color: var(--state-blocked); border-color: var(--state-blocked); box-shadow: 0 2px 8px rgba(220, 38, 38, .28); }
-.dev-ws-rail-vote.is-on[data-ws-voted="no"] .dev-ws-rail-lab { color: var(--state-blocked); }
-.dev-ws-rail-btn[aria-expanded="true"] .dev-ws-rail-ic { box-shadow: 0 0 0 3px var(--accent-wash); }
+/* The sheet a button opens is up: its round turns over. */
+.dev-ws-rail-btn[aria-expanded="true"] .dev-ws-rail-ic { background-color: #fff; color: #14171f; }
+.dev-ws-rail-vote[aria-expanded="true"] .dev-ws-rail-ic { background-color: var(--accent); color: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, .55); }
 .dev-ws-move { display: none; }
 .dev-ws-keys { display: none; }
 
@@ -18264,18 +18243,52 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @keyframes dev-ws-pop-in { from { opacity: 0; transform: translateX(10px) scale(.96); } to { opacity: 1; transform: none; } }
 @keyframes dev-ws-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(10px) scale(.96); } }
 .dev-ws-sheet-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 0 auto 4px; flex: none; }
-.dev-ws-sheet-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding-bottom: 8px; border-bottom: 1px solid var(--border-light); flex: none;
-}
-.dev-ws-sheet-title { font-size: 15px; font-weight: 700; color: var(--text-primary); }
-.dev-ws-sheet-sub { font-size: 12px; color: var(--text-muted); font-weight: 500; margin-left: 8px; }
 .dev-ws-sheet-x {
-  border: 0; padding: 4px 10px; border-radius: 9999px; cursor: pointer;
-  font: inherit; font-size: 12px; font-weight: 600;
-  background: var(--bg-secondary); color: var(--text-secondary);
+  width: 32px; height: 32px; padding: 0; border: 0; border-radius: 9999px; cursor: pointer;
+  display: grid; place-items: center;
+  background: none; color: var(--text-muted);
 }
+.dev-ws-sheet-x:hover { background: var(--state-neutral-bg); color: var(--text-primary); }
+.dev-ws-sheet-x-ic { width: 18px; height: 18px; }
 .dev-ws-sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+/* ── Comments and Ask: one sheet, two tabs (workshop.tsx) ──────────────
+   On a phone a tall sheet from the floor, the same height whichever tab is
+   up, so switching never jumps: the two tabs over the tab's own body, a
+   round Close at the right of them, and the body scrolling under its own
+   composer. The head that repeats the card's caption is the wide panel's
+   alone (the wide block); here the card's top still shows above the sheet.
+   Both tabs stay mounted while the sheet is up, the other one `hidden`. */
+.dev-ws-sheet-talk > .dev-ws-sheet-card {
+  height: 66%; padding-left: 0; padding-right: 0; gap: 0; overflow: hidden;
+}
+.dev-ws-needs[data-ws-kb] .dev-ws-sheet-talk > .dev-ws-sheet-card { height: calc(100% - var(--platform-safe-top, 0px)); }
+.dev-ws-talk-head { display: none; }
+.dev-ws-talk-tabs {
+  position: relative; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 52px; border-bottom: 1px solid var(--border-light);
+}
+.dev-ws-talk-tablist { display: flex; gap: 24px; }
+.dev-ws-talk-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 44px; margin-bottom: -1px; padding: 0 2px;
+  border: 0; border-bottom: 2px solid transparent; background: none; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 600; color: var(--text-muted);
+}
+.dev-ws-talk-tab[aria-selected="true"] { border-bottom-color: var(--text-primary); color: var(--text-primary); }
+.dev-ws-talk-n { margin-left: 4px; font-weight: 500; color: var(--text-muted); }
+.dev-ws-talk-tab-ic { width: 15px; height: 15px; }
+.dev-ws-talk-tabs > .dev-ws-sheet-x { position: absolute; right: 10px; top: 6px; }
+.dev-ws-talk > .dev-ws-sheet-body { padding: 4px 16px 0; }
+/* The thread fills the tab and its reply box stays at the foot, on the
+   sheet's own fill, as a comment box under a reel does. */
+.dev-ws-talk > .dev-ws-sheet-body > .dev-feed-thread { flex: 1 0 auto; }
+.dev-ws-talk > .dev-ws-sheet-body > .dev-feed-thread > form {
+  position: sticky; bottom: 0; margin-top: auto; padding: 8px 0 4px;
+  background-color: var(--dc-sheet);
+}
+.dev-ws-talk > .dev-ws-ask { flex: 1 1 auto; min-height: 0; padding: 0 16px; }
+.dev-ws-talk > [role="tabpanel"][hidden] { display: none; }
 /* The vote sheet's own lines. */
 .dev-ws-ask-q { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -.01em; color: var(--text-primary); }
 .dev-ws-vote-sub { margin: 0 0 8px; font-size: 14px; line-height: 1.4; color: var(--text-muted); }
@@ -18374,41 +18387,21 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-hero-face:last-child { margin-right: 0; }
 .dev-ws-hero-count { font-size: 14px; font-weight: 650; color: var(--text-primary); white-space: nowrap; }
-/* WHO IS HERE AND HOW LIVELY, ONE BLOCK (community-card.tsx HeroPulse): the
-   faces, the count over this week in words, and the fortnight's chart across
-   from both, the busiest day the tallest bar.
-
-   ON A PHONE THE CHART MOVES UP, across from the faces, and the words take
-   the full width under them. Faces, words and chart in one row left the
-   words about 130px on a 390px phone, so the count and the activity line
-   broke into five short lines. The breakpoint is the tabs' own: under 768px
-   they are the coloured band. Each cell of the activity line stays whole,
-   so a line too long for a narrow phone breaks at its separator. */
-.dev-ws-hero-pulse {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas: "faces words chart";
-  align-items: center; gap: 8px 10px;
+/* WHO IS AROUND THIS WEEK (community-card.tsx HeroActive): up to five faces
+   and "+N", then "40 active this week" over their names, the rows' 15 over
+   13. The names keep to one line, cut short with an ellipsis on a phone. */
+.dev-ws-hero-active { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dev-ws-hero-active .dev-ws-hero-face {
+  width: 32px; height: 32px; margin-right: -8px; font-size: 12.5px;
 }
-.dev-ws-hero-pulse > .dev-ws-hero-faces { grid-area: faces; }
-.dev-ws-hero-pulse > .dev-ws-hero-spark-wrap { grid-area: chart; }
-.dev-ws-hero-pulse-words { grid-area: words; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-@media (max-width: 767.98px) {
-  .dev-ws-hero-pulse {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: "faces chart" "words words";
-    column-gap: 12px;
-  }
+.dev-ws-hero-active .dev-ws-hero-face:last-child { margin-right: 0; }
+.dev-ws-hero-active .dev-ws-hero-face-more { background: var(--bg-tertiary); color: var(--text-primary); font-size: 11px; }
+.dev-ws-hero-active-words { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.dev-ws-hero-active-n { font-size: 15px; font-weight: 650; line-height: 20px; color: var(--text-primary); }
+.dev-ws-hero-active-names {
+  font-size: 13px; line-height: 18px; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dev-ws-hero-activity-line { font-size: 13px; line-height: 18px; color: var(--text-muted); }
-.dev-ws-hero-activity-line b { font-weight: 650; }
-.dev-ws-hero-activity-line > [data-ws-members-cell] { white-space: nowrap; }
-.dev-ws-hero-spark { flex: none; width: 112px; height: 30px; display: flex; align-items: flex-end; gap: 2px; }
-.dev-ws-hero-spark-bar {
-  flex: 1 1 0; min-width: 0; border-radius: 2px 2px 1px 1px;
-  background: var(--accent); opacity: .72;
-}
-.dev-ws-hero-spark-bar:last-child { opacity: 1; }
-.dev-ws-hero-spark-bar-quiet { background: var(--app-sheet-line); opacity: 1; }
 /* A change to who it is for, up for a vote: the one line on the hero that
    asks for something, so it carries the accent and goes to the proposal. */
 a.dev-ws-hero-pending {
@@ -18427,14 +18420,42 @@ a.dev-ws-hero-pending {
    ⋯ is near the row's start (after Open app and Invite), and a menu opening
    leftward from there ran under the sidebar. */
 .dev-ws-hero #dev-plus-menu { left: 0; right: auto; }
-/* THE CHART'S TIP (community-card.tsx Spark). Against the chart's right
-   edge, above it, so it never runs off the screen; the day it is about is
-   the lit bar. `pan-y` keeps a vertical drag scrolling the page and hands a
-   sideways one to the chart, which is what lets a finger follow the days. */
-.dev-ws-hero-spark-wrap { position: relative; flex: none; display: flex; }
-.dev-ws-hero-spark { touch-action: pan-y; cursor: default; -webkit-user-select: none; user-select: none; }
-.dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar { opacity: .35; }
-.dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar-on { opacity: 1; }
+/* THE HUB'S HEAD (community-card.tsx, `.dev-ws-hero-summary`, out of a
+   project's first week): the tile and the name over who it is for, the
+   description, who is around, then what you can do. On a wide window the
+   actions sit across from the name: the grid packs the row of actions into
+   the hole beside the name (`dense`), whatever came before them, and
+   everything else takes the full width in the order it is written. Its ⋯
+   menu then hangs from the ⋯'s right edge and opens leftward, into the
+   column. */
+.dev-ws-hero-summary { gap: 14px; padding: 10px 8px 8px; }
+.dev-ws-hero-id { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dev-ws-hero-tile {
+  flex: none; width: 52px; height: 52px; overflow: hidden;
+  display: grid; place-items: center;
+  border-radius: 16px; font-size: 26px; font-weight: 700;
+}
+.dev-ws-hero-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+.dev-ws-hero-tile > span { font-size: inherit; line-height: 1; }
+.dev-ws-hero-id-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dev-ws-hero-name {
+  margin: 0; font-size: 24px; font-weight: 750; line-height: 1.15; letter-spacing: -0.02em;
+  color: var(--text-primary); overflow-wrap: anywhere;
+}
+.dev-ws-hero-id-sub { font-size: 13px; line-height: 18px; color: var(--text-muted); }
+@media (min-width: 768px) {
+  .dev-ws-hero-summary {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: row dense;
+    column-gap: 16px; padding: 4px 4px 8px;
+  }
+  .dev-ws-hero-summary > * { grid-column: 1 / -1; }
+  .dev-ws-hero-summary > .dev-ws-hero-id { grid-column: 1; }
+  .dev-ws-hero-summary > .dev-ws-hero-row { grid-column: 2; align-self: center; }
+  .dev-ws-hero-summary #dev-plus-menu { left: auto; right: 0; }
+  .dev-ws-hero-tile { width: 60px; height: 60px; border-radius: 18px; font-size: 30px; }
+  .dev-ws-hero-name { font-size: 28px; }
+  .dev-ws-hero-id-sub { font-size: 14px; line-height: 20px; }
+}
 
 /* ── The project's colour: its header and its tabs ─────────────────────
    Inside a project, the bar wears its community's colour (lib/community-
@@ -18801,19 +18822,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 .dev-ws-invite-from { margin: 0; font-size: 16px; line-height: 21px; font-weight: 650; color: var(--text-primary); }
 .dev-ws-invite-note { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
 
-/* ── The hub's discussion preview (hub-cards.tsx) ──
-   The channel card's own look, cut to its last two messages with no
-   composer, and above them how many more are unread, as a line that opens
-   the Discussion tab. The accent: it is a number that asks for you. */
-.dev-ws-hub-more-unread {
-  align-self: flex-start;
-  padding: 0; border: 0; background: none;
-  color: var(--accent); font: inherit; font-size: 13.5px; font-weight: 600;
-  cursor: pointer;
-}
-/* The way to the rest of what landed, week by week: the head's door, which
-   keeps its words on one line beside the window's name. */
-.dev-ws-since-card-more { white-space: nowrap; }
 /* ── "Your communities" (features/workshop/community-switcher.tsx) ──
    The switcher behind the Communities tab: a sheet from the floor on a
    phone (the kit's own when it adopts it; this scrim and panel when not),
@@ -19079,21 +19087,10 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   border: 1px solid var(--border-light); background: transparent;
   font-size: 15px; color: var(--text-primary);
 }
-.dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
-.dev-ws-hero-spark-tip {
-  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6;
-  display: flex; flex-direction: column; gap: 1px;
-  padding: 7px 9px; border-radius: 9px; white-space: nowrap;
-  background: #1c1c1e; color: #fff;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .18);
-  pointer-events: none;
-}
-.dark .dev-ws-hero-spark-tip { background: #3a3a3c; }
-.dev-ws-hero-spark-tip-day { font-size: 12.5px; font-weight: 650; }
-.dev-ws-hero-spark-tip-cap { font-size: 11px; color: rgba(255, 255, 255, .65); }
 
-/* ── The ask pane, inside its sheet ────────────────────────────────── */
-.dev-ws-ask { gap: 8px; }
+/* ── The ask pane, the sheet's Ask tab ─────────────────────────────── */
+.dev-ws-ask { display: flex; flex-direction: column; gap: 8px; }
+.dev-ws-ask-private { margin: 8px 0 0; font-size: 12.5px; line-height: 1.35; color: var(--text-muted); }
 .dev-ws-ask-log {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 8px; padding: 6px 0 2px;
@@ -19138,23 +19135,76 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 
 /* ── The end of the feed ──────────────────────────────────────────────
    One card past the last item, always (#2172): the same snap slot as an
-   item, in a tint of its own so the swipe that lands here reads as arriving
-   somewhere rather than as one more decision. */
-.dev-ws-needs-done { align-items: center; justify-content: center; text-align: center; padding: 24px 28px; gap: 10px; }
-.dev-ws-needs-done { background-image: linear-gradient(165deg, rgba(16, 185, 129, .12), rgba(255, 255, 255, 0) 55%, rgba(139, 92, 246, .08)); }
-.dark .dev-ws-needs-done { background-image: linear-gradient(165deg, rgba(16, 185, 129, .16), rgba(0, 0, 0, 0) 55%, rgba(139, 92, 246, .10)); }
-.dev-ws-done-ring { width: 112px; height: 112px; margin-bottom: 8px; }
-.dev-ws-needs-done-line { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; color: var(--text-primary); }
-.dev-ws-needs-done-sub { margin: 0; max-width: 34ch; font-size: 15px; line-height: 1.4; color: var(--text-muted); }
-.dev-ws-done-cta {
-  margin-top: 12px; height: 44px; padding: 0 20px; border: 0; border-radius: 9999px; cursor: pointer;
-  font: inherit; font-size: 15px; font-weight: 600;
-  background: var(--accent); color: #fff;
+   item, in the page's own scheme rather than the reels' dark, so the swipe
+   that lands here reads as arriving somewhere rather than as one more
+   decision. On top, a note when your Yes met a change's rule; under it the
+   card itself, in the plane colour with one hairline: the tick, the
+   headline, what the pass did, and the buttons at its foot. */
+.dev-ws-needs-done {
+  gap: 8px; padding: 0;
+  background-color: transparent;
 }
-/* The way back to what was passed over: a quiet second action under the
-   primary one, drawn only when there is something above to go back to. */
+.dev-ws-done-over {
+  flex: none; display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px; border-radius: 18px;
+  background-color: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 6px 20px rgba(0, 0, 0, .08);
+}
+.dev-ws-done-over-ic {
+  flex: none; width: 28px; height: 28px; border-radius: 9999px;
+  display: grid; place-items: center;
+  background: var(--state-ok-bg); color: var(--state-ok);
+}
+.dev-ws-done-over-ic > svg { width: 16px; height: 16px; }
+.dev-ws-done-over-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.dev-ws-done-over-line { font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary); }
+.dev-ws-done-over-sub { font-size: 13px; line-height: 1.35; color: var(--text-muted); }
+.dev-ws-done-body {
+  flex: 1 1 auto; min-height: 0; box-sizing: border-box; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 26px 18px 16px; border-radius: 22px; text-align: center;
+  background-color: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.dev-ws-done-tick {
+  flex: none; width: 56px; height: 56px; border-radius: 18px;
+  display: grid; place-items: center;
+  background: var(--state-ok-bg); color: var(--state-ok);
+}
+.dev-ws-done-tick > svg { width: 28px; height: 28px; }
+.dev-ws-needs-done-line { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -.02em; color: var(--text-primary); }
+.dev-ws-needs-done-sub { margin: 0; max-width: 34ch; font-size: 15px; line-height: 1.4; color: var(--text-secondary); }
+/* What your votes did: a row each, its title cut short beside its status. */
+.dev-ws-done-did { align-self: stretch; display: flex; flex-direction: column; margin-top: 10px; text-align: left; }
+.dev-ws-done-did-head { margin: 0 0 2px; font-size: 13px; font-weight: 650; color: var(--text-primary); }
+.dev-ws-done-did-list { list-style: none; margin: 0; padding: 0; }
+.dev-ws-done-did-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+.dev-ws-done-did-row + .dev-ws-done-did-row { border-top: 1px solid var(--app-sheet-line); }
+.dev-ws-done-did-title {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 15px; font-weight: 600; line-height: 1.3; color: var(--text-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dev-ws-done-status {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px;
+  border-radius: 9999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  background: var(--state-neutral-bg); color: var(--text-secondary);
+}
+.dev-ws-done-status-ok { background: var(--state-ok-bg); color: var(--state-ok); }
+.dev-ws-done-status-progress { background: var(--accent-tint); color: var(--accent-wash-ink); }
+.dev-ws-done-status-blocked { background: var(--state-blocked-bg); color: var(--state-blocked); }
+.dev-ws-done-status-ic { width: 12px; height: 12px; flex: none; }
+.dev-ws-done-actions { align-self: stretch; display: flex; gap: 8px; margin-top: auto; padding-top: 14px; }
+.dev-ws-done-cta, .dev-ws-done-hub {
+  flex: 1 1 0; min-width: 0; height: 46px; padding: 0 14px; border: 0; border-radius: 9999px; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 650;
+}
+.dev-ws-done-cta { background: var(--accent); color: #fff; }
+.dev-ws-done-hub { background: var(--dc-sheet); color: var(--text-primary); box-shadow: inset 0 0 0 1px var(--border); }
+/* The way back to what was passed over: a quiet action under the two,
+   drawn only when there is something above to go back to. */
 .dev-ws-done-back {
-  height: 40px; padding: 0 16px; border: 0; border-radius: 9999px; cursor: pointer;
+  flex: none; height: 40px; padding: 0 16px; border: 0; border-radius: 9999px; cursor: pointer;
   font: inherit; font-size: 14px; font-weight: 600;
   background: transparent; color: var(--accent);
 }
@@ -19440,13 +19490,14 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .dev-ws-plus-glyph { width: 18px; height: 18px; }
 
   /* ── THE FEED ON A WIDE WINDOW: THE STAGE ──
-     Above 700px the lander is a ROW: the feed as a 720px card at the centre,
-     the rail standing beside it with a word and a key under each button, and
-     the arrows below the rail doing what the wheel does. Anything that was a
-     sheet becomes a PANEL to the right, and the row re-centres around it, so
-     the item stays readable while you use it; the vote is a popover on its
-     own button. The Workshop column widens past its 760px reading measure
-     for this tab alone — the same release the Board pane has. */
+     Above 700px the lander is a ROW: the reel as a 440px card at the
+     centre, the rail standing beside it on the page, its buttons at the
+     card's foot, and the arrows to the rail's right doing what the wheel
+     does. Comments and Ask are a PANEL to the right, with the card's caption
+     repeated at its top while the card keeps only its by-line, so the
+     picture stays in view while you use it; the vote is a popover on its own
+     button. The Workshop column widens past its 760px reading measure for
+     this tab alone — the same release the Board pane has. */
   #dev-workshop.dev-ws-on-needs { max-width: none; }
   /* The tab strip keeps the reading column while the stage takes the window
      (the same re-statement the board pane makes for itself below): a
@@ -19462,69 +19513,119 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
      moves nothing. */
   .dev-ws-needs {
     flex-direction: row; place-content: center; align-items: stretch;
-    gap: 22px; min-height: 480px;
+    gap: 18px; min-height: 480px;
     /* A line of its own under the stage for the key legend, so the legend
-       never lies across the card's caption or the arrows below the rail. */
-    padding-bottom: 30px;
+       never lies across the card's caption or the arrows beside the rail. */
+    padding-bottom: 34px;
   }
-  .dev-ws-needs-scroll { flex: 0 1 720px; max-width: 720px; border-radius: 24px; }
-  .dev-ws-item { padding: 26px 32px 22px; border-radius: 24px; }
-  .dev-ws-item-title { font-size: 32px; line-height: 1.14; margin-right: 0; max-width: 30ch; }
-  .dev-ws-item-summary { font-size: 19px; line-height: 1.45; margin-right: 0; max-width: 62ch; }
-  .dev-ws-item-caption { flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; padding-right: 0; }
-  /* The by-line keeps its one line; the chips take the rest and wrap. */
-  .dev-ws-item-by { flex: 0 0 auto; max-width: 55%; }
-  .dev-ws-item-chips { flex: 1 1 auto; justify-content: flex-end; }
-  .dev-ws-media-view { margin-right: 0; }
-  .dev-ws-media-bar, .dev-ws-shot-changes { margin-right: 0; }
-  .dev-ws-item > .dev-ws-diagram { margin-right: 0; }
-  .dev-ws-item > .dev-ws-item-by { margin-right: 0; }
+  .dev-ws-needs-scroll { flex: 0 1 440px; max-width: 440px; border-radius: 22px; box-shadow: 0 16px 40px rgba(20, 23, 31, .25); }
+  /* The end card is the page's own, with its own hairline: no reel's shadow. */
+  .dev-ws-needs[data-ws-end] > .dev-ws-needs-scroll { box-shadow: none; }
+  .dev-ws-item-progress { left: 14px; right: 14px; top: 12px; }
+  .dev-ws-item-top { margin: 26px 16px 0; }
+  .dev-ws-item-caption { left: 18px; right: 18px; bottom: 20px; gap: 8px; }
+  .dev-ws-item-avatar { width: 32px; height: 32px; font-size: 13px; }
+  .dev-ws-item-by b { font-size: 15px; }
+  .dev-ws-item-title { font-size: 21px; line-height: 1.2; }
+  .dev-ws-item-summary-text { font-size: 15px; }
+  .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: 64px; }
+  .dev-ws-item[data-ws-picture="none"] .dev-ws-item-title { font-size: 26px; line-height: 1.18; }
+  .dev-ws-item[data-ws-picture="none"] .dev-ws-item-summary-text { font-size: 17px; -webkit-line-clamp: 10; }
+  /* The facts: the vote's words are the pill, the topic follows it. */
+  .dev-ws-item-caption > .dev-ws-item-facts { padding: 0; border-radius: 0; background: none; font-size: 12.5px; line-height: 26px; color: var(--text-muted); }
+  .dev-ws-item-caption .dev-ws-item-facts-vote { display: inline-block; padding: 0 10px; border-radius: 9999px; background: rgba(255, 255, 255, .16); color: var(--text-primary); }
+  .dev-ws-item-caption .dev-ws-item-facts-vote + .dev-ws-fact { margin-left: 8px; }
+  .dev-ws-item-caption .dev-ws-item-facts-vote + .dev-ws-fact::before { content: none; }
+  .dev-ws-media-bar { margin: 0 16px 8px; }
+  .dev-ws-item > .dev-ws-diagram { padding: 0 32px 16px; gap: 16px; }
+  .dev-ws-item > .dev-ws-touches .dev-ws-diagram-what { font-size: 18px; }
+  .dev-ws-item > .dev-ws-touches .dev-ws-diagram-bar { height: 10px; }
+  /* With the panel up the card keeps its picture and its by-line: the rest
+     of the caption is at the panel's top. */
+  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item-caption > :not(.dev-ws-item-by) { display: none; }
+  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item-scrim { height: 180px; }
+  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-item[data-ws-picture="none"] > .dev-ws-item-caption { top: auto; }
+  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-needs-scroll { flex-basis: 400px; }
   .dev-ws-rail {
     position: relative; right: auto; bottom: auto; z-index: auto;
-    flex: 0 0 84px; padding-top: 6px; gap: 14px;
+    flex: 0 0 64px; justify-content: flex-end; padding-bottom: 20px; gap: 16px;
   }
-  .dev-ws-rail-btn { width: 84px; }
-  .dev-ws-rail-ic { width: 52px; height: 52px; background-color: var(--dc-sheet); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .dev-ws-rail-lab { font-size: 12px; }
-  .dev-ws-rail-key { display: block; font-size: 10px; color: var(--text-faint); font-family: ui-monospace, Menlo, monospace; }
-  .dev-ws-move { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: auto; padding-top: 14px; }
+  .dev-ws-rail-btn { width: 64px; color: var(--text-secondary); }
+  .dev-ws-rail-ic { width: 48px; height: 48px; background-color: var(--state-neutral-bg); color: var(--text-primary); }
+  .dev-ws-rail-lab { font-size: 12.5px; color: var(--text-secondary); text-shadow: none; }
+  .dev-ws-rail-vote .dev-ws-rail-ic { width: 52px; height: 52px; box-shadow: 0 4px 12px rgba(10, 110, 224, .3); }
+  .dev-ws-rail-vote .dev-ws-rail-lab { color: var(--accent); }
+  .dev-ws-rail-vote.is-on .dev-ws-rail-lab { color: var(--state-ok); }
+  .dev-ws-rail-vote.is-on[data-ws-voted="no"] .dev-ws-rail-lab { color: var(--state-blocked); }
+  .dev-ws-rail-btn[aria-expanded="true"] .dev-ws-rail-ic { background-color: var(--text-primary); color: var(--dc-sheet); }
+  .dev-ws-rail-vote[aria-expanded="true"] .dev-ws-rail-ic { background-color: var(--accent); color: #fff; box-shadow: 0 0 0 3px var(--accent-wash); }
+  /* The arrows: a column of their own to the rail's right, at the stage's
+     middle, out of the row's centring. Gone while the panel is up. */
+  .dev-ws-move {
+    position: absolute; left: calc(100% + 12px); top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+  }
+  .dev-ws-needs:is([data-ws-sheet="comments"], [data-ws-sheet="ask"]) .dev-ws-move { display: none; }
   .dev-ws-move-btn {
-    width: 44px; height: 44px; border-radius: 9999px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--dc-sheet); color: var(--text-primary);
+    width: 42px; height: 42px; border-radius: 9999px; cursor: pointer;
+    border: 0; background: var(--state-neutral-bg); color: var(--text-primary);
     display: grid; place-items: center;
   }
   .dev-ws-move-btn:disabled { opacity: .35; cursor: default; }
-  .dev-ws-move-icon { width: 20px; height: 20px; }
+  .dev-ws-move-icon { width: 18px; height: 18px; }
   .dev-ws-keys {
-    display: flex; place-content: center; align-items: center; gap: 8px;
-    position: absolute; left: 0; right: 0; bottom: 0; height: 30px; margin: 0;
+    display: flex; place-content: center; align-items: center; gap: 8px 12px;
+    position: absolute; left: 0; right: 0; bottom: 0; height: 34px; margin: 0;
     white-space: nowrap;
-    font-size: 12px; color: var(--text-muted); font-family: ui-monospace, Menlo, monospace;
+    font-size: 13px; color: var(--text-muted); font-family: ui-monospace, Menlo, monospace;
   }
   .dev-ws-keys kbd {
-    display: inline-block; padding: 1px 6px; margin: 0 2px; border-radius: 5px;
-    border: 1px solid var(--border); background: var(--dc-sheet); color: var(--text-secondary);
-    font: inherit; font-weight: 600;
+    display: inline-grid; place-items: center; min-width: 20px; height: 22px; box-sizing: border-box; padding: 0 4px; margin: 0 2px; border-radius: 5px;
+    border: 1px solid var(--border); background: var(--dc-sheet); color: var(--text-primary);
+    font: inherit; font-size: 11px; font-weight: 600;
   }
-  /* The panels: Ask and comments beside the rail, the stage's full height.
-     They slide in from the right rather than rising from a floor they do not
-     sit on (the names feed the base block's one animation rule). */
-  .dev-ws-sheet-ask, .dev-ws-sheet-comments, .dev-ws-sheet-description {
-    position: relative; inset: auto; flex: 0 0 400px; z-index: auto;
+  /* THE PANEL: Comments and Ask beside the rail, the stage's full height, in
+     the plane colour with one hairline. It slides in from the right rather
+     than rising from a floor it does not sit on (the names feed the base
+     block's one animation rule). Its head is the card's caption again —
+     who, the title, the description in full and the facts — and scrolls on
+     its own if it runs long; under it the tabs, then the tab's body. */
+  .dev-ws-sheet-talk {
+    position: relative; inset: auto; flex: 0 1 380px; min-width: 300px; z-index: auto;
     display: flex; flex-direction: column;
     --ws-sheet-in: dev-ws-panel-in; --ws-sheet-out: dev-ws-panel-out;
   }
-  .dev-ws-sheet-ask > .dev-ws-scrim, .dev-ws-sheet-comments > .dev-ws-scrim, .dev-ws-sheet-description > .dev-ws-scrim { display: none; }
-  .dev-ws-sheet-ask > .dev-ws-sheet-card, .dev-ws-sheet-comments > .dev-ws-sheet-card, .dev-ws-sheet-description > .dev-ws-sheet-card {
-    flex: 1 1 auto; max-height: none; min-height: 0;
-    padding: 18px 20px 12px;
-    border-radius: 24px;
-    border: 1px solid var(--app-sheet-line);
-    box-shadow: 0 18px 50px rgba(24, 39, 75, .12);
+  .dev-ws-sheet-talk > .dev-ws-scrim { display: none; }
+  .dev-ws-sheet-talk > .dev-ws-sheet-card {
+    flex: 1 1 auto; height: auto; max-height: none; min-height: 0;
+    padding: 0 0 12px;
+    border-radius: 20px;
+    background-color: var(--dc-sheet-solid);
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 8px 24px rgba(0, 0, 0, .06);
   }
+  .dev-ws-talk-head {
+    display: flex; flex-direction: column; gap: 8px; flex: 0 1 auto; max-height: 45%; overflow-y: auto;
+    padding: 16px 52px 14px 18px; border-bottom: 1px solid var(--border-light);
+  }
+  .dev-ws-talk-head .dev-ws-item-avatar { width: 28px; height: 28px; font-size: 12px; }
+  .dev-ws-talk-head .dev-ws-item-by b { font-size: 14px; font-weight: 650; }
+  .dev-ws-talk-title { margin: 0; font-size: 17px; font-weight: 750; line-height: 1.25; color: var(--text-primary); }
+  .dev-ws-talk-words { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-secondary); white-space: pre-line; overflow-wrap: anywhere; }
+  .dev-ws-talk-words > * { margin: 0 0 8px; }
+  .dev-ws-talk-words > :last-child { margin-bottom: 0; }
+  .dev-ws-talk-head .dev-ws-item-facts { background: var(--state-neutral-bg); color: var(--text-secondary); }
+  .dev-ws-talk-tabs { position: static; justify-content: flex-start; padding: 0 18px; }
+  .dev-ws-talk-tablist { gap: 22px; }
+  .dev-ws-talk-tab { height: 42px; font-size: 14.5px; }
+  .dev-ws-talk-tabs > .dev-ws-sheet-x { right: 12px; top: 12px; }
+  .dev-ws-talk > .dev-ws-sheet-body { padding: 4px 18px 0; }
+  .dev-ws-talk > .dev-ws-sheet-body > .dev-feed-thread > form { background-color: var(--dc-sheet-solid); }
+  .dev-ws-talk > .dev-ws-ask { padding: 0 18px; }
   .dev-ws-sheet-handle { display: none; }
-  /* The vote: a popover on its button, arrow towards it. */
-  .dev-ws-sheet-vote { position: absolute; inset: auto calc(100% + 12px) auto auto; top: -8px; width: 340px; z-index: 6; display: block; }
+  /* The vote: a popover on its button, arrow towards it. The button's top in
+     the rail is measured (`--ws-vote-top`, workshop.tsx), because the rail's
+     buttons sit at its foot. */
+  .dev-ws-sheet-vote { position: absolute; inset: auto calc(100% + 12px) auto auto; top: calc(var(--ws-vote-top, 0px) - 8px); width: 340px; z-index: 6; display: block; }
   .dev-ws-sheet-vote { --ws-sheet-in: dev-ws-pop-in; --ws-sheet-out: dev-ws-pop-out; }
   .dev-ws-sheet-vote > .dev-ws-scrim { position: fixed; background: transparent; }
   .dev-ws-sheet-vote > .dev-ws-sheet-card {
@@ -19548,8 +19649,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 /* Between the breakpoint and a wide desktop the panel would push the card
    off the stage, so it OVERLAYS the stage's right side instead. */
 @media (min-width: 700px) and (max-width: 1179.98px) {
-  .dev-ws-sheet-ask, .dev-ws-sheet-comments, .dev-ws-sheet-description {
-    position: absolute; right: 0; top: 0; bottom: 0; width: min(400px, 60%); z-index: 8;
+  .dev-ws-sheet-talk {
+    position: absolute; right: 0; top: 0; bottom: 34px; width: min(380px, 60%); z-index: 8;
   }
 }
 .dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
@@ -22503,7 +22604,6 @@ html.in-side-panel body {
 .dev-ws-wvote > .dev-ws-wvote-btn { pointer-events: auto; }
 .dev-ws-wvote-state { flex: none; padding: 0 calc(10px + 56px) 0 10px; }
 .dev-ws-none { margin: 6px 0 2px; font-size: 14px; color: var(--text-muted); }
-.dev-ws-since-sum { margin: 4px 0 0; font-size: 13px; color: var(--text-muted); }
 
 /* Week by week: one row a week, which opens the week's own page. */
 .dev-ws-week {
@@ -22519,7 +22619,6 @@ html.in-side-panel body {
   align-self: center; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px;
   font-size: 12px; font-weight: 600; background: var(--accent-tint); color: var(--accent-wash-ink);
 }
-.dev-ws-week-line { font-size: 14px; line-height: 1.45; color: var(--text-secondary); }
 .dev-ws-week-n { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-week-n b, .dev-ws-week-live { font-size: 15px; font-weight: 650; color: var(--state-ok); font-variant-numeric: tabular-nums; }
 .dev-ws-week .dev-ws-wrow-chev { margin-top: 0; }
@@ -22527,44 +22626,130 @@ html.in-side-panel body {
 .dev-ws-week-meta { margin: 0; font-size: 13px; color: var(--text-muted); }
 .dev-ws-week-lead { margin: 8px 0 0; font-size: 15px; line-height: 1.5; color: var(--text-primary); }
 
-/* Approval rules, drawn: three steps across, stacked on a phone and
-   beside the side panel. The middle step wears the faces, so its words are
-   the first to run out of room: it takes the wider share, and when the
-   CARD itself is too narrow for three steps side by side (a container
-   query — the viewport media query below does not see the card) they stack
-   the same way (#4527). */
-.dev-ws-strip[data-ws-approval-rules] { container-type: inline-size; }
-.dev-ws-rules { list-style: none; margin: 10px 0 2px; padding: 0; display: flex; align-items: center; }
-.dev-ws-rule-step { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 10px; }
-.dev-ws-rule-step[data-ws-rule-people] { flex-grow: 2; }
-.dev-ws-rule-join { flex: 0 0 20px; height: 2px; margin: 0 6px; border-radius: 2px; background: var(--app-sheet-line); }
-.dev-ws-rule-tile {
-  flex: none; width: 36px; height: 36px; border-radius: 11px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--state-neutral-bg); color: var(--text-secondary);
+/* ── The Workshop tab in three titled parts (After-Workshop-B) ──────────
+   OVERVIEW, WHAT'S HAPPENING and WHAT HAPPENED, each the shell's small-caps
+   SectionHeader over its card or cards. What happened's label carries Mark
+   all seen at its far end, outside the card. */
+.dev-ws-parthead { display: flex; align-items: baseline; gap: 8px; }
+.dev-ws-parthead > .dev-ws-since-clear { margin-right: 2px; }
+
+/* The Overview card: the four figures, where most of the open work is, and
+   the approval rule in one line. The card is its own container, so the rule
+   says itself shorter where the CARD is narrow ("Goes live when …"), on a
+   phone or beside the side panel, not only where the window is. */
+.dev-ws-strip[data-ws-dashboard] { container-type: inline-size; }
+.dev-ws-dash-sub {
+  display: flex; align-items: center; gap: 3px; margin-top: 1px;
+  font-size: 11.5px; line-height: 1.3; color: var(--text-muted);
 }
-.dev-ws-rule-tile svg { width: 19px; height: 19px; }
-.dev-ws-rule-tile[data-tone="ok"] { background: var(--state-ok-bg); color: var(--state-ok); }
-.dev-ws-rule-faces { flex: none; display: inline-flex; }
-.dev-ws-rule-face {
-  width: 36px; height: 36px; border-radius: 11px;
-  display: inline-flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 13px; font-weight: 700;
-  box-shadow: 0 0 0 2px var(--dc-sheet-solid, var(--bg-primary));
+@media (min-width: 420px) {
+  .dev-ws-dash-sub { font-size: 12px; }
 }
-.dev-ws-rule-face + .dev-ws-rule-face { margin-left: -8px; }
-.dev-ws-rule-more { background: var(--state-neutral-bg); color: var(--text-secondary); font-size: 12px; }
-.dev-ws-rule-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.dev-ws-rule-text b { font-size: 14px; font-weight: 650; color: var(--text-primary); line-height: 1.25; }
-.dev-ws-rule-text span { font-size: 12.5px; color: var(--text-muted); line-height: 1.3; }
-.dev-ws[data-ws-side-open] .dev-ws-rules { flex-direction: column; align-items: stretch; }
-.dev-ws[data-ws-side-open] .dev-ws-rule-join { flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; }
-/* The card, not the window, ran out of room: the same stack the phone's
-   media query draws, wherever the strip is narrower than the three steps.
-   (The side panel above already stacks them, so this reads over it.) */
-@container (max-width: 600px) {
-  .dev-ws-rules { flex-direction: column; align-items: stretch; }
-  .dev-ws-rule-join { flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; }
+/* "4 on you" asks something of the viewer, so it is the accent; "from 382"
+   is green going up, muted otherwise, its glyph turned over going down. */
+.dev-ws-dash-sub[data-ws-dash-sub="owed"] { color: var(--accent-wash-ink); }
+.dev-ws-dash-sub[data-dir="up"] { color: var(--state-ok); }
+.dev-ws-dash-trend { flex: none; width: 10px; height: 10px; }
+.dev-ws-dash-sub[data-dir="down"] .dev-ws-dash-trend { transform: rotate(180deg); }
+.dev-ws-ov-topics {
+  margin: 2px 0 0; padding-top: 10px; border-top: 1px solid var(--app-sheet-line);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 13px; line-height: 1.35; color: var(--text-muted);
+}
+.dev-ws-ov-lead { margin-right: 2px; }
+.dev-ws-ov-chips { display: contents; }
+.dev-ws-ov-chip {
+  display: inline-flex; align-items: center; height: 26px; padding: 0 10px;
+  border: 0; border-radius: 999px; background: var(--state-neutral-bg); color: var(--text-primary);
+  font: inherit; font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; cursor: pointer;
+}
+.dev-ws-ov-chip:hover { color: var(--accent); }
+.dev-ws-ov-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-ws-ov-rule {
+  margin: 0; padding-top: 10px; border-top: 1px solid var(--app-sheet-line);
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 13px; line-height: 1.4; color: var(--text-secondary);
+}
+.dev-ws-ov-rule-icon { flex: none; width: 16px; height: 16px; margin-top: 1px; color: var(--text-muted); }
+.dev-ws-ov-rule-text { flex: 1 1 auto; min-width: 0; }
+.dev-ws-ov-rule-text b { font-weight: 650; color: var(--text-primary); }
+.dev-ws-ov-rule-wait { margin-left: 4px; color: var(--text-muted); }
+.dev-ws-ov-rule-edit { flex: none; margin-left: 4px; }
+.dev-ws-ov-faces { display: inline-flex; margin-right: 4px; vertical-align: -3px; }
+.dev-ws-ov-face {
+  width: 16px; height: 16px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 9px; font-weight: 700;
+  box-shadow: 0 0 0 1.5px var(--dc-sheet-solid, var(--bg-primary));
+}
+.dev-ws-ov-face + .dev-ws-ov-face { margin-left: -4px; }
+.dev-ws-ov-narrow { display: none; }
+@container (max-width: 520px) {
+  .dev-ws-ov-wide { display: none; }
+  .dev-ws-ov-narrow { display: inline; }
+}
+
+/* Your work and New for you (workshop/work-row.tsx ActRow): the title and
+   one line in words, then the row's one next step at its end, above the
+   stretched link; under the words on a phone. A vote that waits on the
+   viewer wears the attention tint on its tile. */
+.dev-ws-arow { align-items: center; }
+.dev-ws-arow-act { position: relative; z-index: 1; flex: none; display: inline-flex; align-items: center; }
+.dev-ws-wrow-tile[data-tone="ask"] { background: var(--state-attention-bg); color: var(--state-attention); }
+@media (max-width: 640px) {
+  .dev-ws-arow { flex-wrap: wrap; align-items: flex-start; }
+  .dev-ws-arow > .dev-ws-wrow-main { flex: 1 1 0; }
+  .dev-ws-arow-act { flex-basis: 100%; padding-left: 40px; }
+}
+
+/* What happened (workshop/week-pages.tsx): this week's head and its rows,
+   one line each, then a row for every week before it. A row's title is a
+   link stretched over it; on a narrow card the title wraps and the rest
+   goes under it. */
+.dev-ws-strip[data-ws-happened] { container-type: inline-size; gap: 4px; }
+.dev-ws-hweek { display: flex; flex-direction: column; }
+.dev-ws-hweek-head { display: flex; align-items: center; gap: 12px; padding: 4px 2px 8px; }
+.dev-ws-hweek-head > .dev-ws-week-head { flex: 1 1 auto; min-width: 0; }
+.dev-ws-hlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.dev-ws-hrow {
+  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 8px 2px; border-top: 1px solid var(--app-sheet-line); border-radius: 10px;
+}
+.dev-ws-hrow:hover { background: var(--state-neutral-bg); }
+.dev-ws-hrow[data-on] { background: var(--lit-tint); }
+.dev-ws-hrow-dot { flex: none; width: 7px; height: 7px; border-radius: 999px; }
+.dev-ws-hrow[data-new] .dev-ws-hrow-dot { background: var(--accent); }
+.dev-ws-hrow-glyph { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: var(--text-muted); }
+.dev-ws-hrow-glyph svg { width: 16px; height: 16px; }
+.dev-ws-hrow-glyph[data-kind="live"] { color: var(--state-ok); }
+.dev-ws-hrow-glyph .dc-status-spinner-arc { width: 13px; height: 13px; color: var(--lit-ink); }
+.dev-ws-hrow-main { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.dev-ws-hrow-link {
+  flex: 1 1 auto; min-width: 0; font-size: 15px; line-height: 1.35; color: var(--text-primary); text-decoration: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dev-ws-hrow-link::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.dev-ws-hrow-link:focus-visible { outline: none; }
+.dev-ws-hrow:has(.dev-ws-hrow-link:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-ws-hrow-meta {
+  flex: none; display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-muted); white-space: nowrap;
+}
+.dev-ws-hrow-you {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px;
+  background: var(--accent-tint); color: var(--accent-wash-ink); font-size: 11px; font-weight: 700;
+}
+.dev-ws-hrow-tag[data-tone="run"] { color: var(--lit-ink); }
+.dev-ws-hrow-tag[data-tone="bad"] { color: var(--state-blocked); }
+.dev-ws-hrow-ago { font-variant-numeric: tabular-nums; }
+.dev-ws-hweek > .dev-ws-reveal { margin-top: 2px; }
+.dev-ws-hweek + .dev-ws-wlist { margin-top: 4px; border-top: 1px solid var(--app-sheet-line); }
+@container (max-width: 520px) {
+  .dev-ws-hrow { align-items: flex-start; }
+  .dev-ws-hrow-dot { margin-top: 7px; }
+  .dev-ws-hrow-glyph { margin-top: 2px; }
+  .dev-ws-hrow-main { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .dev-ws-hrow-link { white-space: normal; }
 }
 
 /* The item's page beside the list, on a wide window (workshop/side-panel.tsx).
@@ -22751,9 +22936,6 @@ html.in-side-panel body {
   .dev-ws-allbar .dev-ws-pagehead-title { font-size: 20px; line-height: 26px; }
 }
 @media (max-width: 640px) {
-  .dev-ws-rules { flex-direction: column; align-items: stretch; }
-  .dev-ws-rule-join { flex: 0 0 12px; width: 2px; height: 12px; margin: 3px 0 3px 17px; }
   .dev-ws-wrow { gap: 10px; }
   .dev-ws-wrow-tile { width: 30px; height: 30px; border-radius: 9px; }
-  .dev-ws-week-line { font-size: 13.5px; }
 }

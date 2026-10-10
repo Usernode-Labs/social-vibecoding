@@ -1,9 +1,11 @@
 /**
  * The Workshop's row (#4457, #4486): one item, in one hairline-divided list.
  *
- * ONE ROW, THREE SURFACES. The Workshop tab's lists (Your work, Since your
- * last visit and a week's page), All items' board columns and its By
- * category lanes all draw this row now (#4486). The board and By category
+ * ONE ROW, THREE SURFACES. A week's page on the Workshop tab, All items'
+ * board columns and its By category lanes all draw this row now (#4486);
+ * the Workshop tab's Your work and New for you draw its shorter sibling,
+ * `ActRow`, below (After-Workshop-B), and its What happened its own one-line
+ * row (./week-pages.tsx HappenedRow). The board and By category
  * used to draw the folded card (../card/fold.tsx), which wore a coloured
  * edge and a coloured glyph the column already said, named its author and
  * its provenance twice, and unfolded in place under a ⇕. A row here is:
@@ -50,6 +52,7 @@
 
 import type { MouseEvent, ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import {
   BallotIcon, ChatBubbleTailIcon, CheckIcon, EyeIcon, LockIcon, PencilSquareIcon,
 } from '@/components/ui/icons';
@@ -57,8 +60,8 @@ import {
 import { useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { CategoryChip, ChatCount, ChecksBar, MenuTrigger, VoteButton } from '../card/dev-card';
-import { itemHooks, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
-import type { DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
+import { callAppView, itemHooks, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
+import type { ActionSpec, DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
@@ -125,20 +128,31 @@ function numberWords(b: RowBrief): string {
  * #4485 had dropped "yours": the board's words say who, not whose, and a
  * change Homeroom bot built from your request (#4538) says Homeroom bot.
  */
-export function rowWords(b: RowBrief): string {
-  const parts: string[] = [numberWords(b)];
-  if (b.by) parts.push(b.by);
+export function rowWords(b: RowBrief, opts: {
+  /** What the row is waiting on or where it stands, said first ("In progress", "Only you"). */
+  lead?: string | readonly string[];
+  /** Name the maker (the default). Your work leaves out a maker who is the viewer. */
+  by?: boolean;
+  /** Say how many replies it has, in words ("5 comments"). */
+  replies?: boolean;
+} = {}): string {
+  const parts: string[] = [];
+  for (const lead of typeof opts.lead === 'string' ? [opts.lead] : (opts.lead || [])) if (lead) parts.push(lead);
+  parts.push(numberWords(b));
+  if (b.by && opts.by !== false) parts.push(b.by);
   if (b.linked.length && b.kind !== 'live') {
     parts.push(translate('project:workRow.for', { count: b.linked.length, requests: numbers(b.linked) }));
   }
   if (b.closed.length && b.kind === 'live') {
     parts.push(translate('project:workRow.closed', { count: b.closed.length, requests: numbers(b.closed) }));
   }
+  if (opts.replies && b.replies > 0) parts.push(translate('project:workRow.replies', { count: b.replies }));
   if (b.ago) parts.push(b.ago);
   return parts.reduce((first, second) => translate('project:workRow.facts.pair', { first, second }));
 }
 
-const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
+/** The glyph for what a row is: a request, a change, live work, a vote. */
+export const TILE: Record<RowBrief['kind'], typeof CheckIcon> = {
   request: ChatBubbleTailIcon,
   change: PencilSquareIcon,
   live: CheckIcon,
@@ -283,6 +297,101 @@ export function WorkList({ rows, slug, openKey, onOpen, variant = 'list', catego
           />
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * The card's own next step, when it has one: a request's primary act (Ask
+ * Homeroom bot to build this, Build it now, See progress, …:
+ * AppView._issuePrimaryActionSpec) or an imported change's Ask for
+ * approval. Never a disabled one ("Homeroom bot is building…"), which is a
+ * state, and the row's line in words already says where it stands.
+ */
+export function primaryAct(card: DevCardModel): ActionSpec | null {
+  return (card.actions || []).find((a) => (a.key === 'primary' || a.key === 'promote') && !!a.act && !a.disabled) || null;
+}
+
+/**
+ * One of the card's acts as a row's button: the shell's neutral pill, which
+ * calls the AppView method the act names, as the card's own pill does
+ * (dev-card.tsx ActionButton), the button itself last when the act asks for
+ * it. `label` replaces the act's words where the row says it shorter; the
+ * act's own words are then its tooltip.
+ */
+export function ActButton({ a, label, accent = false }: { a: ActionSpec; label?: string; accent?: boolean }): ReactNode {
+  return (
+    <Button
+      type="button"
+      variant={accent ? 'pillAccent' : 'pillNeutral'}
+      ink={accent ? 'solid' : 'neutral'}
+      size="sm"
+      className="un-touch-target"
+      data-act={a.act?.fn}
+      title={label ? (a.title || a.label) : a.title}
+      onClick={(e) => {
+        if (!a.act) return;
+        callAppView(a.act.fn, ...(a.act.args || []), ...(a.passNode ? [e.currentTarget] : []));
+      }}
+    >
+      {label || a.label}
+    </Button>
+  );
+}
+
+/**
+ * A row with one thing to do (After-Workshop-B): the Workshop's Your work
+ * and New for you. The tile, the title (the item's link, stretched over the
+ * row, as WorkRow's is, and opened beside the list on a wide window through
+ * `onOpen`), one line in words the caller words, and at most one action at
+ * the row's end: a Vote, the card's own next step, or Build it. No tags
+ * line and no ☰: everything else there is to do is on the item's page, a
+ * tap away. On a phone the action goes under the words (app.css).
+ */
+export function ActRow({
+  row, slug, sub, act = null, tone, on = false, onOpen,
+}: {
+  row: CardRow;
+  slug: string;
+  /** The row's one line in words. */
+  sub: string;
+  act?: ReactNode;
+  /** `ask`: the item waits on the viewer, and its tile says so in the attention tint. */
+  tone?: 'ask';
+  on?: boolean;
+  onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
+}): ReactNode {
+  // The line in words is read with `translate`; subscribe the row.
+  useMessages('project');
+  const b = row.brief;
+  if (!b) return null;
+  const card = row.card;
+  const href = openHref(slug, card);
+  const ref = topicRef(card);
+  const Tile = TILE[b.kind] || PencilSquareIcon;
+  return (
+    <div
+      className="dev-ws-wrow dev-ws-arow"
+      data-ws-row={row.key}
+      data-ws-kind={b.kind}
+      data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
+      data-on={on ? '1' : undefined}
+    >
+      <span className="dev-ws-wrow-tile" data-kind={b.kind} data-tone={tone} aria-hidden="true"><Tile aria-hidden="true" /></span>
+      <span className="dev-ws-wrow-main">
+        {href ? (
+          <a
+            className="dev-ws-wrow-link"
+            href={href}
+            aria-current={on ? 'true' : undefined}
+            onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
+          >
+            {card.title.text}
+          </a>
+        ) : <span className="dev-ws-wrow-link">{card.title.text}</span>}
+        {sub ? <span className="dev-ws-wrow-sub">{sub}</span> : null}
+      </span>
+      {act ? <span className="dev-ws-arow-act">{act}</span> : null}
     </div>
   );
 }

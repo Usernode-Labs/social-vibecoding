@@ -123,13 +123,15 @@ test('the panel: nothing to say draws nothing; otherwise the card first, then ea
   // Loaded in an effect, so the first render is nothing.
   assert.match(read(PANEL), /const \[notices, setNotices\] = useState<Notices \| null>\(null\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  // On the Workshop tab, straight under the approval rules (#3528). All
-  // items leads the tab since 5 Oct 2026, and the panel kept its place
-  // under the rules rather than moving up with it.
+  // On the Workshop tab, straight under the Overview card (After-Workshop-B),
+  // whose last line is the approval rule a change to which it reports: the
+  // card it sat under (#3528) folded into that line.
   const ws = lander.slice(lander.indexOf("{tab === 'workshop' && !weekUp ? ("), lander.indexOf("{tab === 'needs' ? ("));
-  assert.match(ws, /\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\n\s*\{\/\*[^]{0,500}?\*\/\}\n\s*\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'straight under the approval rules');
-  assert.ok(ws.indexOf('data-ws-dashboard=""') < ws.indexOf('<WorkshopNotices') && ws.indexOf('<WorkshopNotices') < ws.indexOf('data-ws-mine=""'),
-    'under All items, and above your work');
+  assert.match(ws, /\{slug \? <ApprovalLine slug=\{slug\} \/> : null\}\n\s*<\/section>\n\s*\) : null\}\n\s*\{\/\*[^]{0,500}?\*\/\}\n\s*\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/,
+    'straight under the Overview card, the rule its last line');
+  assert.ok(ws.indexOf('data-ws-dashboard=""') < ws.indexOf('<WorkshopNotices') && ws.indexOf('<WorkshopNotices') < ws.indexOf('data-ws-part="happening"')
+    && ws.indexOf('data-ws-part="happening"') < ws.indexOf('data-ws-mine=""'),
+    'under the Overview, and above What\'s happening');
 });
 
 test('a door to a project\'s hub opens the hub; a page opened again reads the tab last shown', () => {

@@ -145,21 +145,28 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   // "Show past week" went with the walk: the weeks head the since list now,
   // and Show an earlier week below them steps back a week (#3524 renamed it
   // from "Show older").
-  has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-since-card-x ${KIT}"`), 'the summary\'s ×');
-  // #4457: the reveals under a list (Show all N, Show earlier weeks) sit 4px
-  // under its last row, so they take the dense 32px slop rather than the
-  // kit's 44px, as Your work's does.
-  has(ws, /className="dev-ws-reveal touch-target-32" data-ws-since-more=""/, 'Since your last visit\'s Show all N');
-  has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-weeks-more=""/, 'Show earlier weeks');
-  has('frontend/src/features/dev-board/workshop/week-pages.tsx', /className="dev-ws-reveal touch-target-32" data-ws-week-group-more=""/, 'a week group\'s Show all N');
-  has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Clear');
+  // #4457: the reveals under a list (All of this week, Earlier weeks, Show
+  // N more) sit 4px under its last row, so they take the dense 32px slop
+  // rather than the kit's 44px, as Your work's does.
+  const weeks = 'frontend/src/features/dev-board/workshop/week-pages.tsx';
+  has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week=\{week\.key\} data-ws-week-all=""/, 'All of this week');
+  has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-weeks-more=""/, 'Earlier weeks');
+  has(ws, /className="dev-ws-reveal touch-target-32"\s+data-ws-fresh-more=""/, 'New for you\'s Show N more');
+  has(weeks, /className="dev-ws-reveal touch-target-32" data-ws-week-group-more=""/, 'a week group\'s Show all N');
+  has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Mark all seen');
+  // After-Workshop-B: the Overview's chips and its Rules, and a row's one
+  // act (Vote, Build it, the card's own), wear the kit's slop.
+  has(ws, new RegExp(`className="dev-ws-ov-chip ${KIT}"`), 'a chip of where the open work is');
+  has('frontend/src/features/dev-board/workshop/community-card.tsx', new RegExp(`className="dev-ws-hub-open dev-ws-ov-rule-edit ${KIT}"`), 'Rules');
+  has('frontend/src/features/dev-board/workshop/work-row.tsx', new RegExp(`className="${KIT}"\\s+data-act=\\{a\\.act\\?\\.fn\\}`), 'a row\'s act');
+  has(ws, new RegExp(`className="${KIT}"\\s+data-ws-fresh-vote=""`), 'New for you\'s Vote');
   // "N more of yours" is gone: the Workshop tab shows your own work in full.
   has(ws, new RegExp(`className="dev-ws-hub-open dev-ws-head-end ${KIT}"`), 'All items\' See all');
   has('frontend/src/features/dev-board/workshop/page-back.tsx', new RegExp(`className="dev-ws-page-back ${KIT}"`), 'the way back from a page to the hub');
-  has('frontend/src/features/dev-board/workshop/hub-cards.tsx', new RegExp(`className="dev-ws-hub-open ${KIT}"`), 'the channel\'s Open');
-  // #852: the requests line (#3408) went with the hub's doors; the since
-  // card's Week by week is its door in the head's corner now (#3510).
-  has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-hub-open dev-ws-since-card-more ${KIT}"`), 'the summary\'s Week by week');
+  // The hub's Recently live: All in Workshop, the door beside its label
+  // (the since card's Week by week was that door, #3510). The For you rows
+  // are the grouped list's rows, a full row tall each.
+  has('frontend/src/features/dev-board/workshop/hub-cards.tsx', new RegExp(`className="dev-ws-hub-open ${KIT}" data-ws-recent-all=""`), 'Recently live\'s All in Workshop');
   const ui = 'frontend/src/features/home/panels/ui.tsx';
   has(ui, new RegExp(`className="home-panel-browse [^"]*${KIT}"`), 'Browse all apps');
   has(ui, new RegExp(`className="home-panel-lb-browse [^"]*${KIT}"`), 'Open challenges');

@@ -23,7 +23,7 @@ test('the card shows shots first, then the diagram, the legacy pair, "What it to
   const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const at = src.indexOf('{shots && row.visuals ? <ShotsPicture');
   assert.ok(at > 0, 'the picture slot');
-  const slot = src.slice(at, src.indexOf('<div className="dev-ws-item-caption">', at));
+  const slot = src.slice(at, src.indexOf('<span className="dev-ws-item-scrim" aria-hidden="true" />', at));
   const order = ['<ShotsPicture', "picture.kind === 'diagram'", '<BeforeAfter', "picture.kind === 'touches'", 'dev-ws-item-spacer'];
   let last = -1;
   for (const mark of order) {
@@ -35,11 +35,14 @@ test('the card shows shots first, then the diagram, the legacy pair, "What it to
   assert.match(src, /function usePicture\(row: QueueRow, shots: boolean\): Picture \{[\s\S]*?if \(shots\) return \{ kind: 'none' \};/);
   // A Mermaid diagram that cannot be drawn drops to "What it touches".
   assert.match(src, /if \(d && !failed\) return \{ kind: 'diagram'[\s\S]*?return touches \? \{ kind: 'touches', t: touches \} : \{ kind: 'none' \};/);
-  // The summary keeps its place above the picture, clamped shorter.
-  assert.match(src, /picture\.kind === 'diagram' \|\| picture\.kind === 'touches' \? 'dev-ws-item-summary dev-ws-item-summary-short'/);
-  assert.match(read('public/css/app.css'), /\.dev-ws-item-summary\.dev-ws-item-summary-short \{ -webkit-line-clamp: 3; \}/);
-  // A far card's Mermaid diagram waits until the reader is near it.
-  assert.match(src, /defer=\{!near\}/);
+  // The picture fills the card, and the summary is the caption's over it,
+  // two lines whatever the picture is.
+  assert.ok(src.indexOf('<span className="dev-ws-item-scrim"', at) < src.indexOf('<div className="dev-ws-item-caption">', at), 'the caption follows the picture');
+  assert.doesNotMatch(src, /dev-ws-item-summary-short/);
+  // A far card's Mermaid diagram waits until the reader is near it, and on
+  // the dark card it takes Mermaid's dark theme whatever the page's is.
+  assert.match(src, /defer=\{!near\} dark className="dev-ws-media-diagram"/);
+  assert.match(read('frontend/src/lib/diagram/diagram.tsx'), /renderMermaid\(source, dark \|\| isDark\(\)\)/);
 });
 
 test('each fixed kind renders as text, with its label and where it came from', () => {
@@ -203,8 +206,8 @@ test('staging holds each picture under ?demo=1, and ?shot= opens the feed on it'
   for (const it of demo) if (it.diagram) assert.ok(diagram.storedDiagram(it.diagram), `${it.title}: a valid record`);
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(ws, /shot === 'needs-diagram' \? 'diagram' : shot === 'needs-touches' \? 'touches'/);
-  const check = require('../dapp.json').tests.find((t) => /author's diagram under that sentence/.test(t.name));
+  const check = require('../dapp.json').tests.find((t) => /author's diagram as that picture/.test(t.name));
   assert.ok(check, 'folded into the existing Needs-you item check');
-  assert.match(check.expectSelector, /:has\(\.dev-ws-item-summary \+ \[data-ws-diagram=rename\]\)/);
+  assert.match(check.expectSelector, /:has\(\[data-ws-diagram=rename\] ~ \.dev-ws-item-caption\)/, 'the rename is the picture the caption lies over');
   assert.ok(check.expectSelector.length <= 256, "the runner clips selectors at 256 characters");
 });

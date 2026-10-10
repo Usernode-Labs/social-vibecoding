@@ -13,17 +13,18 @@
  * link met "18 open items" before they met the thing's name. So the page
  * leads with identity, the way a profile does, and the dashboard follows:
  *
- *   WHAT IT IS. The app's tile and name (the header chip's, from the page's
- *   own store) and dapp.json's one-line description when it has one.
+ *   WHAT IT IS. The app's tile and name, the page's one large heading (the
+ *   header chip's, from the page's own store), over who it is for, and
+ *   dapp.json's one-line description when it has one (HeroIdentity).
  *
  *   WHO IT IS FOR. The audience, in the words people see (Public community,
- *   Private community, Just you), and for a public or a private community
- *   WHO IS HERE AND HOW LIVELY IT HAS BEEN, as one block under what it is:
- *   faces, the member count over a line of this week's activity, and the
- *   last fourteen days as a small bar chart across from both (#3268; it was
- *   the hub's Members & activity card, fourth down the page). The chart
- *   names a day when it is pointed at, or dragged across with a finger
- *   (Spark, below), so it needs no caption of its own.
+ *   Private community, Just you), with how many are in it, "Public community
+ *   · 266 members", under the name; and for a public or a private community
+ *   WHO IS AROUND: this week's faces, "40 active this week" and their names
+ *   (HeroActive). That is all the hub says about activity: it is who is
+ *   here, not a dashboard of how they performed. The fortnight's small
+ *   chart that sat beside the faces (#3268) is gone, and the hub draws no
+ *   charts.
  *
  *   JOIN, JOINED, INVITE, ⋯. Membership sits across from the name, because
  *   it is a fact about you and this project, the way a profile's Follow
@@ -50,9 +51,9 @@
  *   so and links to it instead of offering a second.
  *
  *   HOW A CHANGE GETS IN is not on the hero any more. The approval rule is
- *   the Workshop page's Approval rules card (ApprovalRules, below), beside
- *   the work it governs: on the hero it was a line about process between
- *   who is here and the channel.
+ *   the last line of the Workshop's Overview card (ApprovalLine, below),
+ *   beside the work it governs: on the hero it was a line about process
+ *   between who is here and the channel.
  *
  *   WHERE THEY TALK is no longer a row here. The channel has a card of its
  *   own on the hub (./hub-cards.tsx), with its last messages, because it
@@ -74,11 +75,12 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { CheckIcon, ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, LockIcon, PersonSilhouetteIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
-import { t as translate } from '../../../lib/i18n/runtime';
+import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
+import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { askToVerifyForPublic, identityNeededHere } from '../../auth/verify-identity';
 import { invitedByLine, joinByInvite, useInviteOffer, type InviteJoin, type InviteOffer } from './invite-offer';
 import { hubShot, hubShotPayload } from './hub-shot';
@@ -183,12 +185,15 @@ export type CommunityPayload = {
     /** Where the hub's composer sends: the room's own write route. */
     post_url?: string | null;
   } | null;
-  /** Who has been around lately, for Members & activity: two counts and
-      the last fourteen days, oldest first, as people-per-day. */
+  /** Who has been around lately (communities.js activitySummary): the
+      hub's people row reads the week's count and up to five of its people
+      by name, most recent first. `daily` is the last fourteen days, oldest
+      first, as people per day; the hub draws no chart of it. */
   activity?: {
     active_week: number;
     shipped_month: number;
     daily?: Array<{ day: string; n: number }>;
+    active_people?: Array<{ id: number; username: string; display_name?: string | null }>;
   } | null;
   /** Whether this viewer may propose who the project is for (the creator,
       an app admin or a platform admin; never the platform's own app). */
@@ -558,166 +563,85 @@ function AudienceLabel({ audience, children }: { audience?: Audience; children?:
   );
 }
 
-/** "Sat, Sep 26", the day a bar stands for, in the viewer's own words. */
-export function sparkDay(day: string): string {
-  const when = new Date(`${day}T12:00:00`);
-  return Number.isNaN(when.getTime()) ? day
-    : when.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-}
-
-/** The tip's first line: "Sat, Sep 26 · 21 people". */
-export function sparkTip(d: { day: string; n: number }): string {
-  return translate('project:communityCard.spark.tip', { day: sparkDay(d.day), count: Number(d.n) || 0 });
-}
-
-/** How long a tip stays up after a finger lifts off the chart. */
-const TIP_LINGER_MS = 2500;
-
 /**
- * The fourteen days as bars, and the day under the pointer as a tip.
+ * WHO IS AROUND, BY NAME (the hub's people row): up to HERO_FACES faces of
+ * the people active this week (GET .../community `activity.active_people`,
+ * most recently active first), "+N" for the rest of them, then "40 active
+ * this week" over their names, "evan, talha, zura, scraido2, kempis and 35
+ * more". The count is the week's (`active_week`), so the names are some of
+ * the people it counts. On a phone the names give way first.
  *
- * NO CAPTION, AND NO `title` ON THE BARS. The chart carried "Who took part,
- * last 14 days" under the activity line, and each bar a native tooltip that
- * a phone never shows. The caption is the tip's second line now, where it
- * explains the number it sits under, and the tip is the chart's own:
- *
- *   - with a mouse it follows the pointer across the bars and leaves with
- *     it;
- *   - with a finger it shows on touch and follows the drag sideways (the
- *     chart takes the pointer, so the drag does not scroll the page; a
- *     vertical drag still does, `touch-action: pan-y` in app.css), and
- *     lingers a moment after the finger lifts, so a tap can be read.
- *
- * The tip is placed against the chart's right edge, not over the bar: the
- * chart ends the row at the screen's edge, and a tip centred on the last
- * bar would run off it. The bar it is about is lit instead.
- *
- * For a screen reader nothing changes: the chart is one image whose name
- * lists every day's count, and the tip is hidden from it.
+ * That is all the hub says about activity: it is who is here, not a
+ * dashboard of how they performed, so it draws no chart. A zero says
+ * nothing: with nobody around this week there is no row.
  */
-function Spark({ days, peak }: { days: Array<{ day: string; n: number }>; peak: number }) {
+export function HeroActive({ activity }: { activity: CommunityPayload['activity'] | null | undefined }) {
   const t = useMessages('project');
-  const [at, setAt] = useState<number | null>(null);
-  const boxRef = useRef<HTMLSpanElement | null>(null);
-  const linger = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stopLinger = () => {
-    if (linger.current) clearTimeout(linger.current);
-    linger.current = null;
-  };
-  useEffect(() => stopLinger, []);
-  const pick = (clientX: number) => {
-    const box = boxRef.current;
-    if (!box) return;
-    const r = box.getBoundingClientRect();
-    if (!r.width) return;
-    const i = Math.floor(((clientX - r.left) / r.width) * days.length);
-    setAt(Math.min(days.length - 1, Math.max(0, i)));
-  };
-  const active = at == null ? null : days[at] || null;
+  const count = Number(activity?.active_week) || 0;
+  if (!count) return null;
+  const people = (activity?.active_people || []).filter((p) => p && p.username).slice(0, HERO_FACES);
+  const rest = Math.max(0, count - people.length);
+  const names = listText(people.map((p) => p.username));
   return (
-    <span className="dev-ws-hero-spark-wrap">
-      <span
-        ref={boxRef}
-        className="dev-ws-hero-spark"
-        data-ws-members-trend=""
-        {...(active ? { 'data-ws-spark-active': '' } : {})}
-        role="img"
-        aria-label={t('project:communityCard.spark.label', { count: days.length, counts: days.map((d) => Number(d.n) || 0).join(', ') })}
-        onPointerDown={(e) => {
-          stopLinger();
-          if (e.pointerType !== 'mouse') {
-            try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
-          }
-          pick(e.clientX);
-        }}
-        onPointerMove={(e) => {
-          if (e.pointerType === 'mouse' || at != null) pick(e.clientX);
-        }}
-        onPointerLeave={(e) => { if (e.pointerType === 'mouse') setAt(null); }}
-        onPointerUp={(e) => {
-          if (e.pointerType === 'mouse') return;
-          stopLinger();
-          linger.current = setTimeout(() => setAt(null), TIP_LINGER_MS);
-        }}
-        onPointerCancel={() => { stopLinger(); setAt(null); }}
-      >
-        {days.map((d, i) => {
-          const n = Number(d.n) || 0;
-          return (
-            <span
-              key={d.day}
-              className={(n ? 'dev-ws-hero-spark-bar' : 'dev-ws-hero-spark-bar dev-ws-hero-spark-bar-quiet')
-                + (i === at ? ' dev-ws-hero-spark-bar-on' : '')}
-              style={{ height: `${n && peak ? Math.max(12, Math.round((n / peak) * 100)) : 8}%` }}
-            />
-          );
-        })}
-      </span>
-      {active ? (
-        <span className="dev-ws-hero-spark-tip" aria-hidden="true" data-ws-spark-tip="">
-          <span className="dev-ws-hero-spark-tip-day">{sparkTip(active)}</span>
-          <span className="dev-ws-hero-spark-tip-cap">{t('project:communityCard.spark.caption')}</span>
+    <div className="dev-ws-hero-active" data-ws-members="" data-ws-active-people={String(count)}>
+      {people.length ? (
+        <span className="dev-ws-hero-faces" aria-hidden="true">
+          {people.map((p) => (
+            <span key={p.id} className="dev-ws-hero-face" style={{ background: swatchFor(p.username) }} title={`@${p.username}`}>
+              {(p.username || '?').charAt(0).toUpperCase()}
+            </span>
+          ))}
+          {rest ? <span className="dev-ws-hero-face dev-ws-hero-face-more">{t('project:hub.people.moreFaces', { count: rest })}</span> : null}
         </span>
       ) : null}
-    </span>
+      <span className="dev-ws-hero-active-words">
+        <span className="dev-ws-hero-active-n" data-ws-members-cell="active">{t('project:hub.people.active', { count })}</span>
+        {people.length ? (
+          <span className="dev-ws-hero-active-names" data-ws-active-names="">
+            {rest ? t('project:hub.people.namesAndMore', { names, count: rest }) : names}
+          </span>
+        ) : null}
+      </span>
+    </div>
   );
 }
 
 /**
- * WHO IS HERE AND HOW LIVELY IT HAS BEEN, as one block (#3268 put both on
- * the hero, as two rows with the actions between them): the faces, then
- * "Public community · 23 members" over who was around this week and how
- * many changes shipped this month, and the last fourteen days as a small
- * bar chart across from both. On a phone the chart moves up across from the
- * faces and the words take the full width under them (app.css): faces,
- * words and chart in one row left the words a column a few words wide.
- *
- * "Changes shipped", not "shipped": a bare number shipped said nothing
- * about what it counted. The separator is a no-break space and a dot, so a
- * line too long for a narrow phone breaks after the dot, never before it.
- * A zero says nothing; a fortnight in which nobody did anything is one
- * quiet line instead of fourteen slivers.
+ * WHAT IT IS, AND WHO IT IS FOR (the hub's head): the project's tile and
+ * name, the page's one large heading, over "Public community · 266 members"
+ * (Just you alone, for a project that is just yours). The tile and name are
+ * the page's own record of the app (improveStore, the header chip's), else
+ * the community record's name and a letter.
  */
-export function HeroPulse({ members, count, audience, audienceLabel, activity }: {
-  members: CommunityPayload['members'] | null | undefined;
-  count: number;
-  audience?: Audience;
-  audienceLabel?: string;
-  activity: CommunityPayload['activity'] | null | undefined;
+function HeroIdentity({ slug, name, iconUrl, iconEmoji, data }: {
+  slug: string;
+  name: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
+  data: CommunityPayload;
 }) {
-  const t = useMessages('project');
-  const days = activity?.daily || [];
-  const active = Number(activity?.active_week) || 0;
-  const shipped = Number(activity?.shipped_month) || 0;
-  const peak = Math.max(0, ...days.map((d) => Number(d.n) || 0));
-  const quiet = !active && !shipped && !peak;
+  const app = { slug, name, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
+  const solo = data.audience === 'solo';
+  const count = Number(data.member_count) || 0;
   return (
-    <div className="dev-ws-hero-pulse" data-ws-members="">
-      <HeroFaces members={members} />
-      <span className="dev-ws-hero-pulse-words">
-        <HeroCount count={count} audience={audience} audienceLabel={audienceLabel} />
-        {quiet ? (
-          <span className="dev-ws-hero-activity-line" data-ws-members-trend="" data-ws-trend-empty="">
-            {t('project:communityCard.pulse.nobody')}
-          </span>
-        ) : (
-          <span className="dev-ws-hero-activity-line" data-ws-members-stats="">
-            {active ? (
-              <span data-ws-members-cell="active">
-                <RichMessage id="project:communityCard.pulse.active" values={{ count: active }} components={[<b />]} />
-              </span>
-            ) : null}
-            {active && shipped ? '\u00a0· ' : null}
-            {shipped ? (
-              <span data-ws-members-cell="shipped">
-                <RichMessage id="project:communityCard.pulse.shipped" values={{ count: shipped }} components={[<b />]} />
-              </span>
-            ) : null}
-            {!active && !shipped ? t('project:communityCard.pulse.quiet') : null}
-          </span>
-        )}
+    <div className="dev-ws-hero-id" data-ws-community-id="">
+      <span className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)} aria-hidden="true">
+        <AppIconContent app={app} />
       </span>
-      {!quiet && days.length >= 2 ? <Spark days={days} peak={peak} /> : null}
+      <span className="dev-ws-hero-id-text">
+        <h1 className="dev-ws-hero-name" data-ws-community-name="">{name}</h1>
+        <span className="dev-ws-hero-id-sub" data-ws-members-cell="members">
+          {solo || !data.audience_label ? (
+            <span className="dev-ws-hero-audience" data-ws-community-audience="">{audienceLine(data)}</span>
+          ) : (
+            <RichMessage
+              id="project:communityCard.people.audienceMembers"
+              values={{ audience: data.audience_label, count }}
+              components={[<span className="dev-ws-hero-audience" data-ws-community-audience="" />]}
+            />
+          )}
+        </span>
+      </span>
     </div>
   );
 }
@@ -1015,11 +939,13 @@ export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef
   );
 }
 
-export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedByInvite }: {
+export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite }: {
   slug: string;
   /** The app's identity as the page already knows it (improveStore), so the
       hero draws the same tile and name as the header's chip. */
   name?: string;
+  iconUrl?: string | null;
+  iconEmoji?: string | null;
   /** The ⋯ and its menu (../actions-row.tsx DevPlusMenu), last on the
       members row. The page renders it so its props stay the page's. */
   menu?: ReactNode;
@@ -1095,7 +1021,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
 
   // BEFORE THE READ: the actions that depend on nothing the read says (Open
   // app and the ⋯), so a read that fails cannot take the project's settings
-  // off the page. The name and tile are the coloured header's now.
+  // off the page. The name and tile come with the read (HeroIdentity).
   const openApp = canOpenApp ? (
     <button
       type="button"
@@ -1195,7 +1121,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
   ) : null;
   // WHO INVITED THEM, AND JOIN, first in the hero: visible without scrolling
   // on a phone, above everything the page shows them to decide by (what it
-  // is, who is here and the fortnight, Open app, and below the hero what is
+  // is, who is here, Open app, and below the hero what is
   // being decided).
   const inviteHead = invited && offer ? (
     <InviteCard
@@ -1252,7 +1178,11 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
   return (
     <section
       ref={cardRef}
-      className="dev-ws-hero"
+      // THE HUB'S HEAD (the hub as the project's summary): out of its first
+      // week, the hero leads with what it is, then who is around, and on a
+      // wide window what you can do sits across from the name (app.css
+      // `.dev-ws-hero-summary`). The first week keeps its own row.
+      className={week ? 'dev-ws-hero' : 'dev-ws-hero dev-ws-hero-summary'}
       data-ws-community=""
       data-audience={data.audience}
       // Lifted while the popup is open: the popup hangs below the hero, over
@@ -1260,33 +1190,23 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, onJoinedBy
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
       {inviteHead}
-      {/* WHAT IT IS first, under the coloured header's tile and name. In a
-          project's first week it sits under the people row instead. */}
-      {data.description && !week ? descLine : null}
-      {/* WHO IS HERE, WHO IT IS FOR AND HOW LIVELY IT HAS BEEN, one block:
-          the faces, "Public community · 23 members" over this week in words,
-          and the fortnight's chart across from both. Just you is the label
-          alone: nobody to show and nothing to count. In its first week the
-          people are the action row's first part instead (WeekPeople, below),
-          and there is no fortnight yet. */}
-      {week ? null : solo ? (
-        <HeroPeople members={[]} count={Number(data.member_count) || 0} audience={data.audience} audienceLabel={data.audience_label} />
-      ) : (
-        <HeroPulse
-          members={data.members}
-          count={Number(data.member_count) || 0}
-          audience={data.audience}
-          audienceLabel={data.audience_label}
-          activity={data.activity}
-        />
+      {/* WHAT IT IS AND WHO IT IS FOR: the tile and the name, the page's one
+          large heading, over "Public community · 266 members". In its first
+          week the First version card draws the tile and the name, and the
+          people row says who it is for (WeekPeople, below). */}
+      {week ? null : (
+        <HeroIdentity slug={slug} name={displayName} iconUrl={iconUrl} iconEmoji={iconEmoji} data={data} />
       )}
+      {data.description && !week ? descLine : null}
+      {/* WHO IS AROUND: this week's faces, how many, and their names. Not on
+          a project that is just yours, which has nobody else to name. */}
+      {week || solo ? null : <HeroActive activity={data.activity} />}
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
           Invite, the ⋯, and across from them Join. "Make it public" and
           "Make it private" are rows of the ⋯ (#4045), and so is Leave. A
           project that is just yours grows from its Share it card instead
           (ShareItCard), so its row keeps Open app and the ⋯. The ⋯ stays
-          LAST among the actions (its menu hangs off its right edge); Join is
-          the row's, pushed to the far end. */}
+          LAST among the actions; Join is the row's, pushed to the far end. */}
       <div className="dev-ws-hero-row">
       {week ? (
         <WeekPeople
@@ -1494,90 +1414,147 @@ export function approvalStep(
   };
 }
 
+/** One regime's sentence on the Workshop's Overview, in its two wordings. */
+type LineIds = { long: string; short: string };
+
 /**
- * HOW A CHANGE GETS IN, on the Workshop page (#4457): the approval rule
- * DRAWN, as the three things that happen to a change — its checks pass, the
- * people the rule names say yes, it goes live — read from the server rather
- * than restated here (GET /api/apps/:slug/community, `approval`). It was one
- * sentence with nothing to look at; that sentence is the drawing's
- * accessible name now (`approvalLine`), so a screen reader still hears the
- * rule whole.
- *
- * The middle step wears faces: the approvers' on an invited-approvers
- * project, with their names ("evan or snait"); otherwise a few members'
- * and "+N" for the rest of the electorate; on a project that is just you,
- * yours. The wait rule adds a line under it. The steps run across a wide
- * card and stack on a phone and beside the Workshop's side panel (app.css);
- * the middle step takes the wider share, because the faces crowd its words
- * otherwise.
- *
- * WHO CAN CHANGE THE RULE also reaches in from here (#4527): the heading's
- * Edit button, drawn like the dashboard's "See all", shows for exactly whom
- * the card's data says can manage (`can_manage`, the same rule the
- * governance proposal enforces) and opens the Members & approvals dialog on
- * its Proposal approvals section — where the change is proposed and voted
- * on. Nothing here edits the rule itself.
+ * The approval rule as the Overview card's last line says it, wide and
+ * narrow: "A change goes live when its checks pass and …" on a wide card,
+ * "Goes live when …" on a phone. A table of ids, read when the line renders.
  */
-export function ApprovalRules({ slug }: { slug: string }) {
+const RULE_LINE: Record<string, LineIds> = {
+  you: { long: 'project:communityCard.line.you', short: 'project:communityCard.lineShort.you' },
+  anyOf: { long: 'project:communityCard.line.anyOf', short: 'project:communityCard.lineShort.anyOf' },
+  allOf: { long: 'project:communityCard.line.allOf', short: 'project:communityCard.lineShort.allOf' },
+  approversSome: { long: 'project:communityCard.line.approvers.some', short: 'project:communityCard.lineShort.approvers.some' },
+  approversOnly: { long: 'project:communityCard.line.approvers.only', short: 'project:communityCard.lineShort.approvers.only' },
+  approversBoth: { long: 'project:communityCard.line.approvers.both', short: 'project:communityCard.lineShort.approvers.both' },
+  approversAll: { long: 'project:communityCard.line.approvers.all', short: 'project:communityCard.lineShort.approvers.all' },
+  approversShort: { long: 'project:communityCard.line.approvers.short', short: 'project:communityCard.lineShort.approvers.short' },
+  fixed: { long: 'project:communityCard.line.fixed', short: 'project:communityCard.lineShort.fixed' },
+  membersSome: { long: 'project:communityCard.line.members.some', short: 'project:communityCard.lineShort.members.some' },
+  membersShort: { long: 'project:communityCard.line.members.short', short: 'project:communityCard.lineShort.members.short' },
+  membersOnly: { long: 'project:communityCard.line.members.only', short: 'project:communityCard.lineShort.members.only' },
+  membersBoth: { long: 'project:communityCard.line.members.both', short: 'project:communityCard.lineShort.members.both' },
+  membersAll: { long: 'project:communityCard.line.members.all', short: 'project:communityCard.lineShort.members.all' },
+};
+
+export interface RuleSentence extends LineIds {
+  values: Record<string, string | number>;
+  /** The approvers the sentence names, whose faces lead their names. */
+  names: string[] | null;
+}
+
+/**
+ * Which sentence the Overview's rule line is, and what goes in it. Pure, for
+ * the tests; the branches are approvalStep's, so the line and the three
+ * steps it replaced cannot disagree about a regime. An invited-approvers
+ * project NAMES its approvers ("evan or snait says yes") when the names
+ * are in hand, there are at most RULE_FACES of them, they are the whole
+ * electorate, and either one of them or all of them is what it takes; any
+ * other count is said as a count.
+ */
+export function ruleSentence(
+  approval: CommunityPayload['approval'],
+  viewer: Pick<CommunityPayload, 'audience' | 'is_member'> | null | undefined,
+  approvers: string[] | null,
+): RuleSentence {
+  const required = Math.max(1, Number(approval.required) || 1);
+  const electorate = Math.max(1, Number(approval.electorate) || 1);
+  const say = (ids: LineIds, values: Record<string, string | number> = {}, names: string[] | null = null): RuleSentence => (
+    { ...ids, values, names }
+  );
+  if (viewer?.audience === 'solo' && viewer.is_member
+    && Number(approval.electorate) === 1 && Number(approval.required) === 1) {
+    return say(RULE_LINE.you);
+  }
+  if (approval.policy === 'invited') {
+    const named = !!approvers && approvers.length > 0 && approvers.length <= RULE_FACES && approvers.length === electorate;
+    if (named && required === 1) return say(RULE_LINE.anyOf, { names: nameList(approvers!, 'or') }, approvers);
+    if (named && required === electorate) return say(RULE_LINE.allOf, { names: nameList(approvers!, 'and') }, approvers);
+    if (required < electorate) return say(RULE_LINE.approversSome, { count: required, total: electorate });
+    if (electorate === 1) return say(RULE_LINE.approversOnly);
+    if (electorate === 2 && required === 2) return say(RULE_LINE.approversBoth);
+    if (required === electorate) return say(RULE_LINE.approversAll, { count: electorate });
+    return say(RULE_LINE.approversShort, { count: electorate, required });
+  }
+  if (approval.approvals_required != null) return say(RULE_LINE.fixed, { count: required });
+  if (required < electorate) return say(RULE_LINE.membersSome, { count: required, total: electorate });
+  // Counted by how many there are: that is the number English words differently.
+  if (required > electorate) return say(RULE_LINE.membersShort, { count: electorate, required });
+  if (electorate === 1) return say(RULE_LINE.membersOnly);
+  if (electorate === 2) return say(RULE_LINE.membersBoth);
+  return say(RULE_LINE.membersAll, { count: electorate });
+}
+
+/**
+ * The rule's sentence in both its wordings, the wide card's and the narrow
+ * card's (app.css shows one): the named approvers' faces, then their names
+ * in bold, where the sentence names them.
+ */
+export function RuleWords({ line }: { line: RuleSentence }) {
+  useMessages('project');
+  const parts = [
+    line.names ? (
+      <span className="dev-ws-ov-faces" aria-hidden="true">
+        {line.names.map((name) => (
+          <span key={name} className="dev-ws-ov-face" style={{ background: swatchFor(name) }}>
+            {(name || '?').charAt(0).toUpperCase()}
+          </span>
+        ))}
+      </span>
+    ) : <span />,
+    <b className="dev-ws-ov-names" />,
+  ];
+  return (
+    <>
+      <span className="dev-ws-ov-wide"><RichMessage id={line.long} values={line.values} components={parts} /></span>
+      <span className="dev-ws-ov-narrow"><RichMessage id={line.short} values={line.values} components={parts} /></span>
+    </>
+  );
+}
+
+/**
+ * HOW A CHANGE GETS IN, as the last line of the Workshop's Overview card
+ * (After-Workshop-B, Oct 2026): "A change goes live when its checks pass
+ * and [faces] evan or snait says yes", and "Goes live when …" where the
+ * card is narrow (app.css `.dev-ws-ov-wide` / `.dev-ws-ov-narrow`, a
+ * container query on the card). It folds the three-step Approval rules card
+ * (#4457) into the sentence those steps spelled out, read from the server
+ * (GET /api/apps/:slug/community, `approval`). The wait rule, where there
+ * is one, follows it in a muted clause (approvalStep's `wait`), and the
+ * whole rule in one sentence is its tooltip (approvalLine).
+ *
+ * WHO CAN CHANGE THE RULE reaches in from here (#4527): "Rules", for
+ * exactly whom the card's data says can manage (`can_manage`), opens the
+ * Members & approvals dialog on its Proposal approvals section, where the
+ * change is proposed and voted on. Everyone else gets the line alone.
+ */
+export function ApprovalLine({ slug }: { slug: string }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
   const invited = !!(data && data.approval && data.approval.policy === 'invited');
   const approvers = useApprovers(slug, invited);
   if (!data || !data.approval) return null;
-  const step = approvalStep(data.approval, data, approvers);
-  const electorate = Math.max(1, Number(data.approval.electorate) || 1);
-  const people = step.solo
-    ? (data.members || []).slice(0, 1).map((m) => m.username)
-    : invited && approvers
-      ? approvers.slice(0, RULE_FACES)
-      : (data.members || []).slice(0, RULE_FACES).map((m) => m.username);
-  const rest = step.solo ? 0 : Math.max(0, (invited && approvers ? approvers.length : electorate) - people.length);
+  const { wait } = approvalStep(data.approval, data, approvers);
   return (
-    <section className="dev-ws-strip" data-ws-approval-rules="">
-      <div className="dev-ws-head">
-        <span className="dev-ws-head-title">{t('project:communityCard.rule.title')}</span>
-        {data.can_manage ? (
-          <button
-            type="button"
-            className="dev-ws-hub-open dev-ws-head-end un-touch-target"
-            data-ws-rules-edit=""
-            aria-label={t('project:communityCard.rule.editName')}
-            onClick={() => (window as any).AppView?.openMembersModal?.({ focus: 'approvals' })}
-          >
-            {t('project:communityCard.rule.edit')}
-          </button>
-        ) : null}
-      </div>
-      <ol className="dev-ws-rules" data-ws-community-rule="" aria-label={approvalLine(data.approval, data)}>
-        <li className="dev-ws-rule-step">
-          <span className="dev-ws-rule-tile" aria-hidden="true"><ShieldCheckIcon aria-hidden="true" /></span>
-          <span className="dev-ws-rule-text"><b>{t('project:communityCard.step.checks.title')}</b><span>{t('project:communityCard.step.checks.where')}</span></span>
-        </li>
-        <li className="dev-ws-rule-join" aria-hidden="true" />
-        <li className="dev-ws-rule-step" data-ws-rule-people="">
-          <span className="dev-ws-rule-faces" aria-hidden="true">
-            {people.map((name) => (
-              <span key={name} className="dev-ws-rule-face" style={{ background: swatchFor(name) }}>
-                {(name || '?').charAt(0).toUpperCase()}
-              </span>
-            ))}
-            {rest ? <span className="dev-ws-rule-face dev-ws-rule-more">{t('project:communityCard.step.moreFaces', { count: rest })}</span> : null}
-            {!people.length && !rest ? (
-              <span className="dev-ws-rule-tile"><UserGroupIcon aria-hidden="true" /></span>
-            ) : null}
-          </span>
-          <span className="dev-ws-rule-text">
-            <b>{step.who}</b>
-            {step.names ? <span>{step.names}</span> : null}
-            {step.wait ? <span className="dev-ws-rule-wait">{step.wait}</span> : null}
-          </span>
-        </li>
-        <li className="dev-ws-rule-join" aria-hidden="true" />
-        <li className="dev-ws-rule-step">
-          <span className="dev-ws-rule-tile" data-tone="ok" aria-hidden="true"><CheckIcon aria-hidden="true" /></span>
-          <span className="dev-ws-rule-text"><b>{t('project:communityCard.step.live.title')}</b><span>{t('project:communityCard.step.live.who')}</span></span>
-        </li>
-      </ol>
-    </section>
+    <p className="dev-ws-ov-rule" data-ws-approval-rules="" title={approvalLine(data.approval, data)}>
+      <ShieldCheckIcon className="dev-ws-ov-rule-icon" aria-hidden="true" />
+      <span className="dev-ws-ov-rule-text" data-ws-community-rule="">
+        <RuleWords line={ruleSentence(data.approval, data, approvers)} />
+        {wait ? <span className="dev-ws-ov-rule-wait">{wait}</span> : null}
+      </span>
+      {data.can_manage ? (
+        <button
+          type="button"
+          className="dev-ws-hub-open dev-ws-ov-rule-edit un-touch-target"
+          data-ws-rules-edit=""
+          aria-label={t('project:communityCard.rule.editName')}
+          onClick={() => (window as any).AppView?.openMembersModal?.({ focus: 'approvals' })}
+        >
+          {t('project:communityCard.rule.rules')}
+        </button>
+      ) : null}
+    </p>
   );
 }

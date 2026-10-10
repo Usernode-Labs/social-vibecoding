@@ -1,5 +1,6 @@
 /**
- * Week by week, on the Workshop tab (#4457, and #3947 before it).
+ * The weeks, on the Workshop tab (#4457, and #3947 before it; After-Workshop-B,
+ * Oct 2026).
  *
  * The weeks used to unfold inside Since your last visit, and each week's
  * rows unfolded again inside the week ("Seen before", "Show 5 more · 25
@@ -8,24 +9,32 @@
  * over thirty rows of history. The information hierarchy was right; the
  * nesting was not.
  *
- * Now each week is ONE ROW: its name and dates, its summary line, how many
- * changes went live, and "3 new" when some of it is new to you. Tapping it
- * opens the week as its own page inside the tab, with "‹ Workshop" to go
- * back, and the page groups the week: New since your last visit (when
- * any), Waiting for votes, Went live, New requests, Being worked on.
- * "Show earlier weeks" adds rows to the same list. Nothing unfolds inside
- * anything; a long group shows its first few rows and "Show all N" puts
- * the rest under them.
+ * Now the tab's What happened card leads with THIS WEEK (`ThisWeek`): its
+ * name and dates, how many of its rows are new to you and how many changes
+ * went live, then its rows newest first, one line each (`HappenedRow`: a
+ * dot when it is new since your last visit, "You" on your own, "Going
+ * live" on a merge still rolling out, and when), the new ones and a few
+ * you have seen, then "All of this week". Every other week is ONE ROW
+ * (`WeekRow`): its name and dates and how many went live. Either opens the
+ * week as its own page inside the tab, with "‹ Workshop" to go back, and
+ * the page groups the week: New since your last visit (when any), Waiting
+ * for votes, Went live, New requests, Being worked on, under the week's
+ * summary line. "Earlier weeks" adds rows to the same list. Nothing
+ * unfolds inside anything; a long group shows its first few rows and "Show
+ * all N" puts the rest under them.
  */
 
 import { useState, type MouseEvent, type ReactNode } from 'react';
 
-import { ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, ChevronRightIcon, PencilSquareIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
+import { agoStamp } from '../../../lib/timestamp';
+import { openHref } from '../card/fold';
+import type { RowBrief } from '../card/model';
 import { PageBack } from './page-back';
-import { WorkList, type CardRow, type TopicRef } from './work-row';
+import { TILE, WorkList, topicRef, type CardRow, type TopicRef } from './work-row';
 import type { SinceWeek } from './workshop';
 
 /**
@@ -58,9 +67,24 @@ export function weekName(week: Pick<SinceWeek, 'title' | 'key' | 'startMs' | 'en
   return weekRange(week.startMs, week.endMs);
 }
 
-/** What other people did in a week since your last visit: the week row's "N new". */
+/**
+ * Whether a row belongs to catching up at all. Your own work in flight is
+ * Your work's, on the same tab, and so is a change Homeroom bot is building
+ * from your request (#4538); once it is live, it is news like anyone's
+ * (#4505: catch-up keeps your merged contributions).
+ */
+export function catchUp(b: Pick<RowBrief, 'mine' | 'requested' | 'stage'>): boolean {
+  return !(b.mine || b.requested) || b.stage === 'live';
+}
+
+/** What moved in a week since your last visit: the dots, and the week's "N new". */
 export function weekFresh(week: Pick<SinceWeek, 'fresh'>): CardRow[] {
-  return week.fresh.filter((r) => !(r.brief && r.brief.mine));
+  return week.fresh.filter((r) => !!r.brief && catchUp(r.brief));
+}
+
+/** What moved in a week before your last visit, which you have seen. */
+export function weekSeen(week: Pick<SinceWeek, 'seen'>): CardRow[] {
+  return week.seen.filter((r) => !!r.brief && catchUp(r.brief));
 }
 
 /** How many changes went live in the week, where the server can stand behind it. */
@@ -173,7 +197,7 @@ export function WeekPage({ week, slug, openKey, onOpen, onBack }: {
   );
 }
 
-/** One week, as one row of the Week by week list. */
+/** One week, as one row of What happened: its name, its dates, what went live. */
 export function WeekRow({ week, onOpen }: { week: SinceWeek; onOpen: () => void }): ReactNode {
   const t = useMessages('project');
   const live = weekLive(week);
@@ -188,22 +212,158 @@ export function WeekRow({ week, onOpen }: { week: SinceWeek; onOpen: () => void 
           {dated ? null : <span>{weekRange(week.startMs, week.endMs, week.live)}</span>}
           {fresh ? <span className="dev-ws-week-fresh">{t('project:weeks.row.fresh', { count: fresh })}</span> : null}
         </span>
-        {week.line ? <span className="dev-ws-week-line">{week.line}</span> : null}
       </span>
-      {live ? (
-        <span className="dev-ws-week-n">
-          <RichMessage
-            id={live.partial ? 'project:weeks.row.liveAtLeast' : 'project:weeks.row.live'}
-            values={{ count: live.count }}
-            components={[<b />]}
-          />
-        </span>
-      ) : null}
+      {live ? <WeekLive live={live} /> : null}
       <ChevronRightIcon className="dev-ws-wrow-chev" aria-hidden="true" />
     </button>
   );
 }
 
-/** How many weeks the list opens with, and how many each "Show earlier weeks" adds. */
+/** "496 live", the figure in green; "496+ live" when it is a floor. */
+function WeekLive({ live }: { live: { count: number; partial: boolean } }): ReactNode {
+  return (
+    <span className="dev-ws-week-n">
+      <RichMessage
+        id={live.partial ? 'project:weeks.row.liveAtLeast' : 'project:weeks.row.live'}
+        values={{ count: live.count }}
+        components={[<b />]}
+      />
+    </span>
+  );
+}
+
+/** A merge still rolling out to the people using the app (statusPillState's keys). */
+const GOING_LIVE = new Set(['deploying', 'delivery_pending', 'merging']);
+
+/**
+ * One row of this week, on one line: a dot when it moved since your last
+ * visit, what it is (a request, a change, live work, a vote), its title (a
+ * link to its page, stretched over the row, and opened beside the list on a
+ * wide window), "You" on your own, "Going live" on a merge still rolling
+ * out (or the pill's own words when it is stuck), and when it moved. On a
+ * phone the title wraps and the rest goes under it (app.css).
+ */
+export function HappenedRow({ row, fresh, slug, on = false, onOpen }: {
+  row: CardRow;
+  fresh: boolean;
+  slug: string;
+  on?: boolean;
+  onOpen?: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const b = row.brief;
+  if (!b) return null;
+  const card = row.card;
+  const href = openHref(slug, card);
+  const ref = topicRef(card);
+  const s = card.pill?.state || null;
+  const going = b.kind === 'live' && !!s && GOING_LIVE.has(s.key);
+  const stuck = b.kind === 'live' && !!s && !going && s.tone === 'blocked';
+  const Glyph = TILE[b.kind] || PencilSquareIcon;
+  const at = Number(row.at) || 0;
+  const when = at > 0 ? agoStamp(at) : null;
+  return (
+    <li
+      className="dev-ws-hrow"
+      data-ws-row={row.key}
+      data-ws-kind={b.kind}
+      data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
+      data-new={fresh ? '' : undefined}
+      data-on={on ? '1' : undefined}
+    >
+      {fresh
+        ? <span className="dev-ws-hrow-dot" role="img" aria-label={t('project:happened.row.new')} />
+        : <span className="dev-ws-hrow-dot" aria-hidden="true" />}
+      <span className="dev-ws-hrow-glyph" data-kind={b.kind} aria-hidden="true">
+        {going ? <span className="dc-status-spinner-arc" /> : <Glyph />}
+      </span>
+      <span className="dev-ws-hrow-main">
+        {href ? (
+          <a
+            className="dev-ws-hrow-link"
+            href={href}
+            aria-current={on ? 'true' : undefined}
+            onClick={ref && onOpen ? (e) => onOpen(e, ref) : undefined}
+          >
+            {card.title.text}
+          </a>
+        ) : <span className="dev-ws-hrow-link">{card.title.text}</span>}
+        <span className="dev-ws-hrow-meta">
+          {b.mine ? <span className="dev-ws-hrow-you">{t('project:happened.row.you')}</span> : null}
+          {going ? <span className="dev-ws-hrow-tag" data-tone="run">{t('project:happened.row.goingLive')}</span> : null}
+          {stuck && s ? <span className="dev-ws-hrow-tag" data-tone="bad">{s.label}</span> : null}
+          {when && when.text ? (
+            <time className="dev-ws-hrow-ago" dateTime={new Date(at).toISOString()} title={when.title}>{when.text}</time>
+          ) : null}
+        </span>
+      </span>
+    </li>
+  );
+}
+
+/** How many of this week's new rows What happened draws, and how many seen ones after them. */
+export const THIS_WEEK_NEW_MAX = 10;
+export const THIS_WEEK_SEEN = 3;
+
+/**
+ * This week, at the head of What happened: its name and dates, "5 new"
+ * (what moved since your last visit), "496 live", then its rows newest
+ * first, the new ones and a few you have seen, then "All of this week",
+ * which opens the week's own page. A quiet visit has no new ones to draw;
+ * a first visit has no rows at all, only the week and its figure.
+ */
+export function ThisWeek({ week, slug, openKey, onOpen, onAll }: {
+  week: SinceWeek;
+  slug: string;
+  openKey: string | null;
+  onOpen: (event: MouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
+  onAll: () => void;
+}): ReactNode {
+  const t = useMessages('project');
+  const live = weekLive(week);
+  const fresh = weekFresh(week);
+  const rows = [
+    ...fresh.slice(0, THIS_WEEK_NEW_MAX).map((row) => ({ row, fresh: true })),
+    ...weekSeen(week).slice(0, THIS_WEEK_SEEN).map((row) => ({ row, fresh: false })),
+  ];
+  const keyOf = (row: CardRow) => {
+    const ref = topicRef(row.card);
+    return ref ? `${ref.kind}:${ref.id}` : null;
+  };
+  return (
+    <div className="dev-ws-hweek" data-ws-this-week={week.key}>
+      <div className="dev-ws-hweek-head">
+        <span className="dev-ws-week-head">
+          <b>{weekName(week)}</b>
+          <span>{weekRange(week.startMs, week.endMs, week.live)}</span>
+          {fresh.length ? <span className="dev-ws-week-fresh">{t('project:weeks.row.fresh', { count: fresh.length })}</span> : null}
+        </span>
+        {live ? <WeekLive live={live} /> : null}
+      </div>
+      {rows.length ? (
+        <ul className="dev-ws-hlist">
+          {rows.map(({ row, fresh: isNew }) => (
+            <HappenedRow
+              key={row.key}
+              row={row}
+              fresh={isNew}
+              slug={slug}
+              on={!!openKey && keyOf(row) === openKey}
+              onOpen={onOpen}
+            />
+          ))}
+        </ul>
+      ) : null}
+      {week.fresh.length || week.seen.length || week.line ? (
+        <button type="button" className="dev-ws-reveal touch-target-32" data-ws-week={week.key} data-ws-week-all="" onClick={onAll}>
+          {t('project:happened.allOfWeek')}
+          <ChevronRightIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** How many weeks before this one What happened lists, and how many each "Earlier weeks" adds. */
 export const WEEKS_FIRST = 2;
 export const WEEKS_STEP = 4;

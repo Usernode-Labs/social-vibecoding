@@ -18,14 +18,15 @@
 // (NeedsFeed, through tests/lib/render-tsx.js) on a project page or on the
 // Communities screen, with the tab bar and the Resume strip up. Into it goes
 // each sheet as workshop.tsx renders it: the vote sheet INSIDE the rail with
-// the vote form rendered by NeedsVoteForm, Ask, Comments and Description
-// beside it, plus the change page's kit sheet (`.un-sheet`) for comparison.
+// the vote form rendered by NeedsVoteForm, the one sheet whose two tabs are
+// Comments and Ask beside it, plus the change page's kit sheet (`.un-sheet`)
+// for comparison.
 // `data-ws-sheet` and, with the keyboard up, `data-ws-kb` are set on the feed
 // root the way workshop.tsx's state and keyboard effect set them.
 //
 // What it asserts, for each action at a sheet's foot (Cancel and the send on
 // the vote sheets, the send and the field on Ask, the last line of a long
-// Comments or Description body scrolled to its end, and Close): its box is
+// Comments body scrolled to its end, and Close): its box is
 // inside the visible viewport (above the keys when they are up), and
 // elementFromPoint at its centre is the control itself, not #platform-tabs or
 // #platform-parked. With the keys up on the vote sheet, the focused line box
@@ -63,21 +64,22 @@ const item = {
 const rows = reelRows([item, { ...item, id: 43, title: 'A second change' }]);
 const noop = () => {};
 const feed = renderToHtml(createElement(W.NeedsFeed, {
-  rows, total: 2, models: { list: [], selected: null }, slug: 'demo-app', canPost: true, onDone: noop, doneLabel: 'Back',
+  rows, models: { list: [], selected: null }, slug: 'demo-app', canPost: true, onDone: noop, doneLabel: 'Back',
 }));
 const form = (side) => renderToHtml(createElement(W.NeedsVoteForm, {
   row: rows[0], side, line: '', onSide: noop, onLine: noop, onBoxKey: noop, onCancel: noop, onSend: noop,
 }));
 const ask = 'Should this change go in?';
 const voteSheet = (side) => `<div class="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label="${ask}"><button type="button" class="dev-ws-scrim" aria-label="Close"></button><div class="dev-ws-sheet-card"><span class="dev-ws-sheet-handle" aria-hidden="true"></span><p class="dev-ws-ask-q">${ask}</p><p class="dev-ws-vote-sub">0 of 2 have said yes so far.</p>${form(side)}<p class="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Enter vote · Esc close</p></div></div>`;
-const head = (t, s) => `<span class="dev-ws-sheet-handle" aria-hidden="true"></span><div class="dev-ws-sheet-head"><span><span class="dev-ws-sheet-title">${t}</span>${s ? `<span class="dev-ws-sheet-sub">${s}</span>` : ''}</span><button type="button" class="dev-ws-sheet-x">Close</button></div>`;
 const long = Array.from({ length: 14 }, (_, i) => `<p>Paragraph ${i + 1}: the settings page draws its colours from the phone, and the switch remembers the choice.</p>`).join('');
+// Comments and Ask are the two tabs of ONE sheet (workshop.tsx): its kind is
+// the tab, both tab bodies are mounted, the other one \`hidden\`.
+const talk = (tab) => `<div class="dev-ws-sheet-modal dev-ws-sheet-talk" data-ws-sheet="${tab}" role="dialog" aria-label="Comments and questions"><button type="button" class="dev-ws-scrim" aria-label="Close"></button><section class="dev-ws-sheet-card dev-ws-talk" data-ws-talk=""><span class="dev-ws-sheet-handle" aria-hidden="true"></span><div class="dev-ws-talk-head" data-ws-talk-head=""><h3 class="dev-ws-talk-title">Add a dark theme</h3></div><div class="dev-ws-talk-tabs"><div class="dev-ws-talk-tablist" role="tablist" aria-label="Comments or ask"><button type="button" role="tab" class="dev-ws-talk-tab" data-ws-talk-tab="comments" aria-selected="${tab === 'comments'}">Comments <span class="dev-ws-talk-n">3</span></button><button type="button" role="tab" class="dev-ws-talk-tab" data-ws-talk-tab="ask" aria-selected="${tab === 'ask'}">Ask</button></div><button type="button" class="dev-ws-sheet-x" aria-label="Close">×</button></div><div class="dev-ws-sheet-body" data-ws-comments="" role="tabpanel"${tab === 'comments' ? '' : ' hidden=""'}>${long}<p data-last="">The last comment.</p></div><div class="dev-ws-ask" data-ws-ask="" role="tabpanel"${tab === 'ask' ? '' : ' hidden=""'}><p class="dev-ws-ask-private">Only you can see what you ask here.</p><div class="dev-ws-ask-log" data-ws-ask-log=""><p class="dev-ws-ask-hint">Ask what this changes, who it affects, or what happens if it goes in.</p></div><form class="dev-ws-ask-composer dc-card"><div class="dev-ws-ask-line"><input id="dev-ws-ask-input" class="dev-ws-ask-input" type="text" placeholder="Ask a question…"></div><div class="dev-ws-ask-row"><button type="submit" class="dc-send-btn dc-circle-send dev-ws-ask-send" aria-label="Ask"></button></div></form></div></section></div>`;
 const sheets = {
   'vote-yes': voteSheet('yes'),
   'vote-no': voteSheet('no'),
-  ask: `<div class="dev-ws-sheet-modal dev-ws-sheet-ask" data-ws-sheet="ask" role="dialog" aria-label="Ask about this item"><button type="button" class="dev-ws-scrim" aria-label="Close"></button><section class="dev-ws-ask dev-ws-sheet-card" data-ws-ask="">${head('Ask about this change', 'private to you')}<div class="dev-ws-ask-log" data-ws-ask-log=""><p class="dev-ws-ask-hint">Ask what this changes, who it affects, or what happens if it goes in.</p></div><form class="dev-ws-ask-composer dc-card"><div class="dev-ws-ask-line"><input id="dev-ws-ask-input" class="dev-ws-ask-input" type="text" placeholder="Ask a question…"></div><div class="dev-ws-ask-row"><button type="submit" class="dc-send-btn dc-circle-send dev-ws-ask-send" aria-label="Ask"></button></div></form></section></div>`,
-  comments: `<div class="dev-ws-sheet-modal dev-ws-sheet-comments" data-ws-sheet="comments" role="dialog" aria-label="Comments"><button type="button" class="dev-ws-scrim" aria-label="Close"></button><section class="dev-ws-sheet-card" data-ws-comments="">${head('3 comments', 'on this change')}<div class="dev-ws-sheet-body">${long}<p data-last="">The last comment.</p></div></section></div>`,
-  description: `<div class="dev-ws-sheet-modal dev-ws-sheet-description" data-ws-sheet="description" role="dialog" aria-label="Description"><button type="button" class="dev-ws-scrim" aria-label="Close"></button><section class="dev-ws-sheet-card" data-ws-description="">${head('Description')}<div class="dev-ws-sheet-body"><h3 class="dev-ws-desc-title">Add a dark theme</h3><div class="dev-ws-desc-body">${long}</div><a class="dev-ws-desc-open" data-last="" href="#x">Open the proposal</a></div></section></div>`,
+  ask: talk('ask'),
+  comments: talk('comments'),
   // The change page's vote picker, as the kit presents it (dev-card.tsx
   // VotePicker in `.dev-vote-sheet`, appended to <body> by presentSheet).
   'kit-no': `<div class="un-backdrop" style="opacity:1"></div><div class="un-sheet" style="transform:none"><div class="un-sheet-grabber"></div><div class="un-sheet-body"><div class="dev-vote-sheet-host">${form('no').replace('class="dev-ws-vote-form" data-ws-vote-form=""', 'class="dev-vote-sheet" role="dialog" aria-label="Your vote" data-vote-sheet=""')}</div></div></div>`,
@@ -157,7 +159,7 @@ const cases = [];
 for (const [size, [w, h]] of Object.entries(phones)) {
   for (const surface of ['project', 'communities']) {
     for (const layout of ['app', 'browser']) {
-      for (const sheet of ['vote-yes', 'vote-no', 'ask', 'comments', 'description', 'kit-no']) {
+      for (const sheet of ['vote-yes', 'vote-no', 'ask', 'comments', 'kit-no']) {
         cases.push({
           size, w, h, surface, layout, sheet, kb: 'none', inset: 0,
           safeBottom: layout === 'app' ? 34 : 0, safeTop: layout === 'app' ? 62 : 0,

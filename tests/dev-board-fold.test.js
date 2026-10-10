@@ -247,8 +247,9 @@ test('the board unfolds nothing in place: ?cards=open draws the fold’s open sh
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // The Workshop's By category draws the board's rows (#4486), so it no
   // longer imports the fold's row at all; `openHref` rides the same import
-  // since the Needs-you feed.
-  assert.match(WORKSHOP, /import \{ callAppView, openHref \} from '\.\.\/card\/fold';/);
+  // since the Needs-you feed, and `voteSpecs` since Your work's rows carry
+  // a change's own Vote (After-Workshop-B).
+  assert.match(WORKSHOP, /import \{ callAppView, openHref, voteSpecs \} from '\.\.\/card\/fold';/);
   assert.ok(!/CardRowView/.test(WORKSHOP), 'By category unfolds nothing in place');
   for (const fn of ['function FoldedRow', 'function UnfoldedRow', 'function CardRowView', 'function RowBand']) {
     assert.ok(FOLD.includes(fn), `${fn} lives in fold.tsx`);
@@ -1705,12 +1706,14 @@ test('the open card is the fold’s sheet, and never picks up the Needs-you deck
     'the deck’s dialogs are the fixed, full-screen thing');
   assert.ok(!/^\.dev-ws-sheet \{/m.test(CSS),
     'and nothing is keyed on the bare name, which is one open card sitting in its row');
-  for (const kind of ['vote', 'ask', 'comments']) {
+  // Two dialogs since the reel redesign: the vote, and the one sheet whose
+  // two tabs are Comments and Ask.
+  for (const kind of ['vote', 'talk']) {
     assert.match(WORKSHOP, new RegExp(`className="dev-ws-sheet-modal dev-ws-sheet-${kind}"`),
       `the ${kind} dialog carries the deck’s base class`);
   }
   assert.ok(!/className="dev-ws-sheet dev-ws-sheet-/.test(WORKSHOP),
-    'and none of the three carries the fold’s');
+    'and neither carries the fold’s');
   // The open card keeps the bare name, because two declared checks select it
   // that way — which is also why the deck is the side that moved.
   assert.match(FOLD, /<div className="dev-feed-entry dev-ws-sheet" data-ws-sheet=\{row\.key\}>/);
@@ -1899,7 +1902,7 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // the title, then the sentence, then the caption) with the same `+`/`~`
   // direction.
   assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
-  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption"?$/);
+  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-caption > \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary"?$/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);

@@ -1095,7 +1095,7 @@
     {
       "name": "A board card unfolds into the same sheet the Workshop's does: the comment tail and the reply box under it (#1884)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-issue-row] ~ .dev-feed-comments[data-comments-for] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
+      "expectSelector": "#dev-kanban .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-issue-row] ~ .dev-feed-comments[data-comments-for] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
     },
     {
       "name": "Dev board: an issue card with no pills drops its status band instead of reserving an empty row (#1139)",
@@ -2155,20 +2155,20 @@
       "expectText": "Submitted features"
     },
     {
-      "name": "A project's Workshop tab holds All items' number tiles",
+      "name": "A project's Workshop tab opens on its Overview: All items' four number tiles, under the Overview label",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] ~ [data-ws-dash-cell=\"shipped\"] > b"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"overview\"] + [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"unclaimed\"] + [data-ws-dash-cell=\"votes\"] + [data-ws-dash-cell=\"shipped\"] > b"
     },
     {
-      "name": "Workshop: Your work stays on screen when it is empty, and says so (#2182), under the approval rules",
+      "name": "Workshop: Your work stays on screen when it is empty, and says so (#2182), first under What's happening",
       "path": "/?demo=1&shot=mine-empty&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-approval-rules] ~ [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-part=\"happening\"] + [data-ws-mine] [data-ws-lane=\"mine\"] > [data-ws-mine-empty]",
       "expectText": "You have no work going on."
     },
     {
       "name": "Hub: Your work stays when nothing is in progress, and says so (#3489)",
       "path": "/?demo=1&shot=mine-empty&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-mine-card] > [data-ws-mine-empty]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-mine-card] [data-ws-mine-empty=\"\"]",
       "expectText": "No work in progress."
     },
     {
@@ -2406,14 +2406,14 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "Re-pointed: the ⋯ ends the hero's actions row, after Invite, with Joined across from it",
+      "name": "Re-pointed: the ⋯ ends the hero's actions row, after Invite, in the hub's head after the project's name (across from it on a wide window)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-ws-hero[data-ws-community] .dev-ws-hero-row > .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn"
+      "expectSelector": "#dev-workshop .dev-ws-hero.dev-ws-hero-summary[data-ws-community] > .dev-ws-hero-id ~ .dev-ws-hero-row > .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn"
     },
     {
-      "name": "A project's page opens on its Hub, the place bar naming it, with the votes you owe as a door and a 14-day trend on the hero",
+      "name": "A project's page opens on its Hub, the place bar naming it, with who is around this week on the hero and the votes you owe as For you's first door",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(> [data-ws-band][data-place-bar=\"status\"]):has([data-ws-members-trend]) > .dev-ws-tabbody > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]",
+      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(> [data-ws-band][data-place-bar=\"status\"]):has(.dev-ws-hero [data-ws-active-people]) > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]",
       "expectText": "to vote"
     },
     {
@@ -2449,15 +2449,15 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-kanban-card .dev-ws-wrow.dev-ws-brow[data-issue-row] > .dev-ws-wrow-main > a.dev-ws-wrow-link[href*=\"/dev/issues/\"]"
     },
     {
-      "name": "A project's Workshop tab leads All items with its one line on what the open work is about",
+      "name": "A project's Workshop tab says where most of the open work is, as chips under All items' figures",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-open-line]",
-      "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-open-topics] > .dev-ws-ov-chips > [data-ws-topic-chip]",
+      "expectText": "Most open work is in"
     },
     {
-      "name": "A project's hub leads with a hero that says who it is for (communities); opened from an invite link, who invited you and Join come first in it (#3700)",
+      "name": "A project's hub leads with a hero that says what it is and who it is for (communities); opened from an invite link, who invited you and Join come first in it (#3700)",
       "path": "/?shot=invite-join#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"]:has(> .dev-ws-invite:first-child [data-ws-invite-join]) [data-ws-community-audience]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-hero[data-ws-community][data-audience=\"open\"]:has(> .dev-ws-invite:first-child [data-ws-invite-join]) > .dev-ws-hero-id [data-ws-community-name] + [data-ws-members-cell] > [data-ws-community-audience]",
       "expectText": "Public community"
     },
     {
@@ -2503,9 +2503,9 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
-      "name": "Workshop: the Workshop is the place lit, a dot on its row says All items' search is still on, and the search leaves its numbers whole, with no 'nothing matches' note (#2915, #4417)",
+      "name": "Workshop: the Workshop is the place lit, a dot on its row says All items' search is still on, and the search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417)",
       "path": "/?demo=1&ws=workshop&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has([data-places] [data-place=\"workshop\"][aria-current=\"page\"] [data-ws-filtered]) #dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"]) .dev-ws-tabbody > [data-ws-dashboard]",
+      "expectSelector": "body:has([data-places] [data-place=\"workshop\"][aria-current=\"page\"] [data-ws-filtered]) #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-place-bar=\"workshop\"]) [data-ws-part=\"overview\"] + [data-ws-dashboard]",
       "expectText": "All items"
     },
     {
@@ -2537,9 +2537,9 @@
       "expectText": "Vote"
     },
     {
-      "name": "A Needs-you item leads with who and when, then its title, then the sentence a voter reads, then the caption; a change with no shots shows its author's diagram under that sentence (#4490)",
+      "name": "A Needs-you item's picture fills the card and the caption over it leads with who and when, then its title, then the sentence a voter reads; a change with no shots has its author's diagram as that picture (#4490)",
       "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs]:has(.dev-ws-item-summary + [data-ws-diagram=rename]) > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"]:not([data-ws-swipeable]) > .dev-ws-item-by + .dev-ws-item-title + .dev-ws-item-summary ~ .dev-ws-item-caption"
+      "expectSelector": "#dev-workshop [data-ws-needs]:has([data-ws-diagram=rename] ~ .dev-ws-item-caption) > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"]:not([data-ws-swipeable]) > .dev-ws-item-caption > .dev-ws-item-by + .dev-ws-item-title + .dev-ws-item-summary"
     },
     {
       "name": "The Needs-you feed's rail offers Ask, which opens the question box about the item in front of you",
@@ -2548,10 +2548,10 @@
       "expectText": "Ask"
     },
     {
-      "name": "#2172: one card past the last Needs-you item is a summary that says that's it, with the way back",
+      "name": "#2172: one card past the last Needs-you item says that's it and how many you reviewed, with the way on to what is live",
       "path": "/?demo=1&ws=needs&shot=needs-end#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-cta",
-      "expectText": "See what changed this week"
+      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-scroll > [data-ws-item][data-ws-kind=\"vote\"] ~ [data-ws-item=\"done\"][data-ws-kind=\"done\"] > .dev-ws-done-body > .dev-ws-needs-done-line + .dev-ws-needs-done-sub ~ .dev-ws-done-actions > .dev-ws-done-cta",
+      "expectText": "See what’s live"
     },
     {
       "name": "#2761: on the Workshop the menu's Go to community hub row is a plain link, not a selected toggle segment",
@@ -2580,28 +2580,28 @@
       "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
     },
     {
-      "name": "Since your last visit lists what other people did as rows, with its count and Clear, and Week by week follows, one row a week (#2183, #4457)",
+      "name": "What happened lists this week's news as rows, each a link with its dot, under Mark all seen, then a row for each week before it (#2183, #4457)",
       "path": "/?demo=1&shot=since-visit&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-head] > .dev-ws-head-n + button[data-ws-since-clear]):has(> .dev-ws-wlist > .dev-ws-wrow .dev-ws-wrow-link[href*=\"/dev/\"]) + [data-ws-weeks] > .dev-ws-wlist > button.dev-ws-week[data-ws-week]",
-      "expectText": "Week by week"
+      "expectSelector": "#dev-workshop [data-ws-happened-head]:has(> [data-ws-since-clear]:enabled) + [data-ws-happened]:has(> [data-ws-this-week] > .dev-ws-hlist > .dev-ws-hrow[data-new] .dev-ws-hrow-link[href*=\"/dev/\"]) > .dev-ws-wlist > button.dev-ws-week[data-ws-week]",
+      "expectText": "What happened"
     },
     {
-      "name": "Since your last visit with nothing new says so in one line, and the weeks are still there (#4457)",
+      "name": "What happened with nothing new says so in one line, Mark all seen waits disabled, and this week is still there (#4457)",
       "path": "/?demo=1&shot=since-seen&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-head] > button[data-ws-since-clear][disabled]) > p[data-ws-since-none]",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-happened-head]:has(> button[data-ws-since-clear][disabled]) + [data-ws-happened] > p[data-ws-since-none] + [data-ws-this-week]",
       "expectText": "Nothing new since you were last here."
     },
     {
-      "name": "A week's row opens the week as its own page in the Workshop tab, with the way back and its items grouped (#3947, #4457)",
+      "name": "This week's All of this week opens the week as its own page in the Workshop tab, with the way back and its items grouped (#3947, #4457)",
       "path": "/?demo=1&shot=week-page&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"] .dev-ws-weekpage[data-ws-week-page] > [data-ws-pagehead]:has(button[data-ws-page-back]) ~ [data-ws-week-group] > .dev-ws-wlist > .dev-ws-wrow",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"] .dev-ws-weekpage[data-ws-week-page=\"thisWeek\"] > [data-ws-pagehead]:has(button[data-ws-page-back]) ~ [data-ws-week-group] > .dev-ws-wlist > .dev-ws-wrow",
       "expectText": "This week"
     },
     {
-      "name": "A project's hub opens on what landed since your last visit, in a sentence or two, with its way to the Workshop page, week by week, in the head's corner beside the dismiss (staging demo line, #3510)",
+      "name": "A project's hub ends on what went live lately: the last three changes as pictures that open their pages, with its door to the Workshop, where what landed is listed week by week (#3510)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-since-summary=\"ai\"]:has(> .dev-ws-head > .dev-ws-hub-head-end > button[data-ws-since-summary-more] + button[data-ws-since-summary-dismiss]) > [data-ws-since-summary-text]",
-      "expectText": "Staging demo: mostly polish on Messages and Discover"
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-hub-recent]:has(button[data-ws-recent-all]) li:nth-child(3) > a.dev-ws-recent-card[href*=\"/dev/changes/\"] > .dev-ws-recent-pic + .dev-ws-recent-title",
+      "expectText": "Recently live"
     },
     {
       "name": "A project page's places are Hub, Needs you and Workshop, a line, then #general under Channels and its topics under Topics, in the column beside the strip (#4417)",
@@ -2622,16 +2622,16 @@
       "expectText": "Communities"
     },
     {
-      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Suggest an improvement leads the hero's ⋯, Build it now next, rather than ending the hub (#852 review, B8)",
+      "name": "The hub's discussion is For you's Discussion row (its last line, a door to the Discussion place, with no composer on the hub), and Suggest an improvement leads the hero's ⋯, Build it now next, rather than ending the hub (#852 review, B8)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(section[data-ws-channel=\"preview\"] button[data-ws-channel-open]):not(:has(section[data-ws-channel=\"preview\"] form)):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"issue\"]:first-child",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has([data-ws-hub-for-you] button[data-ws-channel=\"preview\"][data-ws-channel-open]):not(:has([data-ws-channel-compose])):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"issue\"]:first-child",
       "expectText": "Discussion"
     },
     {
-      "name": "The Workshop tab leads with All items, then the approval rules, then the notices panel (#3487, #3528)",
+      "name": "The Workshop tab opens on its Overview: All items with the approval rule as its last line, then the notices panel, then What's happening (#3487, #3528)",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-dashboard]:first-child + [data-ws-approval-rules]:has(> ol[data-ws-community-rule] > li.dev-ws-rule-step + li.dev-ws-rule-join + li[data-ws-rule-people]) + [data-ws-notices]",
-      "expectText": "It goes live"
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"workshop\"] > .dev-ws-tabbody > [data-ws-part=\"overview\"]:first-child + [data-ws-dashboard]:has(> [data-ws-approval-rules]:last-child > [data-ws-community-rule]) + [data-ws-notices] + [data-ws-part=\"happening\"]",
+      "expectText": "goes live when its checks pass"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -2666,9 +2666,9 @@
       "expectText": "is working on this"
     },
     {
-      "name": "A card about your own session opens the card view, with the session a link inside it (#1887)",
+      "name": "A card about your own session: the hub's Your work leads with it, and opens the Workshop, whose row opens its page (#1887)",
       "path": "/?demo=1&shot=mine-session&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-lane=\"mine-hub\"] > .dev-ws-rowwrap-open > .dev-ws-sheet > .dev-card-dense[data-session-chip] ~ .dev-ws-sheet-actions > a.dev-ws-link[data-ws-open-session][href*=\"/dev/sessions/\"]",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-hub-for-you] > .dev-ws-foryou > button[data-ws-mine-card][data-ws-mine-open=\"workshop\"] [data-ws-mine-first^=\"mine:my-session:\"][data-ws-mine-session]",
       "expectText": "[Mock] Busy own session"
     },
     {

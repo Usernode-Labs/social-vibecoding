@@ -2,8 +2,8 @@
  * The project page's Discussion tab: the community's channel, whole, in
  * place.
  *
- * The hub shows the discussion's last two messages and a way in
- * (./hub-cards.tsx ChannelCard, compact). The way in used to leave the page
+ * The hub shows the discussion's last line and a way in (./hub-cards.tsx
+ * ForYouCard, its Discussion row). The way in used to leave the page
  * for `#messages/app/<slug>`; it is a tab of the page now, so a person
  * reading the hub and a person talking in the room are on the same page with
  * the same coloured header, and Back is the tab strip rather than a screen

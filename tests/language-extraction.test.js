@@ -276,38 +276,37 @@ test('an app or an owner with no name gets an unnamed sentence that reads as the
   assert.match(src, /PlatformI18n\.t\('changes:dialog\.permission\.titleUnnamed', \{ action: view\.blurb \}\)/);
 });
 
-test('the Workshop summary\'s two-count sentences read as before, with a plural form for each count', () => {
-  const noun = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-  for (const open of [1, 2, 21]) {
-    for (const categories of [1, 2, 5, 21]) {
-      const parts = {
-        open: message('project:workshop.describe.fact.open', { count: open }),
-        categories: message('project:workshop.describe.fact.categories', { count: categories }),
-      };
-      const before = `${noun(open, 'open item', 'open items')} across ${noun(categories, 'category', 'categories')}`;
-      assert.equal(message('project:workshop.describe.openAcross', parts), `${before}.`);
-      assert.equal(message('project:workshop.describe.openAcrossBusiest', { ...parts, category: 'Sign-in' }),
-        `${before}, most of the movement in Sign-in.`);
-    }
-  }
-  for (const votes of [1, 2, 21]) {
-    for (const unclaimed of [1, 2, 21]) {
-      const before = `${votes === 1 ? '1 proposal is' : `${votes} proposals are`} waiting on votes and `
-        + `${unclaimed === 1 ? '1 open item has nobody on it' : `${unclaimed} open items have nobody on them`}.`;
-      assert.equal(message('project:workshop.describe.votesAndUnclaimed', {
-        votes: message('project:workshop.describe.fact.votesWaiting', { count: votes }),
-        unclaimed: message('project:workshop.describe.fact.unclaimed', { count: unclaimed }),
-      }), before);
+test('the Workshop\'s counted words read with a plural form for each count, and no number is tested for "one"', () => {
+  // The two-count summary sentences (describe()) went with the paragraph
+  // they built (After-Workshop-B). What the tab counts now is each a counted
+  // message of its own.
+  for (const n of [1, 2, 21]) {
+    assert.equal(message('project:workRow.replies', { count: n }), `${n} ${n === 1 ? 'comment' : 'comments'}`);
+    assert.equal(message('project:workshop.mine.open', { count: n }), `${n} open`);
+    assert.equal(message('project:workshop.fresh.count', { count: n }), `${n} since your last visit`);
+    assert.equal(message('project:workshop.dash.onYou', { count: n }), `${n} on you`);
+    assert.equal(message('project:workshop.dash.fromLastWeek', { count: n }), `from ${n}`);
+    for (const total of [2, 5, 21]) {
+      assert.equal(message('project:communityCard.line.members.some', { count: n, total }),
+        `A change goes live when its checks pass and ${n} of the ${total} active members ${n === 1 ? 'approves' : 'approve'} it.`);
+      assert.equal(message('project:communityCard.lineShort.approvers.some', { count: n, total }),
+        `Goes live when its checks pass and ${n} of the ${total} approvers ${n === 1 ? 'says' : 'say'} yes.`);
     }
   }
   // eslint-disable-next-line global-require
-  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
-  const from = src.indexOf('function describe(d: Dash)');
-  const describe = src.slice(from, src.indexOf('return sentences(parts);', from));
-  assert.ok(describe.length > 200);
-  assert.doesNotMatch(describe, /=== 1/, 'no number is tested for "one" to choose a wording');
-  assert.match(describe, /fact\.categories', \{ count: d\.themes \}/);
-  assert.match(describe, /fact\.unclaimed', \{ count: d\.unclaimed \}/);
+  const fs = require('node:fs');
+  // eslint-disable-next-line global-require
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
+  assert.ok(!/function describe\(d: Dash\)/.test(src), 'the derived sentence is gone');
+  const tiles = src.slice(src.indexOf('function DashTiles('), src.indexOf('function OpenTopics('));
+  assert.ok(tiles.length > 200);
+  assert.doesNotMatch(tiles, /=== 1/, 'no number is tested for "one" to choose a wording');
+  assert.match(tiles, /t\('project:workshop\.dash\.onYou', \{ count: owed \}\)/);
+  assert.match(tiles, /t\('project:workshop\.dash\.fromLastWeek', \{ count: d\.shippedPrevWeek \}\)/);
+  const card = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/workshop/community-card.tsx'), 'utf8');
+  const rule = card.slice(card.indexOf('export function ruleSentence('), card.indexOf('export function RuleWords('));
+  assert.doesNotMatch(rule, /count === 1|=== 1 \?/, 'nor in the rule\'s sentences: each regime is its own message');
 });
 
 test('a machine with no name is a label where it stands alone and a wording of its own inside a sentence', async (t) => {

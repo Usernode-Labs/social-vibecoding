@@ -315,6 +315,18 @@
     "text": "All items",
     "description": "Heading of the first section on a project's Workshop tab: the four figures about the project's requests and proposals."
   },
+  "workshop.part.overview": {
+    "text": "Overview",
+    "description": "Small-caps label over the first part of the Workshop tab of a project's page: the All items card with its figures, where the open work is, and the approval rule."
+  },
+  "workshop.part.happening": {
+    "text": "What's happening",
+    "description": "Small-caps label over the second part of the Workshop tab of a project's page: the viewer's own work in flight and what is new for them since their last visit."
+  },
+  "workshop.part.happened": {
+    "text": "What happened",
+    "description": "Small-caps label over the last part of the Workshop tab of a project's page: this week's changes and requests row by row, then one row for each week before it."
+  },
   "workshop.allItems.seeAll": {
     "text": "See all",
     "description": "Button at the end of the All items heading on a project's Workshop tab: opens the All items page, the whole board of requests and proposals."
@@ -355,93 +367,25 @@
     "text": "This calendar week, counted from Monday 00:00 UTC.",
     "description": "Tooltip on the \"live this week\" figure on a project's Workshop tab: says which week is counted. UTC is the time zone."
   },
-  "workshop.dash.openItems": {
-    "text": "Open items",
-    "description": "Small heading over the one-sentence summary of what the open work is about, under the four figures on a project's Workshop tab. Open is an adjective (not yet done)."
+  "workshop.dash.onYou_one": {
+    "text": "{{count}} on you",
+    "description": "Line under the \"waiting on votes\" figure on the Workshop tab of a project's page: how many of those proposals wait on the viewer's own vote. {{count}} is that number, never zero."
   },
-  "workshop.digest.failed": {
-    "text": "The model’s summary could not be written ({{error}}); it is retried within the hour, and this is worked out from the board meanwhile.",
-    "description": "Note under the summary on a project's Workshop tab, when the AI model failed to write it and a sentence built from the counts is shown instead. {{error}} is the technical reason as the server reported it, not translated."
+  "workshop.dash.onYou_other": {
+    "text": "{{count}} on you",
+    "description": "Line under the \"waiting on votes\" figure on the Workshop tab of a project's page: how many of those proposals wait on the viewer's own vote. {{count}} is that number, never zero."
   },
-  "workshop.digest.derived": {
-    "text": "Worked out from the board; the model writes one on the next pass.",
-    "description": "Note under the summary on a project's Workshop tab, when the AI model has not written one yet and a sentence built from the counts is shown instead."
+  "workshop.dash.fromLastWeek_one": {
+    "text": "from {{count}}",
+    "description": "Line under the \"live this week\" figure on the Workshop tab of a project's page, beside an up or down arrow: how many changes went live last week, for comparison. {{count}} is last week's number."
   },
-  "workshop.describe.open_one": {
-    "text": "{{count}} open item.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists: how many requests and proposals are open."
+  "workshop.dash.fromLastWeek_other": {
+    "text": "from {{count}}",
+    "description": "Line under the \"live this week\" figure on the Workshop tab of a project's page, beside an up or down arrow: how many changes went live last week, for comparison. {{count}} is last week's number."
   },
-  "workshop.describe.open_other": {
-    "text": "{{count}} open items.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists: how many requests and proposals are open."
-  },
-  "workshop.describe.openBusiest_one": {
-    "text": "{{count}} open item, most of the movement in {{category}}.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open, and the category with the most activity. {{category}} is that category's name."
-  },
-  "workshop.describe.openBusiest_other": {
-    "text": "{{count}} open items, most of the movement in {{category}}.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab: how many requests and proposals are open, and the category with the most activity. {{category}} is that category's name."
-  },
-  "workshop.describe.fact.open_one": {
-    "text": "{{count}} open item",
-    "description": "A counted phrase placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{open}} (\"3 open items across 2 categories.\"): how many requests and proposals are open. It starts the sentence. It has its own plural forms because the sentence also counts categories. No full stop."
-  },
-  "workshop.describe.fact.open_other": {
-    "text": "{{count}} open items",
-    "description": "A counted phrase placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{open}} (\"3 open items across 2 categories.\"): how many requests and proposals are open. It starts the sentence. It has its own plural forms because the sentence also counts categories. No full stop."
-  },
-  "workshop.describe.fact.categories_one": {
-    "text": "{{count}} category",
-    "description": "A counted phrase placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{categories}} (\"3 open items across 2 categories.\"): how many categories the open items are grouped into. It follows \"across\", so use the form your language needs there. No full stop."
-  },
-  "workshop.describe.fact.categories_other": {
-    "text": "{{count}} categories",
-    "description": "A counted phrase placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{categories}} (\"3 open items across 2 categories.\"): how many categories the open items are grouped into. It follows \"across\", so use the form your language needs there. No full stop."
-  },
-  "workshop.describe.openAcross": {
-    "text": "{{open}} across {{categories}}.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists. {{open}} is a counted phrase for the open items (project:workshop.describe.fact.open, \"3 open items\") and {{categories}} one for the categories they are grouped into (project:workshop.describe.fact.categories, \"2 categories\"); each already carries its number in the right plural form."
-  },
-  "workshop.describe.openAcrossBusiest": {
-    "text": "{{open}} across {{categories}}, most of the movement in {{category}}.",
-    "description": "First sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, when one category has seen the most activity. {{open}} and {{categories}} are counted phrases (project:workshop.describe.fact.open and .categories), each already in its own plural form; {{category}} is the name of the busiest category."
-  },
-  "workshop.describe.fact.votesWaiting_one": {
-    "text": "{{count}} proposal is waiting on votes",
-    "description": "A counted statement placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{votes}}: how many proposals (changes put up for a vote) are still waiting for votes. It starts the sentence. No full stop."
-  },
-  "workshop.describe.fact.votesWaiting_other": {
-    "text": "{{count}} proposals are waiting on votes",
-    "description": "A counted statement placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{votes}}: how many proposals (changes put up for a vote) are still waiting for votes. It starts the sentence. No full stop."
-  },
-  "workshop.describe.fact.unclaimed_one": {
-    "text": "{{count}} open item has nobody on it",
-    "description": "A counted statement placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{unclaimed}}: how many open items nobody has taken on. It follows \"and\". No full stop."
-  },
-  "workshop.describe.fact.unclaimed_other": {
-    "text": "{{count}} open items have nobody on them",
-    "description": "A counted statement placed in a sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists, where the sentence has {{unclaimed}}: how many open items nobody has taken on. It follows \"and\". No full stop."
-  },
-  "workshop.describe.votesAndUnclaimed": {
-    "text": "{{votes}} and {{unclaimed}}.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab, shown when no AI summary exists that joins two counted statements: {{votes}} (project:workshop.describe.fact.votesWaiting, \"2 proposals are waiting on votes\") and {{unclaimed}} (project:workshop.describe.fact.unclaimed, \"3 open items have nobody on them\"). Each already carries its number in the right plural form."
-  },
-  "workshop.describe.votesWaiting_one": {
-    "text": "{{count}} proposal is waiting on votes.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many proposals (changes put up for a vote) are still waiting for votes."
-  },
-  "workshop.describe.votesWaiting_other": {
-    "text": "{{count}} proposals are waiting on votes.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many proposals (changes put up for a vote) are still waiting for votes."
-  },
-  "workshop.describe.unclaimed_one": {
-    "text": "{{count}} open item has nobody on it.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many open items nobody has taken on."
-  },
-  "workshop.describe.unclaimed_other": {
-    "text": "{{count}} open items have nobody on them.",
-    "description": "Sentence of the fallback summary on a project's Workshop tab: how many open items nobody has taken on."
+  "workshop.overview.mostOpenIn": {
+    "text": "<0>Most open work is in</0><1></1>",
+    "description": "Line in the All items card on the Workshop tab of a project's page. <0> wraps the words; <1></1> is where the chips go, one per category with the most open work (for example \"Onboarding\", \"Infra capacity\"), each opening that category."
   },
   "workshop.pace.nonePartial": {
     "text": "Nothing has landed this week.",
@@ -495,6 +439,14 @@
     "text": "Your work",
     "description": "Heading of the section on a project's Workshop tab that lists this person's own requests, sessions and proposals in the project."
   },
+  "workshop.mine.open_one": {
+    "text": "{{count}} open",
+    "description": "Beside the \"Your work\" heading on the Workshop tab of a project's page: how many pieces of the viewer's own work are still open. {{count}} is that number."
+  },
+  "workshop.mine.open_other": {
+    "text": "{{count}} open",
+    "description": "Beside the \"Your work\" heading on the Workshop tab of a project's page: how many pieces of the viewer's own work are still open. {{count}} is that number."
+  },
   "workshop.mine.empty": {
     "text": "You have no work going on.",
     "description": "Line in the Your work section on a project's Workshop tab when this person has nothing in progress and cannot start anything from here."
@@ -519,85 +471,53 @@
     "text": "Show {{count}} more",
     "description": "Button under the Your work list on a project's Workshop tab: shows the rest of this person's items. {{count}} is how many are hidden."
   },
-  "since.title.sinceVisit": {
-    "text": "Since your last visit",
-    "description": "Heading of a section on a project's Workshop tab, for a member who has been here before: the list of what other people did since this person's last visit."
+  "workshop.fresh.title": {
+    "text": "New for you",
+    "description": "Heading of a card on the Workshop tab of a project's page: votes waiting on the viewer and requests filed since their last visit."
   },
-  "since.title.recently": {
-    "text": "Recently",
-    "description": "Heading of the same section on a project's Workshop tab for a first visit or a person who has not joined, in place of \"Since your last visit\": what moved lately."
+  "workshop.fresh.count_one": {
+    "text": "{{count}} since your last visit",
+    "description": "Beside the \"New for you\" heading on the Workshop tab of a project's page: how many rows the card holds. {{count}} is that number."
   },
-  "since.clear": {
-    "text": "Clear",
-    "description": "Button beside the \"Since your last visit\" heading on a project's Workshop tab: marks everything in the list as seen, so nothing counts as new. A verb."
+  "workshop.fresh.count_other": {
+    "text": "{{count}} since your last visit",
+    "description": "Beside the \"New for you\" heading on the Workshop tab of a project's page: how many rows the card holds. {{count}} is that number."
   },
-  "since.showAll_one": {
-    "text": "Show all {{count}}",
-    "description": "Button under the first few rows of the Since your last visit list on a project's Workshop tab: shows every row. {{count}} is how many rows there are in all."
+  "workshop.fresh.vote": {
+    "text": "Vote",
+    "description": "Button on a row of the \"New for you\" card on the Workshop tab of a project's page: opens that proposal in Needs you, where the viewer votes on it."
   },
-  "since.showAll_other": {
-    "text": "Show all {{count}}",
-    "description": "Button under the first few rows of the Since your last visit list on a project's Workshop tab: shows every row. {{count}} is how many rows there are in all."
-  },
-  "since.inWeeksBelow": {
-    "text": "What happened is in the weeks below.",
-    "description": "Line in the Recently section of a project's Workshop tab for a person with no earlier visit to compare with: it points to the Week by week list under it."
+  "workshop.fresh.buildIt": {
+    "text": "Build it",
+    "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: starts building it, by asking Homeroom bot or with the viewer's own coding agent, whichever the request's own page offers."
   },
   "since.none": {
     "text": "Nothing new since you were last here.",
     "description": "Line in the Since your last visit section of a project's Workshop tab when nobody else has done anything since this person's last visit."
   },
-  "since.words.requests_one": {
-    "text": "{{count}} new request",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many requests were filed."
+  "since.markAllSeen": {
+    "text": "Mark all seen",
+    "description": "Button beside the \"What happened\" label on the Workshop tab of a project's page: marks everything new since the viewer's last visit as seen. Disabled when nothing is new."
   },
-  "since.words.requests_other": {
-    "text": "{{count}} new requests",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many requests were filed."
+  "happened.allOfWeek": {
+    "text": "All of this week",
+    "description": "Button under this week's rows in the \"What happened\" card on the Workshop tab of a project's page: opens this week's own page, with everything in it grouped."
   },
-  "since.words.yourVote_one": {
-    "text": "{{count}} change waiting for your vote",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposed changes are up for a vote that this person has not voted on yet."
+  "happened.earlierWeeks": {
+    "text": "Earlier weeks",
+    "description": "Button at the foot of the \"What happened\" card on the Workshop tab of a project's page: lists more of the weeks before, one row each."
   },
-  "since.words.yourVote_other": {
-    "text": "{{count}} changes waiting for your vote",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposed changes are up for a vote that this person has not voted on yet."
+  "happened.row.new": {
+    "text": "New",
+    "description": "Spoken name of the dot before a row in the \"What happened\" card on the Workshop tab of a project's page: the item moved since the viewer's last visit."
   },
-  "since.words.upForVote_one": {
-    "text": "{{count}} change up for a vote",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposed changes are being voted on where this person's vote is not needed."
+  "happened.row.you": {
+    "text": "You",
+    "description": "Small label on a row in the \"What happened\" card on the Workshop tab of a project's page: the viewer made this change or request."
   },
-  "since.words.upForVote_other": {
-    "text": "{{count}} changes up for a vote",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposed changes are being voted on where this person's vote is not needed."
-  },
-  "since.words.live_one": {
-    "text": "{{count}} change live",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many changes were approved and are now part of the running project."
-  },
-  "since.words.live_other": {
-    "text": "{{count}} changes live",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many changes were approved and are now part of the running project."
-  },
-  "since.words.toVoteOn_one": {
-    "text": "{{count}} proposal to vote on",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposals about the project's rules or settings (not changes to its code) are open for a vote."
-  },
-  "since.words.toVoteOn_other": {
-    "text": "{{count}} proposals to vote on",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many proposals about the project's rules or settings (not changes to its code) are open for a vote."
-  },
-  "since.words.beingMade_one": {
-    "text": "{{count}} change being made",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many changes somebody is still working on."
-  },
-  "since.words.beingMade_other": {
-    "text": "{{count}} changes being made",
-    "description": "One fact in the sentence under the Since your last visit heading on a project's Workshop tab, which counts what other people did since this person was last here, for example \"1 new request, 2 changes live.\" It is one item of a comma-separated list, so it starts in lower case and has no full stop. {{count}} is how many changes somebody is still working on."
-  },
-  "since.words.line": {
-    "text": "{{facts}}.",
-    "description": "Closes the sentence under the Since your last visit heading on a project's Workshop tab. {{facts}} is the finished list of counted facts, already joined, for example \"1 new request, 2 changes live\"; this entry adds only the full stop that ends the sentence."
+  "happened.row.goingLive": {
+    "text": "Going live",
+    "description": "Small label on a row in the \"What happened\" card on the Workshop tab of a project's page: the change was merged and is still rolling out to the app."
   },
   "since.week.thisWeek": {
     "text": "This week",
@@ -614,14 +534,6 @@
   "since.projectStarted": {
     "text": "This project started the week of {{date}}.",
     "description": "Note under the Week by week list on a project's Workshop tab, once every week is shown. {{date}} is the Monday of the project's first week, a short date such as \"Aug 25\" or \"Aug 25, 2025\"."
-  },
-  "weeks.title": {
-    "text": "Week by week",
-    "description": "Heading of the list of past weeks on a project's Workshop tab; each row is one week and opens that week's page."
-  },
-  "weeks.showEarlier": {
-    "text": "Show earlier weeks",
-    "description": "Button under the Week by week list on a project's Workshop tab: adds rows for weeks further back."
   },
   "weeks.lastWeek": {
     "text": "Last week",
@@ -779,6 +691,42 @@
     "text": "{{first}} · {{second}}",
     "description": "Joins the short independent facts of the line under a row's title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR #4456 · evan · for #4455 · 4m ago\". {{first}} is everything said so far and {{second}} the next fact. Only the separator between them is translated."
   },
+  "workRow.replies_one": {
+    "text": "{{count}} comment",
+    "description": "One fact on a Workshop row's line, after who made it: how many comments the item has. {{count}} is that number."
+  },
+  "workRow.replies_other": {
+    "text": "{{count}} comments",
+    "description": "One fact on a Workshop row's line, after who made it: how many comments the item has. {{count}} is that number."
+  },
+  "workRow.state.inProgress": {
+    "text": "In progress",
+    "description": "First fact on a row of Your work on a project's Workshop tab: the viewer's change or request is being worked on."
+  },
+  "workRow.state.waitingForVotes": {
+    "text": "Waiting for votes",
+    "description": "First fact on a row of Your work on a project's Workshop tab: the viewer's change is up for a vote."
+  },
+  "workRow.state.pickedUp": {
+    "text": "Picked up",
+    "description": "First fact on a row of Your work on a project's Workshop tab: the viewer has picked up this request."
+  },
+  "workRow.state.goingLive": {
+    "text": "Going live",
+    "description": "First fact on a row of Your work on a project's Workshop tab: the change was approved and is rolling out."
+  },
+  "workRow.state.live": {
+    "text": "Live",
+    "description": "First fact on a row of Your work on a project's Workshop tab: the change is live."
+  },
+  "workRow.state.yourVote": {
+    "text": "Waiting on your vote",
+    "description": "First fact on a row of the \"New for you\" card on a project's Workshop tab: the proposal waits on the viewer's vote."
+  },
+  "workRow.state.newRequest": {
+    "text": "New request",
+    "description": "First fact on a row of the \"New for you\" card on a project's Workshop tab: the request was filed since the viewer's last visit."
+  },
   "needsYou.fact.approvals_one": {
     "text": "{{yes}} of {{count}} approval",
     "description": "Fact at the foot of an item in the Needs you feed and on its Description sheet: how many Yes votes a change has ({{yes}}) out of how many it needs to be approved ({{count}})."
@@ -802,6 +750,10 @@
   "needsYou.fact.no_other": {
     "text": "{{count}} no",
     "description": "Fact at the foot of an item in the Needs you feed: how many people have voted No on the change so far."
+  },
+  "needsYou.fact.yourYesPutsItLive": {
+    "text": "your yes puts it live",
+    "description": "On the line of facts under a Needs-you card's caption, after its approval count (\"0 of 1 approval · your yes puts it live\"), when exactly one more Yes meets the change's rule and the viewer's Yes counts. Lower case: it continues the line."
   },
   "needsYou.answered.votedYes": {
     "text": "Voted yes",
@@ -943,13 +895,9 @@
     "text": "Homeroom bot",
     "description": "Name shown as the author of a change in the Needs you feed when Homeroom's own building agent made it. A name: Homeroom is the product's name."
   },
-  "needsYou.by.made": {
-    "text": "<0>{{name}}</0> · made {{when}}",
-    "description": "By-line over a change in the Needs you feed when Homeroom bot built it. <0></0> makes the name bold; {{name}} is \"Homeroom bot\" and {{when}} how long ago, already written out, for example \"29m ago\"."
-  },
-  "needsYou.by.proposed": {
-    "text": "<0>{{name}}</0> · proposed {{when}}",
-    "description": "By-line over a change in the Needs you feed: who put it up for a vote and when. <0></0> makes the name bold; {{name}} is the author's username and {{when}} how long ago, already written out, for example \"3d ago\"."
+  "needsYou.by.at": {
+    "text": "<0>{{name}}</0> · {{when}}",
+    "description": "The by-line over a Needs-you card's title, and at the top of its comments panel: who submitted the change, then how long ago. <0> is the name in bold; {{when}} is a short age such as \"2h ago\"."
   },
   "needsYou.by.anonymous": {
     "text": "Proposed",
@@ -959,22 +907,6 @@
     "text": "Proposed · {{when}}",
     "description": "By-line over a change in the Needs you feed when its author is not known: it was put up for a vote, and when. {{when}} is how long ago, already written out, for example \"3d ago\"."
   },
-  "needsYou.by.filedNumberAgo": {
-    "text": "<0>#{{number}}</0> · filed by <1>{{name}}</1> · {{when}}",
-    "description": "By-line over a request in the Needs you feed: its number, who filed it and when. <0></0> and <1></1> make the number and the name bold; {{name}} is a username and {{when}} how long ago, already written out, for example \"3d ago\"."
-  },
-  "needsYou.by.filedNumber": {
-    "text": "<0>#{{number}}</0> · filed by <1>{{name}}</1>",
-    "description": "By-line over a request in the Needs you feed: its number and who filed it. <0></0> and <1></1> make the number and the name bold; {{name}} is a username."
-  },
-  "needsYou.by.filedAgo": {
-    "text": "Filed by <0>{{name}}</0> · {{when}}",
-    "description": "By-line over a request in the Needs you feed that has no number: who filed it and when. <0></0> makes the name bold; {{name}} is a username and {{when}} how long ago, already written out, for example \"3d ago\"."
-  },
-  "needsYou.by.filed": {
-    "text": "Filed by <0>{{name}}</0>",
-    "description": "By-line over a request in the Needs you feed that has no number: who filed it. <0></0> makes the name bold; {{name}} is a username."
-  },
   "needsYou.next.wide": {
     "text": "press ↓ or scroll for the next",
     "description": "Hint on an answered item in the Needs you feed on a wide window: how to move to the next item. It follows the confirmation (\"Voted yes\") after a middle dot, so it starts in lower case. ↓ is the down arrow key. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
@@ -982,10 +914,6 @@
   "needsYou.next.phone": {
     "text": "swipe up for the next",
     "description": "Hint on an answered item in the Needs you feed on a phone: how to move to the next item. It follows the confirmation (\"Voted yes\") after a middle dot, so it starts in lower case. It is one complete fact in a line of independent facts joined by the separator message project:facts.pair; it is not a clause of the fact beside it."
-  },
-  "needsYou.eyebrow.request": {
-    "text": "Request",
-    "description": "Small label at the top of an item in the Needs you feed: the item is a request (a filed issue) that nobody has taken on. A noun."
   },
   "needsYou.eyebrow.groupDecision": {
     "text": "Group decision · Waiting for your approval",
@@ -1003,9 +931,17 @@
     "text": "No plain-language summary was written for this change.",
     "description": "Shown under a proposed change's title in the Needs you feed when it has no summary."
   },
-  "needsYou.noSummary.request": {
-    "text": "This request has no description.",
-    "description": "Shown under a request's title in the Needs you feed when the person who filed it wrote no description. A request is a filed issue."
+  "needsYou.caption.more": {
+    "text": "more",
+    "description": "Small button at the end of the two-line summary in a Needs-you card's caption: grows the caption over the card's picture, with the whole description, what changes and what it touches. Lower case, as on a short video's caption."
+  },
+  "needsYou.caption.less": {
+    "text": "less",
+    "description": "Small button under a Needs-you card's opened caption: folds it back to two lines over the picture. Lower case, as on a short video's caption."
+  },
+  "needsYou.caption.whatChanges": {
+    "text": "What changes",
+    "description": "Small heading in a Needs-you card's opened caption, over the numbered list of what the change does on screen; the numbers match the outlines on its picture."
   },
   "needsYou.swipe.yes": {
     "text": "Yes",
@@ -1024,24 +960,28 @@
     "description": "Words that fade in on an item in the Needs you feed while it is dragged to the left on a phone, on a project that is just this person's: letting go declines the change."
   },
   "needsYou.end.forNow": {
-    "text": "That’s it for now.",
-    "description": "Headline of the card after the last item of the Needs you feed, when this person skipped some items."
-  },
-  "needsYou.end.done": {
-    "text": "That’s it!",
-    "description": "Headline of the card after the last item of the Needs you feed, when this person answered every item."
+    "text": "That’s it for now",
+    "description": "Headline of the card at the end of the Needs-you feed when the viewer went past some decisions without answering them; they are still in the feed above."
   },
   "needsYou.end.caughtUp": {
-    "text": "You’re all caught up.",
-    "description": "Headline of the card after the last item of the Needs you feed, when nothing was waiting on this person."
+    "text": "All caught up",
+    "description": "Headline of the card at the end of the Needs-you feed when the viewer answered everything that was waiting on them, or nothing was."
   },
-  "needsYou.end.voted_one": {
-    "text": "You voted on {{count}} change this time.",
-    "description": "Sentence on the card after the last item of the Needs you feed: how many proposed changes this person voted on in this pass. Change is a noun."
+  "needsYou.end.reviewedAll_one": {
+    "text": "You reviewed the {{count}} change that was waiting on you.",
+    "description": "Line under \"All caught up\" at the end of the Needs-you feed: the viewer voted on the one change that was waiting on them this time."
   },
-  "needsYou.end.voted_other": {
-    "text": "You voted on {{count}} changes this time.",
-    "description": "Sentence on the card after the last item of the Needs you feed: how many proposed changes this person voted on in this pass. Change is a noun."
+  "needsYou.end.reviewedAll_other": {
+    "text": "You reviewed all {{count}} changes that were waiting on you.",
+    "description": "Line under \"All caught up\" at the end of the Needs-you feed: the viewer voted on every change that was waiting on them this time."
+  },
+  "needsYou.end.reviewedSome_one": {
+    "text": "You reviewed {{done}} of the {{count}} change that was waiting on you.",
+    "description": "Line under \"That's it for now\" at the end of the Needs-you feed: how many of the changes waiting on the viewer they voted on this time. {{done}} is how many, {{count}} how many there were."
+  },
+  "needsYou.end.reviewedSome_other": {
+    "text": "You reviewed {{done}} of {{count}} changes that were waiting on you.",
+    "description": "Line under \"That's it for now\" at the end of the Needs-you feed: how many of the changes waiting on the viewer they voted on this time. {{done}} is how many, {{count}} how many there were."
   },
   "needsYou.end.skipped_one": {
     "text": "You skipped {{count}}. It stays above if you change your mind.",
@@ -1051,33 +991,53 @@
     "text": "You skipped {{count}}. They stay above if you change your mind.",
     "description": "Sentences on the card after the last item of the Needs you feed: how many items this person passed without answering. They are still in the feed, above this card."
   },
-  "needsYou.end.nothingElse": {
-    "text": "Nothing else needs you right now.",
-    "description": "Sentence on the card after the last item of the Needs you feed, when this person answered everything in it."
-  },
   "needsYou.end.allAnswered": {
-    "text": "Every change you can vote on has your answer, and every open request has somebody on it.",
-    "description": "Sentence on the card that is the whole Needs you feed when nothing is waiting on this person. A request is a filed issue."
+    "text": "Every change you can vote on has your answer.",
+    "description": "Line under \"All caught up\" at the end of the Needs-you feed when nothing was waiting on the viewer's vote."
   },
-  "needsYou.end.ringAll_one": {
-    "text": "All {{count}} open changes voted on",
-    "description": "Tooltip of the progress ring on the card after the last item of the Needs you feed, when this person has voted on every open proposed change. {{count}} is how many there are."
+  "needsYou.end.didHeading": {
+    "text": "What your votes did",
+    "description": "Heading over the list, on the card at the end of the Needs-you feed, of each change the viewer voted on this time and where it stands now."
   },
-  "needsYou.end.ringAll_other": {
-    "text": "All {{count}} open changes voted on",
-    "description": "Tooltip of the progress ring on the card after the last item of the Needs you feed, when this person has voted on every open proposed change. {{count}} is how many there are."
+  "needsYou.end.status.live": {
+    "text": "Live",
+    "description": "Status beside a change in \"What your votes did\" at the end of the Needs-you feed: it went in and people are using it now."
   },
-  "needsYou.end.ringSome_one": {
-    "text": "{{done}} of {{count}} open changes voted on",
-    "description": "Tooltip of the progress ring on the card after the last item of the Needs you feed: how many of the open proposed changes this person has voted on ({{done}}) out of all of them ({{count}})."
+  "needsYou.end.status.goingLive": {
+    "text": "Going live",
+    "description": "Status beside a change in \"What your votes did\" at the end of the Needs-you feed: its rule is met and it is going in now."
   },
-  "needsYou.end.ringSome_other": {
-    "text": "{{done}} of {{count}} open changes voted on",
-    "description": "Tooltip of the progress ring on the card after the last item of the Needs you feed: how many of the open proposed changes this person has voted on ({{done}}) out of all of them ({{count}})."
+  "needsYou.end.status.waiting_one": {
+    "text": "Waiting for {{count}} more",
+    "description": "Status beside a change in \"What your votes did\" at the end of the Needs-you feed: how many more Yes votes its rule still needs."
   },
-  "needsYou.end.seeWeek": {
-    "text": "See what changed this week",
-    "description": "Main button on the card after the last item of a project's Needs you feed: goes back to the project's Hub."
+  "needsYou.end.status.waiting_other": {
+    "text": "Waiting for {{count}} more",
+    "description": "Status beside a change in \"What your votes did\" at the end of the Needs-you feed: how many more Yes votes its rule still needs."
+  },
+  "needsYou.end.status.backToAuthor": {
+    "text": "Back to the author",
+    "description": "Status beside a change in \"What your votes did\" at the end of the Needs-you feed, when the viewer voted no: their no and the line they wrote with it went to the change's author."
+  },
+  "needsYou.end.overTheLine": {
+    "text": "Your yes put it over the line",
+    "description": "Headline of the note at the top of the card at the end of the Needs-you feed, when the viewer's Yes was the one that met a change's rule."
+  },
+  "needsYou.end.overGoingLive": {
+    "text": "{{title}} is going live now.",
+    "description": "Line under \"Your yes put it over the line\" at the end of the Needs-you feed. {{title}} is the change's title."
+  },
+  "needsYou.end.overLive": {
+    "text": "{{title}} is live now.",
+    "description": "Line under \"Your yes put it over the line\" at the end of the Needs-you feed, once the change has gone live. {{title}} is the change's title."
+  },
+  "needsYou.end.seeLive": {
+    "text": "See what’s live",
+    "description": "Main button on the card at the end of a project's Needs-you feed: opens the project's Workshop, with what went live lately."
+  },
+  "needsYou.end.backToHub": {
+    "text": "Back to Hub",
+    "description": "Second button on the card at the end of a project's Needs-you feed: back to the project's Hub."
   },
   "needsYou.end.backToSkipped": {
     "text": "Back to the first one you skipped",
@@ -1099,21 +1059,9 @@
     "text": "Ask",
     "description": "Accessible name of the round send button in the Ask sheet of the Needs you feed: sends the question to the AI model. A verb."
   },
-  "needsYou.ask.dialog": {
-    "text": "Ask about this item",
-    "description": "Accessible name of the Ask sheet in the Needs you feed: a private question-and-answer box with an AI model about the item on screen."
-  },
-  "needsYou.ask.titleChange": {
-    "text": "Ask about this change",
-    "description": "Title of the Ask sheet in the Needs you feed when the item on screen is a proposed change. Ask is a verb; change is a noun."
-  },
-  "needsYou.ask.titleRequest": {
-    "text": "Ask about this request",
-    "description": "Title of the Ask sheet in the Needs you feed when the item on screen is a request (a filed issue). Ask is a verb; request is a noun."
-  },
   "needsYou.ask.private": {
-    "text": "private to you",
-    "description": "Small note beside the title of the Ask sheet in the Needs you feed: nobody else sees the questions and answers. Lower case, as a gloss on the title."
+    "text": "Only you can see what you ask here.",
+    "description": "Line at the top of the Ask tab on a Needs-you card's sheet: the questions and answers are the viewer's own and nobody else sees them."
   },
   "needsYou.ask.hint": {
     "text": "Ask what this changes, who it affects, or what happens if it goes in. Answered from what the platform knows about it.",
@@ -1167,17 +1115,17 @@
     "text": "Vote",
     "description": "Button beside an item in the Needs you feed: opens the sheet where this person votes Yes or No on the change. A verb."
   },
-  "needsYou.rail.take": {
-    "text": "Take it",
-    "description": "Button beside a request in the Needs you feed: this person takes the request on, to work on it themselves."
-  },
-  "needsYou.rail.description": {
-    "text": "Description",
-    "description": "Button beside an item in the Needs you feed: opens a sheet with the item's full description, its declared changes and its facts."
-  },
   "needsYou.rail.comments": {
     "text": "Comments",
     "description": "Button beside an item in the Needs you feed, when the item has no comments yet: opens the sheet with the item's comments. With comments, the button shows their number instead."
+  },
+  "needsYou.rail.commentsCount_one": {
+    "text": "{{count}} comment",
+    "description": "What a screen reader says for the Comments button on the rail beside a Needs-you card, which shows only the number when there are comments."
+  },
+  "needsYou.rail.commentsCount_other": {
+    "text": "{{count}} comments",
+    "description": "What a screen reader says for the Comments button on the rail beside a Needs-you card, which shows only the number when there are comments."
   },
   "needsYou.rail.ask": {
     "text": "Ask",
@@ -1219,10 +1167,6 @@
     "text": "<0>V</0> vote",
     "description": "Entry in the list of keyboard shortcuts under the Needs you feed: the V key opens the vote sheet. <0></0> draws the key; keep the letter V. Vote is a verb."
   },
-  "needsYou.keys.description": {
-    "text": "<0>D</0> description",
-    "description": "Entry in the list of keyboard shortcuts under the Needs you feed: the D key opens the item's Description sheet. <0></0> draws the key; keep the letter D."
-  },
   "needsYou.keys.ask": {
     "text": "<0>A</0> ask",
     "description": "Entry in the list of keyboard shortcuts under the Needs you feed: the A key opens the Ask sheet, a private question box about the item. <0></0> draws the key; keep the letter A. Ask is a verb."
@@ -1239,69 +1183,33 @@
     "text": "<0>M</0> more",
     "description": "Entry in the list of keyboard shortcuts under the Needs you feed: the M key opens the item's menu of further actions. <0></0> draws the key; keep the letter M."
   },
-  "needsYou.comments.dialog": {
-    "text": "Comments",
-    "description": "Accessible name of the Comments sheet in the Needs you feed: the comments on the item on screen."
-  },
-  "needsYou.comments.titleChange": {
-    "text": "<0>Comments</0><1>on this change</1>",
-    "description": "Title of the Comments sheet in the Needs you feed for a proposed change that has no comments counted. <0></0> is the title and <1></1> a quieter gloss beside it; the layout puts the gap between them."
-  },
-  "needsYou.comments.titleRequest": {
-    "text": "<0>Comments</0><1>on this request</1>",
-    "description": "Title of the Comments sheet in the Needs you feed for a request (a filed issue) that has no comments counted. <0></0> is the title and <1></1> a quieter gloss beside it; the layout puts the gap between them."
-  },
-  "needsYou.comments.countChange_one": {
-    "text": "<0>{{count}} comment</0><1>on this change</1>",
-    "description": "Title of the Comments sheet in the Needs you feed for a proposed change: how many comments it has. <0></0> is the title and <1></1> a quieter gloss beside it; the layout puts the gap between them."
-  },
-  "needsYou.comments.countChange_other": {
-    "text": "<0>{{count}} comments</0><1>on this change</1>",
-    "description": "Title of the Comments sheet in the Needs you feed for a proposed change: how many comments it has. <0></0> is the title and <1></1> a quieter gloss beside it; the layout puts the gap between them."
-  },
-  "needsYou.comments.countRequest_one": {
-    "text": "<0>{{count}} comment</0><1>on this request</1>",
-    "description": "Title of the Comments sheet in the Needs you feed for a request (a filed issue): how many comments it has. <0></0> is the title and <1></1> a quieter gloss beside it; the layout puts the gap between them."
-  },
-  "needsYou.comments.countRequest_other": {
-    "text": "<0>{{count}} comments</0><1>on this request</1>",
-    "description": "Title of the Comments sheet in the Needs you feed for a request (a filed issue): how many comments it has. <0></0> is the title and <1></1> a quieter gloss beside it; the layout puts the gap between them."
-  },
   "needsYou.comments.none": {
     "text": "No comments yet.",
     "description": "Text in the Comments sheet of the Needs you feed when the item has no comments and no thread to post in."
   },
-  "needsYou.description.title": {
-    "text": "Description",
-    "description": "Title and accessible name of the Description sheet in the Needs you feed: the item's full description, its declared changes and its facts."
+  "needsYou.talk.dialog": {
+    "text": "Comments and questions",
+    "description": "What a screen reader calls the sheet (a panel beside the card on a wide window) that holds a Needs-you card's comments and its Ask tab."
   },
-  "needsYou.description.whatChanges": {
-    "text": "What changes",
-    "description": "Heading on the Description sheet in the Needs you feed, over the numbered list of visible changes the proposal declares."
+  "needsYou.talk.tabs": {
+    "text": "Comments or ask",
+    "description": "What a screen reader calls the two tabs at the top of a Needs-you card's comments sheet: Comments and Ask."
   },
-  "needsYou.description.summary": {
-    "text": "Summary",
-    "description": "Heading on the Description sheet in the Needs you feed, over a proposed change's plain-language summary."
+  "needsYou.talk.comments": {
+    "text": "Comments",
+    "description": "Tab on a Needs-you card's sheet with what people have said about the change, when nobody has said anything yet."
   },
-  "needsYou.description.theRequest": {
-    "text": "The request",
-    "description": "Heading on the Description sheet in the Needs you feed, over the text of a request (a filed issue) as its author wrote it. A noun."
+  "needsYou.talk.commentsCount_one": {
+    "text": "Comments <0>{{count}}</0>",
+    "description": "Tab on a Needs-you card's sheet with what people have said about the change. <0> is the number of comments, drawn quieter."
   },
-  "needsYou.description.noSummary": {
-    "text": "No plain-language summary was written for this change.",
-    "description": "Shown on the Description sheet in the Needs you feed when a proposed change has no summary."
+  "needsYou.talk.commentsCount_other": {
+    "text": "Comments <0>{{count}}</0>",
+    "description": "Tab on a Needs-you card's sheet with what people have said about the change. <0> is the number of comments, drawn quieter."
   },
-  "needsYou.description.noDescription": {
-    "text": "This request has no description.",
-    "description": "Shown on the Description sheet in the Needs you feed when a request (a filed issue) was filed without a description."
-  },
-  "needsYou.description.openProposal": {
-    "text": "Open the proposal",
-    "description": "Link at the bottom of the Description sheet in the Needs you feed: goes to the proposal's own page. Open is a verb; a proposal is a change put up for a vote."
-  },
-  "needsYou.description.openRequest": {
-    "text": "Open the request",
-    "description": "Link at the bottom of the Description sheet in the Needs you feed: goes to the request's own page. Open is a verb; a request is a filed issue."
+  "needsYou.talk.ask": {
+    "text": "Ask",
+    "description": "Tab on a Needs-you card's sheet where the viewer asks a model a private question about the change. This is a direct question to a model, not Homeroom bot."
   },
   "needsYou.rail.votedYes": {
     "text": "Voted yes",
@@ -1407,42 +1315,6 @@
     "text": "through a voted change",
     "description": "The whole small grey line beside a changed setting in the \"Lately in this project\" panel of a project's Workshop tab, shown alone in its own element, when nobody changed the setting by hand and the time is unknown: a proposal the members voted in changed it."
   },
-  "sinceSummary.since.today": {
-    "text": "Since earlier today",
-    "description": "Heading of the card at the top of a project's Hub that sums up the changes that went live since this person's last visit, when that visit was earlier the same day."
-  },
-  "sinceSummary.since.yesterday": {
-    "text": "Since yesterday",
-    "description": "Heading of the card at the top of a project's Hub that sums up the changes that went live since this person's last visit, when that visit was yesterday."
-  },
-  "sinceSummary.since.weekday": {
-    "text": "Since {{weekday}}",
-    "description": "Heading of the card at the top of a project's Hub that sums up the changes that went live since this person's last visit, when that visit was two to six days ago. {{weekday}} is that day's full name in the device's language, for example Monday."
-  },
-  "sinceSummary.since.date": {
-    "text": "Since {{date}}",
-    "description": "Heading of the card at the top of a project's Hub that sums up the changes that went live since this person's last visit, when that visit was a week or more ago. {{date}} is a short date in the device's format, for example Sep 12."
-  },
-  "sinceSummary.weekByWeek": {
-    "text": "Week by week",
-    "description": "Link in the corner of the since-your-last-visit card on a project's Hub, followed by an arrow: opens the Workshop tab, where the same changes are listed one week at a time."
-  },
-  "sinceSummary.dismiss": {
-    "text": "Dismiss this summary",
-    "description": "Accessible name and tooltip of the X button on the since-your-last-visit card on a project's Hub: hides the card until newer changes go live."
-  },
-  "sinceSummary.changes_one": {
-    "text": "{{count}} change",
-    "description": "Small line at the foot of the since-your-last-visit card on a project's Hub: how many changes went live in the time the card covers. Change is a noun: one merged change to the project."
-  },
-  "sinceSummary.changes_other": {
-    "text": "{{count}} changes",
-    "description": "Small line at the foot of the since-your-last-visit card on a project's Hub: how many changes went live in the time the card covers. Change is a noun: one merged change to the project."
-  },
-  "sinceSummary.aiTag": {
-    "text": "AI summary",
-    "description": "Small tag at the foot of the since-your-last-visit card on a project's Hub, shown when the card's sentences were written by an AI model, so nobody takes them for a person's words."
-  },
   "invite.from.isMaking": {
     "text": "{{name}} is making it and invited you",
     "description": "First line of a project's page when it was opened from an invite link, above the Join button, while the project's first version is still being built. {{name}} is the display name of the person who started the project and sent the invite; \"it\" is the project."
@@ -1491,10 +1363,6 @@
     "text": "You're in.",
     "description": "Toast shown once a person has joined a community through an invite link."
   },
-  "hub.channel.title": {
-    "text": "Discussion",
-    "description": "Heading of the card on a project's Hub that previews the newest messages of the project's chat channel. A noun."
-  },
   "hub.channel.unread_one": {
     "text": "{{shown}} new",
     "description": "Small badge in the head of the Discussion card: how many messages in the project's channel are unread. {{shown}} is that number as displayed, capped as 99+; the plural form follows the real count."
@@ -1503,41 +1371,9 @@
     "text": "{{shown}} new",
     "description": "Small badge in the head of the Discussion card: how many messages in the project's channel are unread. {{shown}} is that number as displayed, capped as 99+; the plural form follows the real count."
   },
-  "hub.channel.open": {
-    "text": "Open",
-    "description": "Link in the corner of the Discussion card on a project's Hub, followed by an arrow. A verb: opens the project's discussion."
-  },
-  "hub.channel.moreUnread_one": {
-    "text": "{{shown}} more unread message",
-    "description": "Button above the messages previewed on a project's Hub Discussion card: how many unread messages there are beyond the ones shown; pressing it opens the Discussion tab. {{shown}} is that number as displayed, capped as 99+; the plural form follows the real count."
-  },
-  "hub.channel.moreUnread_other": {
-    "text": "{{shown}} more unread messages",
-    "description": "Button above the messages previewed on a project's Hub Discussion card: how many unread messages there are beyond the ones shown; pressing it opens the Discussion tab. {{shown}} is that number as displayed, capped as 99+; the plural form follows the real count."
-  },
   "hub.channel.sayHi": {
     "text": "Say hi to {{project}}",
     "description": "Button on the Discussion card of a project's Hub when nobody has written in the project's channel yet: opens the Discussion tab to write the first message. {{project}} is the project's name."
-  },
-  "hub.channel.empty": {
-    "text": "Nobody has said anything here yet.",
-    "description": "Shown on the Discussion card in place of messages when the project's channel has none yet."
-  },
-  "hub.composer.placeholder": {
-    "text": "Message {{room}}…",
-    "description": "Placeholder in the one-line message box at the foot of the Discussion card. Message is a verb: write to this channel. {{room}} is the channel's handle with its # (for example #general) or the project's name. Keep the ellipsis."
-  },
-  "hub.composer.label": {
-    "text": "Message {{room}}",
-    "description": "Accessible name of the one-line message box at the foot of the Discussion card. Message is a verb: write to this channel. {{room}} is the channel's handle with its # (for example #general) or the project's name."
-  },
-  "hub.composer.send": {
-    "text": "Send",
-    "description": "Accessible name of the arrow button beside the message box at the foot of the Discussion card: posts the typed message to the project's channel."
-  },
-  "hub.composer.sendFailed": {
-    "text": "That did not send. Try again.",
-    "description": "Error under the message box at the foot of the Discussion card when a message could not be posted and the server gave no reason of its own."
   },
   "hub.firstVersion.review": {
     "text": "Review the plan",
@@ -1570,26 +1406,6 @@
   "hub.needs.toVote_other": {
     "text": "{{count}} to vote",
     "description": "Beside the heading of the Needs you card on a project's Hub: how many proposals this person has not yet looked at and still has to vote on."
-  },
-  "hub.needs.from": {
-    "text": "from @{{username}}",
-    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub, when it is the only proposal waiting: who put it up. Shown alone on its own line. {{username}} is that person's username; keep the @ before it."
-  },
-  "hub.needs.fromAndMore_one": {
-    "text": "from @{{username}} · and {{count}} more",
-    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub: who put that proposal up, then how many other proposals also wait for this person's vote. Shown alone on its own line. {{username}} is that person's username; keep the @ before it. {{count}} is the number of other proposals."
-  },
-  "hub.needs.fromAndMore_other": {
-    "text": "from @{{username}} · and {{count}} more",
-    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub: who put that proposal up, then how many other proposals also wait for this person's vote. Shown alone on its own line. {{username}} is that person's username; keep the @ before it. {{count}} is the number of other proposals."
-  },
-  "hub.needs.andMore_one": {
-    "text": "and {{count}} more",
-    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub, when who put it up is not known: how many other proposals also wait for this person's vote. Shown alone on its own line, in its own element; it is not appended to the title."
-  },
-  "hub.needs.andMore_other": {
-    "text": "and {{count}} more",
-    "description": "The whole line under the title of the first proposal on the Needs you card of a project's Hub, when who put it up is not known: how many other proposals also wait for this person's vote. Shown alone on its own line, in its own element; it is not appended to the title."
   },
   "hub.needs.skipped_one": {
     "text": "{{count}} vote you skipped is still open",
@@ -1635,29 +1451,93 @@
     "text": "Nothing in progress. To change something, tell Homeroom bot.",
     "description": "Shown on the Your work card of a project's Hub when the person is alone in the project, has nothing under way, and Homeroom bot builds changes for them there. \"Homeroom bot\" is the assistant's name and stays as it is."
   },
-  "hub.work.goToChat": {
-    "text": "Go to chat",
-    "description": "Button under \"Nothing in progress. To change something, tell Homeroom bot.\" on the Your work card: opens this person's chat with Homeroom bot."
-  },
   "hub.work.emptyMenu": {
     "text": "Nothing in progress. Press <0>⋯</0> to suggest an improvement.",
     "description": "Shown on the Your work card of a project's Hub when the person is alone in the project and has nothing under way. The ⋯ in <0></0> is the three-dot menu button on the same page, shown in the accent colour; keep the symbol."
   },
-  "hub.work.showLess": {
-    "text": "Show less",
-    "description": "Button under the Your work list on a project's Hub while every item is shown: folds the list back to its first two items."
+  "hub.people.active_one": {
+    "text": "{{count}} active this week",
+    "description": "Top of a project's Hub, beside the faces of the people active there: how many people took part in the project in the last seven days (talked in its channel, started a change or voted)."
   },
-  "hub.work.showMore_one": {
-    "text": "Show {{count}} more",
-    "description": "Button under the first two items of the Your work list on a project's Hub: reveals the rest. {{count}} is how many more items there are."
+  "hub.people.active_other": {
+    "text": "{{count}} active this week",
+    "description": "Top of a project's Hub, beside the faces of the people active there: how many people took part in the project in the last seven days (talked in its channel, started a change or voted)."
   },
-  "hub.work.showMore_other": {
-    "text": "Show {{count}} more",
-    "description": "Button under the first two items of the Your work list on a project's Hub: reveals the rest. {{count}} is how many more items there are."
+  "hub.people.namesAndMore_one": {
+    "text": "{{names}} and {{count}} more",
+    "description": "Line under \"40 active this week\" at the top of a project's Hub. {{names}} is a list of up to five usernames of people active this week, already joined with commas; {{count}} is how many more people were active who are not named."
   },
-  "communityCard.rule.title": {
-    "text": "Approval rules",
-    "description": "Heading of a section on a project's Workshop tab that draws, as three steps, what has to happen before a change goes live: its checks pass, the people the rule names say yes, it goes live."
+  "hub.people.namesAndMore_other": {
+    "text": "{{names}} and {{count}} more",
+    "description": "Line under \"40 active this week\" at the top of a project's Hub. {{names}} is a list of up to five usernames of people active this week, already joined with commas; {{count}} is how many more people were active who are not named."
+  },
+  "hub.people.moreFaces_one": {
+    "text": "+{{count}}",
+    "description": "Last circle in the row of faces at the top of a project's Hub: how many more people were active this week than the faces shown. Keep it as short as a plus sign and a number."
+  },
+  "hub.people.moreFaces_other": {
+    "text": "+{{count}}",
+    "description": "Last circle in the row of faces at the top of a project's Hub: how many more people were active this week than the faces shown. Keep it as short as a plus sign and a number."
+  },
+  "hub.forYou.title": {
+    "text": "For you",
+    "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."
+  },
+  "hub.forYou.needs.firstAndMore_one": {
+    "text": "{{title}}, and {{count}} more",
+    "description": "Second line of the Needs you row on a project's Hub: the title of the first change waiting on this person's vote, then how many more are waiting. {{title}} is that change's title."
+  },
+  "hub.forYou.needs.firstAndMore_other": {
+    "text": "{{title}}, and {{count}} more",
+    "description": "Second line of the Needs you row on a project's Hub: the title of the first change waiting on this person's vote, then how many more are waiting. {{title}} is that change's title."
+  },
+  "hub.forYou.work.inProgress_one": {
+    "text": "{{count}} in progress",
+    "description": "Right end of the Your work row on a project's Hub: how many of this person's own requests and changes are in flight in the project."
+  },
+  "hub.forYou.work.inProgress_other": {
+    "text": "{{count}} in progress",
+    "description": "Right end of the Your work row on a project's Hub: how many of this person's own requests and changes are in flight in the project."
+  },
+  "hub.forYou.discussion.title": {
+    "text": "Discussion <0>#{{handle}}</0>",
+    "description": "Title of the row that opens a project's discussion on its Hub. <0></0> draws the channel's name in a lighter weight; {{handle}} is the channel's name without the #, for example general."
+  },
+  "hub.forYou.discussion.lastBy": {
+    "text": "@{{username}}: {{message}} · {{ago}}",
+    "description": "Second line of the Discussion row on a project's Hub: the last message in the channel, who wrote it and how long ago. {{username}} is the writer, {{message}} the message itself, {{ago}} a time such as \"4h ago\"."
+  },
+  "hub.forYou.discussion.last": {
+    "text": "{{message}} · {{ago}}",
+    "description": "Second line of the Discussion row on a project's Hub when the last message in the channel has no writer to name: the message and how long ago it was sent. {{ago}} is a time such as \"4h ago\"."
+  },
+  "hub.forYou.discussion.postedBy": {
+    "text": "@{{username}} posted · {{ago}}",
+    "description": "Second line of the Discussion row on a project's Hub when the newest message in the channel has no words to quote (only a picture or a file): who sent it and how long ago. {{ago}} is a time such as \"4h ago\"."
+  },
+  "hub.forYou.discussion.posted": {
+    "text": "New message · {{ago}}",
+    "description": "Second line of the Discussion row on a project's Hub when the newest message in the channel has no words to quote and no writer to name: how long ago it was sent. {{ago}} is a time such as \"4h ago\"."
+  },
+  "hub.recent.title": {
+    "text": "Recently live",
+    "description": "Small heading over the cards of the last few changes that went live, on a project's Hub."
+  },
+  "hub.recent.all": {
+    "text": "All in Workshop",
+    "description": "Link beside the Recently live heading on a project's Hub: opens the project's Workshop, where everything that went live is listed week by week."
+  },
+  "hub.recent.byAgo": {
+    "text": "{{who}} · {{ago}}",
+    "description": "Line under a change's title in Recently live on a project's Hub: who made the change and how long ago it went live. {{who}} is a username or \"Homeroom bot\"; {{ago}} a time such as \"1h ago\"."
+  },
+  "hub.recent.byGoing": {
+    "text": "{{who}} · going live now",
+    "description": "Line under a change's title in Recently live on a project's Hub, for a change that has merged and is still on its way to the live app. {{who}} is a username or \"Homeroom bot\"."
+  },
+  "hub.recent.going": {
+    "text": "Going live now",
+    "description": "Line under a change's title in Recently live on a project's Hub, for a change that has merged and is still on its way to the live app, when there is no maker to name."
   },
   "communityCard.rule.you": {
     "text": "A change goes live when you approve it.",
@@ -1791,22 +1671,6 @@
     "text": "A change goes live when all {{count}} active members approve it, or after a wait if one approves and nobody objects.",
     "description": "The approval rule of a project where the community's active members vote on changes, read out by a screen reader as the name of the three-step drawing under Approval rules on the project's Workshop tab. Used when every one of them must agree and there are three or more: {{count}} is how many there are. The ending describes a second way in: after a waiting period, one approval is enough as long as no member has voted against."
   },
-  "communityCard.step.checks.title": {
-    "text": "Its checks pass",
-    "description": "Bold line of the first step in the Approval rules drawing on a project's Workshop tab. \"Its\" is a proposed change; checks are the automatic tests run on it."
-  },
-  "communityCard.step.checks.where": {
-    "text": "on a preview of the change",
-    "description": "Second line of the first step in the Approval rules drawing on a project's Workshop tab, under \"Its checks pass\": the checks run on a preview build of the proposed change. It continues that line, so it starts in lower case."
-  },
-  "communityCard.step.live.title": {
-    "text": "It goes live",
-    "description": "Bold line of the last step in the Approval rules drawing on a project's Workshop tab. \"It\" is a proposed change, which becomes part of the running project."
-  },
-  "communityCard.step.live.who": {
-    "text": "for everyone, right away",
-    "description": "Second line of the last step in the Approval rules drawing on a project's Workshop tab, under \"It goes live\": everybody who uses the project gets the change immediately. It continues that line, so it starts in lower case."
-  },
   "communityCard.step.you": {
     "text": "You approve it",
     "description": "Bold line of the middle step in the Approval rules drawing on a project's Workshop tab: who has to say yes before a change goes live. Used on a project that is just this person's own: they are its only approver. \"It\" is a proposed change."
@@ -1814,14 +1678,6 @@
   "communityCard.step.justYou": {
     "text": "It is just you",
     "description": "Line under \"You approve it\" in the Approval rules drawing on a project's Workshop tab, on a project with no other members: it says why this person alone approves."
-  },
-  "communityCard.step.moreFaces_one": {
-    "text": "+{{count}}",
-    "description": "Last circle in the row of member initials on the middle step of the Approval rules drawing on a project's Workshop tab. {{count}} is how many more people can approve than the circles shown. Keep it as short as a plus sign and a number."
-  },
-  "communityCard.step.moreFaces_other": {
-    "text": "+{{count}}",
-    "description": "Last circle in the row of member initials on the middle step of the Approval rules drawing on a project's Workshop tab. {{count}} is how many more people can approve than the circles shown. Keep it as short as a plus sign and a number."
   },
   "communityCard.step.fixed_one": {
     "text": "{{count}} member approves",
@@ -1982,50 +1838,6 @@
   "communityCard.people.audienceMembers_other": {
     "text": "<0>{{audience}}</0> · {{count}} members",
     "description": "Line beside the members' faces at the top of a project's Hub: who the community is for, then how many members it has. <0></0> draws the audience's name in bold after a small icon. {{audience}} is that name, already in the reader's language: Private community or Public community. {{count}} is the number of members."
-  },
-  "communityCard.pulse.active_one": {
-    "text": "<0>{{count}}</0> active this week",
-    "description": "Activity line under the member count at the top of a project's Hub: how many people took part in the project in the last seven days. <0></0> draws the number in bold."
-  },
-  "communityCard.pulse.active_other": {
-    "text": "<0>{{count}}</0> active this week",
-    "description": "Activity line under the member count at the top of a project's Hub: how many people took part in the project in the last seven days. <0></0> draws the number in bold."
-  },
-  "communityCard.pulse.shipped_one": {
-    "text": "<0>{{count}}</0> changes shipped this month",
-    "description": "Activity line under the member count at the top of a project's Hub: how many changes went live in the project in the last thirty days. <0></0> draws the number in bold. The English source uses \"changes\" for one as well."
-  },
-  "communityCard.pulse.shipped_other": {
-    "text": "<0>{{count}}</0> changes shipped this month",
-    "description": "Activity line under the member count at the top of a project's Hub: how many changes went live in the project in the last thirty days. <0></0> draws the number in bold. The English source uses \"changes\" for one as well."
-  },
-  "communityCard.pulse.quiet": {
-    "text": "Quiet this week",
-    "description": "Activity line under the member count at the top of a project's Hub when nobody took part this week and nothing went live this month, though there was some activity in the last fourteen days."
-  },
-  "communityCard.pulse.nobody": {
-    "text": "Nobody has been around in the last 14 days.",
-    "description": "Activity line under the member count at the top of a project's Hub when nobody took part in the project in the last fourteen days; it replaces the small activity chart."
-  },
-  "communityCard.spark.label_one": {
-    "text": "People taking part each day, last {{count}} day: {{counts}}",
-    "description": "Accessible name of the small bar chart at the top of a project's Hub. {{count}} is how many days the chart covers, normally 14. {{counts}} is the list of each day's number of people, oldest first, separated by commas."
-  },
-  "communityCard.spark.label_other": {
-    "text": "People taking part each day, last {{count}} days: {{counts}}",
-    "description": "Accessible name of the small bar chart at the top of a project's Hub. {{count}} is how many days the chart covers, normally 14. {{counts}} is the list of each day's number of people, oldest first, separated by commas."
-  },
-  "communityCard.spark.tip_one": {
-    "text": "{{day}} · {{count}} person",
-    "description": "First line of the tip shown when one bar of the small activity chart at the top of a project's Hub is pointed at or touched. {{day}} is that day as a short date in the device's format, for example Sat, Sep 26. {{count}} is how many people took part that day."
-  },
-  "communityCard.spark.tip_other": {
-    "text": "{{day}} · {{count}} people",
-    "description": "First line of the tip shown when one bar of the small activity chart at the top of a project's Hub is pointed at or touched. {{day}} is that day as a short date in the device's format, for example Sat, Sep 26. {{count}} is how many people took part that day."
-  },
-  "communityCard.spark.caption": {
-    "text": "Who took part, last 14 days",
-    "description": "Second line of the tip on the small activity chart at the top of a project's Hub: says what the chart counts."
   },
   "communityCard.makePublic.question": {
     "text": "Make {{project}} a public community?",
@@ -4147,13 +3959,181 @@
     "text": "Show its text",
     "description": "Label under the line saying a change's diagram could not be drawn: unfolds the diagram's source text as its author wrote it."
   },
-  "communityCard.rule.edit": {
-    "text": "Edit",
-    "description": "Button beside the Approval rules heading on a project's Workshop tab, shown only to people who can manage the project: opens the Members & approvals dialog at its approvals section, where a change to the rule is proposed and voted on. A verb."
-  },
   "communityCard.rule.editName": {
     "text": "Edit approval rules",
     "description": "Accessible name of the Edit button beside the Approval rules heading on a project's Workshop tab: opens the Members & approvals dialog at its approvals section, where a change to the rule is proposed and voted on."
+  },
+  "communityCard.line.you": {
+    "text": "A change goes live when its checks pass and you approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, on a project that is just the viewer's."
+  },
+  "communityCard.line.anyOf": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{names}}</1> says yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where any one of the named approvers is enough. <0></0> is where their faces go; <1> wraps {{names}}, their account names joined with \"or\" (for example \"evan or snait\"), shown bold."
+  },
+  "communityCard.line.allOf": {
+    "text": "A change goes live when its checks pass and <0></0><1>{{names}}</1> say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every named approver has to say yes. <0></0> is where their faces go; <1> wraps {{names}}, their account names joined with \"and\" (for example \"evan and snait\"), shown bold."
+  },
+  "communityCard.line.approvers.some_one": {
+    "text": "A change goes live when its checks pass and {{count}} of the {{total}} approvers says yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where some of the project's approvers must say yes. {{count}} is how many, {{total}} how many approvers there are."
+  },
+  "communityCard.line.approvers.some_other": {
+    "text": "A change goes live when its checks pass and {{count}} of the {{total}} approvers say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where some of the project's approvers must say yes. {{count}} is how many, {{total}} how many approvers there are."
+  },
+  "communityCard.line.approvers.all_one": {
+    "text": "A change goes live when its checks pass and all {{count}} approvers say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every one of the project's approvers must say yes. {{count}} is how many approvers there are."
+  },
+  "communityCard.line.approvers.all_other": {
+    "text": "A change goes live when its checks pass and all {{count}} approvers say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every one of the project's approvers must say yes. {{count}} is how many approvers there are."
+  },
+  "communityCard.line.approvers.short_one": {
+    "text": "A change goes live when its checks pass and {{required}} approvers (there is {{count}}) say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the rule asks for more approvers than the project has. {{required}} is how many it asks for, {{count}} how many there are."
+  },
+  "communityCard.line.approvers.short_other": {
+    "text": "A change goes live when its checks pass and {{required}} approvers (there are {{count}}) say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the rule asks for more approvers than the project has. {{required}} is how many it asks for, {{count}} how many there are."
+  },
+  "communityCard.line.fixed_one": {
+    "text": "A change goes live when its checks pass and {{count}} member approves it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project's settings ask for a fixed number of approvals. {{count}} is that number."
+  },
+  "communityCard.line.fixed_other": {
+    "text": "A change goes live when its checks pass and {{count}} members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project's settings ask for a fixed number of approvals. {{count}} is that number."
+  },
+  "communityCard.line.members.some_one": {
+    "text": "A change goes live when its checks pass and {{count}} of the {{total}} active members approves it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where some of the project's active members must approve. {{count}} is how many, {{total}} how many active members there are."
+  },
+  "communityCard.line.members.some_other": {
+    "text": "A change goes live when its checks pass and {{count}} of the {{total}} active members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where some of the project's active members must approve. {{count}} is how many, {{total}} how many active members there are."
+  },
+  "communityCard.line.members.short_one": {
+    "text": "A change goes live when its checks pass and {{required}} active members (there is {{count}}) approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the rule asks for more approvals than the project has active members. {{required}} is how many it asks for, {{count}} how many active members there are."
+  },
+  "communityCard.line.members.short_other": {
+    "text": "A change goes live when its checks pass and {{required}} active members (there are {{count}}) approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the rule asks for more approvals than the project has active members. {{required}} is how many it asks for, {{count}} how many active members there are."
+  },
+  "communityCard.line.members.all_one": {
+    "text": "A change goes live when its checks pass and all {{count}} active members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every active member must approve. {{count}} is how many active members there are."
+  },
+  "communityCard.line.members.all_other": {
+    "text": "A change goes live when its checks pass and all {{count}} active members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every active member must approve. {{count}} is how many active members there are."
+  },
+  "communityCard.line.approvers.only": {
+    "text": "A change goes live when its checks pass and the approver says yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project has one approver."
+  },
+  "communityCard.line.approvers.both": {
+    "text": "A change goes live when its checks pass and both approvers say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project's two approvers must both say yes."
+  },
+  "communityCard.line.members.only": {
+    "text": "A change goes live when its checks pass and the only active member approves it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project has one active member."
+  },
+  "communityCard.line.members.both": {
+    "text": "A change goes live when its checks pass and both active members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project's two active members must both approve."
+  },
+  "communityCard.lineShort.you": {
+    "text": "Goes live when its checks pass and you approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, on a project that is just the viewer's. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.anyOf": {
+    "text": "Goes live when its checks pass and <0></0><1>{{names}}</1> says yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where any one of the named approvers is enough. <0></0> is where their faces go; <1> wraps {{names}}, their account names joined with \"or\" (for example \"evan or snait\"), shown bold. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.allOf": {
+    "text": "Goes live when its checks pass and <0></0><1>{{names}}</1> say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every named approver has to say yes. <0></0> is where their faces go; <1> wraps {{names}}, their account names joined with \"and\" (for example \"evan and snait\"), shown bold. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.approvers.some_one": {
+    "text": "Goes live when its checks pass and {{count}} of the {{total}} approvers says yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where some of the project's approvers must say yes. {{count}} is how many, {{total}} how many approvers there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.approvers.some_other": {
+    "text": "Goes live when its checks pass and {{count}} of the {{total}} approvers say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where some of the project's approvers must say yes. {{count}} is how many, {{total}} how many approvers there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.approvers.all_one": {
+    "text": "Goes live when its checks pass and all {{count}} approvers say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every one of the project's approvers must say yes. {{count}} is how many approvers there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.approvers.all_other": {
+    "text": "Goes live when its checks pass and all {{count}} approvers say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every one of the project's approvers must say yes. {{count}} is how many approvers there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.approvers.short_one": {
+    "text": "Goes live when its checks pass and {{required}} approvers (there is {{count}}) say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the rule asks for more approvers than the project has. {{required}} is how many it asks for, {{count}} how many there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.approvers.short_other": {
+    "text": "Goes live when its checks pass and {{required}} approvers (there are {{count}}) say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the rule asks for more approvers than the project has. {{required}} is how many it asks for, {{count}} how many there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.fixed_one": {
+    "text": "Goes live when its checks pass and {{count}} member approves it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project's settings ask for a fixed number of approvals. {{count}} is that number. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.fixed_other": {
+    "text": "Goes live when its checks pass and {{count}} members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project's settings ask for a fixed number of approvals. {{count}} is that number. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.members.some_one": {
+    "text": "Goes live when its checks pass and {{count}} of the {{total}} active members approves it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where some of the project's active members must approve. {{count}} is how many, {{total}} how many active members there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.members.some_other": {
+    "text": "Goes live when its checks pass and {{count}} of the {{total}} active members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where some of the project's active members must approve. {{count}} is how many, {{total}} how many active members there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.members.short_one": {
+    "text": "Goes live when its checks pass and {{required}} active members (there is {{count}}) approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the rule asks for more approvals than the project has active members. {{required}} is how many it asks for, {{count}} how many active members there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.members.short_other": {
+    "text": "Goes live when its checks pass and {{required}} active members (there are {{count}}) approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the rule asks for more approvals than the project has active members. {{required}} is how many it asks for, {{count}} how many active members there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.members.all_one": {
+    "text": "Goes live when its checks pass and all {{count}} active members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every active member must approve. {{count}} is how many active members there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.members.all_other": {
+    "text": "Goes live when its checks pass and all {{count}} active members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where every active member must approve. {{count}} is how many active members there are. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.approvers.only": {
+    "text": "Goes live when its checks pass and the approver says yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project has one approver. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.approvers.both": {
+    "text": "Goes live when its checks pass and both approvers say yes.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project's two approvers must both say yes. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.members.only": {
+    "text": "Goes live when its checks pass and the only active member approves it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project has one active member. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.lineShort.members.both": {
+    "text": "Goes live when its checks pass and both active members approve it.",
+    "description": "Sentence: the approval rule, in one line at the foot of the All items card on the Workshop tab of a project's page, where the project's two active members must both approve. The shorter wording drawn where the card is narrow, as on a phone; it leaves out \"A change\"."
+  },
+  "communityCard.rule.rules": {
+    "text": "Rules",
+    "description": "Button at the end of the approval rule's line on the Workshop tab of a project's page, for people who may change the rule: opens the Members & approvals dialog at its approvals section, where a change to the rule is proposed and voted on."
   },
   "page.title.hub": {
     "text": "Hub",

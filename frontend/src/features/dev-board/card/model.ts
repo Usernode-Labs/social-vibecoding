@@ -541,13 +541,14 @@ export interface DevWorkshopView {
    */
   models: { list: { id: string; label: string; note: string }[]; selected: string | null };
   /**
-   * The Needs-you tab's queue, in order: the proposals owed a vote, then the
-   * issues nobody has claimed. One card, one question, three answers — the
-   * row carries the question and what Yes and No DO, so the deck renders
-   * buttons rather than deciding policy.
+   * The Needs-you tab's queue, in order: the changes and group decisions
+   * owed this viewer's vote, and nothing else (the requests nobody has
+   * picked up are `dashboard.unclaimed` and `nextUp`). The row carries the
+   * question and what Yes and No DO, so the deck renders buttons rather than
+   * deciding policy.
    */
   queue: (ListRow & {
-    kind: 'vote' | 'claim';
+    kind: 'vote';
     ask: string;
     /**
      * `approve` (#3977): a change on a project that is just yours whose Yes
@@ -560,8 +561,12 @@ export interface DevWorkshopView {
     who?: string | null;
     ago?: string;
     number?: number | null;
-    /** An issue's body as one plain run, the claim item's sub-hero. */
-    body?: string | null;
+    /**
+     * Exactly one more Yes meets the change's rule, and the viewer's counts
+     * (AppView._yesPutsItLive): the facts line says "your yes puts it live",
+     * and the end card "Your yes put it over the line" once it is cast.
+     */
+    lastYes?: boolean;
     /**
      * The project the row belongs to, on the Communities screen's Needs you
      * (#3488), which mixes every project's. Unset inside a project, whose
@@ -574,9 +579,8 @@ export interface DevWorkshopView {
      */
     tally?: { yes: number; no: number } | null;
     /**
-     * The Description sheet's body: a proposal's summary or an issue's
-     * body, rendered and sanitised where it was built (app-view.js). Empty
-     * when there is none.
+     * The expanded caption's body: a proposal's summary, rendered and
+     * sanitised where it was built (app-view.js). Empty when there is none.
      */
     descriptionHtml?: string;
     /**
@@ -715,6 +719,14 @@ export interface DevWorkshopView {
     unclaimed: number;
     /** The theme with the most recent activity, by name. */
     busiest: string | null;
+    /**
+     * Where most of the open work is (After-Workshop-B): up to four
+     * categories, the most open work first (open, underway and in review,
+     * as `open` counts it), over the whole app whatever All items is
+     * searched for (AppView._workshopOpenThemes). `topic` is a project
+     * topic's, whose chip opens its channel. Empty when nothing is open.
+     */
+    openThemes: { id: string; name: string; open: number; topic: { key: string; handle: string } | null }[];
     /** The merged history is paged; true means the week counts are floors. */
     partial: boolean;
     /**
@@ -793,6 +805,22 @@ export interface DevWorkshopView {
      */
     summary: string | null;
   } | null;
+  /**
+   * The hub's Recently live (AppView._workshopRecentLive): the newest few
+   * changes that merged, newest first. `picture` is the after still of its
+   * before & after shots, when the checks took one. `at` is when it went
+   * live; null, with `going`, while production has not run it yet.
+   */
+  recentLive?: {
+    key: string;
+    sessionId: number;
+    prNumber: number | null;
+    title: string;
+    who: string | null;
+    at: string | null;
+    going: boolean;
+    picture: string | null;
+  }[];
   /**
    * One unclaimed open issue to suggest, as a row. Null when there is none;
    * All items' search and filters do not reach it (#2915).

@@ -235,11 +235,12 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
         recent: [], href: `#messages/app/${a.slug}`, handle: null,
         post_url: `/api/apps/${a.slug}/messages`,
       }, 'a collab-public app: its channel is offered, with its last few messages, its address and where the hub posts');
-      const { daily, ...counts } = got.body.activity;
+      const { daily, active_people: activePeople, ...counts } = got.body.activity;
       assert.deepEqual(counts, { active_week: 0, shipped_month: 0 },
-        'and Members & activity\'s two numbers');
+        'and the hub\'s two numbers');
       assert.equal(daily.length, 14, 'and its fourteen days');
       assert.ok(daily.every((d) => d.n === 0 && /^\d{4}-\d{2}-\d{2}$/.test(d.day)));
+      assert.deepEqual(activePeople, [], 'and nobody to name');
       assert.equal(got.body.can_manage, false, 'a viewer cannot propose who it is for');
       assert.equal(got.body.audience_change, null);
 
@@ -444,7 +445,13 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       `INSERT INTO chat_sessions (app_id, user_id, status, merged_at) VALUES ($1, $2, 'merged', NOW()) RETURNING id`,
       [other.id, owner.id]);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [s[0].id, boss.id]);
-    const { daily, ...counts } = await communities.activitySummary(pool, other.id);
+    // A synthetic account taking part is neither counted nor named.
+    const { rows: [bot] } = await pool.query(
+      `INSERT INTO users (username, password, is_synthetic) VALUES ('busy_bot', 'x', TRUE) RETURNING id`);
+    const { rows: [beep] } = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content) VALUES ($1, $2, 'beep') RETURNING id`, [other.id, bot.id]);
+    const { daily, active_people: activePeople, ...counts } = await communities.activitySummary(pool, other.id);
+    await pool.query('DELETE FROM chat_messages WHERE id = $1', [beep.id]);
     assert.deepEqual(counts, { active_week: 3, shipped_month: 1 });
     // The trend: fourteen days, oldest first, today last, each the number of
     // different people who said something, started a change or voted.
@@ -453,6 +460,12 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     assert.equal(daily[13].n, 3, 'today: the member who talked, the owner who started, the admin who voted');
     const { rows: [{ today }] } = await pool.query(`SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today`);
     assert.equal(daily[13].day, today);
+    // WHO, BY NAME (the hub's faces row): the same three people, the most
+    // recently active first (the admin's vote came last, the member's
+    // messages first), never the bot, with nothing but their names.
+    assert.deepEqual(activePeople.map((p) => p.username), [boss.username, owner.username, member.username]);
+    assert.deepEqual(Object.keys(activePeople[0]).sort(), ['display_name', 'id', 'username']);
+    assert.equal(activePeople[0].id, boss.id);
 
     // A CHANNEL IS WHAT PEOPLE SAID. A platform line with no thread — a
     // proposal put up for a vote, a merge — is written nowhere: not the
