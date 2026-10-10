@@ -422,5 +422,9 @@
   "release.countLine.eta_other": {
     "text": "about {{count}} minutes",
     "description": "When Homeroom's next release is expected, placed in brackets after \"… merged changes go live in the next release\" on the Workshop board's \"Done\" column: in about {{count}} minutes. Lower case because it sits inside that line."
+  },
+  "sectionColumn.label": {
+    "text": "Places",
+    "description": "Accessible name of the column beside a project's page on a wide screen that lists its places (its chat, its topics and its tabs)."
   }
 }

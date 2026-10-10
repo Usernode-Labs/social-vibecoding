@@ -7,6 +7,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { closeUpView, type Point, type Size } from './picture';
 
 const HEIGHT = 150;
@@ -18,6 +19,7 @@ const distOf = (a: Point, b: Point): number => Math.max(1, Math.hypot(a.x - b.x,
 
 /** The zoomed view of the pin, or, when the page has moved on since the pin, the comment's own thumbnail. */
 export function CloseUp({ view, pin, own }: { view: string; pin: Point; own?: string | null }) {
+  const t = useMessages('devchat');
   const boxRef = useRef<HTMLDivElement>(null);
   const [boxWidth, setBoxWidth] = useState(0);
   const [picture, setPicture] = useState<Size | null>(null);
@@ -178,7 +180,7 @@ export function CloseUp({ view, pin, own }: { view: string; pin: Point; own?: st
             />
           ) : null}
           {pinched ? null : (
-            <span className="absolute left-2 top-2 rounded-full bg-zinc-900/80 px-2 py-0.5 text-[11px] font-semibold text-white">Pinch to zoom</span>
+            <span className="absolute left-2 top-2 rounded-full bg-zinc-900/80 px-2 py-0.5 text-[11px] font-semibold text-white">{t('devchat:commentPin.closeUp.pinchHint')}</span>
           )}
         </>
       )}

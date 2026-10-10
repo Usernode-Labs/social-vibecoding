@@ -44,6 +44,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { devWorkshopStore } from '../dev-board/card/cards-store';
@@ -112,6 +113,7 @@ function PlacesColumn({ slug }: { slug: string }) {
 }
 
 export function SectionColumn() {
+  const t = useMessages('core');
   const ref = useRef<HTMLElement | null>(null);
   const { screen, tab } = useStoreState(navStore);
   const place = useStoreState(placeStore);
@@ -123,7 +125,7 @@ export function SectionColumn() {
       ref={ref}
       id="platform-section-column"
       className="platform-section-column hidden"
-      aria-label="Places"
+      aria-label={t('core:sectionColumn.label')}
     >
       {column === 'places' && place.slug ? <PlacesColumn slug={place.slug} /> : null}
     </aside>

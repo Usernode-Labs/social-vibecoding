@@ -59,7 +59,7 @@ import type { HomeroomBotPlan } from './types';
  */
 
 /** #4488: the note under a complicated change's plan while it waits. */
-export const COMPLICATED_PLAN_NOTE = 'Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.';
+export const COMPLICATED_PLAN_NOTE = 'messages:bot.plan.complicatedNote';
 
 export type PlanCardState = 'open' | 'built' | 'replaced' | 'stopped' | 'changing' | 'closed';
 
@@ -256,7 +256,7 @@ export function PlanCardView({
       {open && plan.complicated ? (
         <p className="messages-bot-note mt-2.5" data-bot-plan-note="">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{COMPLICATED_PLAN_NOTE}</span>
+          <span>{t(COMPLICATED_PLAN_NOTE)}</span>
         </p>
       ) : null}
       {open ? (

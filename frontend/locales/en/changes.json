@@ -8618,5 +8618,17 @@
   "shots.noticed.notBefore": {
     "text": "Not on the before build",
     "description": "Fact under a problem listed under \"Also noticed\" on a change's before & after shots: the problem does not show on the version before the change."
+  },
+  "page.steps.detail.release": {
+    "text": "{{release}}.",
+    "description": "Second line under \"Going live\" at the top of a merged change's page, for a change to Homeroom itself. {{release}} is a whole sentence saying when the next release carries it, for example \"Merged; goes live in the next release (about 8 minutes)\". Only the closing punctuation is translated here."
+  },
+  "workshop.row.tag.releaseTitle": {
+    "text": "{{release}}.",
+    "description": "Tooltip on a Workshop row's \"Going live\" tag, for a merged change to Homeroom itself. {{release}} is a whole sentence saying when the next release carries it. Only the closing punctuation is translated here."
+  },
+  "badge.pill.releaseTitle": {
+    "text": "{{release}}.",
+    "description": "Tooltip on a change card's \"Going live\" pill, for a merged change to Homeroom itself. {{release}} is a whole sentence saying when the next release carries it. Only the closing punctuation is translated here."
   }
 }

@@ -3242,5 +3242,9 @@
   "bot.last.release.minutes_other": {
     "text": "Last: {{job}} goes live in about {{count}} minutes",
     "description": "Line under Homeroom bot's name at the top of its conversation while the bot is idle: the most recent thing it did, a change to Homeroom itself that has merged and waits for the platform's next release, with an estimate of when. {{job}} names the work, for example \"Homeroom #12\" or just \"#12\", and is the subject of the sentence. {{count}} is the estimated number of minutes until it goes live; English spells the singular out, and a translation may use {{count}} in any form."
+  },
+  "bot.plan.complicatedNote": {
+    "text": "Its before and after screens are on the request below. What you ask to change is posted there, where the group can see it.",
+    "description": "Note under Homeroom bot's plan card in a conversation, while a complicated change's plan waits: its before and after screens are on the request card below, and what the reader asks to change is posted there for the community to see."
   }
 }

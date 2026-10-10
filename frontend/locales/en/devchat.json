@@ -2454,5 +2454,9 @@
   "commentPin.bar.doneKey": {
     "text": "Esc",
     "description": "Key cap shown inside the Done button on the bar of comment mode (a layer over the page where a click or tap leaves a comment pinned to that spot) on a computer: the Escape key does the same. Use the label this key has on keyboards in your language."
+  },
+  "commentPin.closeUp.pinchHint": {
+    "text": "Pinch to zoom",
+    "description": "Small hint over the zoomed picture at the top of the phone's comment sheet, until the person pinches it: two fingers zoom the picture."
   }
 }

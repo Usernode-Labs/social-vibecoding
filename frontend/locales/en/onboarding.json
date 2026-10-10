@@ -1246,5 +1246,13 @@
   "firstSession.tour.general.tap": {
     "text": "Open #general",
     "description": "Card of the short tour a new member is walked through after joining a project, link on the card about #general: asks the person to open that channel, and opens it for them when pressed. #general is the channel's name; keep it as it is."
+  },
+  "tour.step.meetBot.title": {
+    "text": "Meet Homeroom bot",
+    "description": "Title of the Home tour's stop pointing at the Messages tab, where Homeroom bot's conversation is the first row. \"Homeroom bot\" is the name of Homeroom's assistant that builds changes; keep \"Homeroom\" as it is."
+  },
+  "tour.step.meetBot.body": {
+    "text": "Ask it to build a change, file an idea or fix a bug for you. Find it in Messages.",
+    "description": "Body of the Home tour's stop pointing at the Messages tab: what Homeroom bot does for the reader and where to find it. \"Messages\" is the tab's name."
   }
 }

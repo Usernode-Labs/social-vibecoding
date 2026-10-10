@@ -6011,7 +6011,7 @@ const AppView = {
             ? PlatformI18n.t('changes:page.steps.headline.liveIncludedIn', { number: included.number })
             : PlatformI18n.t('changes:page.steps.headline.liveIncludedInAnother'))
           : PlatformI18n.t('changes:page.steps.headline.live')) : PlatformI18n.t('changes:page.steps.headline.standing')),
-      detail: release ? `${release}.` : req ? (req.detail || null) : null,
+      detail: release ? PlatformI18n.t('changes:page.steps.detail.release', { release }) : req ? (req.detail || null) : null,
       done: req ? req.done : null,
       total: req ? req.total : null,
       rows: out,
@@ -10110,7 +10110,7 @@ const AppView = {
       const release = pill.key === 'deploying' ? AppView._releaseSentence(it) : null;
       tags.push({
         label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain',
-        ...(release ? { title: `${release}.` } : {}),
+        ...(release ? { title: PlatformI18n.t('changes:workshop.row.tag.releaseTitle', { release }) } : {}),
       });
     };
     // #4486: the card's own age, as its meta line says it, for the row's
@@ -22247,7 +22247,7 @@ const AppView = {
       const releaseWords = AppView._releaseSentence(p);
       if (p.deployment_state === 'deploying') {
         return { ...base, tier: 0, key: 'deploying', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'progress', spinner: true, lock: false, advisory: 0,
-          title: releaseWords ? `${releaseWords}.` : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
+          title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
       if (p.deployment_state === 'stalled') {
         return { ...base, tier: 0, key: 'deployment_stalled', label: PlatformI18n.t('changes:badge.pill.stuck'), tone: 'blocked', lock: false, advisory: 0,
@@ -22272,7 +22272,7 @@ const AppView = {
       // field reads as it always did.
       if (p.live_at === null) {
         return { ...base, tier: 0, key: 'deploying', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'progress', spinner: true, lock: false, advisory: 0,
-          title: releaseWords ? `${releaseWords}.` : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
+          title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
       return { ...base, tier: 0, key: 'merged', label: PlatformI18n.t('changes:badge.pill.live'), tone: 'ok', lock: false, advisory: 0 };
     }

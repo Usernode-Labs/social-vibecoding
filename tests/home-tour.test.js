@@ -122,11 +122,12 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   assert.deepEqual([...byId.communities.targets], ['#platform-tab-workshop']);
   // #4604: the Messages tab, where the bot's DM is the first row.
   assert.deepEqual([...byId['meet-bot'].targets], ['#platform-tab-messages']);
-  assert.equal(byId['meet-bot'].title, 'Meet Homeroom bot');
-  assert.match(byId['meet-bot'].body, /build a change, file an idea or fix a bug for you\. Find it in Messages\./);
+  assert.equal(message(byId['meet-bot'].title), 'Meet Homeroom bot');
+  assert.match(message(byId['meet-bot'].body), /build a change, file an idea or fix a bug for you\. Find it in Messages\./);
   assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
-    /\{ key: 'messages' as const, label: 'Messages', href: '#messages'/,
+    /\{ key: 'messages' as const, label: 'core:tabs\.messages', href: '#messages'/,
     'the tab the step points at is Messages');
+  assert.equal(message('core:tabs.messages'), 'Messages');
   assert.match(read('frontend/src/features/nav/tab-bar.tsx'),
     /\{ key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities'/);
   assert.equal(message('core:tabs.communities'), 'Communities',

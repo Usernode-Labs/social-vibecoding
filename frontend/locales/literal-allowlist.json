@@ -267,9 +267,11 @@
     },
     "frontend/src/features/comment-pin/post.ts": {
       "texts": [
-        "Pinned with C ${…}${…}."
+        "Pinned with C ${…}${…}.",
+        "Pinned with C ${…}: ${…}.",
+        "Pinned with C: ${…}."
       ],
-      "why": "whereLine() is stored in the request's description for whoever (or whichever agent) picks it up; it is content posted, not UI."
+      "why": "whereLine() and whereLines() are stored in the request's description for whoever (or whichever agent) picks it up; they are content posted, not UI."
     },
     "frontend/src/features/comment-pin/picture.ts": {
       "texts": [

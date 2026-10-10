@@ -141,7 +141,8 @@ test('the reworked mode: the bar as the view\'s header, the phone sheet, and the
   assert.match(src, /own=\{viewDiffers \? activePicture\?\.thumb \|\| null : null\}/);
   const closeUp = read('frontend/src/features/comment-pin/close-up.tsx');
   assert.match(closeUp, /touchAction: 'none'/, 'the close-up box only, never the page under it');
-  assert.match(closeUp, /Pinch to zoom/);
+  assert.match(closeUp, /\{t\('devchat:commentPin\.closeUp\.pinchHint'\)\}/);
+  assert.equal(message('devchat:commentPin.closeUp.pinchHint'), 'Pinch to zoom');
   assert.match(closeUp, /Math\.min\(MAX_ZOOM, zPrev \* dist \/ g\.dist\)/, 'the pinch sets the zoom from the fingers');
   assert.match(closeUp, /mid\.x - c\.x - \(g\.mid\.x - c\.x - panRef\.current\.x\) \* \(z \/ zPrev\)/,
     'the point under the fingers stays under them as the zoom changes');

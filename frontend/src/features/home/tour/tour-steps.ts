@@ -197,8 +197,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // menu, and the tab this one points at is behind it on a phone. Like
     // every tab step it describes its target rather than asking for a press.
     id: 'meet-bot',
-    title: 'Meet Homeroom bot',
-    body: 'Ask it to build a change, file an idea or fix a bug for you. Find it in Messages.',
+    title: 'onboarding:tour.step.meetBot.title',
+    body: 'onboarding:tour.step.meetBot.body',
     targets: ['#platform-tab-messages'],
     closesPanel: true,
   },
