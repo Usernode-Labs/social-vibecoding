@@ -637,7 +637,7 @@ test('after Make it: the build line, then one invite, and the second button says
   assert.equal(invites.LIMITS.maxUses, 100);
 });
 
-test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, and on the hub when not', () => {
+test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, and otherwise meets the bot on Home and ends on the hub', () => {
   const { makerSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const withBot = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: 12 });
   assert.deepEqual(withBot.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub', 'hub', 'bot']);
@@ -645,8 +645,20 @@ test('the maker\'s tour ends in Homeroom bot\'s chat when it builds for them, an
   assert.equal(withBot[7].opensNext, true);
   assert.equal(withBot[8].last, true);
   const without = makerSteps({ slug: 'film', name: 'Friday Film Crew', conversationId: null });
-  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'hub']);
-  assert.equal(without[6].last, true);
+  assert.deepEqual(without.map((s) => s.screen), ['home', 'app', 'app', 'app', 'app', 'home', 'home', 'hub']);
+  assert.equal(without[7].last, true);
+  // With no chat (a ready-made app), the bot is still met (Evan, 10 Oct
+  // 2026: the tour ended on the hub without it): on Home, its tab ringed,
+  // before the Communities tab.
+  assert.deepEqual(without[5], {
+    screen: 'home',
+    target: '#platform-tab-messages',
+    ringed: true,
+    title: 'Meet Homeroom bot',
+    text: 'Tell it what Friday Film Crew should do next, and it starts building it. It\'s always here in Messages.',
+  });
+  assert.equal(without[6].target, '#platform-tab-workshop');
+  assert.equal(withBot.filter((s) => s.title === 'Meet Homeroom bot').length, 0, 'the bot\'s own chat ends the tour instead');
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = `#messages\/\$\{conversationId\}`;/);
 });

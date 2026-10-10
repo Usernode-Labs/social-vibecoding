@@ -86,20 +86,25 @@ test('it steps before the browser paints, while the story is taller than its roo
 
 // Evan, 10 Oct 2026, iPhone 13 mini in Safari: the fit took all four steps
 // and dropped the third example with about 100px empty above the toolbar,
-// because it counted the space under the foot as out of bounds.
-test('a fit may use the space under the foot, keeping "Sign in" clear of the bottom', () => {
+// because it counted the space under the foot as out of bounds; holding 18px
+// of that space back (#4691) still dropped it.
+test('a fit may use all the space under the foot', () => {
   const { settledStep } = loadTsx(STORY);
-  assert.match(SOURCE, /const FOOT_AIR = 18;/);
-  // That phone's story, measured at each step (the third row is 60px), with
-  // step 4 the first to fit and 3px of room either side of its group.
-  const heights = [636, 588, 528, 485, 425];
-  // Safari: the toolbar allowance (52) and the page's bottom air (34) under
-  // the foot. Step 3 runs 54px into that 86, leaving more than FOOT_AIR.
-  assert.equal(settledStep(heights, 4, 3, 52 + 34), 3);
-  // In the app there is only the bottom air: 54px is too far, so step 4.
-  assert.equal(settledStep(heights, 4, 3, 34), 4);
+  assert.doesNotMatch(SOURCE, /FOOT_AIR/);
+  // That phone's story at each step, measured off his screenshot: step 4,
+  // the first to fit, 484px tall with half a pixel of room either side;
+  // the third row is 60px, the larger headline 43px, the spacing 50px and
+  // the larger picture 48px.
+  const heights = [685, 637, 587, 544, 484];
+  // Safari: about 38px kept for the toolbar and the page's 34px of air under
+  // the foot. Step 3 needs 59 of those 72: three examples.
+  assert.equal(settledStep(heights, 4, 0.5, 38 + 34), 3);
+  // With 18px held back it came to 54, short of 59: the bug.
+  assert.ok(484 + 1 + (72 - 18) < 544);
+  // In the app there is only the bottom air: 34 is short of 59, so step 4.
+  assert.equal(settledStep(heights, 4, 0.5, 34), 4);
   // Never past the step that fit, never earlier than the room allows.
-  assert.equal(settledStep(heights, 2, 40, 34), 1, '588 <= 528 + 80 + 16');
-  assert.equal(settledStep(heights, 0, 10, 86), 0);
+  assert.equal(settledStep(heights, 2, 20, 34), 1, '637 <= 587 + 40 + 34 < 685');
+  assert.equal(settledStep(heights, 0, 10, 72), 0);
   assert.equal(settledStep([700, 650], 1, 0.5, 0), 1);
 });

@@ -20732,19 +20732,21 @@ html.un-kb #platform-tabs {
    2026, iPhone Safari). Both are `fixed` boxes with their own scroller, and
    with Safari's toolbar showing such a box ends above it: what scrolled was
    cut off there, Make it in half, with the page's plain ground below. Now
-   the box runs to the large viewport's foot, the foot of the screen, so what
-   scrolls carries on under the toolbar as a page does, and the scroller
-   keeps the toolbar's height (the large viewport less the small, as the
-   story does) after its last line, so Make it scrolls clear of it. In a
+   the box runs on 200px past its foot, under the toolbar and off the foot of
+   the screen, so what scrolls carries on under the toolbar as a page does,
+   and the scroller keeps those 200px after its last line, so the end still
+   scrolls up to where it stopped before. A fixed length, not the viewport
+   units: on an iPhone 13 mini in Safari 26 `100lvh` came out shorter than
+   the box itself, so `100% - 100lvh` extended nothing (#4691's first try).
+   200px is more than the toolbar and the home indicator together. In a
    phone browser on iOS, with the keys down: the keyboard surface measures
-   its padding against the box as it was. Elsewhere the two viewports are
-   one and nothing moves. */
+   its padding against the box as it was. */
 @media (max-width: 767px) {
   html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make], [data-first-session-made]) {
-    bottom: min(0px, calc(100% - 100lvh));
+    bottom: -200px;
   }
   html.un-ios.web-browser-chrome:not(.platform-kb-open) :is([data-first-session-make-scroll], [data-first-session-made]) {
-    padding-bottom: max(0px, calc(100lvh - 100svh));
+    padding-bottom: 200px;
   }
 }
 

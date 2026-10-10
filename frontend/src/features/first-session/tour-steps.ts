@@ -343,10 +343,23 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
  * nothing asks for it before the tour ends (decision C): the last card says
  * the bot is working on it until a plan is in the chat, and how to answer it
  * once it is. Nothing else in the tour names the plan (./tour-running.ts).
+ *
+ * A project with no chat (a ready-made app, with nothing for the bot to
+ * build) still meets the bot (Evan, 10 Oct 2026: a ready-made tier list's
+ * tour ended on the hub without it): one card on Home, before the
+ * Communities tab, says what it is for and where it always is.
  */
 export function makerSteps({ slug, name, conversationId }: TourProject): TourStep[] {
   const steps = sharedSteps(slug, name);
   if (!conversationId) {
+    const communities = steps.findIndex((step) => step.target === '#platform-tab-workshop');
+    steps.splice(communities, 0, {
+      screen: 'home',
+      target: '#platform-tab-messages',
+      ringed: true,
+      title: translate('onboarding:firstSession.tour.maker.meetBot.title'),
+      text: translate('onboarding:firstSession.tour.maker.meetBot.text', { app: name }),
+    });
     steps[steps.length - 1] = { ...steps[steps.length - 1], last: true };
     return steps;
   }
