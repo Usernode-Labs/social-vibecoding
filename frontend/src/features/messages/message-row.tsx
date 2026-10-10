@@ -118,6 +118,10 @@ export const MessageRow = memo(function MessageRow({
   block?: ChangeBlock | null;
 }) {
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
+  // #4655: in a direct message people are named bare ("ada", not "@ada"),
+  // everywhere this row names someone — its author line, a quote, the sheet
+  // and the Block and Report labels. Group chats and channels keep the @.
+  const bare = kind === 'direct';
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
   const [sheet, setSheet] = useState(false);
@@ -180,7 +184,7 @@ export const MessageRow = memo(function MessageRow({
     if (mine || !message.sender.id) return;
     // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
     const ok = await confirmAction({
-      title: `Block ${senderName(message.sender)}?`,
+      title: `Block ${senderName(message.sender, { bare })}?`,
       message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
       confirmLabel: 'Block',
       danger: true,
@@ -235,10 +239,10 @@ export const MessageRow = memo(function MessageRow({
   } else {
     items.push({
       key: 'report', label: 'Report message', icon: FlagIcon, separated: true,
-      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: `Message from ${senderName(message.sender)}`, userId: message.sender.id }),
+      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: `Message from ${senderName(message.sender, { bare })}`, userId: message.sender.id }),
     });
     if (message.sender.id) {
-      items.push({ key: 'block', label: `Block ${senderName(message.sender)}`, icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
+      items.push({ key: 'block', label: `Block ${senderName(message.sender, { bare })}`, icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
     }
   }
 
@@ -290,7 +294,7 @@ export const MessageRow = memo(function MessageRow({
     <p className="messages-deleted">Message deleted</p>
   ) : (
     <>
-      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender)}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
+      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare })}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
       {editing ? (
         <div className="messages-edit"><textarea ref={editRef} aria-label="Edit message" value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
       ) : isThanksMessage(message) ? (
@@ -411,7 +415,7 @@ export const MessageRow = memo(function MessageRow({
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : <UserAvatar user={message.sender} size="md" shape="square" />}
       <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : 'min-w-0 flex-1'}>
-        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender)}</span>{message.sender.bot ? <span className="messages-bot-badge">AI</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender, { bare })}</span>{message.sender.bot ? <span className="messages-bot-badge">AI</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {/* #4564: the dropped card's own label, spoken: a screen reader still
             hears which request these words are about, as the block's top
             shows. */}
@@ -430,7 +434,7 @@ export const MessageRow = memo(function MessageRow({
         onReact={(emoji) => { void toggle(emoji); }}
         onPick={pick}
         items={sheetItems}
-        preview={{ who: senderName(message.sender), text: message.content }}
+        preview={{ who: senderName(message.sender, { bare }), text: message.content }}
       />
     </article>
   );
