@@ -4658,7 +4658,9 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {/* ── Your work ──
           A returning member's own work in flight: their requests, their
-          changes and their votes, never what has merged (AppView
+          changes and their votes, never what is already live (#4715: a
+          merged change of theirs still going live stays, with its tag,
+          until the release lands) (AppView
           ._workshopView), in the shared work rows (./work-row.tsx WorkRow):
           the title, the board's words, its tags and its vote, and its ☰. A
           request your change addresses is drawn as that change. Its first

@@ -51,6 +51,17 @@ test('the routes read the shared fragment', () => {
     /COALESCE\(\$\{botRequestedBySql\('cs', '\$2'\)\}, FALSE\) AS requested_by_me/,
     'the flag rides the /promoted payload, FALSE for a guest');
 
+  // #4715: the merged rows carry it too, so Your work can tell whose ask a
+  // going-live bot change was once it has merged. mergedRowSelect is the
+  // shared fragment both /merged and the single-proposal fetch select
+  // through, and both bind the viewer as $2 — assert on the function body,
+  // not the file, so the match names THIS select and not /promoted's.
+  const mergedSelect = /function mergedRowSelect\(\) \{[\s\S]*?\n\}/.exec(votes);
+  assert.ok(mergedSelect, 'mergedRowSelect found');
+  assert.match(mergedSelect[0],
+    /COALESCE\(\$\{botRequestedBySql\('cs', '\$2'\)\}, FALSE\) AS requested_by_me/,
+    'the flag rides the /merged payload too, for the same viewer parameter');
+
   // The Communities counts read it inside MY_PROPOSALS_WHERE, on $1.
   const overview = read('src/routes/workshop-overview.js');
   assert.match(overview, /require\('\.\.\/services\/bot-requested-by'\)/);
