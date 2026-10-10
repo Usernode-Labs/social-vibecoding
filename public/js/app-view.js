@@ -11578,6 +11578,22 @@ const AppView = {
       // Underway column and in its theme, exactly as before.
       ...mineOf(buckets.inProgress, (e) => e.kind === 'issue' && AppView._issueIsMine(e.item))
         .map((e) => ({ kind: 'issue', item: e.item })),
+      // #4715: a merged change of yours that is still GOING LIVE stays in
+      // Your work until the release lands — the strip's job is what you
+      // have underway, and a change whose rollout is still running is
+      // underway. The same reading of the pill that draws "Going live" in
+      // This week (statusPillState: 'deploying', or a child app's
+      // 'delivery_pending') decides what counts, so a stalled or failed
+      // release stays out, and a row without `live_at` reads as it always
+      // did (live) and adds nothing. Bot changes built from the viewer's
+      // request count as theirs here, as in review above (`requested_by_me`
+      // now rides the /merged payload too). A close-issue row is a task,
+      // not a change of yours going live.
+      ...mineOf(buckets.done, (m) => meId != null && m.row_type !== 'close_issue'
+        && (String(m.user_id) === String(meId) || m.requested_by_me === true)
+        && ['deploying', 'delivery_pending']
+          .includes((AppView.statusPillState(m) || {}).key))
+        .map((m) => ({ kind: 'merged', item: m })),
     ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item))
       // #4457: a request your own change addresses is that change's, and is
       // drawn as it ("Change #4456 · yours · for #4455"), not a second time.
@@ -11602,13 +11618,18 @@ const AppView = {
       count: mineList.length,
       shown: AppView.WORKSHOP_MINE_MAX,
       rows: mineList.map(({ kind, item }) => {
+        // #4715: a merged row draws the very card This week draws for it
+        // (`_mergedRowModel`, whose pill says "Going live" while the release
+        // is still rolling out), so there is no new markup to keep in step.
         const card = kind === 'my-session'
           ? AppView._mySessionCardModel(item)
           : kind === 'gov'
             ? AppView._govCardModel(item)
             : kind === 'issue'
               ? AppView._issueCardModel(item)
-              : AppView._proposalCardModel(item);
+              : kind === 'merged'
+                ? AppView._mergedRowModel(item)
+                : AppView._proposalCardModel(item);
         if (!card) return null;
         return AppView._attachRowConversation(
           { t: 'card', key: `mine:${card.key}`, card, brief: AppView._workshopBrief(kind, item, card) }, kind, item,

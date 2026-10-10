@@ -2197,6 +2197,52 @@ test('#4538: a change Homeroom bot built from your request is Your work, still b
   assert.ok(sinceHtml && !sinceHtml.includes('Dark mode toggle'), 'in review, it is Your work\'s row, not New for you\'s nor what happened\'s');
 });
 
+test('#4715: a merged change of yours that is still going live stays in Your work', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // The corners of the rule, all in the /merged payload (which now carries
+  // `requested_by_me`): mine still going live, mine already live, somebody
+  // else's going live, the bot change built from my request going live, and
+  // mine with a stuck release. A row without `live_at` (the seed's) reads
+  // as live, as it always did, and adds nothing.
+  AppView._merged = [
+    { id: 81, pr_number: 80, pr_title: 'Mine, going live', status: 'merged', username: 'me',
+      user_id: 1, created_at: at(1), merged_at: at(0.1), last_message_at: at(0.1),
+      row_type: 'pr', linked_issues: [], live_at: null },
+    { id: 82, pr_number: 81, pr_title: 'Mine, live', status: 'merged', username: 'me',
+      user_id: 1, created_at: at(2), merged_at: at(0.4), last_message_at: at(0.4),
+      row_type: 'pr', linked_issues: [], live_at: at(0.05) },
+    { id: 83, pr_number: 82, pr_title: 'Theirs, going live', status: 'merged', username: 'carol',
+      user_id: 9, created_at: at(2), merged_at: at(0.35), last_message_at: at(0.35),
+      row_type: 'pr', linked_issues: [], live_at: null },
+    { id: 84, pr_number: 83, pr_title: 'Bot change, going live', status: 'merged', username: 'homeroom_bot',
+      user_id: 900, requested_by_me: true, created_at: at(1), merged_at: at(0.2),
+      last_message_at: at(0.2), row_type: 'pr', linked_issues: [], live_at: null },
+    { id: 85, pr_number: 84, pr_title: 'Mine, stuck', status: 'merged', username: 'me',
+      user_id: 1, created_at: at(2), merged_at: at(0.25), last_message_at: at(0.25),
+      row_type: 'pr', linked_issues: [], live_at: null, deployment_state: 'stalled' },
+  ];
+  const v = AppView._workshopView();
+  assert.deepEqual(plain(v.mine.rows).map((r) => r.key), ['mine:merged:81', 'mine:merged:84'],
+    'mine going live and the bot change from my request; not the live one, not theirs, not the stuck one');
+  assert.equal(v.mine.count, 2, 'the count beside the heading follows the rows');
+
+  // The row is the one This week draws: the merged brief, whose tag is the
+  // "Going live" pill (statusPillState key 'deploying'), not a new kind.
+  const row = v.mine.rows[0];
+  assert.equal(row.brief.kind, 'live');
+  assert.equal(row.brief.stage, 'live');
+  const tag = plain(row.brief.tags)[0];
+  assert.equal(tag.label, message('changes:badge.pill.goingLive'));
+  assert.equal(tag.tone, 'run');
+
+  // Rendered, keyed apart from the same card elsewhere in the pane — This
+  // week keeps every merged row it ever showed; nothing moves.
+  const html = workshopHtml(AppView, 'workshop');
+  assert.deepEqual(html.match(/data-ws-row="mine:[^"]*"/g) || [],
+    ['data-ws-row="mine:merged:81"', 'data-ws-row="mine:merged:84"']);
+});
+
 test('#2496: an issue you are working on joins "What you are working on"', () => {
   const AppView = makeAppView();
   seed(AppView);

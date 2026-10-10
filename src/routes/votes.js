@@ -1462,7 +1462,22 @@ function stagingMockMerged(viewer) {
     merged_at: new Date(Date.now() - 60 * 1000).toISOString(),
     live_at: null,
   };
-  return [autoMerged, goingLive, inheritedAttrs, undone].concat(titles.map((t, i) => mk(
+  // #4715: the same going-live state, OWNED by the viewer, so Your work
+  // shows the merged row that stays there until the release lands — the
+  // ownership the auto-merged mock already takes (#4505). Outside the
+  // 9100000-9100034 deployed-mock range like 9100035, so `live_at: null`
+  // is what draws its "Going live" pill; it carries no release of its own.
+  const mineGoingLive = {
+    ...mk(9100036, 910136,
+      '[Mock] Going-live test: your own change, still going live in Your work', 0, 0),
+    merged_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+    live_at: null,
+  };
+  if (viewer?.id != null && viewer.username) {
+    mineGoingLive.user_id = viewer.id;
+    mineGoingLive.username = viewer.username;
+  }
+  return [autoMerged, goingLive, mineGoingLive, inheritedAttrs, undone].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
     `[Mock] Completed: ${t}`,
@@ -2433,6 +2448,11 @@ function mergedRowSelect() {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- #4715: whose ask a merged bot change was (#4538's rule, the
+           -- shared fragment), so Your work can keep the viewer's own
+           -- going-live change after it merges. Both callers bind the
+           -- viewer as $2; a guest gets FALSE.
+           COALESCE(${botRequestedBySql('cs', '$2')}, FALSE) AS requested_by_me,
            -- Test accounts (D1): the viewer is a test account and a real
            -- person made this app, so their vote is recorded and shown but
            -- not counted. The vote picker says so in one line.
