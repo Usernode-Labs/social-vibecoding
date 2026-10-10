@@ -126,6 +126,7 @@ function reviewerSystemPrompt() {
     'Answer "ship" when nothing blocker or major is left; minor issues alone are not a reason to ask for another pass.',
     'When PREVIOUS ISSUES are given, they are the ones you raised last round: list in "previousFixed" the ids of those now fixed, do not raise a fixed one again, and keep the id of one still open.',
     '',
+    'Write `screen`, `problem` and `fix` in English.',
     'Reply with ONLY a JSON object, no prose and no code fence:',
     '{"verdict":"ship"|"fix","issues":[{"id":"short-kebab-id","severity":"blocker"|"major"|"minor","screen":"which screen or state","problem":"what is wrong","fix":"what to change, and to what"}],"previousFixed":["id"]}',
   ].join('\n');
@@ -287,7 +288,7 @@ function fixPrompt({ seed = '', spec = '', issues = [], round = 1, maxRounds = 1
     ...(platformRepo ? live.PLATFORM_TEST_NOTE : []),
     ...live.browserLines({ readsImages }),
     '',
-    'End with two or three sentences saying what you changed. Do not write a DESCRIPTION block: the proposal\'s description',
+    'End with two or three sentences, in English, saying what you changed. Do not write a DESCRIPTION block: the proposal\'s description',
     'is the build\'s own.',
   ].filter((l) => l !== null).join('\n');
 }

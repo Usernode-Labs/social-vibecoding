@@ -544,6 +544,7 @@ function specPrompt({
     ...specScopeLines(firstVersion, starter),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
+    '- Written in English.',
     `- ${specDesignBrief(firstVersion, starter)}`,
     ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
@@ -596,6 +597,7 @@ function specHtmlPrompt({ seed, buildNote, firstVersion, platformStyles, guidanc
     ...specScopeLines(firstVersion, starter),
     '- Written without em dashes: use a comma, a colon or a full stop. The group reads it, and its "User-facing',
     '  changes" half can become the change\'s description.',
+    '- Written in English.',
     `- ${specDesignBrief(firstVersion, starter)}`,
     ...stageGuidanceLines('spec', { firstVersion, guidance }),
     ...requestRulesLines(),
@@ -1055,7 +1057,7 @@ function followUpPlanFormat({ config, app }) {
       'Write the updated plan as an HTML document: start with <h1> Title and end with </article>, no preamble.',
       '- Two sections, "user" (what people will see and do differently, no file paths) then "tech" (the files,',
       '  data, edge cases and tests). Title it with what the change DOES, at most 72 characters.',
-      '- Written without em dashes: use a comma, a colon or a full stop.',
+      '- Written without em dashes: use a comma, a colon or a full stop. Written in English.',
       specHtmlContract(platformStyles),
     ].join('\n');
   }
@@ -1065,7 +1067,7 @@ function followUpPlanFormat({ config, app }) {
     '  headings, in this order: "## User-facing changes" then "## Technical implementation". The user half is',
     '  what people will see and do differently, no file paths; the technical half holds the files, data, edge',
     '  cases and tests.',
-    '- Written without em dashes: use a comma, a colon or a full stop.',
+    '- Written without em dashes: use a comma, a colon or a full stop. Written in English.',
   ].join('\n');
 }
 
@@ -1672,8 +1674,8 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
   '==== END DESCRIPTION ====',
   '',
   'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
-  'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop. Skip the',
-  'block only if you changed nothing.',
+  'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop.',
+  'Write it in English. Skip the block only if you changed nothing.',
 ]);
 
 // #4487: the bot's proposals get before/after shots on the exact builds, as
@@ -1690,7 +1692,7 @@ const BUILD_DESCRIPTION_LINES = Object.freeze([
 const BUILD_VISIBLE_CHANGES_LINES = Object.freeze([
   '',
   'Once the change is built and committed, call the provided declare_visible_changes tool once, with the changes',
-  'as you actually built them: one to three, each a claim in plain words a voter would recognise, the real',
+  'as you actually built them: one to three, each a claim in plain English words a voter would recognise, the real',
   'startPath and steps that reach it, the persona who sees it, both screen sizes, and hints (data to create',
   'first, text that shows the state was reached, the element to point at) when you learned them while building.',
   'Changes that show on the same screen are one declared change. Homeroom\'s shots agent follows each one on the',
