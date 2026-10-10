@@ -105,11 +105,17 @@ test('the logo is same-origin, not a third party, and there is still no <style>/
   for (const kind of templates.KINDS) {
     const { html } = templates.buildMessage(kind, PAYLOAD);
     const imgTags = html.match(/<img\b[^>]*>/gi) || [];
-    assert.equal(imgTags.length, 1, `${kind}: exactly one image, the logo`);
+    // #4570: the release welcome also draws the landing page's people
+    // illustration, hosted on the same /brand/ tier. Every other kind still
+    // carries exactly the logo.
+    const expected = kind === 'waitlist_released' ? 2 : 1;
+    assert.equal(imgTags.length, expected, `${kind}: exactly ${expected} image(s) from /brand/`);
     assert.match(imgTags[0], /src="https:\/\/[^"/]+\/brand\/homeroom-logotype-black\.png"/,
       `${kind}: the logo is same-origin, absolute, and never a third-party host`);
-    assert.doesNotMatch(imgTags[0], /src="(?!https:\/\/[^"/]+\/brand\/)/,
-      `${kind}: no other image host sneaks in`);
+    for (const tag of imgTags) {
+      assert.doesNotMatch(tag, /src="(?!https:\/\/[^"/]+\/brand\/)/,
+        `${kind}: no other image host sneaks in`);
+    }
     assert.doesNotMatch(html, /<style\b/i, `${kind}: no style block`);
     assert.doesNotMatch(html, /\sclass=/i, `${kind}: no classes`);
   }
