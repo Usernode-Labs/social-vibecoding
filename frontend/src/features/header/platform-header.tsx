@@ -50,6 +50,7 @@ import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 import { nativeBackEnabled, useNativeBackNavigation } from './native-back-navigation';
+import { HeaderPlace } from '../dev-board/workshop/place-bar';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
 // These six imports and the four inits below rode on the hamburger drawer's
@@ -232,7 +233,7 @@ export function PlatformHeader() {
   // sites agreeing by convention.
   const {
     slug: backSlug, tab: backTab, subTab: backSubTab,
-    sessionOrigin, boardView, topicOrigin,
+    sessionOrigin, boardView, topicOrigin, name: appName,
   } = useStoreState(improveStore);
   const routeUp = appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
   // #2916: on a Workshop topic the back control is the "‹ Workshop" chip at
@@ -537,6 +538,18 @@ export function PlatformHeader() {
               className={backClose ? 'w-5 h-5' : 'hidden w-5 h-5'}
             />
           </a>
+          {/*
+              #4703: THE MERGED HEADER'S PLACES BUTTON, on a phone. A project
+              page under 768px carries its place bar's contents here — this
+              button, then the place's name after the switcher — and the
+              second coloured row is gone. The page owns the tray and
+              published the toggle (place-store.ts); this only draws the
+              button and calls it. Nothing renders until the phone flag is
+              settled in an effect and a page for this project is mounted, so
+              the prerender and the first client render are untouched, and on
+              a wide window the bar draws none at all.
+          */}
+          <HeaderPlace slug={backSlug} name={appName || ''} />
         </div>
         {/*
             The screen's only h1 — a NAME, not a control, since #2718. It was

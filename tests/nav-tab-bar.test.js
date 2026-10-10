@@ -528,9 +528,11 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   assert.match(css, /\.platform-sidebar-toggle \{\n  display: none;\n\}/);
   // All three questions are CSS's, and none is part of hydration: does the
   // rail exist (`#platform-tabs.hidden`), is there room for it (the media
-  // query), and has the group anything in it (`:has(> #back-btn.hidden)`).
+  // query), and has the group anything in it (`:has(> #back-btn.hidden)` —
+  // #4703's merged places button excepted, which is the group's fourth
+  // possible contents).
   assert.match(css,
-    /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: none;/);
+    /#platform-header \.platform-header-left:has\(> #back-btn\.hidden\):not\(:has\(> \.header-places-btn\)\) \{\s*\n\s*display: none;/);
   assert.match(css,
     /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-route-hidden\)\) #platform-header\s*\n\s*\.platform-header-left:has\(> #back-btn\.hidden\) \{\s*\n\s*display: flex;/,
     '…unless the toggle is in it, which needs both a rail and the width');

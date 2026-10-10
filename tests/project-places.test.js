@@ -148,9 +148,12 @@ test('the page draws the bar where the tabs were, and the tray only while it is 
   // moves the page; the tray shuts when the place changes under it.
   assert.match(WS, /const choosePlace = \(key: TabKey\) => \{\s*trayNav\.current = true;\s*setTrayOpen\(false\);/);
   assert.match(WS, /useEffect\(\(\) => \{ setTrayOpen\(false\); \}, \[tab, v\.slug, placesInColumn\]\);/);
-  // The page publishes where it is, and how to move it, for the column.
+  // The page publishes where it is, and how to move it, for the column —
+  // #4703: with the unread and the tray state the merged header's button
+  // draws, and the toggle its press calls.
   assert.match(WS, /registerPlaceOpener\(mine, /);
-  assert.match(WS, /publishPlace\(v\.slug, tab, owed\)/);
+  assert.match(WS, /registerTrayToggle\(mine, /);
+  assert.match(WS, /publishPlace\(v\.slug, tab, owed, unreadElsewhere, trayOpen\)/);
 });
 
 test('the tray: rendered only while open, into the body; focus in and back; Escape, the scrim and a swipe close it', () => {

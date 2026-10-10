@@ -368,7 +368,7 @@ test('#3522: on a phone the band pins where it rests', () => {
   assert.match(block, /#dev-workshop \{ --ws-band-top: calc\(var\(--dev-ws-head-foot, 7px\) - 17px\); \}/);
   assert.match(block, /html\[data-browser-scroller="dev-forum-scroll"\] #dev-workshop \{\s*--ws-band-top: calc\(var\(--browser-banner-h\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top\) - 17px\);/);
   assert.match(block, /\.dev-ws-tabs\.dev-ws-band \{\s*position: sticky;\s*top: var\(--ws-band-top\);\s*z-index: 29;/, 'sticky, over the cards, under the header');
-  assert.match(block, /#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-band-top\) \+ 58px\); \}/, 'All items\' head pins under the band');
+  assert.match(block, /#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-band-top\) \+ 18px\); \}/, 'All items\' head pins under the band');
   // The two numbers the offsets are built from.
   assert.match(CSS, /^#dev-body:has\(> #dev-workshop\) \{ padding: 8px /m, '#dev-body\'s 8px top padding');
   assert.match(CSS, /^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px /m, 'the band\'s 18px tuck');

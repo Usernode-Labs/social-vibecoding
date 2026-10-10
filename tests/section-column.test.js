@@ -80,7 +80,9 @@ test('the column steps aside for the side panel under 1296px, told by the page',
   publishPlace('notes', 'all', 2);
   assert.equal(placeStore.get().side, true, 'a new count keeps it');
   clearPlace('notes');
-  assert.deepEqual(placeStore.get(), { slug: null, place: 'status', owed: 0, side: false });
+  // #4703 added unread and tray to the state, for the merged header's button.
+  assert.deepEqual(placeStore.get(),
+    { slug: null, place: 'status', owed: 0, side: false, unread: 0, tray: false });
 });
 
 test('the places column is the page\'s list, and a press there moves the page in place', () => {
