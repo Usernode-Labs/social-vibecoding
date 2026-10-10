@@ -24,6 +24,10 @@ type Commit = { id: number; language: string; value: string | null; auto: boolea
 const DEVICE_KEY = 'homeroom:language:device';
 // Set once the automatic-language notice has been shown on this device.
 const NOTICE_KEY = 'homeroom:language:auto-notice';
+// The language last on screen on this device. The head's first-paint hold
+// (frontend/src/head.html) reads it before anything paints.
+const SHOWN_KEY = 'homeroom:language:shown';
+const PENDING_CLASS = 'language-pending';
 const PACK_TIMEOUT_MS = 8000;
 const RETRY_AFTER_MS = 10000;
 
@@ -183,6 +187,56 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     }[character]!));
   }
 
+  /**
+   * A whole message with markup inside it, for an owner that builds HTML as a
+   * string. The catalog holds numbered tags (`Read <0>the terms</0>.`); `wrap`
+   * supplies the element for each number as a function of its (already
+   * escaped) inner HTML. Everything else, parameters included, is escaped, so
+   * neither a translation nor a value can add markup of its own. A tag with
+   * no wrapper keeps its text and loses the tag.
+   */
+  function htmlRich(key: string, values: Record<string, string | number | null | undefined> = {},
+    wrap: ((inner: string) => string)[] = []): string {
+    const escape = (text: string) => text.replace(/[&<>"']/g, (character) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[character]!));
+    // Leave {{parameters}} in place: they are substituted after the tags are
+    // parsed, so a value that looks like a tag stays text (as in RichMessage).
+    const text = t(key, {
+      count: typeof values.count === 'number' ? values.count : undefined,
+      interpolation: { prefix: '[[unused:', suffix: ']]' },
+    } as TOptions);
+    const stack: { index: number; html: string }[] = [{ index: -1, html: '' }];
+    for (const token of text.split(/(<\/?\d+>|{{\s*\w+\s*}})/g)) {
+      const open = /^<(\d+)>$/.exec(token);
+      const close = /^<\/(\d+)>$/.exec(token);
+      const parameter = /^{{\s*(\w+)\s*}}$/.exec(token);
+      const top = stack[stack.length - 1];
+      if (open) stack.push({ index: Number(open[1]), html: '' });
+      else if (close && stack.length > 1 && top.index === Number(close[1])) {
+        stack.pop();
+        const wrapper = wrap[top.index];
+        stack[stack.length - 1].html += wrapper ? wrapper(top.html) : top.html;
+      } else if (parameter) top.html += escape(String(values[parameter[1]] ?? ''));
+      else top.html += escape(token);
+    }
+    // An unclosed tag keeps what it held.
+    return stack.map((group) => group.html).join('');
+  }
+
+  /**
+   * Independent facts said one after another, as an accessible name gives
+   * them ("App: Recipe Box, still open, unread"). Each part is a whole
+   * message of its own. What joins two of them is a message too
+   * (`core:list.pair`), so a language can use its own punctuation.
+   */
+  function listText(parts: readonly (string | null | undefined | false)[]): string {
+    const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
+    if (!i18n.exists('core:list.pair')) return said.join(', ');
+    if (!said.length) return '';
+    return said.reduce((first, second) => t('core:list.pair', { first, second }));
+  }
+
   async function prepareLanguage(value: string | null): Promise<{ language: string; auto: boolean }> {
     const resolved = resolveLanguage(value, deviceLanguages(), shipped);
     let seen = 0;
@@ -210,6 +264,10 @@ export function createLanguageRuntime(catalogs: Catalogs) {
       document.documentElement.lang = language;
     }
     if (changed) announce();
+    // The language is on screen: lift the head's hold, and remember it so
+    // the next load holds (or does not) for the right language.
+    writeStored(SHOWN_KEY, language);
+    if (typeof document !== 'undefined') document.documentElement.classList?.remove(PENDING_CLASS);
     // Once per device, the first time the language was picked for the person
     // rather than by them. Shown, it is spent, whatever they do with it.
     if (auto && language !== 'en') {
@@ -321,6 +379,8 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     i18n,
     t,
     htmlText,
+    htmlRich,
+    listText,
     languageName,
     registerNamespace,
     ensureNamespace,

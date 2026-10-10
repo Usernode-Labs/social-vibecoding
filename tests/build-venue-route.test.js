@@ -27,6 +27,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -200,8 +201,9 @@ test('a venue pick that works is silent — in all four states (#1348 follow-up)
 
   // A FAILURE still speaks, in both directions, because a switch that did
   // not happen changes nothing on screen — there is no other signal.
-  assert.match(fn[0], /toast\(data\.error \|\| 'Could not switch to the platform agent\.'\)/);
-  assert.match(fn[0], /toast\('Network error while switching coding agents\.'\)/);
+  assert.match(fn[0], /toast\(data\.error \|\| PlatformI18n\.t\('devchat:agentSwitch\.platformFailed'\)\)/);
+  assert.match(fn[0], /toast\(PlatformI18n\.t\('devchat:agentSwitch\.networkError'\)\)/);
+  assert.equal(message('devchat:agentSwitch.networkError'), 'Network error while switching coding agents.');
   // As does a row the sheet is refusing.
   assert.match(DEV_CHAT_SRC, /onUnavailable: \(row\) => PlatformUI\.toast\(row\.reason\)/);
   // And the two things that DO report the outcome are still wired: the

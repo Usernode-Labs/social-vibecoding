@@ -15,6 +15,13 @@
 //                    the runtime shows English for that one message. A
 //                    translation never fails a build.
 //
+// A language listed in config.json SHIPS (is offered in Settings, matched to a
+// device and given packs) only once its translations cover at least
+// `minimumCoverage` of the English messages. Until the translation step has
+// filled it, a configured language is built into nothing and Homeroom stays
+// in English for its readers; afterwards a message the step has not reached
+// yet still falls back to English on its own.
+//
 // Output (both ignored by git and Docker, rebuilt by every shell build):
 //
 //   frontend/src/lib/i18n/catalogs.generated.json   bundled English + manifest
@@ -123,7 +130,19 @@ function readConfig(directory) {
       throw new Error(`frontend/locales/config.json: "${tag}" must be a canonical language tag with its own name`);
     }
   }
+  if ('minimumCoverage' in config && !(typeof config.minimumCoverage === 'number'
+      && config.minimumCoverage >= 0 && config.minimumCoverage <= 1)) {
+    throw new Error('frontend/locales/config.json: minimumCoverage is a fraction from 0 to 1');
+  }
   return config;
+}
+
+/** The share of a language's messages a translation must cover before it ships. */
+const minimumCoverage = (config) => (typeof config.minimumCoverage === 'number' ? config.minimumCoverage : 0);
+
+/** Whether a configured language's coverage lets it ship (`tally` from collectCatalogs). */
+function covered(tally, config) {
+  return tally.total > 0 && tally.translated / tally.total >= minimumCoverage(config);
 }
 
 /**
@@ -155,14 +174,24 @@ function requiredMessages(source, language) {
   return { required, groups };
 }
 
-/** 'missing' | 'stale' | 'invalid' for an entry that cannot be used, or null. */
-function translationProblem(entry, english) {
+/**
+ * 'missing' | 'stale' | 'invalid' for an entry that cannot be used, or null.
+ *
+ * A translation carries exactly the English text's parameters, with one
+ * exception for a form of a counted message (`counted`): the number the form
+ * was chosen by, `{{count}}`, is always handed to it, so a translation may
+ * show it where English spells the number out ("an hour ago"), and may leave
+ * it out where its own form already says it. Russian's `one` form is also
+ * used for 21, 31 and 101: it has to be able to print the number.
+ */
+function translationProblem(entry, english, counted = false) {
   if (entry === undefined) return 'missing';
   if (!isObject(entry) || typeof entry.text !== 'string' || !entry.text.trim()) return 'invalid';
   if (Object.keys(entry).some((field) => !['text', 'source', 'locked'].includes(field))) return 'invalid';
   if ('locked' in entry && typeof entry.locked !== 'boolean') return 'invalid';
   if (entry.source !== hash(english)) return 'stale';
-  if (!sameList(parameters(entry.text), parameters(english))) return 'invalid';
+  const named = (text) => parameters(text).filter((name) => !(counted && name === 'count'));
+  if (!sameList(named(entry.text), named(english))) return 'invalid';
   try {
     if (!sameList(componentTags(entry.text), componentTags(english))) return 'invalid';
   } catch { return 'invalid'; }
@@ -197,9 +226,10 @@ function collectCatalogs(root) {
       const { required, groups } = requiredMessages(english[namespace], language);
       const messages = {};
       const unusable = new Set();
+      const countedKeys = new Set([...groups.values()].flat());
       for (const [key, text] of Object.entries(required)) {
         tally.total += 1;
-        const problem = translationProblem(translation[key], text);
+        const problem = translationProblem(translation[key], text, countedKeys.has(key));
         if (problem) { tally[problem].push(`${namespace}:${key}`); unusable.add(key); } else messages[key] = translation[key].text;
       }
       // A counted message is used whole or not at all: half a plural set
@@ -213,18 +243,29 @@ function collectCatalogs(root) {
       tally.translated += Object.keys(messages).length;
       catalogs[language][namespace] = messages;
     }
+    tally.ships = covered(tally, config);
     report[language] = tally;
   }
   return { config, namespaces, english, catalogs, report };
 }
 
+/** English and every configured language whose coverage lets it ship, in config order. */
+function shippedLanguages(config, report) {
+  return Object.fromEntries(Object.entries(config.languages)
+    .filter(([language]) => language === 'en' || report[language]?.ships));
+}
+
 function buildLanguagePacks(root) {
   const { config, namespaces, english, catalogs, report } = collectCatalogs(root);
+  const languages = shippedLanguages(config, report);
   const output = path.join(root, 'public/locales');
   fs.mkdirSync(output, { recursive: true });
   const manifest = {};
   const current = new Set();
   for (const [language, packs] of Object.entries(catalogs)) {
+    // A language the translation step has not filled yet gets no pack: it is
+    // not offered, so nothing would ever ask for one.
+    if (!(language in languages)) continue;
     manifest[language] = {};
     for (const [namespace, messages] of Object.entries(packs)) {
       const bytes = JSON.stringify(messages);
@@ -242,22 +283,29 @@ function buildLanguagePacks(root) {
   }
   const generated = path.join(root, 'frontend/src/lib/i18n/catalogs.generated.json');
   fs.mkdirSync(path.dirname(generated), { recursive: true });
-  fs.writeFileSync(generated, JSON.stringify({ languages: config.languages, namespaces, english, manifest }));
-  return { manifest, report };
+  fs.writeFileSync(generated, JSON.stringify({ languages, namespaces, english, manifest }));
+  return { manifest, report, languages };
 }
 
-function formatReport(report) {
+/**
+ * The coverage report. `limit` caps the keys listed per reason and language
+ * (a language nobody has translated yet is every message missing); pass
+ * Infinity for all of them.
+ */
+function formatReport(report, { limit = 25 } = {}) {
   const languages = Object.keys(report);
-  if (!languages.length) return 'Only English is shipped; there is no translation coverage to report.';
+  if (!languages.length) return 'Only English is configured; there is no translation coverage to report.';
   const lines = [];
   for (const language of languages) {
-    const { total, translated, missing, stale, invalid, unknown } = report[language];
+    const { total, translated, missing, stale, invalid, unknown, ships } = report[language];
     const percent = total ? Math.floor((translated / total) * 100) : 100;
     lines.push(`${language}: ${translated} of ${total} translated (${percent}%), `
       + `${missing.length} missing, ${stale.length} stale, ${invalid.length} invalid`
-      + (unknown.length ? `, ${unknown.length} no longer in English` : ''));
+      + (unknown.length ? `, ${unknown.length} no longer in English` : '')
+      + (ships === false ? ', not offered yet' : ''));
     for (const [reason, keys] of [['missing', missing], ['stale', stale], ['invalid', invalid]]) {
-      for (const key of keys) lines.push(`  ${reason}  ${key}`);
+      for (const key of keys.slice(0, limit)) lines.push(`  ${reason}  ${key}`);
+      if (keys.length > limit) lines.push(`  ${reason}  … and ${keys.length - limit} more`);
     }
   }
   return lines.join('\n');
@@ -267,11 +315,13 @@ if (require.main === module) {
   const root = path.join(__dirname, '..');
   try {
     if (process.argv.includes('--report')) {
-      console.log(formatReport(collectCatalogs(root).report));
+      const limit = process.argv.includes('--all') ? Infinity : undefined;
+      console.log(formatReport(collectCatalogs(root).report, { limit }));
     } else if (process.argv.includes('--check')) {
-      const { config, namespaces } = collectCatalogs(root);
+      const { config, namespaces, report } = collectCatalogs(root);
       console.log(`[language-packs] English source is valid: ${namespaces.length} namespace(s), `
-        + `${Object.keys(config.languages).length} shipped language(s)`);
+        + `${Object.keys(config.languages).length} configured language(s), `
+        + `${Object.keys(shippedLanguages(config, report)).length} shipped`);
     } else {
       buildLanguagePacks(root);
     }
@@ -282,5 +332,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  PACK_NAME, buildLanguagePacks, collectCatalogs, componentTags, formatReport, hash, parameters, requiredMessages,
+  PACK_NAME, buildLanguagePacks, collectCatalogs, componentTags, formatReport, hash, minimumCoverage, parameters,
+  readConfig, requiredMessages, shippedLanguages, translationProblem,
 };

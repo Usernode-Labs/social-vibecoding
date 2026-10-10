@@ -56,6 +56,8 @@ import {
   type InviteOutcome,
   type InviteState,
 } from './invite-data';
+import { useMessages } from '../../lib/i18n/react';
+import { t } from '../../lib/i18n/runtime';
 import { daysUntil } from './invite-model';
 
 export type { InviteLink, InviteState } from './invite-data';
@@ -82,10 +84,14 @@ const USE_CHOICES = [1, 5, 10, 25, 50, 100, NO_LIMIT];
 
 /** "3 of 25 used · 5 days left", for a row of Your links. */
 export function linkDetail(link: Pick<InviteLink, 'expiresAt' | 'maxUses' | 'uses'>, now = Date.now()): string {
-  const used = link.maxUses == null ? `${link.uses} joined` : `${link.uses} of ${link.maxUses} used`;
-  if (link.expiresAt == null) return `${used} · no end date`;
+  const uses = link.maxUses == null
+    ? t('agent:appContext.invite.detail.joined', { count: link.uses })
+    : t('agent:appContext.invite.detail.used', { used: link.uses, max: link.maxUses });
+  // Two facts about the link, side by side.
+  if (link.expiresAt == null) return t('agent:appContext.invite.detail.pair', { uses, expiry: t('agent:appContext.invite.detail.noEnd') });
   const days = daysUntil(link.expiresAt, now);
-  return `${used} · ${days <= 1 ? 'under a day left' : `${days} days left`}`;
+  const expiry = days <= 1 ? t('agent:appContext.invite.detail.underDay') : t('agent:appContext.invite.detail.daysLeft', { count: days });
+  return t('agent:appContext.invite.detail.pair', { uses, expiry });
 }
 
 function absolute(path: string): string {
@@ -118,15 +124,16 @@ function SkeletonLine({ className, shape = 'muted' }: { className: string; shape
  * Share, the heading row and a link row are theirs. What it cannot know is
  * how many links there are, so it draws the common case: one of their own.
  */
-export function InviteSkeleton({ label, canShare }: { label: string; canShare: boolean }): ReactNode {
+export function InviteSkeleton({ label, unnamed = false, canShare }: { label: string; unnamed?: boolean; canShare: boolean }): ReactNode {
+  const t = useMessages('agent');
   return (
     <div id="app-invite-pane" className="pb-2" data-invite-loading="">
       <div className="px-5 pt-1">
-        <div className={TITLE}>{`Invite people to ${label}`}</div>
+        <div className={TITLE}>{unnamed ? t('agent:appContext.invite.titleUnnamed') : t('agent:appContext.invite.title', { project: label })}</div>
       </div>
       {/* The pulse is opacity alone, on the compositor, and still under
           reduced motion. */}
-      <SkeletonGroup label="Making your link" className="motion-reduce:animate-none">
+      <SkeletonGroup label={t('agent:appContext.invite.making')} className="motion-reduce:animate-none">
         <div className="px-5 pt-3">
           <div className={inputVariants()}>
             <SkeletonLine shape="line" className="w-3/4" />
@@ -149,7 +156,13 @@ export function InviteSkeleton({ label, canShare }: { label: string; canShare: b
   );
 }
 
-export function InvitePane({ slug, label }: { slug: string | null; label: string }) {
+/**
+ * `label` is the project's name. With `unnamed`, no name has loaded and `label`
+ * is a stand-in: the sentences here use their unnamed wording instead of
+ * taking the stand-in as a name.
+ */
+export function InvitePane({ slug, label, unnamed = false }: { slug: string | null; label: string; unnamed?: boolean }) {
+  const t = useMessages('agent');
   // What AppContext.openInvite() read before the sheet went up, when it came
   // in time: the pane's first render is then the loaded one.
   const [prepared] = useState<InviteOutcome | null>(() => (slug ? preparedInvite(slug) : null));
@@ -211,12 +224,12 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
-      setError('Could not copy. Press and hold the link to copy it.');
+      setError(t('agent:appContext.invite.copyFailed'));
     }
   };
   const share = async () => {
     if (!url || typeof navigator.share !== 'function') return;
-    try { await navigator.share({ title: `Join ${label} on Homeroom`, url }); } catch { /* dismissed */ }
+    try { await navigator.share({ title: unnamed ? t('agent:appContext.invite.shareTitleUnnamed') : t('agent:appContext.invite.shareTitle', { project: label }), url }); } catch { /* dismissed */ }
   };
   const make = async () => {
     if (!base) return;
@@ -251,7 +264,7 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
 
   const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
 
-  if (!slug) return <div id="app-invite-pane"><p className={NOTE}>Open a project to invite people to it.</p></div>;
+  if (!slug) return <div id="app-invite-pane"><p className={NOTE}>{t('agent:appContext.invite.noProject')}</p></div>;
   if (!state && error) {
     return (
       <div id="app-invite-pane">
@@ -259,14 +272,14 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
       </div>
     );
   }
-  if (!state) return <InviteSkeleton label={label} canShare={canShare} />;
+  if (!state) return <InviteSkeleton label={label} unnamed={unnamed} canShare={canShare} />;
   if (!state.canCreate) {
     return (
       <div id="app-invite-pane">
         <p className={NOTE}>
           {state.grant === 'collaborator'
-            ? `Only the people building ${label} can invite others to it.`
-            : `Join ${label} to invite people to it.`}
+            ? (unnamed ? t('agent:appContext.invite.buildersOnlyUnnamed') : t('agent:appContext.invite.buildersOnly', { project: label }))
+            : (unnamed ? t('agent:appContext.invite.joinFirstUnnamed') : t('agent:appContext.invite.joinFirst', { project: label }))}
         </p>
       </div>
     );
@@ -275,7 +288,7 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
     <div id="app-invite-pane" className="pb-2">
       <div className="px-5 pt-1">
         <div className={TITLE}>
-          {`Invite people to ${label}`}
+          {unnamed ? t('agent:appContext.invite.titleUnnamed') : t('agent:appContext.invite.title', { project: label })}
         </div>
       </div>
       {current ? (
@@ -285,19 +298,19 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
               id="app-invite-url"
               readOnly
               value={url}
-              aria-label="Invite link"
+              aria-label={t('agent:appContext.invite.linkLabel')}
               onFocus={(e) => e.currentTarget.select()}
             />
           </div>
           <div className="flex items-stretch gap-2 px-5 pt-3">
             <button id="app-invite-copy" type="button" className={PRIMARY} onClick={copy}>
               <CopyIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{copied ? 'Copied' : 'Copy link'}</span>
+              <span className="truncate">{copied ? t('agent:appContext.invite.copied') : t('agent:appContext.invite.copyLink')}</span>
             </button>
             {canShare ? (
               <button id="app-invite-share" type="button" className={SECONDARY} onClick={share}>
                 <ShareIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span className="truncate">Share</span>
+                <span className="truncate">{t('agent:appContext.invite.share')}</span>
               </button>
             ) : null}
           </div>
@@ -307,35 +320,35 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
 
       <div id="app-invite-links">
         <div className={SECTION_ROW}>
-          <h4 className={SECTION}>{state.manages ? 'Live links' : 'Your links'}</h4>
+          <h4 className={SECTION}>{state.manages ? t('agent:appContext.invite.liveLinks') : t('agent:appContext.invite.yourLinks')}</h4>
           {changing ? null : (
             <button id="app-invite-change-open" type="button" className={CHANGE_LINK} onClick={() => setChanging(true)}>
-              Change
+              {t('agent:appContext.invite.change')}
             </button>
           )}
         </div>
         {changing ? (
           <div id="app-invite-change" className="px-5 pt-2 pb-2 space-y-3">
             <label className="block text-sm text-zinc-700 dark:text-zinc-200">
-              <span className="block pb-1">Expires after</span>
+              <span className="block pb-1">{t('agent:appContext.invite.expiresAfter')}</span>
               <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))}>
                 {DAY_CHOICES.filter((d) => d === NO_LIMIT || (d >= state.limits.minDays && d <= state.limits.maxDays)).map((d) => (
-                  <option key={d} value={d}>{d === NO_LIMIT ? 'Until you turn it off' : d === 1 ? '1 day' : `${d} days`}</option>
+                  <option key={d} value={d}>{d === NO_LIMIT ? t('agent:appContext.invite.option.untilOff') : t('agent:appContext.invite.option.days', { count: d })}</option>
                 ))}
               </Select>
             </label>
             <label className="block text-sm text-zinc-700 dark:text-zinc-200">
-              <span className="block pb-1">Works for</span>
+              <span className="block pb-1">{t('agent:appContext.invite.worksFor')}</span>
               <Select value={String(uses)} onChange={(e) => setUses(Number(e.target.value))}>
                 {USE_CHOICES.filter((n) => n === NO_LIMIT || (n >= state.limits.minUses && n <= state.limits.maxUses)).map((n) => (
-                  <option key={n} value={n}>{n === NO_LIMIT ? 'Anyone with the link' : n === 1 ? '1 person' : `${n} people`}</option>
+                  <option key={n} value={n}>{n === NO_LIMIT ? t('agent:appContext.invite.option.anyone') : t('agent:appContext.invite.option.people', { count: n })}</option>
                 ))}
               </Select>
             </label>
             <div className="flex items-stretch gap-2">
-              <button type="button" className={SECONDARY} onClick={() => setChanging(false)}>Cancel</button>
+              <button type="button" className={SECONDARY} onClick={() => setChanging(false)}>{t('core:common.cancel')}</button>
               <button id="app-invite-make" type="button" className={PRIMARY} disabled={busy} onClick={make}>
-                Make new link
+                {t('agent:appContext.invite.makeNew')}
               </button>
             </div>
           </div>
@@ -345,7 +358,7 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
             <span className="flex-1 min-w-0">
               <span className="block truncate">{linkDetail(link)}</span>
               {!link.mine && link.createdBy ? (
-                <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{`by @${link.createdBy}`}</span>
+                <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{t('agent:appContext.invite.madeBy', { username: link.createdBy })}</span>
               ) : null}
             </span>
             <button
@@ -354,10 +367,10 @@ export function InvitePane({ slug, label }: { slug: string | null; label: string
               disabled={busy}
               onClick={() => turnOff(link)}
             >
-              Turn off
+              {t('agent:appContext.invite.turnOff')}
             </button>
           </div>
-        )) : (changing ? null : <p className={NOTE}>No live links.</p>)}
+        )) : (changing ? null : <p className={NOTE}>{t('agent:appContext.invite.noLinks')}</p>)}
       </div>
     </div>
   );

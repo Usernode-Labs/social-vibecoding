@@ -864,7 +864,7 @@ const AppView = {
         errorCode: window.UITelemetry?.errorCodeFor?.(res.status, failure.code),
       });
       if (failure.code === 'app_blocked') {
-        void window.PlatformUI?.confirm({ title: 'App blocked', message: 'You blocked this app. Unblock it in Settings → Blocked apps to open it again.', confirmLabel: 'Open Settings', cancelLabel: 'Close' }).then(open => {
+        void window.PlatformUI?.confirm({ title: PlatformI18n.t('changes:appBlocked.title'), message: PlatformI18n.t('changes:appBlocked.message'), confirmLabel: PlatformI18n.t('changes:appBlocked.openSettings'), cancelLabel: PlatformI18n.t('core:common.close') }).then(open => {
           if (open) location.hash = '#settings/blocked-apps';
         });
       }
@@ -1514,17 +1514,16 @@ const AppView = {
     if (shot === 'preview-rebuilding') {
       // The ONE state that still promises 20–60 seconds: a real rebuild.
       AppView._setStagingLoader(true, {
-        title: 'Spinning the preview back up…',
-        sub: 'The preview was paused after a while of inactivity. Rebuilding it '
-          + 'from the session’s latest changes. This usually takes 20–60 seconds.',
+        title: PlatformI18n.t('changes:preview.loader.rebuildingTitle'),
+        sub: PlatformI18n.t('changes:preview.loader.rebuildingSub'),
       });
       return;
     }
     // The common post-build path: the server verified the preview, so this
     // is a plain "the page is rendering" spinner with no invented duration.
     AppView._setStagingLoader(true, {
-      title: 'Loading the preview…',
-      sub: 'Automated checks are running against this preview, so the first load may be a little slower.',
+      title: PlatformI18n.t('changes:preview.loader.loadingTitle'),
+      sub: PlatformI18n.t('changes:preview.loader.loadingSub'),
     });
   },
 
@@ -2138,7 +2137,7 @@ const AppView = {
       iconKind: tile.kind,
       iconHtml: tile.html,
       name: (record && record.name) || '',
-      note: 'Opening…',
+      note: PlatformI18n.t('changes:launch.cover.opening'),
       spinner: false,
     };
   },
@@ -2587,7 +2586,7 @@ const AppView = {
       reveal();
     });
     at(AppView.LAUNCH_SLOW_MS, () => {
-      const text = 'This is taking longer than expected…';
+      const text = PlatformI18n.t('changes:launch.cover.slow');
       if (isReactCover) { AppView._appFrame().coverNote(text); return; }
       const note = document.getElementById(`${coverId}-note`);
       if (note) note.textContent = text;
@@ -2979,7 +2978,7 @@ const AppView = {
   _appStatusView(appData) {
     if (appData?.staging_sample) return {
       dot: null,
-      message: 'Preview sample app. You can try its discussion, favorites, reporting and blocking. No live app is deployed here.',
+      message: PlatformI18n.t('changes:appStatus.sample'),
       detail: null,
       action: null,
     };
@@ -2990,16 +2989,16 @@ const AppView = {
       return AppView._firstVersionView(appData);
     }
     if (appData?.status === 'creating') {
-      return { dot: 'creating', message: 'App is spinning up...', detail: null, action: null };
+      return { dot: 'creating', message: PlatformI18n.t('changes:appStatus.spinningUp'), detail: null, action: null };
     }
     if (appData?.status === 'awaiting_secrets') {
       const missing = Array.isArray(appData.missingSecrets) ? appData.missingSecrets : [];
       return {
         dot: 'creating',
-        message: 'Awaiting required secrets. Deploy is blocked.',
-        detail: missing.length ? missing.join(', ') : null,
+        message: PlatformI18n.t('changes:appStatus.awaitingSecrets'),
+        detail: missing.length ? PlatformI18n.listText(missing) : null,
         action: appData.slug
-          ? { key: 'secrets', label: 'Configure secrets', slug: appData.slug }
+          ? { key: 'secrets', label: PlatformI18n.t('changes:appStatus.configureSecrets'), slug: appData.slug }
           : null,
       };
     }
@@ -3012,14 +3011,14 @@ const AppView = {
       const involved = !!(appData.lastFailure || appData.is_collaborator || appData.can_manage);
       return {
         dot: 'error',
-        message: 'App failed to start',
+        message: PlatformI18n.t('changes:appStatus.failed'),
         detail: failReason ? String(failReason).slice(0, 280) : null,
         action: (involved && appData.slug)
-          ? { key: 'buildLog', label: 'View build log', slug: appData.slug }
+          ? { key: 'buildLog', label: PlatformI18n.t('changes:appStatus.viewBuildLog'), slug: appData.slug }
           : null,
       };
     }
-    return { dot: null, message: 'App not available', detail: null, action: null };
+    return { dot: null, message: PlatformI18n.t('changes:appStatus.notAvailable'), detail: null, action: null };
   },
 
   _reactAppStatus() {
@@ -3139,7 +3138,7 @@ const AppView = {
 
   /** While a pending record waits for the server's word, the screen says only this. */
   _firstVersionCheckingView() {
-    return { dot: null, message: 'Opening…', detail: null, action: null };
+    return { dot: null, message: PlatformI18n.t('changes:appStatus.checking'), detail: null, action: null };
   },
 
   /**
@@ -3326,7 +3325,7 @@ const AppView = {
     const chat = fv.mine === true
       ? {
         key: 'botChat',
-        label: thumb.buildLine === 'plan' ? 'Review the plan' : 'Open Homeroom bot',
+        label: thumb.buildLine === 'plan' ? PlatformI18n.t('changes:firstVersion.reviewPlan') : PlatformI18n.t('changes:firstVersion.openBot'),
         slug: appData.slug,
         conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null,
         // The plan is the one thing that waits on them: the primary button.
@@ -3340,7 +3339,7 @@ const AppView = {
       message: appData.name || appData.slug,
       detail: null,
       ...thumb,
-      lines: ['It opens here when it’s ready.'],
+      lines: [PlatformI18n.t('changes:firstVersion.opensWhenReady')],
       tourSays: true,
       action: chat,
       ...(waiting ? { waiting } : {}),
@@ -3409,21 +3408,21 @@ const AppView = {
       lines,
     };
     if (!approval) {
-      lines.push(fv.mine ? 'Try it from your chat.' : 'Waiting for approval.');
+      lines.push(fv.mine ? PlatformI18n.t('changes:firstVersion.tryFromChat') : PlatformI18n.t('changes:firstVersion.waitingForApproval'));
       return {
         ...view,
         action: fv.mine
-          ? { key: 'botChat', label: 'Open my chat with Homeroom bot', slug,
+          ? { key: 'botChat', label: PlatformI18n.t('changes:firstVersion.openMyBotChat'), slug,
             conversationId: Number.isInteger(fv.conversationId) ? fv.conversationId : null }
           : null,
       };
     }
-    const tryIt = { key: 'tryChange', label: 'Try it', slug, sessionId: approval.sessionId };
-    const change = { key: 'seeChange', label: 'See the change', slug, sessionId: approval.sessionId };
+    const tryIt = { key: 'tryChange', label: PlatformI18n.t('changes:firstVersion.tryIt'), slug, sessionId: approval.sessionId };
+    const change = { key: 'seeChange', label: PlatformI18n.t('changes:firstVersion.seeChange'), slug, sessionId: approval.sessionId };
     // "Ready to try" stays on the thumbnail beside Try it (owner, 7 Oct):
     // with the title gone it is the one thing that says it is ready.
     if (approval.mustApprove) {
-      lines.push('Waiting for your approval.');
+      lines.push(PlatformI18n.t('changes:firstVersion.waitingForYourApproval'));
       return { ...view, action: tryIt, alt: change };
     }
     lines.push(AppView._firstVersionWaitLine(approval));
@@ -3443,15 +3442,43 @@ const AppView = {
   _firstVersionWaitLine(approval, now = new Date(), locale) {
     const day = approval.goesLiveAt ? AppView._liveDay(approval.goesLiveAt, now, locale) : null;
     const missing = Math.max(Number(approval.missing) || 0, 0);
+    // The day's own name fills {{weekday}} or {{date}}; today and tomorrow
+    // are worded in the message itself.
+    const when = day ? { weekday: day.day, date: day.day } : {};
     let next = null;
-    if (approval.soon) next = 'It goes live in a minute or two.';
-    else if (!missing && day) next = `It goes live ${day} if nobody objects.`;
-    else if (!approval.approved) next = 'Waiting for approval.';
+    if (approval.soon) next = PlatformI18n.t('changes:firstVersion.wait.soon');
+    else if (!missing && day) next = PlatformI18n.t(AppView.FIRST_VERSION_LIVE_IDS[day.kind], when);
+    else if (!approval.approved) next = PlatformI18n.t('changes:firstVersion.wait.forApproval');
     else if (missing) {
-      next = `Waiting for ${AppView._firstVersionWhom(approval, missing)}${day ? `, or it goes live ${day} if nobody objects` : ''}.`;
+      const people = AppView._firstVersionWhom(approval, missing);
+      const ids = people ? AppView.FIRST_VERSION_PEOPLE_IDS : AppView.FIRST_VERSION_MORE_IDS;
+      next = PlatformI18n.t(ids[day ? day.kind : 'none'], people ? { people, ...when } : { count: missing, ...when });
     }
     if (!approval.approved) return next;
-    return next ? `You approved it. ${next}` : 'You approved it.';
+    return next ? PlatformI18n.t('changes:firstVersion.wait.approvedThen', { next }) : PlatformI18n.t('changes:firstVersion.wait.approved');
+  },
+
+  // One whole message for each wording of the wait line, keyed by when the
+  // version goes live (_liveDay's kind; 'none' when no time is known).
+  FIRST_VERSION_LIVE_IDS: {
+    today: 'changes:firstVersion.wait.liveToday',
+    tomorrow: 'changes:firstVersion.wait.liveTomorrow',
+    weekday: 'changes:firstVersion.wait.liveWeekday',
+    date: 'changes:firstVersion.wait.liveDate',
+  },
+  FIRST_VERSION_PEOPLE_IDS: {
+    none: 'changes:firstVersion.wait.people',
+    today: 'changes:firstVersion.wait.peopleOrToday',
+    tomorrow: 'changes:firstVersion.wait.peopleOrTomorrow',
+    weekday: 'changes:firstVersion.wait.peopleOrWeekday',
+    date: 'changes:firstVersion.wait.peopleOrDate',
+  },
+  FIRST_VERSION_MORE_IDS: {
+    none: 'changes:firstVersion.wait.more',
+    today: 'changes:firstVersion.wait.moreOrToday',
+    tomorrow: 'changes:firstVersion.wait.moreOrTomorrow',
+    weekday: 'changes:firstVersion.wait.moreOrWeekday',
+    date: 'changes:firstVersion.wait.moreOrDate',
   },
 
   /** Whose Yes it still needs: "@sam", "@sam and @ada", or how many more when no one person is needed. */
@@ -3461,10 +3488,14 @@ const AppView = {
     const more = Math.max(Number(approval.more) || 0, 0);
     // Named only when they are exactly who is needed; else how many more.
     if (names.length && names.length + more === missing) {
-      const who = [...names.map((name) => `@${name}`), ...(more ? [`${more} more`] : [])];
-      return who.length > 1 ? `${who.slice(0, -1).join(', ')} and ${who[who.length - 1]}` : who[0];
+      const who = names.map((name) => `@${name}`);
+      if (more) return PlatformI18n.t('changes:firstVersion.people.andMore', { people: PlatformI18n.listText(who), count: more });
+      return who.length > 1
+        ? PlatformI18n.t('changes:firstVersion.people.lastTwo', { first: PlatformI18n.listText(who.slice(0, -1)), last: who[who.length - 1] })
+        : who[0];
     }
-    return missing === 1 ? 'one more person to approve' : `${missing} more people to approve`;
+    // Not nameable: the wait line says how many more instead.
+    return null;
   },
 
   /**
@@ -3479,11 +3510,11 @@ const AppView = {
     // Rounded: a day across a clock change is 23 or 25 hours long.
     const days = Math.round((midnight(when) - midnight(now)) / 86400000);
     if (when.getTime() > now.getTime()) {
-      if (days === 0) return 'later today';
-      if (days === 1) return 'tomorrow';
-      if (days < 7) return `on ${new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when)}`;
+      if (days === 0) return { kind: 'today', day: null };
+      if (days === 1) return { kind: 'tomorrow', day: null };
+      if (days < 7) return { kind: 'weekday', day: new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when) };
     }
-    return `on ${new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when)}`;
+    return { kind: 'date', day: new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when) };
   },
 
   /** Try it, on the first version's screen: its change's preview, as its ready card's Try it opens it. */
@@ -3701,7 +3732,7 @@ const AppView = {
       AppView._unmountAppFrame();
       AppView._paintAppStatus(content, {
         dot: null,
-        message: 'This app needs a connection. Reconnect to open it.',
+        message: PlatformI18n.t('changes:appStatus.needsConnection'),
         detail: null,
         action: null,
       });
@@ -3728,8 +3759,8 @@ const AppView = {
       AppView._unmountAppFrame();
       AppView._paintAppStatus(content, {
         dot: 'error',
-        message: 'This app cannot open safely.',
-        detail: 'Its address is not isolated from Homeroom.',
+        message: PlatformI18n.t('changes:appStatus.unsafe'),
+        detail: PlatformI18n.t('changes:appStatus.unsafeDetail'),
         action: null,
       });
       AppView._setSurface('platform');
@@ -3846,14 +3877,18 @@ const AppView = {
       const elapsed = deployProgress.startedAt
         ? Math.max(0, Math.floor((Date.now() - new Date(deployProgress.startedAt).getTime()) / 1000))
         : null;
-      const tipParts = ['Redeploying'];
-      if (deployProgress.fromSha) tipParts.push(`from ${String(deployProgress.fromSha).slice(0, 7)}`);
-      if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
-      const tip = tipParts.join(' · ');
+      const fromSha = deployProgress.fromSha ? String(deployProgress.fromSha).slice(0, 7) : null;
+      const tip = fromSha
+        ? (elapsed != null
+          ? PlatformI18n.t('changes:versionPill.redeployingFromElapsed', { sha: fromSha, count: elapsed })
+          : PlatformI18n.t('changes:versionPill.redeployingFrom', { sha: fromSha }))
+        : (elapsed != null
+          ? PlatformI18n.t('changes:versionPill.redeployingElapsed', { count: elapsed })
+          : PlatformI18n.t('changes:versionPill.redeploying'));
       if (plain) {
         return `
           <span class="${cls.base} ${cls.deploying}" title="${escapeAttr(tip)}">
-            <span class="${cls.spinner}" aria-hidden="true"></span>deploying
+            <span class="${cls.spinner}" aria-hidden="true"></span>${PlatformI18n.htmlText('changes:versionPill.deploying')}
           </span>`;
       }
       return `
@@ -3861,7 +3896,7 @@ const AppView = {
           <span class="app-version-pill-spinner" aria-hidden="true"></span>
           <span class="app-version-pill-label">
             ${slugPart}
-            deploying
+            ${PlatformI18n.htmlText('changes:versionPill.deploying')}
           </span>
         </span>`;
     }
@@ -3876,14 +3911,14 @@ const AppView = {
       // own status dot at the top.
       if (plain) {
         return `
-          <span class="${cls.base} ${cls.dev}" title="No deployed version recorded yet">dev</span>`;
+          <span class="${cls.base} ${cls.dev}" title="${PlatformI18n.htmlText('changes:versionPill.noVersion')}">${PlatformI18n.htmlText('changes:versionPill.dev')}</span>`;
       }
       return `
-        <span class="app-version-pill" title="No deployed version recorded yet">
+        <span class="app-version-pill" title="${PlatformI18n.htmlText('changes:versionPill.noVersion')}">
           ${quiet ? '' : '<span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>'}
           <span class="app-version-pill-label">
             ${slugPart}
-            dev
+            ${PlatformI18n.htmlText('changes:versionPill.dev')}
           </span>
         </span>`;
     }
@@ -3891,9 +3926,11 @@ const AppView = {
     const href = version.prUrl || version.commitUrl || '#';
     const parts = [];
     if (includePrContext && version.prTitle) parts.push(version.prTitle);
-    if (includePrContext && version.mergedBy) parts.push(`by @${version.mergedBy}`);
+    if (includePrContext && version.mergedBy) parts.push(PlatformI18n.t('changes:versionPill.mergedBy', { username: version.mergedBy }));
     if (includePrContext && version.mergedAt) parts.push(relTime(version.mergedAt));
-    const tip = parts.length ? parts.join(' · ') : `Commit ${version.shortSha}`;
+    const tip = parts.length
+      ? parts.reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second }))
+      : PlatformI18n.t('changes:versionPill.commit', { sha: version.shortSha });
     const sha = version.prNumber
       ? `${version.shortSha} · #${version.prNumber}`
       : version.shortSha;
@@ -4239,7 +4276,7 @@ const AppView = {
     if (subTab === 'chat') {
       // The app's name stays the chip's label and the subtitle qualifies it —
       // replacing the name here was the chip forgetting which app it was in.
-      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Channel');
+      App.setHeaderTitle?.(AppView.appData?.name || PlatformI18n.t('changes:header.appFallback'), PlatformI18n.t('changes:header.channel'));
       // A LEVEL INSIDE THE PROJECT'S HUB. This was a row in the Messages
       // inbox (#2718 review) and hung off #messages; the channels live on
       // each community's hub now, so the Communities tab is what lights for
@@ -4318,7 +4355,7 @@ const AppView = {
     // repeated segment. The bar names the SECTION, the chip names the scope.
     // COMMUNITIES since the tab was renamed: the page is a community's hub
     // and its Workshop, both inside the Communities section.
-    App.setHeaderTitle?.('Communities');
+    App.setHeaderTitle?.(PlatformI18n.t('changes:header.communities'));
 
     // THE APP'S RECORD MAY NOT BE HERE — the #2879 case, on the board. A
     // failed or superseded GET /api/apps/<slug> leaves AppView.appData empty
@@ -4769,7 +4806,7 @@ const AppView = {
       if (!ok || !AppView._findTopicItem()) {
         if (App._abandonWorkshopResume?.()) return;
         if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast('Couldn’t open that proposal’s discussion.');
+          PlatformUI.toast(PlatformI18n.t('changes:discussion.openFailed'));
         }
         App.switchTab('dev');
         return;
@@ -5271,7 +5308,9 @@ const AppView = {
       // Native and imported changes use the same details before review.
       // Shared rows carry username; the viewer's own rows (from
       // /api/me/active-sessions) don't — the owner is the viewer then.
-      const ownerName = item.username || (App.user ? App.user.username : '') || 'someone';
+      // No name stays no name: the card has its own sentences for an owner
+      // nobody can name, and a stand-in word is never passed off as one.
+      const ownerName = item.username || (App.user ? App.user.username : '') || '';
       card = AppView._sharedSessionCardModel({ ...item, username: ownerName }, { noNav: true });
       body = {
         actions: AppView._detailActionsView('session', item),
@@ -5312,7 +5351,7 @@ const AppView = {
       body.steps = AppView._topicStepsView(item, card, body);
       body.thread = AppView._changeThreadView(t.kind, item, card, body);
     }
-    body.aboutTitle = { issue: 'About this request', proposal: 'About this change', session: 'About this change', gov: 'About this proposal' }[t.kind] || 'About';
+    body.aboutTitle = PlatformI18n.t({ issue: 'changes:page.about.request', proposal: 'changes:page.about.change', session: 'changes:page.about.change', gov: 'changes:page.about.proposal' }[t.kind] || 'changes:page.about.generic');
     return { card, body };
   },
 
@@ -5331,15 +5370,15 @@ const AppView = {
     if (!ref || !ref.sessionId) return null;
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
     const heading = ref.state === 'merged'
-      ? (issue.state === 'closed' ? 'Closed by' : 'Addressed by')
-      : ref.state === 'review' ? 'Waiting for approval' : 'Work underway';
+      ? (issue.state === 'closed' ? PlatformI18n.t('changes:request.ref.closedBy') : PlatformI18n.t('changes:request.ref.addressedBy'))
+      : ref.state === 'review' ? PlatformI18n.t('changes:request.ref.waiting') : PlatformI18n.t('changes:request.ref.underway');
     const n = parseInt(ref.prNumber, 10) || 0;
     return {
       heading,
       state: ref.state,
       sessionId: ref.sessionId,
-      label: n ? `#${n}` : 'Change',
-      title: ref.title || (n ? `Pull request #${n}` : `Change ${ref.sessionId}`),
+      label: n ? `#${n}` : PlatformI18n.t('changes:request.ref.changeLabel'),
+      title: ref.title || (n ? PlatformI18n.t('changes:request.ref.pullRequestTitle', { number: n }) : PlatformI18n.t('changes:request.ref.changeTitle', { id: ref.sessionId })),
       href: n ? `#app/${slug}/dev/changes/${n}` : `#app/${slug}/dev/proposals/${ref.sessionId}`,
     };
   },
@@ -5354,9 +5393,10 @@ const AppView = {
     const ref = AppView._issueProposalRefView(issue);
     const merged = !!(ref && ref.state === 'merged');
     const stamp = issue.closedAt ? relStamp(issue.closedAt) : { text: '', title: '' };
+    // Which way it was closed, as a key: the band words each case itself.
     const how = merged ? null
-      : issue.closed_via === 'admin' ? 'by an admin'
-        : issue.closed_via === 'vote' ? 'by vote' : null;
+      : issue.closed_via === 'admin' ? 'admin'
+        : issue.closed_via === 'vote' ? 'vote' : null;
     return {
       tone: merged ? 'merged' : 'settled',
       when: stamp.text || null,
@@ -5394,7 +5434,7 @@ const AppView = {
       number: n,
       category,
       menuKey: AppView._registerCardMenu(`request:${n}`, AppView._requestMenuItems(issue)),
-      asker: issue.created_by_username || issue.user || 'someone',
+      asker: issue.created_by_username || issue.user || PlatformI18n.t('changes:request.page.askerUnknown'),
       askedAt,
       askedTime: stamp.text,
       askedTitle: stamp.title,
@@ -5438,47 +5478,54 @@ const AppView = {
 
     const who = st ? st.who : null;
     const others = st && st.people > 1 ? st.people - 1 : 0;
-    const subject = who === 'you' ? 'You' : (who || 'Someone');
-    const plural = others ? ` and ${others} other${others === 1 ? '' : 's'}` : '';
-    const are = who === 'you' || others ? 'are' : 'is';
+    // Who is on it, as a whole sentence for each case: the viewer, a named
+    // person or nobody named, alone or with `others` more
+    // (AppView.REQUEST_WORKING_IDS).
+    const whoKey = who === 'you' ? 'you' : (who ? 'named' : 'someone');
+    const people = (ids) => PlatformI18n.t(ids[whoKey][others ? 'others' : 'alone'], { username: who, count: others });
     let lead;
-    if (merged) lead = 'Voted in.';
-    else if (!st) lead = 'Nobody is working on this yet.';
+    if (merged) lead = PlatformI18n.t('changes:request.status.lead.votedIn');
+    else if (!st) lead = PlatformI18n.t('changes:request.status.lead.nobody');
     else if (st.key === 'in_review') {
-      lead = who === 'you' ? 'Your change for this is waiting for approval.'
-        : who ? `${who}’s change for this is waiting for approval.` : 'A change for this is waiting for approval.';
+      lead = who === 'you' ? PlatformI18n.t('changes:request.status.lead.reviewYours')
+        : who ? PlatformI18n.t('changes:request.status.lead.reviewNamed', { username: who }) : PlatformI18n.t('changes:request.status.lead.review');
     } else if (st.key === 'bot') {
-      lead = issue.bot && issue.bot.what === 'queued' ? 'Homeroom bot will build this next.'
-        : AppView._botWorkReading(issue.bot) ? 'Homeroom bot is reading this.' : 'Homeroom bot is building this.';
-    } else if (st.key === 'auto_solving') lead = 'An auto-solve run is working on this.';
-    else if (st.key === 'answer_needed') lead = 'An auto-solve run asked a question that needs an answer.';
-    else if (st.key === 'draft_ready') lead = 'An auto-solve run left a draft to look over.';
+      lead = issue.bot && issue.bot.what === 'queued' ? PlatformI18n.t('changes:request.status.lead.botQueued')
+        : AppView._botWorkReading(issue.bot) ? PlatformI18n.t('changes:request.status.lead.botReading') : PlatformI18n.t('changes:request.status.lead.botBuilding');
+    } else if (st.key === 'auto_solving') lead = PlatformI18n.t('changes:request.status.lead.autoSolving');
+    else if (st.key === 'answer_needed') lead = PlatformI18n.t('changes:request.status.lead.answerNeeded');
+    else if (st.key === 'draft_ready') lead = PlatformI18n.t('changes:request.status.lead.draftReady');
     // A paused session: they started it, and nobody is in it right now.
-    else if (st.key === 'paused') lead = `${subject}${plural} started working on this.`;
-    else lead = who === 'you' && !others ? 'You’re working on this.' : `${subject}${plural} ${are} working on this.`;
+    else if (st.key === 'paused') lead = people(AppView.REQUEST_WORKING_IDS.started);
+    else lead = people(AppView.REQUEST_WORKING_IDS.working);
 
+    // The change that settled it, by its pull request number when it has one.
+    const refNumber = ref ? (parseInt(issue.addressed_by.prNumber, 10) || 0) : 0;
     let note = null;
-    if (merged) note = closed ? `${ref.label} closed it.` : `${ref.label} is live.`;
-    else if (ref && ref.state === 'review' && !(st && st.key === 'in_review')) note = 'A change for it is waiting for approval.';
-    else if (ref && ref.state === 'underway') note = 'A change for it is underway.';
+    if (merged) {
+      note = closed
+        ? (refNumber ? PlatformI18n.t('changes:request.status.note.closedByNumber', { number: refNumber }) : PlatformI18n.t('changes:request.status.note.closedByChange'))
+        : (refNumber ? PlatformI18n.t('changes:request.status.note.liveNumber', { number: refNumber }) : PlatformI18n.t('changes:request.status.note.liveChange'));
+    } else if (ref && ref.state === 'review' && !(st && st.key === 'in_review')) note = PlatformI18n.t('changes:request.status.note.review');
+    else if (ref && ref.state === 'underway') note = PlatformI18n.t('changes:request.status.note.underway');
 
     // The claim's lapse, which the work-state sentence used to bury.
     let fine = null;
     if (st && st.clearAt && (st.key === 'claimed' || st.key === 'paused') && !closed) {
       let date = '';
       try { date = new Date(st.clearAt).toLocaleDateString([], { month: 'short', day: 'numeric' }); } catch { date = ''; }
-      if (date) fine = `If nothing moves by ${date}, it opens up for someone else.`;
+      if (date) fine = PlatformI18n.t('changes:request.status.fine.lapses', { date });
     }
 
     let action = null;
-    const toChange = ref ? { label: 'See the change', href: ref.href } : null;
+    const toChange = ref ? { label: PlatformI18n.t('changes:request.status.action.seeChange'), href: ref.href } : null;
     if (closed) {
       action = toChange;
     } else if (merged) {
       action = toChange;
     } else if (!AppView.readOnly && issue.myPrSessionId) {
       action = {
-        label: 'Continue your work', title: 'Open your agent session on this request',
+        label: PlatformI18n.t('changes:request.status.action.continueWork'), title: PlatformI18n.t('changes:request.status.action.continueWorkTitle'),
         act: { fn: 'openChangeWorkspace', args: [issue.myPrSessionId] },
       };
     } else if (!AppView.readOnly) {
@@ -5491,16 +5538,39 @@ const AppView = {
     }
     if (action && action.act && typeof action.act.fn !== 'string') action.act = undefined;
 
-    const how = issue.closed_via === 'admin' ? ' by an admin' : issue.closed_via === 'vote' ? ' by vote' : '';
+    // How it was closed and when, a whole sentence for each case.
+    const how = issue.closed_via === 'admin' ? 'admin' : issue.closed_via === 'vote' ? 'vote' : 'plain';
     const when = issue.closedAt ? relStamp(issue.closedAt).text : '';
+    const closedIds = AppView.REQUEST_CLOSED_IDS[how];
     return {
       stage,
       lead,
       note,
       fine,
       action,
-      closed: closed && !merged ? `This request was closed${how}${when ? `, ${when}` : ''}.` : null,
+      closed: closed && !merged ? (when ? PlatformI18n.t(closedIds.when, { when }) : PlatformI18n.t(closedIds.alone)) : null,
     };
+  },
+
+  // The status card's sentence about who is on a request, by who leads it
+  // (the viewer, a named person, nobody named) and whether more people are.
+  REQUEST_WORKING_IDS: {
+    started: {
+      you: { alone: 'changes:request.status.lead.startedYou', others: 'changes:request.status.lead.startedYouOthers' },
+      named: { alone: 'changes:request.status.lead.startedNamed', others: 'changes:request.status.lead.startedNamedOthers' },
+      someone: { alone: 'changes:request.status.lead.startedSomeone', others: 'changes:request.status.lead.startedSomeoneOthers' },
+    },
+    working: {
+      you: { alone: 'changes:request.status.lead.workingYou', others: 'changes:request.status.lead.workingYouOthers' },
+      named: { alone: 'changes:request.status.lead.workingNamed', others: 'changes:request.status.lead.workingNamedOthers' },
+      someone: { alone: 'changes:request.status.lead.workingSomeone', others: 'changes:request.status.lead.workingSomeoneOthers' },
+    },
+  },
+  // "This request was closed", by whom and with or without when.
+  REQUEST_CLOSED_IDS: {
+    plain: { alone: 'changes:request.status.closed.plain', when: 'changes:request.status.closed.plainWhen' },
+    admin: { alone: 'changes:request.status.closed.byAdmin', when: 'changes:request.status.closed.byAdminWhen' },
+    vote: { alone: 'changes:request.status.closed.byVote', when: 'changes:request.status.closed.byVoteWhen' },
   },
 
   // The sheet header's ⋯: everything that is not the next step. The work
@@ -5511,15 +5581,16 @@ const AppView = {
     const n = issue.number;
     const closed = issue.state === 'closed';
     const base = AppView._issueMenuItems(issue, { noNav: true });
-    const WORK = ['Build it now', 'Start more work', 'Claim it', 'Stop working on this'];
+    // The work rows carry `work` where _issueMenuItems builds them ('build',
+    // 'more', 'claim', 'stop'), so this reads the mark and never their words.
     const work = [];
     if (!AppView.readOnly && !closed && issue.myPrSessionId) {
-      work.push({ label: 'Start more work', icon: 'generate', title: 'Start another agent session on this request', act: () => AppView.chooseIssueWork(n) });
+      work.push({ label: PlatformI18n.t('changes:request.menu.startMore'), work: 'more', icon: 'generate', title: PlatformI18n.t('changes:request.menu.startMoreTitle'), act: () => AppView.chooseIssueWork(n) });
     }
     for (const row of base) {
-      if (WORK.includes(row.label) && !(row.label === 'Start more work' && work.length)) work.push(row);
+      if (row.work && !(row.work === 'more' && work.length)) work.push(row);
     }
-    const rest = base.filter((row) => !WORK.includes(row.label));
+    const rest = base.filter((row) => !row.work);
     // An admin's escape hatch for a stuck claim: the DELETE route is the
     // authoritative gate (claimer or write-admin).
     const release = [];
@@ -5529,17 +5600,17 @@ const AppView = {
         if (c.mine) continue;
         const userId = parseInt(c.userId, 10) || 0;
         release.push({
-          label: `Release ${c.username || 'their'}’s claim`, icon: 'clear',
-          title: `Release ${c.username || 'this'} claim (admin)`,
+          label: c.username ? PlatformI18n.t('changes:request.menu.releaseClaim', { username: c.username }) : PlatformI18n.t('changes:request.menu.releaseClaimUnnamed'), icon: 'clear',
+          title: c.username ? PlatformI18n.t('changes:request.menu.releaseClaimTitle', { username: c.username }) : PlatformI18n.t('changes:request.menu.releaseClaimTitleUnnamed'),
           act: () => AppView.clearIssueClaim(n, userId),
         });
       }
     }
     const edit = [];
     if (AppView._canEditIssueAuthor(issue)) {
-      edit.push({ label: 'Edit title', icon: 'edit', act: () => AppView.beginIssueTitleEdit(n) });
+      edit.push({ label: PlatformI18n.t('changes:request.menu.editTitle'), icon: 'edit', act: () => AppView.beginIssueTitleEdit(n) });
       edit.push({
-        label: 'Edit request', icon: 'edit',
+        label: PlatformI18n.t('changes:request.menu.editRequest'), icon: 'edit',
         act: () => window.dispatchEvent(new CustomEvent('request-body-edit', { detail: n })),
       });
     }
@@ -5585,12 +5656,13 @@ const AppView = {
     // The full card owns lifecycle actions; its menu is independent of the
     // compact card so filtering shortcuts here cannot change the board.
     const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
-    const shortcuts = ['View checks', 'Re-run checks', 'Open public discussion',
-      'Continue building', 'Ask for approval',
-      'Retry preview', 'Before/after screenshots', 'Before & after'];
+    // A row the change page already offers on its cards or in its ledger is
+    // marked `pageShortcut` where it is built (the session and proposal
+    // menus), so this reads the mark and never the row's words. The same
+    // goes for the rows it looks for below: `sessionDoor` (Open session),
+    // `githubPr` (View PR on GitHub) and `githubIssue` (Open on GitHub).
     const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
-      .filter((a) => !body.changeId || !shortcuts.some((label) =>
-        a.label === label || a.label.startsWith(`${label} (`)));
+      .filter((a) => !body.changeId || !a.pageShortcut);
     for (const action of card.actions || []) {
       if (action.key === 'vis') menu.unshift(AppView._foldedMenuItem(action));
     }
@@ -5608,8 +5680,8 @@ const AppView = {
       const rows = [];
       if (proposal && AppView._botBuilt(item) && !ro) {
         rows.push({
-          label: 'Ask for changes', icon: 'generate',
-          title: 'Ask Homeroom bot to change this, in your chat with it',
+          label: PlatformI18n.t('changes:page.menu.askForChanges'), icon: 'generate',
+          title: PlatformI18n.t('changes:page.menu.askForChangesTitle'),
           act: () => AppView.askBotForChanges(item.id, item.session_title || item.pr_title || null),
         });
       }
@@ -5617,26 +5689,26 @@ const AppView = {
         rows.push({
           label: body.build.label, icon: 'session',
           title: body.build.kind === 'owner'
-            ? 'Open the agent session behind this change'
-            : 'Read the agent session that built this change',
+            ? PlatformI18n.t('changes:page.menu.buildOwnerTitle')
+            : PlatformI18n.t('changes:page.menu.buildReadTitle'),
           act: () => AppView.openChangeWorkspace(item.id),
         });
         // The Build door is the owner's way into their session already.
-        for (let i = menu.length - 1; i >= 0; i -= 1) if (menu[i].label === 'Open session') menu.splice(i, 1);
+        for (let i = menu.length - 1; i >= 0; i -= 1) if (menu[i].sessionDoor) menu.splice(i, 1);
       }
       if (body.canEditIssues) {
         const linked = (item.linked_issues || []).length;
         rows.push({
-          label: linked ? 'Edit requests' : 'Add a request', icon: 'edit',
-          title: 'Change which requests this change addresses',
+          label: linked ? PlatformI18n.t('changes:page.menu.editRequests') : PlatformI18n.t('changes:page.menu.addRequest'), icon: 'edit',
+          title: PlatformI18n.t('changes:page.menu.requestsTitle'),
           act: () => window.dispatchEvent(new CustomEvent('change-issues-edit', { detail: Number(item.id) })),
         });
       }
       const shots = item.shots && typeof item.shots === 'object' ? item.shots : null;
       if (shots && shots.state === 'verified') {
         rows.push({
-          label: 'Shot details', icon: 'details',
-          title: 'How each change was reached, at which screen sizes, and on which builds',
+          label: PlatformI18n.t('changes:page.menu.shotDetails'), icon: 'details',
+          title: PlatformI18n.t('changes:page.menu.shotDetailsTitle'),
           act: () => AppView.openTechnicalDetails(item.id, 'shots'),
         });
       }
@@ -5645,8 +5717,8 @@ const AppView = {
       const shotsRunning = shots && ['provisioning', 'exploring', 'replaying', 'reviewing'].includes(String(shots.state));
       if (shots && !ro && (mine || manager) && !shotsRunning && shots.state !== 'not_required') {
         rows.push({
-          label: 'Take the shots again', icon: 'visuals',
-          title: 'Take the before & after shots again on this exact build',
+          label: PlatformI18n.t('changes:page.menu.takeShotsAgain'), icon: 'visuals',
+          title: PlatformI18n.t('changes:page.menu.takeShotsAgainTitle'),
           act: () => AppView.rerunShots(item.id, null),
         });
       }
@@ -5654,8 +5726,8 @@ const AppView = {
       // Thank is on the page (the Addresses row); Explore and Share stay rows.
       for (let i = menu.length - 1; i >= 0; i -= 1) if (menu[i].icon === 'kudos') menu.splice(i, 1);
       menu.push(...rows);
-      if (gh && !menu.some((a) => a.label === 'View PR on GitHub')) {
-        menu.push({ label: 'View PR on GitHub', icon: 'github', title: gh, act: () => window.open(gh, '_blank', 'noopener') });
+      if (gh && !menu.some((a) => a.githubPr)) {
+        menu.push({ label: PlatformI18n.t('changes:page.menu.viewPr'), githubPr: true, icon: 'github', title: gh, act: () => window.open(gh, '_blank', 'noopener') });
       }
       card.actions = (card.actions || []).filter((a) => a.explore == null && a.kudos == null);
     }
@@ -5666,19 +5738,19 @@ const AppView = {
     // the Tested line on the page; whoever reviews the code opens this.
     if (body.changeId) {
       menu.unshift({
-        label: 'Details', icon: 'details',
-        title: 'The pull request, its steps and checks, and its description',
+        label: PlatformI18n.t('changes:page.menu.details'), icon: 'details',
+        title: PlatformI18n.t('changes:page.menu.detailsTitle'),
         act: () => AppView.openTechnicalDetails(item.id),
       });
     }
     if (body.changeId && AppView._canEditDescription(item)) {
       menu.unshift({
-        label: 'Edit description', icon: 'edit',
+        label: PlatformI18n.t('changes:page.menu.editDescription'), icon: 'edit',
         act: () => window.dispatchEvent(new CustomEvent('change-description-edit', { detail: Number(item.id) })),
       });
     }
-    if (gh && !body.changeId && !menu.some((a) => a.label === 'Open on GitHub')) {
-      menu.push({ label: 'Open on GitHub', icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
+    if (gh && !body.changeId && !menu.some((a) => a.githubIssue)) {
+      menu.push({ label: PlatformI18n.t('changes:page.menu.openOnGitHub'), githubIssue: true, icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
     }
     card.rail.menuKey = AppView._registerCardMenu(`detail:${kind}:${item.id || item.number}`, menu);
     if (card.pill) card.pill = { ...card.pill, inline: false };
@@ -5698,7 +5770,7 @@ const AppView = {
     card.rail.preview = null;
     if (body.changeId && item.status === 'merged') {
       card.actions = card.actions.filter((a) => !a.preview);
-      card.actions.unshift({ key: 'open-app', cls: 'gc-vote-btn', label: 'Open app',
+      card.actions.unshift({ key: 'open-app', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:page.actions.openApp'),
         act: { fn: 'openLiveApp', args: [AppView.appData?.slug || App.currentApp] } });
     }
     return card;
@@ -5718,44 +5790,52 @@ const AppView = {
     const dep = item.deployment_state;
     // live_at is null while a merge is still going live (the merge-followups
     // workflow machine); a row without the field reads as it always did.
-    const settled = (dep === 'pending' || dep === 'deploying') ? 'Going live'
-      : (dep === 'failed' || dep === 'stalled') ? 'Not live yet'
-        : dep === 'deployed' ? 'Live' : item.live_at === null ? 'Going live' : 'Live';
+    const settled = (dep === 'pending' || dep === 'deploying') ? 'goingLive'
+      : (dep === 'failed' || dep === 'stalled') ? 'notLiveYet'
+        : dep === 'deployed' ? 'live' : item.live_at === null ? 'goingLive' : 'live';
     // A change that went live inside another one says which
     // (services/included-changes.js): "Live, included in #8".
-    const included = AppView._includedInWords(item);
+    const included = AppView._includedIn(item);
+    const mergedIds = AppView.HERO_MERGED_IDS[settled];
     const status = underway
-      ? (item.shared_at ? 'Visible to the group' : 'Not shared yet')
+      ? (item.shared_at ? PlatformI18n.t('changes:page.hero.status.visibleToGroup') : PlatformI18n.t('changes:page.hero.status.notShared'))
       : item.status === 'promoted' ? AppView._waitingWords(item)
-        : ({ merging: 'Going live', merged: included ? `${settled}, ${included}` : settled, closed: 'Closed' }[item.status]
-        || String(item.status || ''));
+        : item.status === 'merging' ? PlatformI18n.t('changes:page.hero.status.merging')
+          : item.status === 'merged' ? (included
+            ? (included.number
+              ? PlatformI18n.t(mergedIds.includedIn, { number: included.number })
+              : PlatformI18n.t(mergedIds.includedInAnother))
+            : PlatformI18n.t(mergedIds.alone))
+            : item.status === 'closed' ? PlatformI18n.t('changes:page.hero.status.closed')
+              : String(item.status || '');
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
     // First-session run-through, 4 Oct 2026: a flatmate's first look at the
     // group's first version read "homeroom_bot · proposed 35m ago". The bot
     // is "Homeroom bot" wherever it is named (group-chat.js BOT_NAME, the
     // notifications), and it MADE the change, which is what a reader needs.
     const bot = AppView._botBuilt(item);
-    const author = bot ? 'Homeroom bot'
+    const author = bot ? PlatformI18n.t('changes:page.hero.authorBot')
       : (item.username || (kind === 'session' && App.user ? App.user.username : null) || null);
     // The provenance words the meta line carried, as text: React escapes.
     const bits = [];
     if (item.source === 'imported') {
-      bits.push(item.imported_pr_author ? `imported from GitHub (${item.imported_pr_author})` : 'imported from GitHub');
+      bits.push(item.imported_pr_author ? PlatformI18n.t('changes:page.hero.provenance.importedBy', { author: item.imported_pr_author }) : PlatformI18n.t('changes:page.hero.provenance.imported'));
     }
-    const agent = AppView.externalAgentName(item.external_agent);
-    if (agent) bits.push(`built with ${agent}`);
-    if (item.source === 'maintenance') bits.push('platform maintenance');
+    const agent = AppView.externalAgentProduct(item.external_agent);
+    if (agent) bits.push(PlatformI18n.t('changes:page.hero.provenance.builtWith', { agent }));
+    else if (item.external_agent) bits.push(PlatformI18n.t('changes:page.hero.provenance.builtWithExternal'));
+    if (item.source === 'maintenance') bits.push(PlatformI18n.t('changes:page.hero.provenance.maintenance'));
     return {
       // B10b: the eyebrow is "Change · Waiting for approval"; the pull
       // request it names rides the by-line's end (`ref`, as the card meta
       // line's number reads it) and is in Details too.
-      kind: 'Change',
+      kind: PlatformI18n.t('changes:page.hero.kind'),
       ref: n ? { s: `PR#${n}`, href: item.pr_url || null } : null,
       status,
       age: age ? { s: age.s, title: age.title } : null,
       author,
-      verb: underway ? 'started' : (item.source === 'imported' ? 'imported' : (bot ? 'made' : 'proposed')),
-      provenance: bits.length ? bits.join(' · ') : null,
+      verb: underway ? PlatformI18n.t('changes:page.hero.verb.started') : (item.source === 'imported' ? PlatformI18n.t('changes:page.hero.verb.imported') : (bot ? PlatformI18n.t('changes:page.hero.verb.made') : PlatformI18n.t('changes:page.hero.verb.proposed'))),
+      provenance: bits.length ? bits.reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second })) : null,
       tint: Number(item.id) % 2 ? 'a' : 'b',
     };
   },
@@ -5781,10 +5861,28 @@ const AppView = {
   // ("included in #8") ride on the eyebrow and the steps' headline, and the
   // hero names the carrying change with a link to its page, as an issue
   // page names the change that closed it (_issueProposalRefView).
-  _includedInWords(item) {
+  _includedIn(item) {
     if (!item || !item.included_in_session_id) return null;
-    const n = parseInt(item.included_in_pr_number, 10) || 0;
-    return n ? `included in #${n}` : 'included in another change';
+    return { number: parseInt(item.included_in_pr_number, 10) || 0 };
+  },
+  // The hero's status for a merged change, a whole message for each state of
+  // its release: alone, or with the change it went live inside.
+  HERO_MERGED_IDS: {
+    goingLive: {
+      alone: 'changes:page.hero.status.goingLive',
+      includedIn: 'changes:page.hero.status.goingLiveIncludedIn',
+      includedInAnother: 'changes:page.hero.status.goingLiveIncludedInAnother',
+    },
+    notLiveYet: {
+      alone: 'changes:page.hero.status.notLiveYet',
+      includedIn: 'changes:page.hero.status.notLiveYetIncludedIn',
+      includedInAnother: 'changes:page.hero.status.notLiveYetIncludedInAnother',
+    },
+    live: {
+      alone: 'changes:page.hero.status.live',
+      includedIn: 'changes:page.hero.status.liveIncludedIn',
+      includedInAnother: 'changes:page.hero.status.liveIncludedInAnother',
+    },
   },
   _includedInView(item) {
     if (!item || item.status !== 'merged' || !item.included_in_session_id) return null;
@@ -5793,11 +5891,11 @@ const AppView = {
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
     const n = parseInt(item.included_in_pr_number, 10) || 0;
     return {
-      heading: 'Went live as part of',
+      heading: PlatformI18n.t('changes:page.includedIn.heading'),
       state: 'merged',
       sessionId: id,
-      label: n ? `#${n}` : 'Change',
-      title: item.included_in_pr_title || (n ? `Pull request #${n}` : `Change ${id}`),
+      label: n ? `#${n}` : PlatformI18n.t('changes:page.includedIn.changeLabel'),
+      title: item.included_in_pr_title || (n ? PlatformI18n.t('changes:page.includedIn.pullRequestTitle', { number: n }) : PlatformI18n.t('changes:page.includedIn.changeTitle', { id })),
       href: n ? `#app/${slug}/dev/changes/${n}` : `#app/${slug}/dev/proposals/${id}`,
     };
   },
@@ -5812,7 +5910,12 @@ const AppView = {
   // yet — draws in the same shape after the gates, with its tone as its
   // mark. Row KEYS are the ledger's where a ledger row backs the step:
   // dapp.json's declared checks address a fact by its data-note.
-  STEP_ACTORS: { auto: 'automatic', author: 'the author', admin: 'an admin', group: 'the group' },
+  STEP_ACTORS: {
+    auto: 'changes:page.steps.actor.auto',
+    author: 'changes:page.steps.actor.author',
+    admin: 'changes:page.steps.actor.admin',
+    group: 'changes:page.steps.actor.group',
+  },
   // Which ledger rows say what each gate is about.
   STEP_HOMES: {
     approvals: ['votes'],
@@ -5858,7 +5961,7 @@ const AppView = {
     const vote = { yes, no, majority, pill: card.pill ? card.pill.state : null,
       was: AppView.thresholdWasNote(item, majority) };
     // B7: on a project that is just the viewer's, the step is their approval.
-    const voteStep = AppView._approveSolo(item) ? 'Your approval' : 'Vote';
+    const voteStep = AppView._approveSolo(item) ? PlatformI18n.t('changes:page.steps.label.yourApproval') : PlatformI18n.t('changes:page.steps.label.vote');
     // #2588: the two rows this carve-out existed for — the imported note and
     // the built-with note — are gone from the ledger, because neither was a
     // step waiting on anyone and the hero above the card already says where
@@ -5883,7 +5986,7 @@ const AppView = {
         // The vote step says what it is; the gate's "Enough approvals" is
         // what it needs, which the tally under it says in numbers.
         label: g.key === 'approvals' ? voteStep : g.label,
-        actor: AppView.STEP_ACTORS[g.actor] || g.actor || null,
+        actor: (AppView.STEP_ACTORS[g.actor] ? PlatformI18n.t(AppView.STEP_ACTORS[g.actor]) : g.actor) || null,
         note: useRow ? null : (g.note || (row ? said(row) : null) || null),
         action: g.action ? { key: `req:${g.key}`, cls: 'gc-vote-btn', label: g.action.label, title: g.action.title, act: g.action.act } : null,
         row: useRow ? row : null,
@@ -5895,16 +5998,20 @@ const AppView = {
     for (const r of rows) out.push(noteStep(r));
 
     const merged = item.status === 'merged';
-    const included = merged ? AppView._includedInWords(item) : null;
+    const included = merged ? AppView._includedIn(item) : null;
     // Every step done is merged, which is live only once production runs it
     // (live_at, null until then).
     const goingLive = merged && item.live_at === null;
     // A merge of Homeroom itself: when the platform's next release carries it.
     const release = goingLive ? AppView._releaseSentence(item) : null;
     return {
-      headline: goingLive ? 'Going live'
-        : req ? req.headline : (merged ? (included ? `Live, ${included}` : 'Live') : 'Where it stands'),
-      detail: release ? `${release}.` : req ? (req.detail || null) : null,
+      headline: goingLive ? PlatformI18n.t('changes:page.steps.headline.goingLive')
+        : req ? req.headline : (merged ? (included
+          ? (included.number
+            ? PlatformI18n.t('changes:page.steps.headline.liveIncludedIn', { number: included.number })
+            : PlatformI18n.t('changes:page.steps.headline.liveIncludedInAnother'))
+          : PlatformI18n.t('changes:page.steps.headline.live')) : PlatformI18n.t('changes:page.steps.headline.standing')),
+      detail: release ? PlatformI18n.t('changes:page.steps.detail.release', { release }) : req ? (req.detail || null) : null,
       done: req ? req.done : null,
       total: req ? req.total : null,
       rows: out,
@@ -5933,7 +6040,7 @@ const AppView = {
     const syncable = mine && !AppView.readOnly && open && item.source !== 'imported'
       && AppView._headHome(item) === 'app_repo';
     const syncAction = () => ({
-      key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main',
+      key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? PlatformI18n.t('changes:page.actions.syncing') : PlatformI18n.t('changes:page.actions.syncWithMain'),
       disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] },
     });
     const rows = req.gates.map((g) => {
@@ -5957,7 +6064,7 @@ const AppView = {
           const recheck = AppView._recheckAction(item);
           if (recheck) step.actions.push(recheck);
           if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
-            step.actions.push({ key: 'retry-preview', cls: 'gc-vote-btn', label: 'Retry preview',
+            step.actions.push({ key: 'retry-preview', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:page.actions.retryPreview'),
               act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
           }
         }
@@ -5993,13 +6100,13 @@ const AppView = {
     return [
       // Named as the state it reaches, like "No conflicts with main", so it
       // does not read as a second copy of the hero's Submit for review button.
-      { key: 'review', label: 'Submitted for review', actor: 'author', state: submission.kind === 'pending' ? 'active' : 'waiting', detail: null },
-      { key: 'approvals', label: 'Votes', actor: 'group', state: 'pending', detail: null },
+      { key: 'review', label: PlatformI18n.t('changes:page.draft.gate.review'), detailLabel: PlatformI18n.t('changes:page.draft.gate.reviewDetail'), actor: 'author', state: submission.kind === 'pending' ? 'active' : 'waiting', detail: null },
+      { key: 'approvals', label: PlatformI18n.t('changes:page.draft.gate.approvals'), actor: 'group', state: 'pending', detail: null },
       // A conflict is not the draft's turn yet: the platform resolves it once
       // the change is up for a vote. The owner may still sync it now.
-      { key: 'integration', label: 'No conflicts with main', actor: 'auto', state: clean && !conflict ? 'done' : 'pending', detail: null, conflict },
-      { key: 'checks', label: 'Checks', actor: 'author', state: checks, detail: null },
-      { key: 'github', label: 'Merge', actor: 'auto', state: 'pending', detail: null },
+      { key: 'integration', label: PlatformI18n.t('changes:page.draft.gate.integration'), detailLabel: PlatformI18n.t('changes:page.draft.gate.integrationDetail'), actor: 'auto', state: clean && !conflict ? 'done' : 'pending', detail: null, conflict },
+      { key: 'checks', label: PlatformI18n.t('changes:page.draft.gate.checks'), detailLabel: PlatformI18n.t('changes:page.draft.gate.checksDetail'), actor: 'author', state: checks, detail: null },
+      { key: 'github', label: PlatformI18n.t('changes:page.draft.gate.github'), detailLabel: PlatformI18n.t('changes:page.draft.gate.githubDetail'), actor: 'auto', state: 'pending', detail: null },
     ];
   },
   _draftStepsView(item, body) {
@@ -6010,21 +6117,21 @@ const AppView = {
     const fresh = AppView._freshnessOf(item);
     const lineOf = (g) => {
       if (g.key === 'review') {
-        if (submission.kind === 'pending') return 'Submitting…';
-        return mine ? (submission.short || null) : 'Not submitted yet';
+        if (submission.kind === 'pending') return PlatformI18n.t('changes:page.draft.line.submitting');
+        return mine ? (submission.short || null) : PlatformI18n.t('changes:page.draft.line.notSubmitted');
       }
       if (g.key === 'integration') {
         if (g.state === 'done') return null;
         if (g.conflict) {
           const n = Array.isArray(item.integration_conflict_paths) && item.integration_conflict_paths.length
             ? item.integration_conflict_paths.length : (Array.isArray(fresh.files) ? fresh.files.length : 0);
-          return n ? `Conflict in ${n} file${n === 1 ? '' : 's'}` : 'Conflict with main';
+          return n ? PlatformI18n.t('changes:page.draft.line.conflictFiles', { count: n }) : PlatformI18n.t('changes:page.draft.line.conflict');
         }
-        return 'Not measured yet';
+        return PlatformI18n.t('changes:page.draft.line.notMeasured');
       }
       if (g.key === 'checks') {
-        if (item.check_state === 'pending' && item.check_phase === 'deferred') return 'Runs after the sync';
-        if (g.state === 'pending' && !item.check_state) return 'Not run yet';
+        if (item.check_state === 'pending' && item.check_phase === 'deferred') return PlatformI18n.t('changes:page.draft.line.checksAfterSync');
+        if (g.state === 'pending' && !item.check_state) return PlatformI18n.t('changes:page.draft.line.checksNotRun');
         return AppView._checksLine(g, item, false);
       }
       return null;
@@ -6040,7 +6147,7 @@ const AppView = {
     const integration = view.rows.find((r) => r.gate === 'integration');
     if (integration && syncable && gates.find((g) => g.key === 'integration').conflict) {
       const busy = AppView._changeActions.get(Number(item.id));
-      integration.actions.push({ key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main',
+      integration.actions.push({ key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? PlatformI18n.t('changes:page.actions.syncing') : PlatformI18n.t('changes:page.actions.syncWithMain'),
         disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] } });
     }
     return view;
@@ -6050,12 +6157,13 @@ const AppView = {
   // carries that). Null while there is nothing to say.
   _voteNamesLine(roster) {
     if (!roster || roster.phase === 'hidden') return null;
-    if (roster.phase === 'loading') return 'Loading votes…';
+    if (roster.phase === 'loading') return PlatformI18n.t('changes:vote.names.loading');
     const names = (side) => (side && side.names && side.names !== '—' ? side.names : '');
     const yes = names(roster.yes);
     const no = names(roster.no);
-    if (!yes && !no) return 'No votes yet';
-    return [yes, no ? `No: ${no}` : ''].filter(Boolean).join(' · ');
+    if (!yes && !no) return PlatformI18n.t('changes:vote.names.none');
+    if (!no) return yes;
+    return yes ? PlatformI18n.t('changes:vote.names.yesAndNo', { yes, no }) : PlatformI18n.t('changes:vote.names.no', { names: no });
   },
 
   // What the Checks step shows when it opens: the build as its steps, then
@@ -6080,7 +6188,7 @@ const AppView = {
     const now = b ? (b.steps || []).find((st) => st.state === 'now') : null;
     const build = b ? {
       steps: b.steps || [],
-      value: b.done ? (b.sub ? b.sub.charAt(0).toUpperCase() + b.sub.slice(1) : 'Built') : (now ? now.label : 'Building'),
+      value: b.done ? (b.subTitle || PlatformI18n.t('changes:page.checks.build.built')) : (now ? now.label : PlatformI18n.t('changes:page.checks.build.building')),
     } : null;
     const unit = prog && prog.bar.unit ? prog.bar.unit : null;
     const fails = v && v.failures.length ? v.failures : [];
@@ -6094,9 +6202,9 @@ const AppView = {
       // change" (#1771).
       note = String(item.check_error_detail).slice(0, 280);
     } else if (!item.staging_url && item.staging_error) {
-      note = `The preview did not start: ${String(item.staging_error).slice(0, 280)}`;
+      note = PlatformI18n.t('changes:page.checks.note.previewDidNotStart', { error: String(item.staging_error).slice(0, 280) });
     } else if (item.check_state === 'error') {
-      note = "The staging build or the test run itself broke, so the platform can't confirm the app works.";
+      note = PlatformI18n.t('changes:page.checks.note.broken');
     } else if (v && v.baseNote) {
       note = v.baseNote;
     }
@@ -6140,20 +6248,20 @@ const AppView = {
     // running), and says why in its own words when it does.
     // `short` is the same fact in a few words: the draft's "Submit for
     // review" step line (_draftStepsView).
-    const ready = (note, tone = 'ok', short = 'Ready') => ({ kind: 'ready', note, tone, short });
+    const ready = (note, tone = 'ok', short = PlatformI18n.t('changes:page.submission.ready.short')) => ({ kind: 'ready', note, tone, short });
     if (item.check_state === 'failing') {
-      return ready('Its checks are failing. You can submit it now; it can merge only after a fix passes them.', 'warn',
-        'Ready · checks must pass before it merges');
+      return ready(PlatformI18n.t('changes:page.submission.failing.note'), 'warn',
+        PlatformI18n.t('changes:page.submission.failing.short'));
     }
     if (item.check_state === 'error') {
-      return ready('Its checks could not run. You can submit it now; it can merge only once they run and pass.', 'warn',
-        'Ready · checks must run before it merges');
+      return ready(PlatformI18n.t('changes:page.submission.error.note'), 'warn',
+        PlatformI18n.t('changes:page.submission.error.short'));
     }
     // A managed change's uploaded commit is not its revision until the agent
     // submits it; the server refuses to put it up for review before then.
     if (item.source === 'cli_handoff' && item.proposal_state === 'uploaded') {
-      return ready('A commit was uploaded but has not been submitted for checks yet. Ask the agent to submit it first.', 'mute',
-        'The agent has not submitted its commit yet');
+      return ready(PlatformI18n.t('changes:page.submission.uploaded.note'), 'mute',
+        PlatformI18n.t('changes:page.submission.uploaded.short'));
     }
     // #2379 — a change with nothing on its branch is not a change yet. The
     // server refuses it ("no committed code on its branch yet"); say so here
@@ -6169,17 +6277,17 @@ const AppView = {
         ? item.proposal_state === 'draft'
         : !item.pr_number && !item.staging_url && !item.check_state;
       if (levelWithMain || nothingPushed) {
-        return { kind: 'empty', tone: 'mute', short: 'Nothing committed yet',
-          note: 'There are no committed changes to submit yet. Ask the agent to make a change first.' };
+        return { kind: 'empty', tone: 'mute', short: PlatformI18n.t('changes:page.submission.empty.short'),
+          note: PlatformI18n.t('changes:page.submission.empty.note') };
       }
     }
     if (item.check_state === 'passing' && !item.staging_url) {
-      return ready('Ready to submit for review. Its preview was closed while idle; submitting rebuilds it and runs the checks again.', 'ok',
-        'Ready · submitting rebuilds the preview');
+      return ready(PlatformI18n.t('changes:page.submission.previewClosed.note'), 'ok',
+        PlatformI18n.t('changes:page.submission.previewClosed.short'));
     }
-    if (item.check_state === 'passing') return ready('Ready to submit for review.');
-    return ready('You can submit it now. Its checks keep running, and it can merge only once they pass.', 'ok',
-      item.check_phase === 'deferred' ? 'Ready · checks run after the sync' : 'Ready · checks are still running');
+    if (item.check_state === 'passing') return ready(PlatformI18n.t('changes:page.submission.ready.note'));
+    return ready(PlatformI18n.t('changes:page.submission.running.note'), 'ok',
+      item.check_phase === 'deferred' ? PlatformI18n.t('changes:page.submission.running.shortDeferred') : PlatformI18n.t('changes:page.submission.running.shortRunning'));
   },
   _completeChangeView(item, card, body) {
     const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
@@ -6190,13 +6298,13 @@ const AppView = {
     body.changeId = item.id;
     body.includedIn = AppView._includedInView(item);
     if (item.preview_placeholder) {
-      body.note = 'This is a display-only sample. To try editing a description, open "[Preview sample] Your editable change" in your sessions.';
+      body.note = PlatformI18n.t('changes:page.sample.note');
     }
     AppView._changeItems.set(Number(item.id), item);
     body.canEditIssues = !AppView.readOnly && (mine || !!App.user?.canAdminWrite);
     body.issueOptions = (AppView._ghIssues || []).map((issue) => ({
       n: Number(issue.number),
-      title: issue.title || `Issue #${issue.number}`,
+      title: issue.title || PlatformI18n.t('changes:request.fallbackTitle', { number: issue.number }),
       href: `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${issue.number}`,
     })).filter((issue) => Number.isSafeInteger(issue.n) && issue.n > 0);
     if (mine && underway && item.source !== 'imported') {
@@ -6206,7 +6314,7 @@ const AppView = {
     }
     body.issues = (item.linked_issues || []).map((n) => {
       const issue = AppView._findItem('issue', Number(n));
-      return { n, title: issue?.title || `Issue #${n}`, href: body.details.linked.find((link) => Number(link.n) === Number(n))?.href || `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${n}` };
+      return { n, title: issue?.title || PlatformI18n.t('changes:request.fallbackTitle', { number: n }), href: body.details.linked.find((link) => Number(link.n) === Number(n))?.href || `#app/${AppView.appData?.slug || App.currentApp}/dev/issues/${n}` };
     });
     // #2371: before review the author still needs something to read. The
     // spec is the change's description until a summary exists; /details
@@ -6221,15 +6329,15 @@ const AppView = {
     // no Details section for "under Details" to point at.
     body.descriptionFold = !body.summaryHtml && !body.plan && !!body.proposalBody;
     body.summaryHtml ||= body.plan
-      ? '<p>No short summary has been added yet. The plan this change is built from is below.</p>'
+      ? `<p>${PlatformI18n.htmlText('changes:page.summary.missingPlan')}</p>`
       : body.proposalBody
-        ? '<p>No short summary has been added yet. The current description is below.</p>'
-        : '<p>No change summary has been added yet.</p>';
+        ? `<p>${PlatformI18n.htmlText('changes:page.summary.missingDescription')}</p>`
+        : `<p>${PlatformI18n.htmlText('changes:page.summary.missing')}</p>`;
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
-    body.discussion = underway && !item.shared_at ? 'Make this change visible to the group to start a discussion. Only you can see the agent workspace here unless you share it. Its code is on public GitHub.' : null;
-    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Not shared yet') : (item.status === 'promoted' ? AppView._waitingWords(item) : item.status) }];
+    body.discussion = underway && !item.shared_at ? PlatformI18n.t('changes:page.discussion.shareFirst') : null;
+    card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? PlatformI18n.t('changes:card.meta.visibleToGroup') : PlatformI18n.t('changes:card.meta.notShared')) : (item.status === 'promoted' ? AppView._waitingWords(item) : item.status) }];
     // The Preview pill on the card says whether there is one to open, and
     // the checks row says what ran on it, so a "Preview: available" row was
     // the same fact a third time. The row stays for a preview that FAILED,
@@ -6238,15 +6346,17 @@ const AppView = {
       || (!item.staging_url && !!item.staging_error);
     if (previewFailed && !rows.some((r) => r.key === 'preview')) {
       rows.unshift({
-        key: 'preview', label: 'Preview', tone: 'bad',
-        text: [{ b: 'Failed.', tone: 'bad' }, ` The submitted preview did not start${item.staging_error ? `: ${String(item.staging_error).slice(0, 280)}` : '.'}`],
+        key: 'preview', label: PlatformI18n.t('changes:page.ledger.preview.label'), tone: 'bad',
+        text: item.staging_error
+          ? AppView._boldLeadText('changes:page.ledger.preview.failedWith', { error: String(item.staging_error).slice(0, 280) }, 'bad')
+          : AppView._boldLeadText('changes:page.ledger.preview.failed', {}, 'bad'),
       });
     }
-    if (!rows.some((r) => r.key === 'checks')) rows.push({ key: 'checks', label: 'Checks', tone: 'mute', text: ['No check results have been recorded yet.'] });
+    if (!rows.some((r) => r.key === 'checks')) rows.push({ key: 'checks', label: PlatformI18n.t('changes:page.ledger.checks.label'), tone: 'mute', text: [PlatformI18n.t('changes:page.ledger.checks.none')] });
     if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
       const preview = rows.find((r) => r.key === 'preview');
       if (preview) {
-        preview.actions = [{ key: 'retry-preview', cls: 'gc-vote-btn', label: 'Retry preview',
+        preview.actions = [{ key: 'retry-preview', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:page.actions.retryPreview'),
           act: { fn: 'swapToStagingForSession', args: [item.id, ''] } }];
       }
     }
@@ -6259,12 +6369,12 @@ const AppView = {
       // columns — is the current one.
       const fresh = AppView._freshnessOf(item);
       const behind = fresh.behindBy;
-      main = { key: 'main', label: 'Main', tone: behind > 0 ? 'warn' : 'mute', text: [behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind main.` : (fresh.checkedAt && behind === 0 ? 'Up to date with main.' : 'Main freshness has not been verified yet.')] };
+      main = { key: 'main', label: PlatformI18n.t('changes:page.ledger.main.label'), tone: behind > 0 ? 'warn' : 'mute', text: [behind > 0 ? PlatformI18n.t('changes:page.ledger.main.behind', { count: behind }) : (fresh.checkedAt && behind === 0 ? PlatformI18n.t('changes:page.ledger.main.upToDate') : PlatformI18n.t('changes:page.ledger.main.unverified'))] };
       const reviewIndex = rows.findIndex((r) => r.key === 'votes');
       rows.splice(reviewIndex < 0 ? rows.length : reviewIndex, 0, main);
     }
     if (mine && !AppView.readOnly && open && AppView._headHome(item) === 'app_repo' && item.source !== 'imported') {
-      main.actions = [...(main.actions || []), { key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main', disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] } }];
+      main.actions = [...(main.actions || []), { key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? PlatformI18n.t('changes:page.actions.syncing') : PlatformI18n.t('changes:page.actions.syncWithMain'), disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] } }];
     } else if (AppView._headHome(item) === 'user_fork'
       // QA 2026-09-24: only when there is something to update. This went
       // under every fork proposal's row, so a branch that was "Up to date
@@ -6274,21 +6384,21 @@ const AppView = {
       // with the reason, so it is not said twice either.
       && main.tone !== 'mute' && main.tone !== 'ok'
       && !(main.foot && main.foot.length)) {
-      main.foot = [...(main.foot || []), ['The author must update this branch in their fork, then push the changes.']];
+      main.foot = [...(main.foot || []), [PlatformI18n.t('changes:page.ledger.main.forkNote')]];
     }
     const votes = rows.find((r) => r.key === 'votes');
-    if (votes) votes.label = 'Review';
+    if (votes) votes.label = PlatformI18n.t('changes:page.ledger.votes.label');
     body.build = AppView._buildDoorView(item);
     // The shots claims and state, for "What changes for you".
     body.shots = AppView._shotsView(item.shots);
     if (underway) {
       const checks = rows.find((r) => r.key === 'checks');
-      if (item.check_state === 'failing' && checks) checks.text = [{ b: 'Failing.', tone: 'bad' }, ' Required checks need attention before this change can merge.'];
+      if (item.check_state === 'failing' && checks) checks.text = AppView._boldLeadText('changes:page.ledger.checks.failing', {}, 'bad');
       if (main.key === 'behind') {
         const behind = AppView._freshnessOf(item).behindBy ?? main.count;
-        main.label = 'Main';
+        main.label = PlatformI18n.t('changes:page.ledger.main.label');
         main.sub = null;
-        main.text = [behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind main.` : 'Main has moved ahead.'];
+        main.text = [behind > 0 ? PlatformI18n.t('changes:page.ledger.main.behind', { count: behind }) : PlatformI18n.t('changes:page.ledger.main.movedAhead')];
       }
       body.details.pathSteps = null;
       body.details.pathLeft = null;
@@ -6296,14 +6406,71 @@ const AppView = {
       const submission = AppView.changeSubmissionState(item);
       const ready = submission.kind === 'ready';
       const pending = submission.kind === 'pending';
-      rows.push({ key: 'review', label: 'Review', tone: pending ? 'mute' : submission.tone,
-        text: [pending ? 'Submitting for review…' : submission.note] });
+      rows.push({ key: 'review', label: PlatformI18n.t('changes:page.ledger.review.label'), tone: pending ? 'mute' : submission.tone,
+        text: [pending ? PlatformI18n.t('changes:page.ledger.review.submitting') : submission.note] });
       card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
       if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
-        label: pending ? 'Submitting…' : 'Submit for review',
+        label: pending ? PlatformI18n.t('changes:page.actions.submitting') : PlatformI18n.t('changes:page.actions.submitForReview'),
         title: submission.note, disabled: !ready || !!busy,
         act: { fn: 'runChangeAction', args: [item.id, 'promote', item] } });
     }
+  },
+
+  // Message ids for the "Sync with main" row of the ledger, by state and by
+  // what is known. Each is a whole sentence, and each NUMBER in it picks its
+  // own plural form:
+  //   commitsLines   the commits main gained (its plural count); files unknown
+  //   aheadFiles     the files changed on both sides (its plural count); commits unknown
+  //   commitsAndFiles  both are known. Two counts cannot share one plural
+  //                  choice, so each is a complete counted fact of its own
+  //                  (ledger.sync.fact.moved / .overlap) and the sentence
+  //                  places the two.
+  //   aheadLines     neither is known
+  SYNC_TEXT_IDS: {
+    blocked: {
+      commitsAndFiles: 'changes:ledger.sync.blocked.commitsAndFiles',
+      commitsLines: 'changes:ledger.sync.blocked.commitsLines',
+      aheadFiles: 'changes:ledger.sync.blocked.aheadFiles',
+      aheadLines: 'changes:ledger.sync.blocked.aheadLines',
+    },
+    resolvingNow: {
+      commitsAndFiles: 'changes:ledger.sync.resolvingNow.commitsAndFiles',
+      commitsLines: 'changes:ledger.sync.resolvingNow.commitsLines',
+      aheadFiles: 'changes:ledger.sync.resolvingNow.aheadFiles',
+      aheadLines: 'changes:ledger.sync.resolvingNow.aheadLines',
+    },
+    afterVote: {
+      commitsAndFiles: 'changes:ledger.sync.afterVote.commitsAndFiles',
+      commitsLines: 'changes:ledger.sync.afterVote.commitsLines',
+      aheadFiles: 'changes:ledger.sync.afterVote.aheadFiles',
+      aheadLines: 'changes:ledger.sync.afterVote.aheadLines',
+    },
+    automatic: {
+      commitsAndFiles: 'changes:ledger.sync.automatic.commitsAndFiles',
+      commitsLines: 'changes:ledger.sync.automatic.commitsLines',
+      aheadFiles: 'changes:ledger.sync.automatic.aheadFiles',
+      aheadLines: 'changes:ledger.sync.automatic.aheadLines',
+    },
+    catchingUp: {
+      commits: 'changes:ledger.sync.catchingUp.commits',
+      ahead: 'changes:ledger.sync.catchingUp.ahead',
+    },
+  },
+
+  // A ledger row's text is a list of parts, a bold verdict among them. The
+  // sentence is one message with its verdict in <0></0>; this splits it into
+  // those parts. Parameters are filled in after the split, as htmlRich does,
+  // so a value that looks like a tag stays text.
+  _boldLeadText(id, values, tone) {
+    const fill = (text) => text.replace(/{{\s*(\w+)\s*}}/g, (_all, name) => (values[name] == null ? '' : String(values[name])));
+    // A plural pair is chosen by `count`; its number is filled in below with the rest.
+    const marked = PlatformI18n.t(id, {
+      ...(values && values.count != null ? { count: values.count } : {}),
+      interpolation: { prefix: '[[unused:', suffix: ']]' },
+    });
+    const found = /^([\s\S]*?)<0>([\s\S]*?)<\/0>([\s\S]*)$/.exec(marked);
+    if (!found) return [fill(marked)];
+    return [found[1] && fill(found[1]), { b: fill(found[2]), tone }, found[3] && fill(found[3])].filter(Boolean);
   },
 
   async runChangeAction(id, action, item) {
@@ -6332,9 +6499,9 @@ const AppView = {
       // The server's own sentence first: since #3173 the few refusals left
       // (nothing committed, an agent turn still running) each say why.
       if (!response.ok || data.ok === false) throw new Error(data.message || (data.error === 'proposal_not_ready'
-        ? 'This change cannot be submitted yet. Try again in a moment.'
-        : data.error) || 'The action could not be completed.');
-      if (stillVisible() && action !== 'promote') PlatformUI.toast(data.message || 'Synced with main.');
+        ? PlatformI18n.t('changes:page.actions.notReady')
+        : data.error) || PlatformI18n.t('changes:page.actions.failed'));
+      if (stillVisible() && action !== 'promote') PlatformUI.toast(data.message || PlatformI18n.t('changes:page.actions.synced'));
       if (action === 'promote') {
         const promoted = { status: 'promoted' };
         if (data.prNumber) promoted.pr_number = data.prNumber;
@@ -6354,7 +6521,7 @@ const AppView = {
       }
       if (AppView.appData?.slug === slug) await AppView._loadDevData();
     } catch (error) {
-      if (stillVisible()) PlatformUI.toast(error?.name === 'TypeError' ? 'Network error' : error.message);
+      if (stillVisible()) PlatformUI.toast(error?.name === 'TypeError' ? PlatformI18n.t('changes:page.actions.networkError') : error.message);
       else console.warn('Change action failed after leaving the session:', error.message);
     } finally {
       AppView._changeActions.delete(Number(id));
@@ -6379,7 +6546,7 @@ const AppView = {
     const version = plan && Number(plan.version) > 0 ? Number(plan.version) : null;
     const draft = ownDraft && String(item.spec_md || '').trim() ? String(item.spec_md) : null;
     if (!version && !draft) return null;
-    const title = item.pr_title || item.session_title || 'The plan';
+    const title = item.pr_title || item.session_title || PlatformI18n.t('changes:page.plan.untitled');
     const at = (version ? plan.at : null) || null;
     const stamp = at && typeof GroupChat !== 'undefined' && GroupChat._stamp
       ? GroupChat._stamp(at) : (at ? relStamp(at) : { text: '', title: '' });
@@ -6387,8 +6554,10 @@ const AppView = {
       key: `c${item.id}`,
       title,
       version,
-      // The change's author, as its hero names them (set once it is built).
-      by: item.username || 'someone',
+      // The change's author, as its hero names them (set once it is built);
+      // with none, the card's unnamed wording (request-model.ts byUnknown).
+      by: item.username || '',
+      ...(item.username ? {} : { byUnknown: true }),
       at,
       time: stamp.text,
       timeTitle: stamp.title,
@@ -6415,12 +6584,15 @@ const AppView = {
     let category = meta ? meta.label : (placed ? placed.name : (top || null));
     if (category) category = category.charAt(0).toUpperCase() + category.slice(1);
     const hero = body.hero || {};
-    const author = hero.author || 'someone';
+    const author = hero.author || PlatformI18n.t('changes:page.thread.authorUnknown');
     const at = item.created_at || null;
     const stamp = at && typeof GroupChat !== 'undefined' && GroupChat._stamp
       ? GroupChat._stamp(at) : (at ? relStamp(at) : { text: '', title: '' });
     // What built it, in two words: the coding agent an outside change names.
-    const agent = AppView.externalAgentName(item.external_agent);
+    const agent = AppView.externalAgentProduct(item.external_agent);
+    const via = agent ? PlatformI18n.t('changes:page.thread.via', { agent })
+      : item.external_agent ? PlatformI18n.t('changes:page.thread.viaExternal')
+        : (item.source === 'imported' ? PlatformI18n.t('changes:page.thread.viaGitHub') : null);
     return {
       number: n || null,
       category,
@@ -6428,7 +6600,7 @@ const AppView = {
       at,
       time: stamp.text,
       timeTitle: stamp.title,
-      via: agent ? `via ${agent}` : (item.source === 'imported' ? 'via GitHub' : null),
+      via,
       votes: AppView._changeVotesView(item, card),
       testing: AppView._changeTestingView(item),
       shots: AppView._changeShotsView(kind, item),
@@ -6440,7 +6612,7 @@ const AppView = {
   _nameList(names) {
     const list = (names || []).filter(Boolean);
     if (list.length <= 1) return list.join('');
-    return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+    return PlatformI18n.t('changes:page.votes.people.andLast', { names: PlatformI18n.listText(list.slice(0, -1)), last: list[list.length - 1] });
   },
 
   // A bar of `parts` equal parts, `filled` of them done: one part per yes a
@@ -6462,17 +6634,17 @@ const AppView = {
     if (underway) {
       const submission = AppView.changeSubmissionState(item);
       return {
-        name: 'Votes', figure: 'Not up for a vote yet', tone: 'muted', done: false,
+        name: PlatformI18n.t('changes:page.votes.name'), figure: PlatformI18n.t('changes:page.votes.figure.notUp'), tone: 'muted', done: false,
         segments: [{ weight: 1, pct: 0, state: 'moving' }],
-        label: 'Votes: not up for a vote yet',
-        note: [mine ? submission.note : 'Its author has not asked for approval yet.'].filter(Boolean),
+        label: PlatformI18n.t('changes:page.votes.label.notUp'),
+        note: [mine ? submission.note : PlatformI18n.t('changes:page.votes.note.notAsked')].filter(Boolean),
       };
     }
     if (item.status === 'closed') {
       return {
-        name: 'Votes', figure: 'Closed', tone: 'muted', done: false,
-        segments: [{ weight: 1, pct: 0, state: 'moving' }], label: 'Votes: closed',
-        note: ['This change was closed without going live.'],
+        name: PlatformI18n.t('changes:page.votes.name'), figure: PlatformI18n.t('changes:page.votes.figure.closed'), tone: 'muted', done: false,
+        segments: [{ weight: 1, pct: 0, state: 'moving' }], label: PlatformI18n.t('changes:page.votes.label.closed'),
+        note: [PlatformI18n.t('changes:page.votes.note.closed')],
       };
     }
     const pill = (card && card.pill && card.pill.state) || AppView.statusPillState(item, {}) || {};
@@ -6483,22 +6655,22 @@ const AppView = {
     const note = [];
     if (item.status === 'merged' || item.status === 'merging') {
       const said = ready && ready.yesNames && ready.yesNames.length
-        ? `${AppView._nameList(ready.yesNames)} said yes.` : null;
+        ? PlatformI18n.t('changes:page.votes.note.saidYes', { count: ready.yesNames.length, people: AppView._nameList(ready.yesNames) }) : null;
       if (said) note.push(said);
       // Where the rollout is, in the pill's own states.
       const LIVE = {
-        deployed: 'It’s live.', merged: 'It’s live.', deploying: 'It’s going live.', merging: 'It’s going live.',
-        delivery_pending: 'It’s going live.', deployment_stalled: 'It’s stuck going live.', delivery_failed: 'It couldn’t go live.',
+        deployed: 'changes:page.votes.note.live', merged: 'changes:page.votes.note.live', deploying: 'changes:page.votes.note.goingLive', merging: 'changes:page.votes.note.goingLive',
+        delivery_pending: 'changes:page.votes.note.goingLive', deployment_stalled: 'changes:page.votes.note.stuck', delivery_failed: 'changes:page.votes.note.failed',
       };
       // A merge of Homeroom itself says when its release comes instead:
       // `release`, which the card words and keeps counting down
       // (change-head.tsx, frontend/src/lib/release-eta.ts).
       const release = !item.included_in_session_id && pill.key === 'deploying' && AppView._releaseSentence(item)
         ? item.release : null;
-      if (!release && !item.included_in_session_id && LIVE[pill.key]) note.push(LIVE[pill.key]);
+      if (!release && !item.included_in_session_id && Object.prototype.hasOwnProperty.call(LIVE, pill.key)) note.push(PlatformI18n.t(LIVE[pill.key]));
       return {
-        name: 'Votes', figure: 'Voted in', tone: 'done', done: true,
-        segments: [{ weight: 1, pct: 100, state: 'done' }], label: 'Votes: voted in', note,
+        name: PlatformI18n.t('changes:page.votes.name'), figure: PlatformI18n.t('changes:page.votes.figure.votedIn'), tone: 'done', done: true,
+        segments: [{ weight: 1, pct: 100, state: 'done' }], label: PlatformI18n.t('changes:page.votes.label.votedIn'), note,
         ...(release ? { release } : {}),
       };
     }
@@ -6508,66 +6680,69 @@ const AppView = {
     let figure;
     let tone;
     if (pill.key === 'reject_countdown') { figure = pill.label; tone = 'bad'; }
-    else if (pill.key === 'contested') { figure = 'Needs a conversation'; tone = 'warn'; }
+    else if (pill.key === 'contested') { figure = PlatformI18n.t('changes:page.votes.figure.contested'); tone = 'warn'; }
     else if (pill.key === 'merge_countdown') { figure = pill.label; tone = reached ? 'done' : 'ask'; }
     else if (yes >= maj && waitsOnMember) {
-      figure = canVote && item.approval_policy !== 'invited' ? 'Needs your yes' : 'Needs another member’s yes';
+      figure = canVote && item.approval_policy !== 'invited' ? PlatformI18n.t('changes:page.votes.figure.needsYours') : PlatformI18n.t('changes:page.votes.figure.needsAnother');
       tone = canVote ? 'ask' : 'warn';
-    } else if (reached) { figure = `${yes} of ${maj} yes`; tone = 'done'; }
-    else if (pill.key === 'needs_vote' && AppView._approveSolo(item)) { figure = 'Waiting for your approval'; tone = 'ask'; }
-    else { figure = `Needs ${maj - yes} more yes`; tone = canVote ? 'ask' : 'muted'; }
+    } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { yes, needed: maj }); tone = 'done'; }
+    else if (pill.key === 'needs_vote' && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
+    else { figure = PlatformI18n.t('changes:page.votes.figure.needsMore', { count: maj - yes }); tone = canVote ? 'ask' : 'muted'; }
     if (reached && ready && ready.yesNames && ready.yesNames.length) {
-      note.push(`${AppView._nameList(ready.yesNames)} said yes.`);
+      note.push(PlatformI18n.t('changes:page.votes.note.saidYes', { count: ready.yesNames.length, people: AppView._nameList(ready.yesNames) }));
     } else if (!reached) {
       const approvers = ready && Number(ready.approvers) > 0 ? Number(ready.approvers) : 0;
       const members = Number((AppView._proposalsCtx || {}).activeUsers) || 0;
-      if (approvers) note.push(`Any of the ${approvers} approver${approvers === 1 ? '' : 's'} can give it.`);
-      else if (members > 1) note.push(`Any of the ${members} members can give it.`);
+      if (approvers) note.push(PlatformI18n.t('changes:page.votes.note.anyApprover', { count: approvers }));
+      else if (members > 1) note.push(PlatformI18n.t('changes:page.votes.note.anyMember', { count: members }));
     }
     // A countdown or a contest says what happens next, in a few words.
-    if (pill.key === 'merge_countdown') note.push('It goes live when the countdown ends, unless someone objects.');
-    else if (pill.key === 'reject_countdown') note.push('It will be set aside when the countdown ends, unless someone speaks up.');
-    else if (pill.key === 'contested') note.push('Enough people objected that it needs a straight majority of yes votes.');
+    if (pill.key === 'merge_countdown') note.push(PlatformI18n.t('changes:page.votes.note.mergeCountdown'));
+    else if (pill.key === 'reject_countdown') note.push(PlatformI18n.t('changes:page.votes.note.rejectCountdown'));
+    else if (pill.key === 'contested') note.push(PlatformI18n.t('changes:page.votes.note.contested'));
     const earlierYes = ready && Array.isArray(ready.earlierYes) ? ready.earlierYes : [];
     const earlierNo = ready && Array.isArray(ready.earlierNo) ? ready.earlierNo : [];
-    if (earlierYes.length) note.push(`${AppView._nameList(earlierYes)}’s yes was on an earlier version.`);
-    if (earlierNo.length) note.push(`${AppView._nameList(earlierNo)}’s no was on an earlier version.`);
-    if (pill.awaitsOtherYes && !(yes >= maj && waitsOnMember)) note.push('Needs a Yes from another member before it can go live.');
-    else if (pill.lock && pill.lockTitle) note.push(/[.!?]$/.test(pill.lockTitle) ? pill.lockTitle : `${pill.lockTitle}.`);
+    if (earlierYes.length) note.push(PlatformI18n.t('changes:page.votes.note.earlierYes', { count: earlierYes.length, people: AppView._nameList(earlierYes) }));
+    if (earlierNo.length) note.push(PlatformI18n.t('changes:page.votes.note.earlierNo', { count: earlierNo.length, people: AppView._nameList(earlierNo) }));
+    if (pill.awaitsOtherYes && !(yes >= maj && waitsOnMember)) note.push(PlatformI18n.t('changes:page.votes.note.needsOtherYes'));
+    // The lock's own tooltip is a whole sentence (changes:explicit.lockTitle).
+    else if (pill.lock && pill.lockTitle) note.push(pill.lockTitle);
     // #695: yeses from people who are not approvers count for nothing here.
     if (Number(pill.advisory) > 0) {
       const n = Number(pill.advisory);
-      note.push(`${n} more ${n === 1 ? 'yes is' : 'yeses are'} advisory, from people who aren’t approvers.`);
+      note.push(PlatformI18n.t('changes:page.votes.note.advisory', { count: n }));
     }
-    const was = AppView.thresholdWasNote(item, maj);
-    if (was) note.push(`${was}.`);
+    // The same fact the pill's note carries, as a sentence of this line.
+    if (AppView.thresholdWasNote(item, maj)) {
+      note.push(PlatformI18n.t('changes:page.votes.note.thresholdWas', { now: maj, was: parseInt(item.votes_required_at_promote, 10) }));
+    }
     if (reached && item.check_state !== 'passing' && item.check_state !== 'skipped') {
-      note.push(item.check_state === 'failing' ? 'It goes live once a fix passes testing.' : 'It goes live once testing passes.');
+      note.push(item.check_state === 'failing' ? PlatformI18n.t('changes:page.votes.note.liveOnceFixed') : PlatformI18n.t('changes:page.votes.note.liveOnceTested'));
     }
     const fill = Math.min(yes, maj);
     return {
-      name: 'Votes', figure, tone, done: tone === 'done',
+      name: PlatformI18n.t('changes:page.votes.name'), figure, tone, done: tone === 'done',
       segments: AppView._changeVoteSegments(fill, maj, tone === 'done' ? 'done' : 'moving'),
-      label: `Votes: ${yes} of ${maj} yes`,
+      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
       note,
     };
   },
 
-  // "a third done": how far the checks are, in words.
-  _fractionWords(f) {
-    if (f < 0.12) return 'just started';
-    if (f < 0.3) return 'a quarter done';
-    if (f < 0.42) return 'a third done';
-    if (f < 0.58) return 'half done';
-    if (f < 0.71) return 'two thirds done';
-    if (f < 0.88) return 'three quarters done';
-    return 'almost done';
+  // "Preview built, checks a third done.": how far the checks are, a whole
+  // sentence for each step of the way.
+  _checksFractionLine(f) {
+    if (f < 0.12) return PlatformI18n.t('changes:page.testing.where.justStarted');
+    if (f < 0.3) return PlatformI18n.t('changes:page.testing.where.quarter');
+    if (f < 0.42) return PlatformI18n.t('changes:page.testing.where.third');
+    if (f < 0.58) return PlatformI18n.t('changes:page.testing.where.half');
+    if (f < 0.71) return PlatformI18n.t('changes:page.testing.where.twoThirds');
+    if (f < 0.88) return PlatformI18n.t('changes:page.testing.where.threeQuarters');
+    return PlatformI18n.t('changes:page.testing.where.almost');
   },
 
-  // "3 min", "under a minute".
+  // Whole minutes, rounded; 0 reads "under a minute" where it is said.
   _minutes(ms) {
-    const m = Math.round(ms / 60000);
-    return m < 1 ? 'under a minute' : `${m} min`;
+    return Math.round(ms / 60000);
   },
 
   // #4452 — the Testing card: the preview build and both kinds of checks
@@ -6595,41 +6770,43 @@ const AppView = {
       const b = p && p.build && p.build.step === 'done' ? p.build : null;
       const buildMs = b ? (Array.isArray(b.steps) ? b.steps.reduce((t, st) => t + (Number(st && st.ms) || 0), 0) : 0) || Number(b.totalMs) || 0 : 0;
       const checksMs = p && Number(p.checksMs) > 0 ? Number(p.checksMs) : 0;
+      const build = AppView._minutes(buildMs);
+      const checks = AppView._minutes(checksMs);
       if (buildMs && checksMs) {
         // "Preview built in 3 min, checked in 9.": the second unit is the first's.
-        const second = buildMs >= 60000 && checksMs >= 60000
-          ? String(Math.round(checksMs / 60000)) : AppView._minutes(checksMs);
-        return `Preview built in ${AppView._minutes(buildMs)}, checked in ${second}.`;
+        if (buildMs >= 60000 && checksMs >= 60000) return PlatformI18n.t('changes:page.testing.cost.both', { build, checks });
+        if (build < 1) return checks < 1 ? PlatformI18n.t('changes:page.testing.cost.underUnder') : PlatformI18n.t('changes:page.testing.cost.underMinutes', { checks });
+        return checks < 1 ? PlatformI18n.t('changes:page.testing.cost.minutesUnder', { build }) : PlatformI18n.t('changes:page.testing.cost.minutesMinutes', { build, checks });
       }
-      if (checksMs) return `Checked in ${AppView._minutes(checksMs)}.`;
+      if (checksMs) return checks < 1 ? PlatformI18n.t('changes:page.testing.cost.checkedUnder') : PlatformI18n.t('changes:page.testing.cost.checked', { checks });
       return null;
     };
     if (previewFailed) {
-      if (!AppView.readOnly) actions.push({ key: 'retry-preview', cls: 'gc-vote-btn', label: 'Retry preview', act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
+      if (!AppView.readOnly) actions.push({ key: 'retry-preview', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:page.actions.retryPreview'), act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
       return {
-        name: 'Testing', figure: 'The preview didn’t start', tone: 'bad', done: false, segments: full('bad'),
-        label: 'Testing: the preview did not start',
+        name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.previewFailed'), tone: 'bad', done: false, segments: full('bad'),
+        label: PlatformI18n.t('changes:page.testing.label.previewFailed'),
         note: [String(item.staging_error).slice(0, 280)], actions, details: true,
       };
     }
     const broken = (cs === 'passing' || cs === 'skipped') ? AppView._shotsBrokenCount(item.shots) : 0;
     if (broken) {
       return {
-        name: 'Testing', figure: broken === 1 ? 'One thing isn’t working' : `${broken} things aren’t working`, tone: 'bad', done: false,
-        segments: full('bad'), label: 'Testing: the checks passed, but the shots found something broken',
-        note: ['The checks passed, but the shots agent tried this change and the app broke.'], actions, details: true,
+        name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.broken', { count: broken }), tone: 'bad', done: false,
+        segments: full('bad'), label: PlatformI18n.t('changes:page.testing.label.broken'),
+        note: [PlatformI18n.t('changes:page.testing.note.broken')], actions, details: true,
       };
     }
     if (cs === 'passing') {
       const superseded = AppView._freshnessOf(item).baseVerdict === 'superseded';
       return {
-        name: 'Tested', figure: 'All checks passed', tone: 'done', done: true, segments: full('done'),
-        label: 'Tested: all checks passed',
-        note: [cost(), superseded ? 'They passed on an older main.' : null].filter(Boolean), actions,
+        name: PlatformI18n.t('changes:page.testing.name.tested'), figure: PlatformI18n.t('changes:page.testing.figure.passed'), tone: 'done', done: true, segments: full('done'),
+        label: PlatformI18n.t('changes:page.testing.label.passed'),
+        note: [cost(), superseded ? PlatformI18n.t('changes:page.testing.note.olderMain') : null].filter(Boolean), actions,
       };
     }
     if (cs === 'skipped') {
-      return { name: 'Testing', figure: 'Not tested', tone: 'muted', done: false, segments: full('idle'), label: 'Testing: not tested', note: ['Its checks were skipped.'], actions };
+      return { name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.skipped'), tone: 'muted', done: false, segments: full('idle'), label: PlatformI18n.t('changes:page.testing.label.skipped'), note: [PlatformI18n.t('changes:page.testing.note.skipped')], actions };
     }
     if (cs === 'failing') {
       const v = AppView._checksVerdictView(item);
@@ -6637,35 +6814,35 @@ const AppView = {
       const rerun = recheck();
       if (rerun) actions.push(rerun);
       return {
-        name: 'Testing', figure: 'Found a problem', tone: 'bad', done: false, segments: full('bad'),
-        label: 'Testing: found a problem',
-        note: [failed ? `${failed} check${failed === 1 ? '' : 's'} failed.` : 'A check failed.'], actions, details: true,
+        name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.failing'), tone: 'bad', done: false, segments: full('bad'),
+        label: PlatformI18n.t('changes:page.testing.label.failing'),
+        note: [failed ? PlatformI18n.t('changes:page.testing.note.checksFailed', { count: failed }) : PlatformI18n.t('changes:page.testing.note.checkFailed')], actions, details: true,
       };
     }
     if (cs && cs !== 'pending') {
       // An error: the run itself broke, or will run again by itself.
       if (AppView._checksWillRetry(item)) {
-        return { name: 'Testing', figure: 'Running again soon', tone: 'muted', done: false, segments: [{ weight: 1, pct: 0, state: 'moving' }], label: 'Testing: will run again', note: ['Testing will run again by itself.'], actions };
+        return { name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.willRetry'), tone: 'muted', done: false, segments: [{ weight: 1, pct: 0, state: 'moving' }], label: PlatformI18n.t('changes:page.testing.label.willRetry'), note: [PlatformI18n.t('changes:page.testing.note.willRetry')], actions };
       }
       const rerun = recheck();
       if (rerun) actions.push(rerun);
       return {
-        name: 'Testing', figure: 'Couldn’t finish', tone: 'bad', done: false, segments: full('bad'),
-        label: 'Testing: could not finish',
-        note: [item.check_error_detail ? String(item.check_error_detail).slice(0, 280) : 'The staging build or the test run itself broke.'],
+        name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.broke'), tone: 'bad', done: false, segments: full('bad'),
+        label: PlatformI18n.t('changes:page.testing.label.broke'),
+        note: [item.check_error_detail ? String(item.check_error_detail).slice(0, 280) : PlatformI18n.t('changes:page.testing.note.broke')],
         actions, details: true,
       };
     }
     const building = !!item.staging_building || (!item.staging_url && !cs && !!p);
     if (!cs && !building && !p) {
-      return { name: 'Testing', figure: 'Not started', tone: 'muted', done: false, segments: [{ weight: 1, pct: 0, state: 'moving' }], label: 'Testing: not started', note: ['Testing starts once its preview is built.'], actions };
+      return { name: PlatformI18n.t('changes:page.testing.name.testing'), figure: PlatformI18n.t('changes:page.testing.figure.notStarted'), tone: 'muted', done: false, segments: [{ weight: 1, pct: 0, state: 'moving' }], label: PlatformI18n.t('changes:page.testing.label.notStarted'), note: [PlatformI18n.t('changes:page.testing.note.notStarted')], actions };
     }
     if (phase === 'queued' || phase === 'deferred') {
       const copy = AppView._checksPhaseCopy(phase, item);
       return {
-        name: 'Testing', figure: phase === 'queued' ? 'Waiting for a slot' : 'Waiting', tone: 'muted', done: false,
+        name: PlatformI18n.t('changes:page.testing.name.testing'), figure: phase === 'queued' ? PlatformI18n.t('changes:page.testing.figure.queued') : PlatformI18n.t('changes:page.testing.figure.deferred'), tone: 'muted', done: false,
         segments: [{ weight: est ? est.buildMs : 1, pct: 100, state: 'moving' }, { weight: est ? est.checksMs : 3, pct: 0, state: 'moving' }],
-        label: 'Testing: waiting', note: [copy.title], actions,
+        label: PlatformI18n.t('changes:page.testing.label.waiting'), note: [copy.title], actions,
         ...(phase === 'deferred' ? { noteDetail: copy.detail } : {}),
       };
     }
@@ -6686,30 +6863,30 @@ const AppView = {
     }
     const checksFrac = buildFrac < 1 ? 0 : (fracs.length ? fracs.reduce((t, f) => t + f, 0) / fracs.length : 0);
     const where = buildFrac < 1
-      ? `Building the preview, step ${Math.min(BUILD_KEYS.length, doneSteps + 1)} of ${BUILD_KEYS.length}.`
-      : `Preview built, checks ${AppView._fractionWords(checksFrac)}.`;
+      ? PlatformI18n.t('changes:page.testing.where.building', { step: Math.min(BUILD_KEYS.length, doneSteps + 1), steps: BUILD_KEYS.length })
+      : AppView._checksFractionLine(checksFrac);
     if (est) {
       const left = (1 - buildFrac) * est.buildMs + (1 - checksFrac) * est.checksMs;
       const usual = Math.max(1, Math.round((est.buildMs + est.checksMs) / 60000));
       return {
-        name: 'Testing',
-        figure: left < 60000 ? 'under a minute left' : `about ${Math.round(left / 60000)} min left`,
+        name: PlatformI18n.t('changes:page.testing.name.testing'),
+        figure: left < 60000 ? PlatformI18n.t('changes:page.testing.figure.underMinuteLeft') : PlatformI18n.t('changes:page.testing.figure.minutesLeft', { minutes: Math.round(left / 60000) }),
         tone: 'muted', done: false,
         segments: [
           { weight: est.buildMs, pct: Math.round(buildFrac * 100), state: buildFrac >= 1 ? 'done' : 'moving' },
           { weight: est.checksMs, pct: Math.round(checksFrac * 100), state: 'moving' },
         ],
-        label: `Testing: ${where} About ${Math.max(1, Math.round(left / 60000))} minutes left.`,
-        note: [`${where} Usually about ${usual} minute${usual === 1 ? '' : 's'} here.`], actions,
+        label: PlatformI18n.t('changes:page.testing.label.whereLeft', { where, count: Math.max(1, Math.round(left / 60000)) }),
+        note: [PlatformI18n.t('changes:page.testing.note.whereUsual', { where, count: usual })], actions,
       };
     }
     return {
-      name: 'Testing', figure: buildFrac < 1 ? 'Building the preview' : 'Checking it', tone: 'muted', done: false,
+      name: PlatformI18n.t('changes:page.testing.name.testing'), figure: buildFrac < 1 ? PlatformI18n.t('changes:page.testing.figure.building') : PlatformI18n.t('changes:page.testing.figure.checking'), tone: 'muted', done: false,
       segments: [
         { weight: 1, pct: Math.round(buildFrac * 100), state: buildFrac >= 1 ? 'done' : 'moving' },
         { weight: 3, pct: Math.round(checksFrac * 100), state: 'moving' },
       ],
-      label: `Testing: ${where}`, note: [where], actions,
+      label: PlatformI18n.t('changes:page.testing.label.where', { where }), note: [where], actions,
     };
   },
 
@@ -6730,7 +6907,7 @@ const AppView = {
       return html ? { state: 'verified', html, line: null } : null;
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
-    if (running) return { state: view.state, html: '', line: 'Taking the shots. They show up here when they are ready.', waiting: true };
+    if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
     return { state: view.state, html: '', line: view.sentence, waiting: false };
   },
 
@@ -6782,12 +6959,12 @@ const AppView = {
       // #2779: a change started from an agent session is built from that
       // conversation, so its owner's door leads back there.
       if (item.agent_session_id) {
-        return { kind: 'owner', label: 'Continue in agent session', agentSessionId: Number(item.agent_session_id) };
+        return { kind: 'owner', label: PlatformI18n.t('changes:page.build.continueInSession'), agentSessionId: Number(item.agent_session_id) };
       }
-      return { kind: 'owner', label: ['active', 'paused'].includes(item.status) ? 'Continue building' : 'Open build' };
+      return { kind: 'owner', label: ['active', 'paused'].includes(item.status) ? PlatformI18n.t('changes:page.build.continueBuilding') : PlatformI18n.t('changes:page.build.openBuild') };
     }
     return (item.transcript_shared || item.transcript_shared_at)
-      ? { kind: 'published', label: 'Read the build' }
+      ? { kind: 'published', label: PlatformI18n.t('changes:page.build.readBuild') }
       : null;
   },
 
@@ -6890,8 +7067,8 @@ const AppView = {
       const isMerged = item.status === 'merged';
       if (mine && item.source !== 'imported') {
         pills.push({
-          key: 'session', cls: 'gc-vote-btn', label: 'Continue building',
-          title: 'Open the agent session behind this change',
+          key: 'session', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:card.actions.continueBuilding'),
+          title: PlatformI18n.t('changes:card.actions.continueBuildingTitle'),
           act: { fn: 'openChangeWorkspace', args: [item.id] },
         });
       }
@@ -6899,19 +7076,19 @@ const AppView = {
       // no session behind the row above (#687), so Explore is its only AI
       // affordance (#1045). The shared predicate owns that rule.
       if (AppView._showExplorePill(item) && !AppView.readOnly) {
-        pills.push({ key: 'explore', label: 'Explore in a coding agent', title: AppView.EXPLORE_CHAT_TITLE, explore: item.id });
+        pills.push({ key: 'explore', label: PlatformI18n.t('changes:card.actions.explore'), title: AppView.EXPLORE_CHAT_TITLE, explore: item.id });
       }
       if (!AppView.readOnly && !isMerged && mine && item.status === 'promoted') {
         // #3114: the non-destructive counterpart to Withdraw. The PR stays
         // open; the proposal just leaves review until it is proposed again.
         pills.push({
-          key: 'unpromote', cls: 'gc-vote-btn', label: 'Move back to Underway',
-          title: 'Take this proposal out of review to keep working on it (clears its votes, keeps the PR open)',
+          key: 'unpromote', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:card.actions.moveBack'),
+          title: PlatformI18n.t('changes:card.actions.moveBackTitle'),
           act: { fn: 'unpromoteProposal', args: [item.id] },
         });
         pills.push({
-          key: 'withdraw', cls: 'gc-vote-btn', label: 'Withdraw',
-          title: 'Withdraw this proposal (closes the PR, removes it from the vote panel)',
+          key: 'withdraw', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:card.actions.withdraw'),
+          title: PlatformI18n.t('changes:card.actions.withdrawTitle'),
           act: { fn: 'withdrawProposal', args: [item.id] },
         });
       }
@@ -6920,8 +7097,8 @@ const AppView = {
       const mine = item.user_id == null || !!(App.user && item.user_id === App.user.id);
       if (!AppView.readOnly && mine && item.status === 'active') {
         pills.push({
-          key: 'promote', cls: 'gc-vote-btn', label: 'Ask for approval',
-          title: 'Ask the group to approve this imported change',
+          key: 'promote', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:card.actions.askForApproval'),
+          title: PlatformI18n.t('changes:card.actions.askForApprovalTitle'),
           act: { fn: 'promoteImportedSession', args: [item.id] }, passNode: true,
         });
       }
@@ -6936,22 +7113,22 @@ const AppView = {
       // this too": the bot keeps going (homeroom-bot.js issueHolders).
       if (myClaim) {
         pills.push({
-          key: 'claim', cls: 'gc-vote-btn', label: 'Stop working on this',
-          title: 'Stop working on this so somebody else can pick it up',
+          key: 'claim', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:request.actions.stopWorking'),
+          title: PlatformI18n.t('changes:request.actions.stopWorkingTitle'),
           act: { fn: 'clearIssueClaim', args: [item.number] },
         });
       } else {
         pills.push({
-          key: 'claim', cls: 'gc-vote-btn', label: 'Claim it',
-          title: "Let everyone know you'll work on this. It's not a promise of progress",
+          key: 'claim', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:request.actions.claim'),
+          title: PlatformI18n.t('changes:request.actions.claimTitle'),
           act: { fn: 'markIssueInProgress', args: [item.number] },
         });
       }
       const meta = AppView._ghIssuesMeta || {};
       pills.push({
         key: 'bounty', cls: 'gc-vote-btn',
-        label: item.my_bounty ? '★ Bountied' : 'Pledge kudos',
-        title: "Pledge kudos to whoever's change makes this happen",
+        label: item.my_bounty ? PlatformI18n.t('changes:request.actions.bountied') : PlatformI18n.t('changes:request.actions.pledgeKudos'),
+        title: PlatformI18n.t('changes:request.actions.pledgeKudosTitle'),
         disabled: !!(item.my_bounty || meta.myRemaining === 0),
         act: { fn: 'giveIssueBounty', args: [item.number] },
       });
@@ -6960,12 +7137,12 @@ const AppView = {
         && Number(g.payload && g.payload.issueNumber) === item.number);
       pills.push(hasCloseProposal
         ? {
-          key: 'close', cls: 'gc-vote-btn', label: 'Close proposed', disabled: true,
-          title: 'Closing this request is waiting for approval',
+          key: 'close', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:request.actions.closeProposed'), disabled: true,
+          title: PlatformI18n.t('changes:request.actions.closeProposedTitle'),
         }
         : {
-          key: 'close', cls: 'gc-vote-btn', label: 'Propose to close',
-          title: 'Ask the group to close this request. If they approve, it\'s closed',
+          key: 'close', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:request.actions.proposeClose'),
+          title: PlatformI18n.t('changes:request.actions.proposeCloseTitle'),
           act: { fn: 'promptCloseIssue', args: [item.number] },
         });
     }
@@ -6987,8 +7164,8 @@ const AppView = {
         const underwayImported = kind === 'session' && item.source === 'imported';
         reasons = {
           heading: underwayImported
-            ? 'What needs attention before voting'
-            : (list.some((r) => !r.soft) ? 'Why this can’t merge yet' : 'Worth knowing before you vote'),
+            ? PlatformI18n.t('changes:card.reasons.attention')
+            : (list.some((r) => !r.soft) ? PlatformI18n.t('changes:card.reasons.cantMerge') : PlatformI18n.t('changes:card.reasons.worthKnowing')),
           items: list.map((r) => ({ key: r.key, label: r.label, detail: r.detail, soft: !!r.soft })),
         };
       }
@@ -7038,7 +7215,7 @@ const AppView = {
     // collab-gated — nothing to offer read-only viewers.
     if (AppView.readOnly) return '';
     return `<button type="button" class="gc-vote-btn gc-explore-chat-btn" data-proposal-id="${pr.id}"
-      title="${escapeAttr(AppView.EXPLORE_CHAT_TITLE)}"><span aria-hidden="true">✨</span> Explore in a coding agent</button>`;
+      title="${escapeAttr(AppView.EXPLORE_CHAT_TITLE)}"><span aria-hidden="true">✨</span> ${PlatformI18n.htmlText('changes:card.actions.exploreButton')}</button>`;
   },
 
 
@@ -7128,7 +7305,7 @@ const AppView = {
     const entry = window.Kudos && typeof Kudos._ensureCache === 'function' ? Kudos._ensureCache(id) : null;
     const retract = !!(entry && entry.my_kudos && entry.my_kudos_direct);
     return {
-      label: label ? label.textContent.trim() : (retract ? 'Retract kudos' : 'Give kudos'),
+      label: label ? label.textContent.trim() : (retract ? PlatformI18n.t('changes:card.menu.retractKudos') : PlatformI18n.t('changes:card.menu.giveKudos')),
       icon: 'kudos',
       title: (btn && btn.getAttribute('title')) || null,
       disabled: !!(btn && btn.disabled),
@@ -7177,9 +7354,9 @@ const AppView = {
     const rows = folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list;
     if (!own) return rows;
     return [{
-      label: 'Open card',
+      label: PlatformI18n.t('changes:card.menu.openCard'),
       icon: 'open',
-      title: 'The card on its own page',
+      title: PlatformI18n.t('changes:card.menu.openCardTitle'),
       act: () => { window.location.hash = own; },
     }].concat(rows);
   },
@@ -7597,16 +7774,13 @@ const AppView = {
   // groups — the long copy became the label's tooltip, and the row
   // builders in _mySessionsRows / _inProgressRows supply both.
 
-  EXPLORE_CHAT_TITLE: 'Open an agent session with a message about this change ready to edit and send',
+  get EXPLORE_CHAT_TITLE() { return PlatformI18n.t('changes:explore.title'); },
 
   // #827: the closing paragraph of every exploration seed. Load-bearing —
   // it is what keeps an UNEDITED send from making the Mayor dispatch the
   // coding agent: the turn stays a chat-only explanation. Pinned
   // byte-for-byte by tests/explore-pr-in-dev-chat.test.js.
-  EXPLORE_SEED_TAIL:
-    'Please read it and explain in plain terms what it changes, how it works, '
-    + "and anything risky or worth checking. Just explain it for now, don't "
-    + 'change any code or open a PR.',
+  get EXPLORE_SEED_TAIL() { return PlatformI18n.t('changes:explore.seed.tail'); },
 
   // #827: the editable kickoff message for "Explore in dev chat", built
   // purely from the cached proposal row (no extra fetch). Optional lines are
@@ -7616,18 +7790,21 @@ const AppView = {
     const row = pr || {};
     const title = (row.pr_title || '').trim();
     const author = (row.username || '').trim();
-    const by = author ? ` by ${author}` : '';
     const lines = [];
-    lines.push(row.pr_number
-      ? `Let's explore PR #${row.pr_number} in this app: "${title || `PR #${row.pr_number}`}"${by}.`
-      : `Let's explore the proposal "${title || 'this proposal'}" in this app${by}.`);
-    if (row.pr_url) lines.push(`PR link: ${row.pr_url}`);
+    if (row.pr_number) {
+      const values = { number: row.pr_number, title: title || PlatformI18n.t('changes:explore.seed.prUntitled', { number: row.pr_number }), author };
+      lines.push(author ? PlatformI18n.t('changes:explore.seed.prBy', values) : PlatformI18n.t('changes:explore.seed.pr', values));
+    } else {
+      const values = { title: title || PlatformI18n.t('changes:explore.seed.proposalUntitled'), author };
+      lines.push(author ? PlatformI18n.t('changes:explore.seed.proposalBy', values) : PlatformI18n.t('changes:explore.seed.proposal', values));
+    }
+    if (row.pr_url) lines.push(PlatformI18n.t('changes:explore.seed.prLink', { url: row.pr_url }));
     const issues = Array.isArray(row.linked_issues)
       ? row.linked_issues.filter((n) => Number.isInteger(n))
       : [];
-    if (issues.length) lines.push(`Linked issues: ${issues.map((n) => `#${n}`).join(', ')}.`);
-    if (row.status === 'merged') lines.push('This proposal is already merged.');
-    else if (row.status === 'merging') lines.push('This proposal is currently being merged.');
+    if (issues.length) lines.push(PlatformI18n.t('changes:explore.seed.linkedIssues', { issues: PlatformI18n.listText(issues.map((n) => `#${n}`)) }));
+    if (row.status === 'merged') lines.push(PlatformI18n.t('changes:explore.seed.merged'));
+    else if (row.status === 'merging') lines.push(PlatformI18n.t('changes:explore.seed.merging'));
     return `${lines.join('\n')}\n\n${AppView.EXPLORE_SEED_TAIL}`;
   },
 
@@ -7760,7 +7937,7 @@ const AppView = {
     if (t.kind === 'session' || t.kind === 'proposal') {
       const item = AppView._findTopicItem();
       const closed = item && ['active', 'paused'].includes(item.status) && !item.shared_at
-        ? 'Only you can see this change. Share it with the group to start a discussion.' : null;
+        ? PlatformI18n.t('changes:page.thread.onlyYou') : null;
       GroupChat.mountThread({
         type: 'session',
         ref: t.id,
@@ -7768,11 +7945,11 @@ const AppView = {
         fullHeight: true,
         withHeader: true,
         language: 'change',
-        placeholder: 'Reply…',
+        placeholder: PlatformI18n.t('changes:page.thread.replyPlaceholder'),
         readOnly: AppView.readOnly || !!closed,
-        ...(closed ? { closed, notice: 'Share this change to start a discussion.' } : {}),
+        ...(closed ? { closed, notice: PlatformI18n.t('changes:page.thread.shareToDiscuss') } : {}),
         ...(AppView.readOnly && !closed
-          ? { notice: "You're viewing this app's dev space read-only. Only collaborators can post." }
+          ? { notice: PlatformI18n.t('changes:discussion.readOnlyNotice') }
           : {}),
       });
       return;
@@ -7794,14 +7971,14 @@ const AppView = {
       fullHeight: true,
       // #4453: a request's page is a Messages reply thread, the request its
       // root post, with its GitHub comments in the same stream.
-      ...(t.kind === 'issue' ? { language: 'request', placeholder: 'Reply…' } : {}),
+      ...(t.kind === 'issue' ? { language: 'request', placeholder: PlatformI18n.t('changes:page.thread.replyPlaceholder') } : {}),
       // #363: request the in-scroll header slot so _renderTopicHead can paint
       // the topic card/body above the messages in the same scroll region.
       withHeader: true,
       // #621: non-collaborators read the thread but can't post to it.
       readOnly: AppView.readOnly,
       ...(AppView.readOnly
-        ? { notice: "You're viewing this app's dev space read-only. Only collaborators can post." }
+        ? { notice: PlatformI18n.t('changes:discussion.readOnlyNotice') }
         : {}),
     });
   },
@@ -8177,7 +8354,7 @@ const AppView = {
         const rows = settingsPanel
           ? Array.from(settingsPanel.querySelectorAll('button[data-plus]')) : [];
         Promise.resolve(PlatformUI.actionSheet({
-          title: 'Settings & rules', cancelLabel: 'Back', actions: sheetActions(rows),
+          title: PlatformI18n.t('changes:board.plusMenu.settingsTitle'), cancelLabel: PlatformI18n.t('core:common.back'), actions: sheetActions(rows),
         })).then((picked) => { if (!picked && btn.isConnected) btn.click(); });
         return;
       }
@@ -8685,7 +8862,7 @@ const AppView = {
     AppView._reactGroupChat()?.mountGeneralChat(content, {
       readOnly: !!(app && app.readOnly),
       notice: archived
-        ? 'This was Homeroom\u2019s project discussion. It is read-only now: Homeroom\u2019s channel is #general.'
+        ? PlatformI18n.t('changes:discussion.archivedNotice')
         : ((ctx && ctx.notice) || null),
       maxLength: typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000,
       ...(ctx && ctx.placeholder ? { placeholder: ctx.placeholder } : {}),
@@ -9395,7 +9572,7 @@ const AppView = {
     if (ok === null) return;
     if (!ok) {
       if (AppView._devDataReady) return;
-      body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
+      body.innerHTML = `<div class="text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:feed.loadFailed')}</div>`;
       return;
     }
     AppView._renderMainPauseNotice();
@@ -9654,8 +9831,8 @@ const AppView = {
     return {
       href: slug ? App._appUrl(slug, 'dev', null, 'chat') : null,
       preview: (fresh && s.content)
-        ? `${s.username || 'System'}: ${s.content.slice(0, 140)}`
-        : 'Talk with everyone building this app',
+        ? PlatformI18n.t('changes:discussion.door.said', { author: s.username || PlatformI18n.t('changes:discussion.door.system'), message: s.content.slice(0, 140) })
+        : PlatformI18n.t('changes:discussion.door.empty'),
     };
   },
 
@@ -9674,8 +9851,8 @@ const AppView = {
     // Workshop's row.
     const said = (fresh && s.content) ? s.content.slice(0, 200) : null;
     const preview = said
-      ? (s.username ? `${s.username}: ${said}` : said)
-      : 'Talk with everyone building this app';
+      ? (s.username ? PlatformI18n.t('changes:discussion.card.said', { author: s.username, message: said }) : said)
+      : PlatformI18n.t('changes:discussion.card.empty');
     const meta = [{ t: 'text', s: preview }];
     // #1808: a `span` rather than a `text` part purely so the age can carry
     // the exact instant in `title`. Same everywhere a card's meta line ends
@@ -9687,7 +9864,7 @@ const AppView = {
       cls: `${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}`,
       // The delegated #dev-body handler opens it; see the branch beside
       // data-issue-row. A `1` rather than an id because there is exactly one.
-      attrs: { 'data-discussion-row': '1', title: "Open the app's general chat" },
+      attrs: { 'data-discussion-row': '1', title: PlatformI18n.t('changes:discussion.card.tooltip') },
       icon: AppView._devCardIcon('chat'),
       // NAMED FOR ITS APP. The Workshop draws this as one row at the foot
       // of the dashboard pane, where "General discussion" alone does not
@@ -9698,9 +9875,9 @@ const AppView = {
       // "for undefined".
       title: {
         text: (AppView.appData && AppView.appData.name)
-          ? `General discussion for ${AppView.appData.name}`
-          : 'General discussion',
-        title: "Open the app's general chat",
+          ? PlatformI18n.t('changes:discussion.card.titleFor', { app: AppView.appData.name })
+          : PlatformI18n.t('changes:discussion.card.title'),
+        title: PlatformI18n.t('changes:discussion.card.tooltip'),
       },
       meta,
       pill: null,
@@ -9883,7 +10060,8 @@ const AppView = {
   // is the title, one line in the board's words ("PR #4456 · evan · for
   // #4455 · 4m ago", #4486), then small tags for what is happening on it
   // and, on a change up for a vote, the vote. Resolved here, like every
-  // other card fact, so the component re-derives nothing: `noun`/`n`/`by`
+  // other card fact, so the component re-derives nothing: `noun` (which
+  // word names it: a key, the word itself is the row's message), `n`, `by`
   // and the rest are joined into the line by workshop/work-row.tsx. Tag
   // tones: `run` (in flight), `ok` (live, passed), `warn` (worth knowing),
   // `bad` (stops it), `plain`.
@@ -9898,44 +10076,53 @@ const AppView = {
     // rule, _botBuilt), and a row Your work now draws is one more place a
     // reader meets it: the raw account name read like a person's handle.
     const rawWho = AppView._devCardAuthor(kind === 'my-session' || kind === 'shared-session' ? 'session' : kind, it);
-    const who = String(rawWho).toLowerCase() === 'homeroom_bot' ? 'Homeroom bot' : rawWho;
+    const isBot = String(rawWho).toLowerCase() === 'homeroom_bot';
+    const who = isBot ? PlatformI18n.t('changes:workshop.row.byBot') : rawWho;
     const mineBy = kind === 'my-session'
       || (meId != null && (String(it.user_id) === String(meId) || String(it.created_by) === String(meId)))
-      || (!!who && !!App.user && who === App.user.username);
+      || (!isBot && !!who && !!App.user && who === App.user.username);
     const nums = (arr) => AppView._sanitizeIssueNumbers(Array.isArray(arr) ? arr : []);
     const tags = [];
     const tagTone = (cls) => (cls === AppView.STATUS_TAG_CLS.running ? 'run'
       : cls === AppView.STATUS_TAG_CLS.soft ? 'warn' : 'bad');
     // #4485: a row's chips share one line with its vote, so the longest
     // say less there: the full sentence stays the chip's tooltip and its
-    // screen-reader words, and the change's page says it in full.
-    const ROW_SHORT = { 'Taking before & after shots': 'Taking shots', 'Preview ready': 'Preview' };
-    // "Checks running… 459" (a run that does not know its total yet) carries
-    // a count, so it is matched on its words' start rather than by name.
-    const shortOf = (label) => ROW_SHORT[label] || (/^Checks running…/.test(label) ? 'Checks…' : '');
-    const shortly = (tag) => (shortOf(tag.label) ? { ...tag, short: shortOf(tag.label) } : tag);
+    // screen-reader words, and the change's page says it in full. Which tag
+    // gets fewer words is read off what the tag IS, never off its words,
+    // which are in the language on screen: the shots tag while the shots
+    // are being taken ("Taking shots"; not "Trying the shots again", a
+    // failed run started over), and the preview tags below ("Preview").
+    const shortOf = (s, p) => {
+      const key = s.data && s.data['data-status-tag'];
+      if (key === 'shots' && s.spinner && !(p.shots && p.shots.state === 'failed')) {
+        return PlatformI18n.t('changes:workshop.row.tag.takingShotsShort');
+      }
+      return '';
+    };
     const checkTags = (p) => {
       for (const s of AppView.statusTagSpecs(p)) {
         // #4486: "Behind main" does not stop a change landing, so it stays
         // on the change's page, off the row. A change that cannot land
         // says so in its bar.
         if (s.data && s.data['data-status-tag'] === 'behind') continue;
-        tags.push(shortly(s.progress
+        const tag = s.progress
           ? { label: s.label, tone: tagTone(s.cls), title: s.title, progress: s.progress }
-          : { label: s.label, tone: tagTone(s.cls) }));
+          : { label: s.label, tone: tagTone(s.cls) };
+        const short = shortOf(s, p);
+        tags.push(short ? { ...tag, short } : tag);
       }
-      if (p.check_state === 'passing') tags.push({ label: 'Checks passed', tone: 'ok' });
+      if (p.check_state === 'passing') tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.checksPassed'), tone: 'ok' });
     };
     const preview = !!(card && ((card.rail && card.rail.preview && card.rail.preview.state === 'live')
       || (card.actionPreview && card.actionPreview.state === 'live')));
     const settled = (pill) => {
       if (!pill) return;
-      if (pill.key === 'deployed' || pill.key === 'merged') { tags.push({ label: 'Live', tone: 'ok' }); return; }
+      if (pill.key === 'deployed' || pill.key === 'merged') { tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.live'), tone: 'ok' }); return; }
       // A merge of Homeroom itself says when its release comes, on hover.
       const release = pill.key === 'deploying' ? AppView._releaseSentence(it) : null;
       tags.push({
         label: pill.label, tone: pill.tone === 'blocked' ? 'bad' : pill.spinner ? 'run' : 'plain',
-        ...(release ? { title: `${release}.` } : {}),
+        ...(release ? { title: PlatformI18n.t('changes:workshop.row.tag.releaseTitle', { release }) } : {}),
       });
     };
     // #4486: the card's own age, as its meta line says it, for the row's
@@ -9946,7 +10133,7 @@ const AppView = {
     // words names its maker as every other row does (#4486).
     const by = who || (kind === 'my-session' && App.user && App.user.username ? App.user.username : '');
     const base = {
-      kind: 'change', noun: 'Change', n: null, by, mine: !!mineBy,
+      kind: 'change', noun: 'change', n: null, by, mine: !!mineBy,
       // #4538: Homeroom bot built this change from a request made for the
       // viewer, so Your work lists it — while `mine` stays "the viewer made
       // it", so the line keeps naming Homeroom bot as its maker.
@@ -9957,22 +10144,41 @@ const AppView = {
     if (kind === 'issue') {
       const ws = AppView._issueWorkState(it);
       const WORDS = {
-        in_review: 'Waiting for votes', working: 'Being worked on', paused: 'Started', claimed: 'Picked up',
-        auto_solving: 'Auto-solving', answer_needed: 'Needs an answer', draft_ready: 'Draft ready',
+        in_review: 'changes:workshop.row.tag.waitingForVotes',
+        working: 'changes:workshop.row.tag.beingWorkedOn',
+        paused: 'changes:workshop.row.tag.started',
+        claimed: 'changes:workshop.row.tag.pickedUp',
+        auto_solving: 'changes:workshop.row.tag.autoSolving',
+        answer_needed: 'changes:workshop.row.tag.needsAnswer',
+        draft_ready: 'changes:workshop.row.tag.draftReady',
       };
       if (ws) {
         // #4486: and who is on it ("Picked up · zura", "Started · you"), in
-        // place of the card's @ chip: the work-state chip's own name.
+        // place of the card's @ chip: the work-state chip's own name. The
+        // state, the person and how many more are one message; the viewer
+        // (`ws.who` is 'you') is a message of its own, not a name.
+        const state = WORDS[ws.key] ? PlatformI18n.t(WORDS[ws.key]) : ws.label;
         const person = ws.who && (ws.key === 'in_review' || ws.key === 'working' || ws.key === 'paused' || ws.key === 'claimed')
-          ? ` · ${ws.who}${ws.people > 1 ? ` +${ws.people - 1}` : ''}` : '';
+          ? ws.who : null;
+        const more = ws.people > 1 ? ws.people - 1 : 0;
+        let label = state;
+        if (person === 'you') {
+          label = more
+            ? PlatformI18n.t('changes:workshop.row.tag.stateYouMore', { state, count: more })
+            : PlatformI18n.t('changes:workshop.row.tag.stateYou', { state });
+        } else if (person) {
+          label = more
+            ? PlatformI18n.t('changes:workshop.row.tag.stateWhoMore', { state, who: person, count: more })
+            : PlatformI18n.t('changes:workshop.row.tag.stateWho', { state, who: person });
+        }
         tags.push({
-          label: (WORDS[ws.key] || ws.label) + person,
+          label,
           tone: ws.spinner ? 'run' : ws.key === 'answer_needed' ? 'warn' : 'plain',
         });
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
       return {
-        ...base, kind: 'request', noun: 'Request', n: Number(it.number) || null,
+        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null,
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
         at: ts(it.createdAt || it.created_at), ago: agoOf(it.createdAt || it.created_at),
@@ -9982,7 +10188,7 @@ const AppView = {
       const closeRow = it.row_type === 'close_issue';
       settled(AppView.statusPillState(it));
       return {
-        ...base, kind: 'live', noun: closeRow ? 'Vote' : 'Change', n: Number(it.pr_number || it.id) || null,
+        ...base, kind: 'live', noun: closeRow ? 'vote' : 'change', n: Number(it.pr_number || it.id) || null,
         closed: nums(it.linked_issues), replies: Number(it.chat_count) || 0, stage: 'live',
         at: ts(it.merged_at || it.closed_at || it.created_at),
         ago: agoOf(closeRow ? ((it.payload && it.payload.appliedAt) || it.created_at) : it.created_at),
@@ -9991,7 +10197,7 @@ const AppView = {
     if (kind === 'gov') {
       const pill = AppView.statusPillState(it, { kind: 'gov' });
       return {
-        ...base, kind: 'vote', noun: 'Vote', n: Number(it.id) || null, replies: Number(it.chat_count) || 0,
+        ...base, kind: 'vote', noun: 'vote', n: Number(it.id) || null, replies: Number(it.chat_count) || 0,
         stage: 'vote', at: ts(it.created_at),
         vote: pill ? { yes: pill.yes, need: pill.majority, ask: it.status === 'open' && !it.my_vote && !AppView.readOnly } : null,
       };
@@ -10007,7 +10213,7 @@ const AppView = {
     }
     if (it.status === 'promoted') {
       checkTags(it);
-      if (preview) tags.push(shortly({ label: 'Preview ready', tone: 'plain', glyph: 'eye' }));
+      if (preview) tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.previewReadyVote'), short: PlatformI18n.t('changes:workshop.row.tag.previewReadyVoteShort'), tone: 'plain', glyph: 'eye' });
       const pill = AppView.statusPillState(it);
       return {
         ...out, stage: 'vote',
@@ -10018,9 +10224,12 @@ const AppView = {
     // #4486: your session nobody else can see says so, with a lock, where
     // the board's "Yours · not shared" divider said it for the whole group.
     if (kind === 'my-session' && !it.shared_at) tags.push(AppView._onlyYouTag());
-    tags.push({ label: busy ? 'Being worked on' : 'Started', tone: busy ? 'run' : 'plain' });
+    tags.push({
+      label: busy ? PlatformI18n.t('changes:workshop.row.tag.changeBeingWorkedOn') : PlatformI18n.t('changes:workshop.row.tag.changeStarted'),
+      tone: busy ? 'run' : 'plain',
+    });
     if (it.pr_number) checkTags(it);
-    if (preview) tags.push(shortly({ label: 'Preview ready', tone: 'plain', glyph: 'eye' }));
+    if (preview) tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.previewReady'), short: PlatformI18n.t('changes:workshop.row.tag.previewReadyShort'), tone: 'plain', glyph: 'eye' });
     return { ...out, stage: 'worked' };
   },
 
@@ -10029,10 +10238,10 @@ const AppView = {
   // session of theirs is for, where that session folds in rather than being
   // a second row ("Spec draft · only you", `_foldPrivateDrafts`).
   _onlyYouTag() {
-    return { label: 'Only you', tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
+    return { label: PlatformI18n.t('changes:workshop.row.tag.onlyYou'), tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
   },
   _specDraftTag() {
-    return { label: 'Spec draft · only you', tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
+    return { label: PlatformI18n.t('changes:workshop.row.tag.specDraft'), tone: 'plain', glyph: 'lock', title: AppView.PRIVATE_DIVIDER_TITLE };
   },
   // The request a private session of the viewer's is for, when that request
   // is one of `numbers` (the requests drawn beside it), else null.
@@ -10300,8 +10509,8 @@ const AppView = {
         };
       }).filter(Boolean);
       return {
-        path: claim?.claim || 'Before & after',
-        claim: claim?.claim || 'Before & after',
+        path: claim?.claim || PlatformI18n.t('changes:visuals.fallbackClaim'),
+        claim: claim?.claim || PlatformI18n.t('changes:visuals.fallbackClaim'),
         mobile: viewport === 'mobile',
         before: before?.url || null,
         after: after?.url || null,
@@ -10711,7 +10920,7 @@ const AppView = {
   _workshopThemeName(themeId) {
     const t = AppView._workshopThemeData();
     const theme = t && (t.themes || []).find((x) => x.id === themeId);
-    return theme ? theme.name : 'Category';
+    return theme ? theme.name : PlatformI18n.t('changes:workshop.category.fallbackName');
   },
 
   // #1933: the auto-drafted category a card is in, as a chip for its meta
@@ -10895,7 +11104,7 @@ const AppView = {
     // the button's label is true on every press including the first.
     if (cards.thisWeek) {
       out.push({
-        key: 'thisWeek', title: 'This week', line: cards.thisWeek,
+        key: 'thisWeek', title: PlatformI18n.t('changes:workshop.weeks.thisWeek'), line: cards.thisWeek,
         startMs: thisStart, endMs: nowMs,
         counts: (counts && counts.thisWeek) || null,
       });
@@ -11435,10 +11644,10 @@ const AppView = {
 
     // ── Themes ──
     const laneOrder = [
-      { key: 'review', title: 'Waiting for approval' },
-      { key: 'underway', title: 'Underway' },
-      { key: 'open', title: 'Open' },
-      { key: 'shipped', title: 'Shipped this week' },
+      { key: 'review', title: PlatformI18n.t('changes:workshop.lane.review') },
+      { key: 'underway', title: PlatformI18n.t('changes:workshop.lane.underway') },
+      { key: 'open', title: PlatformI18n.t('changes:workshop.lane.open') },
+      { key: 'shipped', title: PlatformI18n.t('changes:workshop.lane.shipped') },
     ];
     const mkTheme = (def, ungrouped) => ({
       id: def.id, name: def.name, description: def.description || '',
@@ -11469,8 +11678,8 @@ const AppView = {
       // have, the remainder is what they did not name — titled below, once
       // it is known whether those cards are on their way or were declined.
       const rest = mkTheme(tData
-        ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the categories do not name yet.' }
-        : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
+        ? { id: 'ungrouped', name: PlatformI18n.t('changes:workshop.ungrouped.name'), description: PlatformI18n.t('changes:workshop.ungrouped.description') }
+        : { id: 'ungrouped', name: PlatformI18n.t('changes:workshop.ungrouped.everything'), description: '' }, true);
       let placingCount = 0;
       for (const e of list) {
         if (e.lane === 'done') continue;
@@ -11499,12 +11708,12 @@ const AppView = {
           const restCount = rest.lanes.reduce((n, l) => n + l.rows.length + l.more, 0);
           rest.placing = placingCount;
           if (placingCount && placingCount === restCount) {
-            rest.name = 'Being placed';
-            rest.description = 'New cards are placed into a category within a minute or two of arriving.';
+            rest.name = PlatformI18n.t('changes:workshop.ungrouped.placingName');
+            rest.description = PlatformI18n.t('changes:workshop.ungrouped.placingDescription');
           } else if (placingCount) {
-            rest.description = `Cards the categories do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
+            rest.description = PlatformI18n.t('changes:workshop.ungrouped.somePlacing', { count: placingCount });
           } else {
-            rest.description = 'Cards the categories do not cover yet. They count towards the next re-draft of the categories.';
+            rest.description = PlatformI18n.t('changes:workshop.ungrouped.notCovered');
           }
         }
         drawnOf.push(finish(rest));
@@ -11708,11 +11917,11 @@ const AppView = {
         // The Description sheet's body: the summary as its own page renders
         // it (sanitised where it is built), for a proposal that has one.
         descriptionHtml: x.kind === 'proposal' ? AppView._proposalSummaryHtml(x.item) : '',
-        ask: 'Should this change go in?',
+        ask: PlatformI18n.t('changes:workshop.queue.voteAsk'),
         // #3977: a Just-you change's Yes is its approval (B7), and the
         // item says Approve / Don't approve, as its card does.
-        yes: yes ? { label: yes.label, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
-        no: no ? { label: no.label, act: no.act } : null,
+        yes: yes ? { label: yes.label, tally: yes.tally, act: yes.act, ...(yes.approve ? { approve: true } : {}) } : null,
+        no: no ? { label: no.label, tally: no.tally, act: no.act } : null,
       });
     }
     for (const e of idle.slice(0, AppView.WORKSHOP_LANE_MAX)) {
@@ -11737,8 +11946,8 @@ const AppView = {
         // offering them side by side asked the reader to tell apart a
         // distinction the app does not make. Skip is the honest one — it says
         // "not now" without implying the app filed a preference.
-        ask: 'Want to give this one a try?',
-        yes: n ? { label: "Let's take it", act: { fn: 'openTopic', args: ['issue', n] } } : null,
+        ask: PlatformI18n.t('changes:workshop.queue.claimAsk'),
+        yes: n ? { label: PlatformI18n.t('changes:workshop.queue.claimYes'), act: { fn: 'openTopic', args: ['issue', n] } } : null,
         no: null,
       });
     }
@@ -11919,13 +12128,13 @@ const AppView = {
     const tail = list.slice(-AppView.FEED_COMMENT_PREVIEW);
     const hidden = list.length - tail.length;
     const more = hidden > 0
-      ? `<div class="dev-feed-comment-more">${hidden} earlier ${hidden === 1 ? 'reply' : 'replies'}</div>`
+      ? `<div class="dev-feed-comment-more">${PlatformI18n.htmlText('changes:feed.comment.earlier', { count: hidden })}</div>`
       : '';
     const rows = tail.map((c) => {
       const isBot = AppView._isBotCommentAuthor(c.author);
-      const author = c.author ? escapeHtml(c.author) : 'unknown';
+      const author = c.author ? escapeHtml(c.author) : PlatformI18n.htmlText('changes:feed.comment.unknownAuthor');
       const botTag = isBot
-        ? ' <span class="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>'
+        ? ` <span class="text-[0.9375rem] text-sky-700 dark:text-sky-400">${PlatformI18n.htmlText('changes:feed.comment.botTag')}</span>`
         : '';
       // #1808: the age, with the unelided instant one hover away.
       const age = relStamp(c.createdAt);
@@ -11942,7 +12151,7 @@ const AppView = {
       // here; the request's own page draws the spec itself.
       const spec = AppView._botSpecOf(c);
       const specLine = spec
-        ? `<span class="dev-feed-comment-spec">${escapeHtml(spec.title ? `The plan: ${spec.title}` : 'The plan')}</span>`
+        ? `<span class="dev-feed-comment-spec">${spec.title ? PlatformI18n.htmlText('changes:feed.comment.specTitled', { title: spec.title }) : PlatformI18n.htmlText('changes:feed.comment.spec')}</span>`
         : '';
       return `<div class="dev-feed-comment">
           <span class="dev-feed-comment-main">
@@ -11950,7 +12159,7 @@ const AppView = {
               <span class="dev-feed-comment-author">${author}</span>${botTag}
               <span class="dev-feed-comment-body">${renderMd(spec ? spec.lead : (c.body || ''))}${specLine}</span>
             </span>
-            <button type="button" class="dev-feed-comment-toggle ${AppView.FEED_COMMENT_TOGGLE_CLASS}" aria-expanded="false" hidden>Show more</button>
+            <button type="button" class="dev-feed-comment-toggle ${AppView.FEED_COMMENT_TOGGLE_CLASS}" aria-expanded="false" hidden>${PlatformI18n.htmlText('changes:feed.comment.showMore')}</button>
           </span>
           ${ageHtml}
         </div>`;
@@ -12159,7 +12368,7 @@ const AppView = {
         e.stopPropagation();
         const expanded = clamp.classList.toggle('is-expanded');
         btn.setAttribute('aria-expanded', String(expanded));
-        btn.textContent = expanded ? 'Show less' : 'Show more';
+        btn.textContent = expanded ? PlatformI18n.t('changes:feed.comment.showLess') : PlatformI18n.t('changes:feed.comment.showMore');
       });
       // NOT MEASURED HERE when there is an observer to do it. This runs on
       // the line after `innerHTML` was written, and a measurement there made
@@ -12299,15 +12508,15 @@ const AppView = {
     const d = Math.floor(s / 86400);
     if (d >= 1) {
       const h = Math.floor((s % 86400) / 3600);
-      return h >= 1 ? `~${d}d ${h}h` : `~${d}d`;
+      return h >= 1 ? PlatformI18n.t('changes:countdown.daysHours', { days: d, hours: h }) : PlatformI18n.t('changes:countdown.days', { days: d });
     }
     const h = Math.floor(s / 3600);
     if (h >= 1) {
       const m = Math.floor((s % 3600) / 60);
-      return m >= 1 ? `~${h}h ${m}m` : `~${h}h`;
+      return m >= 1 ? PlatformI18n.t('changes:countdown.hoursMinutes', { hours: h, minutes: m }) : PlatformI18n.t('changes:countdown.hours', { hours: h });
     }
     const m = Math.max(1, Math.floor(s / 60));
-    return `~${m}m`;
+    return PlatformI18n.t('changes:countdown.minutes', { minutes: m });
   },
 
   // Ticks the "Goes live in ~X" / "Set aside in ~X" countdown pills purely from
@@ -12650,7 +12859,7 @@ const AppView = {
         num = it.pr_number != null ? it.pr_number : null;
       } else {
         // proposal | merged — mirror the card renderers' title fallback.
-        title = it.pr_title || `Change by ${it.username || ''}`;
+        title = it.pr_title || PlatformI18n.t('changes:card.proposal.fallbackTitle', { username: it.username || '' });
         num = it.pr_number != null ? it.pr_number : it.id;
       }
       const author = AppView._devCardAuthor(kind, it);
@@ -13181,10 +13390,10 @@ const AppView = {
   _kanbanActiveChips() {
     const f = AppView._kanbanFilters || {};
     const chips = [];
-    if (f.q && f.q.trim()) chips.push({ key: 'q', label: `Search: ${f.q.trim()}` });
+    if (f.q && f.q.trim()) chips.push({ key: 'q', label: PlatformI18n.t('changes:board.filterChip.search', { query: f.q.trim() }) });
     if (f.priority) {
-      const label = f.priority.charAt(0).toUpperCase() + f.priority.slice(1);
-      chips.push({ key: 'priority', label: `${label} priority` });
+      const id = AppView.KANBAN_PRIORITY_CHIP_IDS[f.priority];
+      chips.push({ key: 'priority', label: id ? PlatformI18n.t(id) : String(f.priority) });
     }
     if (f.category) {
       chips.push({ key: 'category', label: AppView._categoryMeta(f.category).label });
@@ -13192,23 +13401,29 @@ const AppView = {
     if (f.assignee) {
       chips.push({
         key: 'assignee',
-        label: f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED ? 'Nobody yet' : f.assignee,
+        label: f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED ? PlatformI18n.t('changes:board.filterChip.nobodyYet') : f.assignee,
       });
     }
-    if (f.needsVote) chips.push({ key: 'needsVote', label: 'Waiting on you' });
+    if (f.needsVote) chips.push({ key: 'needsVote', label: PlatformI18n.t('changes:board.filterChip.needsVote') });
     // Same rule as the count: a dismissable chip for a filter whose own
     // toggle is two controls away would be the same state said twice.
     if (AppView._quickFiltersInDialog) {
-      if (f.assignedToMe) chips.push({ key: 'assignedToMe', label: 'Assigned to you' });
-      if (f.createdByMe) chips.push({ key: 'createdByMe', label: 'Created by you' });
+      if (f.assignedToMe) chips.push({ key: 'assignedToMe', label: PlatformI18n.t('changes:board.filterChip.assignedToYou') });
+      if (f.createdByMe) chips.push({ key: 'createdByMe', label: PlatformI18n.t('changes:board.filterChip.createdByYou') });
     }
     // `theme` is the GROUPING-membership filter (it follows a card's linked
     // issues, which a plain value match would not), kept as a separate key
     // from the value filter above. One list means it reads as a category to
     // whoever set it, which is what this label says; unifying the two inputs
     // is the piece this change deliberately leaves.
-    if (f.theme) chips.push({ key: 'theme', label: `Category: ${AppView._workshopThemeName(f.theme)}` });
+    if (f.theme) chips.push({ key: 'theme', label: PlatformI18n.t('changes:board.filterChip.category', { category: AppView._workshopThemeName(f.theme) }) });
     return chips;
+  },
+  // The priority chip's whole label, one message per priority.
+  KANBAN_PRIORITY_CHIP_IDS: {
+    low: 'changes:board.filterChip.priorityLow',
+    medium: 'changes:board.filterChip.priorityMedium',
+    high: 'changes:board.filterChip.priorityHigh',
   },
   // The category vocabulary as DATA — built-ins then this app's customs,
   // mirroring the retired select's order (#780), with the active selection
@@ -13440,11 +13655,11 @@ const AppView = {
       const row = { t: 'card', key: card.key, card, ...(b ? { brief: AppView._workshopBrief(b.kind, b.item, card) } : {}) };
       return ref ? AppView._attachRowConversation(row, ref.kind, ref.item) : row;
     });
-    const emptyNote = filtering ? 'No matching cards' : 'Nothing here yet';
+    const emptyNote = filtering ? PlatformI18n.t('changes:board.column.emptyFiltered') : PlatformI18n.t('changes:board.column.empty');
 
     const cols = [
       {
-        key: 'issues', title: 'Requests', count: kIssues.length,
+        key: 'issues', title: PlatformI18n.t('changes:board.column.requests'), count: kIssues.length,
         rows: cardRows(kIssues, (i) => AppView._issueCardModel(i), (i) => ({ kind: 'issue', item: i })),
         empty: kIssues.length ? null : emptyNote,
         footer: issuesFooter,
@@ -13457,14 +13672,14 @@ const AppView = {
       // `?col=` deep-link value. Retitling is copy; rekeying would break
       // saved drag orders and every existing link.
       {
-        key: 'inprogress', title: 'Underway', count: kInProgress.length,
+        key: 'inprogress', title: PlatformI18n.t('changes:board.column.underway'), count: kInProgress.length,
         rows: AppView._inProgressRows(kInProgress),
         empty: null,
         footer: null,
-        hint: 'Somebody or something is on these: being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.',
+        hint: PlatformI18n.t('changes:board.column.underwayHint'),
       },
       {
-        key: 'inreview', title: 'Waiting for approval', count: kInReview.length,
+        key: 'inreview', title: PlatformI18n.t('changes:board.column.review'), count: kInReview.length,
         reviewSort,
         rows: cardRows(
           kInReview,
@@ -13476,7 +13691,7 @@ const AppView = {
         footer: null,
       },
       {
-        key: 'done', title: 'Done', count: filtering ? kDone.length : doneTotal,
+        key: 'done', title: PlatformI18n.t('changes:board.column.done'), count: filtering ? kDone.length : doneTotal,
         rows: cardRows(kDone, (m) => AppView._mergedRowModel(m), null, (m) => ({ kind: 'merged', item: m })),
         empty: kDone.length ? null : emptyNote,
         footer: doneFooter,
@@ -13520,21 +13735,21 @@ const AppView = {
     if (!d || typeof d !== 'object') return null;
     if (d.kind === 'child') {
       if (d.state === 'failed') return {
-        tone: 'blocked', text: 'Latest merged change · deploy failed',
-        title: 'The latest merged change has not been confirmed in production.',
+        tone: 'blocked', text: PlatformI18n.t('changes:board.deploy.childFailed'),
+        title: PlatformI18n.t('changes:board.deploy.childFailedTitle'),
       };
       if (d.state === 'pending') return {
-        tone: 'neutral', text: 'Latest merged change · awaiting deployment',
-        title: 'Production is still serving an earlier revision.',
+        tone: 'neutral', text: PlatformI18n.t('changes:board.deploy.childPending'),
+        title: PlatformI18n.t('changes:board.deploy.childPendingTitle'),
       };
       // #4486: in the board's words, through the change it names when it
       // names one ("Live in production through PR #4454").
       if (d.state === 'deployed') return {
         tone: 'ok',
         text: d.livePrNumber
-          ? `Live in production through PR #${d.livePrNumber}`
-          : `Live in production at ${String(d.runningSha).slice(0, 7)}`,
-        title: 'The latest merged change is included in the observed production revision.',
+          ? PlatformI18n.t('changes:board.deploy.childLiveThroughPr', { number: d.livePrNumber })
+          : PlatformI18n.t('changes:board.deploy.childLive', { sha: String(d.runningSha).slice(0, 7) }),
+        title: PlatformI18n.t('changes:board.deploy.childLiveTitle'),
       };
       // `unknown` means the platform has no evidence either way (a
       // container deployed before revision labels existed, one that is
@@ -13543,13 +13758,12 @@ const AppView = {
       return null;
     }
     const pending = Number.isFinite(Number(d.pendingCount)) ? Math.max(0, Number(d.pendingCount)) : null;
-    const noun = pending === 1 ? 'change' : 'changes';
     if (pending > 0) {
       if (d.state === 'stalled') {
         return {
           tone: 'blocked',
-          text: `${pending} merged ${noun} · deployment stalled`,
-          title: 'Production is still running an earlier revision. The release watcher has detected a stalled deployment.',
+          text: PlatformI18n.t('changes:board.deploy.stalled', { count: pending }),
+          title: PlatformI18n.t('changes:board.deploy.stalledTitle'),
         };
       }
       // When the platform's next release carries them (_releaseSentence):
@@ -13561,31 +13775,35 @@ const AppView = {
         return {
           tone: 'progress',
           text: line,
-          title: 'Merged changes go live together, in the platform’s next release. Production is still running an earlier revision.',
+          title: PlatformI18n.t('changes:board.deploy.releaseTitle'),
         };
       }
       return {
         tone: 'progress',
-        text: `${pending} merged ${noun} waiting to go live`,
-        title: 'Production is still running an earlier revision.',
+        text: PlatformI18n.t('changes:board.deploy.waiting', { count: pending }),
+        title: PlatformI18n.t('changes:board.deploy.waitingTitle'),
       };
     }
     const sha = /^[0-9a-f]{7,40}$/i.test(String(d.runningSha || ''))
       ? String(d.runningSha).slice(0, 7) : null;
     if (d.state === 'deployed') {
-      const boundary = d.livePrNumber
-        ? `PR #${d.livePrNumber}${sha ? ` · ${sha}` : ''}`
-        : (sha || 'the latest merged change');
+      const text = d.livePrNumber
+        ? (sha
+          ? PlatformI18n.t('changes:board.deploy.liveThroughPrSha', { number: d.livePrNumber, sha })
+          : PlatformI18n.t('changes:board.deploy.liveThroughPr', { number: d.livePrNumber }))
+        : (sha
+          ? PlatformI18n.t('changes:board.deploy.liveThroughSha', { sha })
+          : PlatformI18n.t('changes:board.deploy.liveThroughLatest'));
       return {
         tone: 'ok',
-        text: `Live in production through ${boundary}`,
-        title: 'Every merged change through this point is live in production.',
+        text,
+        title: PlatformI18n.t('changes:board.deploy.liveThroughTitle'),
       };
     }
     return {
       tone: 'neutral',
-      text: 'Production deployment could not be matched to completed history',
-      title: sha ? `Production is running ${sha}, but no completed proposal records that merge commit.` : undefined,
+      text: PlatformI18n.t('changes:board.deploy.unmatched'),
+      title: sha ? PlatformI18n.t('changes:board.deploy.unmatchedTitle', { sha }) : undefined,
     };
   },
   _recentDone(rows) {
@@ -13688,7 +13906,7 @@ const AppView = {
   // card. The agent-session Mayor names changes in prose, quotes and all,
   // which is how it surfaced.
   _sessionCardLabel(s) {
-    return String(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
+    return String(s.session_title || s.pr_title || s.branch_name || PlatformI18n.t('changes:session.fallbackTitle', { id: s.id }));
   },
 
   // #1038: busy is read live from window.SessionState, falling back to the
@@ -13725,7 +13943,7 @@ const AppView = {
       buildVenue: s.build_venue,
     });
     if (!v) return null;
-    return { t: 'venue', key: 'venue', label: v.label, title: `${v.label}: ${v.blurb}` };
+    return { t: 'venue', key: 'venue', label: v.label, title: PlatformI18n.t('changes:session.venueTitle', { venue: v.label, blurb: v.blurb }) };
   },
 
   // The session card's state chip, as a SPEC. Three sources, in
@@ -13775,16 +13993,20 @@ const AppView = {
     const shown = f.rows.slice(0, 2).map((r) => r.name).filter(Boolean);
     if (!shown.length) return meta;
     const rest = f.total - shown.length;
-    const names = shown.join(' · ') + (rest > 0 ? ` · +${rest} more` : '');
+    const names = shown.reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second }));
     meta.push({
       t: 'span', cls: '',
-      s: `Failing: ${names}`,
+      s: rest > 0
+        ? PlatformI18n.t('changes:session.failing.namesAndMore', { checks: names, count: rest })
+        : PlatformI18n.t('changes:session.failing.names', { checks: names }),
       // The full first reason, where a pointer cannot carry it. Advisory
       // rows are named too but marked, because they do not block the merge
       // and a reviewer counting them as blockers reads a held-up merge that
       // is not held up.
       title: f.rows
-        .map((r) => `${r.advisory ? '[advisory] ' : ''}${r.name} — ${r.reason}`)
+        .map((r) => (r.advisory
+          ? PlatformI18n.t('changes:session.failing.reasonAdvisory', { check: r.name, reason: r.reason })
+          : PlatformI18n.t('changes:session.failing.reason', { check: r.name, reason: r.reason })))
         .join('\n'),
     });
     return meta;
@@ -13794,7 +14016,7 @@ const AppView = {
     if (AppView._sessionBusy(s)) {
       return {
         t: 'chip', key: 'state', cls: 'dev-badge bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-        label: 'working…', spinner: true,
+        label: PlatformI18n.t('changes:session.chip.working'), spinner: true,
       };
     }
     // A submitted build stays status='active' until the owner puts it up for
@@ -13827,7 +14049,7 @@ const AppView = {
 
   _importedSessionBadgeSpec(s) {
     return s && s.source === 'imported'
-      ? { t: 'chip', key: 'imported', cls: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400', label: 'Imported PR' }
+      ? { t: 'chip', key: 'imported', cls: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400', label: PlatformI18n.t('changes:session.chip.importedPr') }
       : null;
   },
 
@@ -13839,17 +14061,18 @@ const AppView = {
     const items = AppView._attrMenuItems('proposal', s.id, s);
     if (!AppView.readOnly && Number(s.user_id) === Number(App.user?.id)
         && ['active', 'paused'].includes(s.status)) {
-      items.push({ label: 'Archive PR', icon: 'archive', danger: true,
-        title: 'Close this imported pull request and archive its card',
+      items.push({ label: PlatformI18n.t('changes:session.menu.archivePr'), icon: 'archive', danger: true,
+        title: PlatformI18n.t('changes:session.menu.archivePrTitle'),
         act: async () => {
-          if (!await AppView._archiveSession(s.id, s.pr_title || `PR #${s.pr_number}`, true)) return;
+          if (!await AppView._archiveSession(s.id, s.pr_title || PlatformI18n.t('changes:session.prFallbackTitle', { number: s.pr_number }), true)) return;
           await AppView._loadDevFeed();
           AppView._renderTopicHead();
         } });
     }
     if (s.pr_url) {
       items.push({
-        label: 'View PR on GitHub',
+        label: PlatformI18n.t('changes:session.menu.viewPr'),
+        githubPr: true,
         icon: 'github',
         title: s.pr_url,
         act: () => window.open(s.pr_url, '_blank', 'noopener'),
@@ -13877,12 +14100,13 @@ const AppView = {
     // means there is something to preview. The owner is always authorized
     // on ensure-staging, which rebuilds a preview the idle GC reclaimed.
     const preview = AppView._cardPreviewSpec(s, { kind: 'own-session', sessionId: s.id });
-    const author = s.imported_pr_author || 'unknown author';
     const subtitle = imported
-      ? `Imported by ${author} · not waiting for approval yet`
+      ? (s.imported_pr_author
+        ? PlatformI18n.t('changes:session.mine.importedBy', { author: s.imported_pr_author })
+        : PlatformI18n.t('changes:session.mine.importedByUnknown'))
       : (shared
-        ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
-        : 'Only you can see this here. Code is on public GitHub.');
+        ? (transcriptShared ? PlatformI18n.t('changes:session.mine.visibleChatReadable') : PlatformI18n.t('changes:session.mine.visible'))
+        : PlatformI18n.t('changes:session.mine.private'));
 
     // "Open chat" is GONE as a pill. Tapping this card opens the card itself
     // (see above); the dev chat — its working surface — is the "Open session"
@@ -13897,27 +14121,27 @@ const AppView = {
     const actions = [];
     if (imported && !AppView.readOnly) {
       actions.push({
-        key: 'promote', cls: 'gc-vote-btn', label: 'Ask for approval',
-        title: 'Ask the group to approve this imported change',
+        key: 'promote', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:session.actions.askForApproval'),
+        title: PlatformI18n.t('changes:session.actions.askForApprovalTitle'),
         act: { fn: 'promoteImportedSession', args: [s.id] }, passNode: true,
       });
     } else if (!imported && !AppView.readOnly) {
       actions.push(shared
         ? {
-          key: 'vis', cls: 'gc-vote-btn', label: 'Hide',
-          title: "Make this session private again (removes it from everyone's In progress area, and stops anyone reading the chat)",
+          key: 'vis', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:session.actions.hide'),
+          title: PlatformI18n.t('changes:session.actions.hideTitle'),
           act: { fn: '_setSessionShared', args: [s.id, false, null] },
         }
         : {
-          key: 'vis', cls: 'gc-vote-btn', label: 'Make visible',
-          title: "Show this session in everyone's In progress area. Others can comment and open its live preview, but can't read your chat unless you also share it",
+          key: 'vis', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:session.actions.makeVisible'),
+          title: PlatformI18n.t('changes:session.actions.makeVisibleTitle'),
           act: { fn: '_setSessionShared', args: [s.id, true, null] },
         });
     }
 
     const menu = imported ? AppView._importedUnderwayMenuItems(s) : [];
     if (!imported && s.pr_url) menu.push({
-      label: 'View PR on GitHub', icon: 'github', title: s.pr_url,
+      label: PlatformI18n.t('changes:session.menu.viewPr'), githubPr: true, icon: 'github', title: s.pr_url,
       act: () => window.open(s.pr_url, '_blank', 'noopener'),
     });
     // The SECOND opt-in, offered only once the session is visible (there is
@@ -13925,22 +14149,25 @@ const AppView = {
     if (shared && !imported) {
       menu.push(transcriptShared
         ? {
-          label: 'Chat shared. Stop sharing',
+          label: PlatformI18n.t('changes:session.menu.stopSharingChat'),
           icon: 'chat',
-          title: 'Stop others reading this chat (they keep the card and the discussion)',
+          title: PlatformI18n.t('changes:session.menu.stopSharingChatTitle'),
           act: () => AppView._setTranscriptShared(s.id, false, null),
         }
         : {
-          label: 'Share chat',
+          label: PlatformI18n.t('changes:session.menu.shareChat'),
           icon: 'chat',
-          title: "Let everyone read this chat, read-only. They can't reply in it, and can't see your costs or uploaded files",
+          title: PlatformI18n.t('changes:session.menu.shareChatTitle'),
           act: () => AppView._setTranscriptShared(s.id, true, null),
         });
       const chatN = sh ? (parseInt(sh.chat_count, 10) || 0) : 0;
       menu.push({
-        label: `Open public discussion${chatN ? ` (${chatN})` : ''}`,
+        label: chatN
+          ? PlatformI18n.t('changes:session.menu.openDiscussionCount', { count: chatN })
+          : PlatformI18n.t('changes:session.menu.openDiscussion'),
+        pageShortcut: true,
         icon: 'chat',
-        title: 'Open the public discussion on this session',
+        title: PlatformI18n.t('changes:session.menu.openDiscussionTitle'),
         act: () => AppView.openTopic('session', s.id),
       });
     }
@@ -13951,11 +14178,12 @@ const AppView = {
     // Underway card, only on the promoted topic page. So an owner watching
     // their own session fail could see the verdict and do nothing about it
     // without leaving the board.
-    menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
+    menu.push({ label: PlatformI18n.t('changes:session.menu.viewChecks'), pageShortcut: true, icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
       menu.push({
-        label: 'Re-run checks',
+        label: PlatformI18n.t('changes:session.menu.rerunChecks'),
+        pageShortcut: true,
         icon: 'retry',
         title: recheck.title,
         act: () => AppView.castRecheck(s.id),
@@ -13963,9 +14191,9 @@ const AppView = {
     }
     if (!imported) {
       menu.push({
-        label: 'Archive',
+        label: PlatformI18n.t('changes:session.menu.archive'),
         icon: 'archive',
-        title: 'Archive this session (closes the PR, frees the slot)',
+        title: PlatformI18n.t('changes:session.menu.archiveTitle'),
         danger: true,
         act: () => {
           (async () => {
@@ -13980,7 +14208,7 @@ const AppView = {
     // nobody else can see it, replacing the caption that used to sit above
     // the group. Single-row shell like every other card on the board.
     const mutedCls = shared || imported ? '' : ` ${AppView.DEV_CARD_MUTED_CLS}`;
-    const attrs = { role: 'button', tabindex: '0', title: `${s.busy ? 'AI is working: ' : ''}${label}` };
+    const attrs = { role: 'button', tabindex: '0', title: s.busy ? PlatformI18n.t('changes:session.mine.workingTitle', { title: label }) : label };
     if (imported) attrs['data-shared-session-row'] = String(s.id);
     else attrs['data-session-chip'] = String(s.id);
     // #3081: a change started from an agent session is revised in that
@@ -14034,25 +14262,23 @@ const AppView = {
   _sharedSessionCardModel(s, opts) {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
-    const editableTitle = String(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
-    const owner = s.username || 'someone';
+    const editableTitle = String(s.session_title || s.pr_title || s.branch_name || PlatformI18n.t('changes:session.fallbackTitle', { id: s.id }));
     const imported = s.source === 'imported';
     const canEditTitle = !!(noNav && !AppView.readOnly && !imported
       && ['active', 'paused'].includes(s.status)
       && typeof App !== 'undefined' && App.user
       && Number(s.user_id) === Number(App.user.id));
     const editingTitle = canEditTitle && AppView._editingSessionTitle === Number(s.id);
-    const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
     const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
     if (!imported && s.pr_url) menu.push({
-      label: 'View PR on GitHub', icon: 'github', title: s.pr_url,
+      label: PlatformI18n.t('changes:session.menu.viewPr'), githubPr: true, icon: 'github', title: s.pr_url,
       act: () => window.open(s.pr_url, '_blank', 'noopener'),
     });
-    menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
+    menu.push({ label: PlatformI18n.t('changes:session.menu.viewChecks'), pageShortcut: true, icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
-      menu.push({ label: 'Re-run checks', icon: 'retry', act: () => AppView.castRecheck(s.id) });
+      menu.push({ label: PlatformI18n.t('changes:session.menu.rerunChecks'), pageShortcut: true, icon: 'retry', act: () => AppView.castRecheck(s.id) });
     }
     const attrs = { title: label };
     if (!noNav) {
@@ -14076,8 +14302,8 @@ const AppView = {
       meta: [{
         t: 'text',
         s: imported
-          ? `Imported pull request by ${author} · imported by ${owner}`
-          : `${owner} is working on this`,
+          ? PlatformI18n.t(AppView.SHARED_IMPORT_LINE_IDS[(s.imported_pr_author ? 'author' : 'unknown') + (s.username ? 'Owner' : 'Someone')], { author: s.imported_pr_author, owner: s.username })
+          : (s.username ? PlatformI18n.t('changes:session.shared.working', { owner: s.username }) : PlatformI18n.t('changes:session.shared.workingSomeone')),
       }, ...(s.pr_url && s.pr_number ? [{
         t: 'link', href: s.pr_url, s: `PR#${s.pr_number}`,
         cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
@@ -14113,20 +14339,29 @@ const AppView = {
   // These replaced two full grey sentences. The long copy is now the
   // divider label's tooltip, and the private group's own cards carry the
   // muted shell, so the information survives at a fraction of the height.
-  PRIVATE_DIVIDER_TITLE: 'Only you can see your active sessions here. Their code is on public GitHub.',
-  VISIBLE_DIVIDER_TITLE: 'Visible to everyone, including a live preview of your changes.',
-  OTHERS_DIVIDER_TITLE: 'Agent sessions other people have made visible.',
+  // Getters, so each is read in the language in use when it is shown.
+  get PRIVATE_DIVIDER_TITLE() { return PlatformI18n.t('changes:board.divider.privateTitle'); },
+  get VISIBLE_DIVIDER_TITLE() { return PlatformI18n.t('changes:board.divider.visibleTitle'); },
+  get OTHERS_DIVIDER_TITLE() { return PlatformI18n.t('changes:board.divider.othersTitle'); },
+  // An imported pull request's line on somebody else's session card: one
+  // whole message for each of (author known or not) x (importer known or not).
+  SHARED_IMPORT_LINE_IDS: {
+    authorOwner: 'changes:session.shared.imported',
+    authorSomeone: 'changes:session.shared.importedBySomeone',
+    unknownOwner: 'changes:session.shared.importedUnknownAuthor',
+    unknownSomeone: 'changes:session.shared.importedUnknownBoth',
+  },
 
   _privateDividerRow() {
-    return { t: 'divider', key: 'div:private', d: { label: 'Yours · not shared', title: AppView.PRIVATE_DIVIDER_TITLE } };
+    return { t: 'divider', key: 'div:private', d: { label: PlatformI18n.t('changes:board.divider.private'), title: AppView.PRIVATE_DIVIDER_TITLE } };
   },
 
   _visibleDividerRow() {
-    return { t: 'divider', key: 'div:visible', d: { label: 'Yours · visible', title: AppView.VISIBLE_DIVIDER_TITLE } };
+    return { t: 'divider', key: 'div:visible', d: { label: PlatformI18n.t('changes:board.divider.visible'), title: AppView.VISIBLE_DIVIDER_TITLE } };
   },
 
   _othersDividerRow() {
-    return { t: 'divider', key: 'div:others', d: { label: 'Others', title: AppView.OTHERS_DIVIDER_TITLE } };
+    return { t: 'divider', key: 'div:others', d: { label: PlatformI18n.t('changes:board.divider.others'), title: AppView.OTHERS_DIVIDER_TITLE } };
   },
 
   // The visible note that replaces the filter bar's silent skip of session
@@ -14145,15 +14380,21 @@ const AppView = {
     if (f.category) which.push('category');
     if (f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED) which.push('assignee');
     if (!which.length) return null;
-    const list = which.length === 1
-      ? which[0]
-      : `${which.slice(0, -1).join(', ')} or ${which[which.length - 1]}`;
     return {
       t: 'note',
       key: 'note:session-filter',
-      text: `Agent sessions don't carry priority, category or assignee. The ${sessionCount} `
-        + `session card${sessionCount === 1 ? '' : 's'} below ${sessionCount === 1 ? 'is' : 'are'} not filtered by ${list}.`,
+      text: PlatformI18n.t(AppView.SESSION_FILTER_NOTE_IDS[which.join('+')], { count: sessionCount }),
     };
+  },
+  // One whole sentence for each set of filters the session cards ignore.
+  SESSION_FILTER_NOTE_IDS: {
+    priority: 'changes:board.sessionNote.priority',
+    category: 'changes:board.sessionNote.category',
+    assignee: 'changes:board.sessionNote.assignee',
+    'priority+category': 'changes:board.sessionNote.priorityCategory',
+    'priority+assignee': 'changes:board.sessionNote.priorityAssignee',
+    'category+assignee': 'changes:board.sessionNote.categoryAssignee',
+    'priority+category+assignee': 'changes:board.sessionNote.all',
   },
 
   // The archived-sessions block. OPEN/CLOSED is the component's state now
@@ -14239,7 +14480,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/${shared ? 'share' : 'unshare'}`, { method: 'POST' });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || `Failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(body.error || PlatformI18n.t('changes:session.visibility.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = original; }
         return;
       }
@@ -14261,7 +14502,7 @@ const AppView = {
         });
       }
     } catch (err) {
-      PlatformUI.toast(`Failed: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:session.visibility.failed', { error: err.message }));
       if (btn) { btn.disabled = false; btn.textContent = original; }
     }
   },
@@ -14270,13 +14511,12 @@ const AppView = {
   // rather than a generic "are you sure?": the whole point is that the
   // owner knows what becomes readable (their own typed messages included)
   // and what doesn't, before they publish it.
-  SHARE_CHAT_CONFIRM: {
-    title: 'Let everyone read this chat?',
-    message: 'Anyone who can see this app will be able to read the whole conversation. '
-      + "your messages, the AI's replies, and what the coding agent did. They can't reply "
-      + "in your chat, and they can't see your costs or your uploaded files. You can turn "
-      + 'this off at any time.',
-    confirmLabel: 'Share chat',
+  get SHARE_CHAT_CONFIRM() {
+    return {
+      title: PlatformI18n.t('changes:session.shareChat.confirmTitle'),
+      message: PlatformI18n.t('changes:session.shareChat.confirmMessage'),
+      confirmLabel: PlatformI18n.t('changes:session.shareChat.confirmLabel'),
+    };
   },
 
   // Publish / revoke the transcript of one of the viewer's own sessions
@@ -14303,7 +14543,7 @@ const AppView = {
       );
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || `Failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(body.error || PlatformI18n.t('changes:session.shareChat.failedHttp', { status: resp.status }));
         if (btn) { btn.disabled = false; btn.textContent = original; }
         return;
       }
@@ -14328,7 +14568,7 @@ const AppView = {
         });
       }
     } catch (err) {
-      PlatformUI.toast(`Failed: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:session.shareChat.failed', { error: err.message }));
       if (btn) { btn.disabled = false; btn.textContent = original; }
     }
   },
@@ -14344,16 +14584,16 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/unarchive`, { method: 'POST' });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(body.error || 'Failed to unarchive session');
+        PlatformUI.toast(body.error || PlatformI18n.t('changes:session.unarchive.failed'));
         btn.textContent = original;
         btn.disabled = false;
         return;
       }
       if (body.ccPurged) {
-        PlatformUI.alert({ title: 'Session restored', message: "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch." });
+        PlatformUI.alert({ title: PlatformI18n.t('changes:session.unarchive.restoredTitle'), message: PlatformI18n.t('changes:session.unarchive.restoredMessage') });
       }
     } catch (err) {
-      PlatformUI.toast(`Unarchive failed: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:session.unarchive.failedWith', { error: err.message }));
       btn.textContent = original;
       btn.disabled = false;
       return;
@@ -14369,9 +14609,9 @@ const AppView = {
   async _archiveSession(sessionId, name, imported = false) {
     if (!sessionId) return false;
     const ok = await ConfirmModal.show({
-      title: `Archive "${name}"?`,
-      message: imported ? "This closes the imported pull request on GitHub and archives its card. The source branch is kept." : "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
-      confirmLabel: 'Archive',
+      title: PlatformI18n.t('changes:session.archive.confirmTitle', { title: name }),
+      message: imported ? PlatformI18n.t('changes:session.archive.confirmMessageImported') : PlatformI18n.t('changes:session.archive.confirmMessage'),
+      confirmLabel: PlatformI18n.t('changes:session.archive.confirmLabel'),
       danger: true,
     });
     if (!ok) return false;
@@ -14379,11 +14619,11 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Archive failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:session.archive.failedHttp', { status: resp.status }));
         return false;
       }
     } catch (err) {
-      PlatformUI.toast(`Archive failed: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:session.archive.failedWith', { error: err.message }));
       return false;
     }
     return true;
@@ -14558,7 +14798,7 @@ const AppView = {
         id: null,
         key: String(c.id != null ? c.id : `i${i}`),
         kind: 'github',
-        username: c.author || 'unknown',
+        username: c.author || PlatformI18n.t('changes:request.comments.unknownAuthor'),
         senderId: null,
         time: stamp.text,
         timeTitle: stamp.title,
@@ -14640,7 +14880,7 @@ const AppView = {
       label: cached
         || ((typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
           ? SessionTranscript.headerText(item, { expanded: false })
-          : 'Read the agent session'),
+          : PlatformI18n.t('changes:transcript.readSession')),
       expanded,
     };
   },
@@ -14701,11 +14941,11 @@ const AppView = {
     if (!content) return false;
     const label = (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
       ? SessionTranscript.headerText(data.session, { expanded: true })
-      : 'Agent session';
+      : PlatformI18n.t('changes:transcript.pageTitle');
     content.innerHTML = `
       <div class="dev-session-read">
         <div class="st-section" data-transcript-section="${id}">
-          <p class="dev-session-read-head">${escapeHtml(label)}<span class="st-readonly-tag">read-only</span></p>
+          <p class="dev-session-read-head">${escapeHtml(label)}<span class="st-readonly-tag">${PlatformI18n.htmlText('changes:transcript.readOnlyTag')}</span></p>
           <div class="st-body" data-transcript-body="${id}"></div>
         </div>
       </div>`;
@@ -14763,15 +15003,15 @@ const AppView = {
     if (cached) { paint(cached); return; }
 
     const slot = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-    if (slot) slot.innerHTML = '<div class="st-truncated">Loading the chat…</div>';
+    if (slot) slot.innerHTML = `<div class="st-truncated">${PlatformI18n.htmlText('changes:transcript.loading')}</div>`;
     try {
       const res = await fetch(`/api/sessions/${sessionId}/transcript${AppView._demoQS()}`);
       if (!res.ok) {
         const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
         if (after) {
           after.innerHTML = `<div class="st-error">${res.status === 404
-            ? 'This chat is no longer shared.'
-            : `Couldn't load the chat (HTTP ${res.status}).`}</div>`;
+            ? PlatformI18n.htmlText('changes:transcript.notShared')
+            : PlatformI18n.htmlText('changes:transcript.loadFailedHttp', { status: res.status })}</div>`;
         }
         return;
       }
@@ -14780,7 +15020,7 @@ const AppView = {
       paint(data);
     } catch (err) {
       const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-      if (after) after.innerHTML = `<div class="st-error">Couldn't load the chat: ${escapeHtml(err.message)}</div>`;
+      if (after) after.innerHTML = `<div class="st-error">${PlatformI18n.htmlText('changes:transcript.loadFailedWith', { error: err.message })}</div>`;
     }
   },
 
@@ -14978,14 +15218,14 @@ const AppView = {
     const majority = ctx.majority || 1;
     const isMerging = pr.status === 'merging';
     const isMerged = pr.status === 'merged';
-    const title = { text: '', title: pr.pr_title || `Change by ${pr.username || ''}` };
+    const title = { text: '', title: pr.pr_title || PlatformI18n.t('changes:card.proposal.fallbackTitle', { username: pr.username || '' }) };
     if (pr.revert_of_session_id) {
-      title.lead = { s: '↩ Revert of', cls: 'text-amber-800 dark:text-amber-300' };
+      title.lead = { s: PlatformI18n.t('changes:card.proposal.revertLead'), cls: 'text-amber-800 dark:text-amber-300' };
       title.text = pr.original_pr_title
         ? pr.original_pr_title
-        : `PR #${pr.original_pr_number || pr.revert_of_session_id}`;
+        : PlatformI18n.t('changes:card.proposal.revertedPr', { number: pr.original_pr_number || pr.revert_of_session_id });
     } else {
-      title.text = pr.pr_title ? pr.pr_title : `Change by ${pr.username || ''}`;
+      title.text = pr.pr_title ? pr.pr_title : PlatformI18n.t('changes:card.proposal.fallbackTitle', { username: pr.username || '' });
     }
     // ── Meta line ──
     // Provenance moved OFF the badge row and INTO this line as plain words.
@@ -15014,7 +15254,7 @@ const AppView = {
     // FOR — was the first thing to disappear.
     const linked = isMerged
       ? AppView.closesPillSpecs(pr)
-      : AppView.issueChipSpecs(pr.linked_issues, { label: 'Closes' });
+      : AppView.issueChipSpecs(pr.linked_issues, { says: 'closes' });
 
     // mine: the viewer authored this PR, so they own its dev session. Drives
     // both "Open session" and the violet "yours" icon below.
@@ -15099,7 +15339,7 @@ const AppView = {
     if (pr.status === 'promoted' && !pr.my_vote) attrs['data-unvoted'] = '1';
     if (!noNav) {
       attrs['data-proposal-row'] = String(pr.id);
-      attrs.title = "Open this proposal's discussion";
+      attrs.title = PlatformI18n.t('changes:card.proposal.openTitle');
     }
     return {
       key: `proposal:${pr.id}`,
@@ -15107,7 +15347,7 @@ const AppView = {
       attrs,
       icon: AppView._devCardIcon(
         isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'),
-        mine && !isMerged ? { title: 'This is your PR. Its session is under ⋯.' } : undefined),
+        mine && !isMerged ? { title: PlatformI18n.t('changes:card.proposal.mineIconTitle') } : undefined),
       title,
       meta,
       pill,
@@ -15152,8 +15392,8 @@ const AppView = {
     if (MS && typeof MS.explicitApprovalCopy === 'function') return MS.explicitApprovalCopy(reason);
     return {
       phrase: null,
-      sentence: 'This change needs a Yes from another member.',
-      line: 'It changes a protected setting',
+      sentence: PlatformI18n.t('changes:explicit.fallback.sentence'),
+      line: PlatformI18n.t('changes:explicit.fallback.line'),
     };
   },
 
@@ -15168,21 +15408,40 @@ const AppView = {
 
   // The lock's tooltip (the status pill's glyph and the vote pill's chip).
   _lockTitle(pr) {
+    return PlatformI18n.t('changes:explicit.lockTitle', { reason: AppView._explicitLead(pr) });
+  },
+  // The sentence that says why a change needs explicit approval: the member
+  // rule's own sentence, or which protected setting it changes.
+  _explicitLead(pr) {
     const copy = AppView._explicitCopy(pr && pr.explicit_approval_reason);
-    const lead = pr && pr.needs_other_member_yes
-      ? copy.sentence
-      : `It changes ${copy.phrase || 'a protected setting'}.`;
-    return `${lead} It won’t merge on a timer: it needs real Yes votes to reach the app’s normal threshold, and it can still be voted down.`;
+    if (pr && pr.needs_other_member_yes) return copy.sentence;
+    return PlatformI18n.t(AppView._EXPLICIT_LEAD_IDS[copy.reason] || 'changes:explicit.lead.changesProtected');
+  },
+  // One whole sentence for each protected setting: which one it is decides
+  // the wording, and no phrase is fitted into a frame.
+  _EXPLICIT_LEAD_IDS: {
+    admins: 'changes:explicit.lead.admins',
+    governance: 'changes:explicit.lead.governance',
+    visibility: 'changes:explicit.lead.visibility',
+    platform_env: 'changes:explicit.lead.platformEnv',
+    secrets: 'changes:explicit.lead.secrets',
+  },
+  _EXPLICIT_ADMIN_MERGE_IDS: {
+    admins: 'changes:explicit.adminMerge.admins',
+    governance: 'changes:explicit.adminMerge.governance',
+    visibility: 'changes:explicit.adminMerge.visibility',
+    platform_env: 'changes:explicit.adminMerge.platformEnv',
+    secrets: 'changes:explicit.adminMerge.secrets',
   },
 
   // The Admin merge control's tooltip. Only a platform admin sees it on a
   // flagged row (the server refuses an app admin there).
   _adminMergeTitle(pr) {
     if (!pr || !pr.requires_explicit_approval) {
-      return 'Admin: merge this PR right now, bypassing the vote majority';
+      return PlatformI18n.t('changes:explicit.adminMerge.plain');
     }
-    const phrase = AppView._explicitCopy(pr.explicit_approval_reason).phrase;
-    return `Admin: merge this change to ${phrase || 'a protected setting'} right now, without the vote or another member’s Yes`;
+    const reason = AppView._explicitCopy(pr.explicit_approval_reason).reason;
+    return PlatformI18n.t(AppView._EXPLICIT_ADMIN_MERGE_IDS[reason] || 'changes:explicit.adminMerge.protected');
   },
 
   requirementsSpec(pr) {
@@ -15277,7 +15536,7 @@ const AppView = {
         if (g.state === 'done' || !reached) return null;
         return AppView._explicitCopy(detail.reason || p.explicit_approval_reason).line;
       }
-      case 'admin_yes': return g.state === 'done' || !reached ? null : 'Needs one admin to vote yes';
+      case 'admin_yes': return g.state === 'done' || !reached ? null : PlatformI18n.t('changes:step.adminYes');
       case 'integration': return AppView._integrationLine(g, p, o.viewer);
       case 'checks': {
         const integration = gates.find((x) => x && x.key === 'integration');
@@ -15286,27 +15545,36 @@ const AppView = {
       }
       case 'shots':
         if (g.state === 'done' || g.state === 'pending') return null;
-        return g.state === 'blocked' ? 'Couldn’t take shots' : 'Taking shots';
+        return g.state === 'blocked' ? PlatformI18n.t('changes:step.shots.failed') : PlatformI18n.t('changes:step.shots.taking');
       case 'platform_env': {
         if (g.state === 'done' || !reached) return null;
         const keys = Array.isArray(detail.missing) ? detail.missing.filter(Boolean) : [];
-        if (!keys.length) return 'Needs values set';
-        return `Set ${keys.length === 1 ? keys[0] : `${keys.slice(0, -1).join(', ')} and ${keys[keys.length - 1]}`}`;
+        if (!keys.length) return PlatformI18n.t('changes:step.env.needsValues');
+        return keys.length === 1
+          ? PlatformI18n.t('changes:step.env.setOne', { name: keys[0] })
+          : PlatformI18n.t('changes:step.env.setMany', { names: PlatformI18n.listText(keys.slice(0, -1)), last: keys[keys.length - 1] });
       }
       case 'main_healthy': {
-        if (detail.passThrough) return 'Red, but this change can merge';
-        if (detail.paused && detail.confirming) return 'Re-checking a failure';
-        if (detail.paused) return `Red${detail.sha ? ` since ${detail.sha}` : ''}${detail.test ? ` · ${detail.test}` : ''}`;
-        if (g.state === 'active') return 'Checking the last merge';
-        if (/resumed/.test(detail.note || '')) return 'Red · an admin resumed merges';
+        if (detail.passThrough) return PlatformI18n.t('changes:step.main.passThrough');
+        if (detail.paused && detail.confirming) return PlatformI18n.t('changes:step.main.confirming');
+        if (detail.paused) {
+          if (detail.sha) {
+            return detail.test
+              ? PlatformI18n.t('changes:step.main.redSinceTest', { sha: detail.sha, test: detail.test })
+              : PlatformI18n.t('changes:step.main.redSince', { sha: detail.sha });
+          }
+          return detail.test ? PlatformI18n.t('changes:step.main.redTest', { test: detail.test }) : PlatformI18n.t('changes:step.main.red');
+        }
+        if (g.state === 'active') return PlatformI18n.t('changes:step.main.checking');
+        if (/resumed/.test(detail.note || '')) return PlatformI18n.t('changes:step.main.resumed');
         return null;
       }
       case 'github': {
         if (g.state === 'done' || g.state === 'pending') return null;
         const note = String(detail.note || '');
         if (/^merging (now|shortly)$/.test(note)) return null;
-        if (/refused.*resolving/.test(note)) return 'GitHub refused · resolving it now';
-        if (/refused/.test(note)) return 'GitHub refused · needs a manual sync';
+        if (/refused.*resolving/.test(note)) return PlatformI18n.t('changes:step.github.resolving');
+        if (/refused/.test(note)) return PlatformI18n.t('changes:step.github.manualSync');
         return note ? note.charAt(0).toUpperCase() + note.slice(1) : null;
       }
       default:
@@ -15322,21 +15590,22 @@ const AppView = {
     const fresh = AppView._freshnessOf(p);
     const n = Array.isArray(p.integration_conflict_paths) && p.integration_conflict_paths.length
       ? p.integration_conflict_paths.length : (Array.isArray(fresh.files) ? fresh.files.length : 0);
-    const conflict = n ? `Conflict in ${n} file${n === 1 ? '' : 's'}` : 'Conflict with main';
+    const IDS = AppView.INTEGRATION_LINE_IDS;
+    const conflict = (ids) => (n ? PlatformI18n.t(ids.files, { count: n }) : PlatformI18n.t(ids.main));
     const conflicting = g.state !== 'pending' || fresh.mergeability === 'conflict'
       || p.merge_conflict_state === 'failed' || served.length > 0;
     if (!conflicting) {
-      return fresh.mergeability === 'unknown' || fresh.mergeability == null ? 'Not measured yet' : null;
+      return fresh.mergeability === 'unknown' || fresh.mergeability == null ? PlatformI18n.t('changes:step.integration.notMeasured') : null;
     }
-    if (served.includes('integrating')) return n ? `Resolving a conflict in ${n} file${n === 1 ? '' : 's'}` : 'Resolving a conflict with main';
-    if (served.includes('unresolvable') || p.merge_conflict_state === 'failed') return `${conflict} · needs a manual sync`;
+    if (served.includes('integrating')) return n ? PlatformI18n.t('changes:step.integration.resolvingFiles', { count: n }) : PlatformI18n.t('changes:step.integration.resolvingMain');
+    if (served.includes('unresolvable') || p.merge_conflict_state === 'failed') return conflict(IDS.manualSync);
     if (served.includes('fork_head')) {
-      return viewer && viewer.isAuthor ? `${conflict} · merge main into your fork` : `${conflict} · the author updates their fork`;
+      return viewer && viewer.isAuthor ? conflict(IDS.mergeFork) : conflict(IDS.authorFork);
     }
-    if (served.includes('awaiting_approval')) return `${conflict} · fixed after the vote`;
-    if (served.includes('budget')) return `${conflict} · resumes after the daily budget reset`;
+    if (served.includes('awaiting_approval')) return conflict(IDS.afterVote);
+    if (served.includes('budget')) return conflict(IDS.budget);
     if (n || fresh.mergeability === 'conflict' || /conflict/.test(String((g.detail && g.detail.note) || ''))) {
-      return `${conflict} · queued to fix`;
+      return conflict(IDS.queued);
     }
     // Not a conflict the columns can see (a recording from before direct
     // merges, say): the gate's own words, as a sentence.
@@ -15346,44 +15615,64 @@ const AppView = {
 
   // The checks step's line: the verdict's count when there is one, where the
   // run has got to while it runs.
+  // The conflict line for each way a conflict gets fixed: one whole message
+  // when the number of files is known (a plural pair) and one when it is not.
+  INTEGRATION_LINE_IDS: {
+    manualSync: { files: 'changes:step.integration.manualSyncFiles', main: 'changes:step.integration.manualSyncMain' },
+    mergeFork: { files: 'changes:step.integration.mergeForkFiles', main: 'changes:step.integration.mergeForkMain' },
+    authorFork: { files: 'changes:step.integration.authorForkFiles', main: 'changes:step.integration.authorForkMain' },
+    afterVote: { files: 'changes:step.integration.afterVoteFiles', main: 'changes:step.integration.afterVoteMain' },
+    budget: { files: 'changes:step.integration.budgetFiles', main: 'changes:step.integration.budgetMain' },
+    queued: { files: 'changes:step.integration.queuedFiles', main: 'changes:step.integration.queuedMain' },
+  },
+
   _checksLine(g, p, moot) {
     const cs = p.check_state;
-    if (g.state === 'pending') return moot ? 'Runs after the sync' : null;
-    if (cs === 'pending' && p.check_phase === 'deferred') return 'Runs after the sync';
+    if (g.state === 'pending') return moot ? PlatformI18n.t('changes:step.checks.afterSync') : null;
+    if (cs === 'pending' && p.check_phase === 'deferred') return PlatformI18n.t('changes:step.checks.afterSync');
     const v = AppView._checksVerdictView(p);
     if (g.state === 'done') {
-      if (cs === 'skipped') return 'Skipped';
-      const older = AppView._freshnessOf(p).baseVerdict === 'superseded' ? ' · on an older main' : '';
-      if (!v) return `Passed${older}`;
+      if (cs === 'skipped') return PlatformI18n.t('changes:step.checks.skipped');
+      const older = AppView._freshnessOf(p).baseVerdict === 'superseded';
+      if (!v) return older ? PlatformI18n.t('changes:step.checks.passedOlder') : PlatformI18n.t('changes:step.checks.passed');
       const total = v.passCount + v.failures.length;
-      return (v.failures.length ? `${v.passCount} of ${total} passed` : `All ${total} passed`) + older;
+      if (v.failures.length) {
+        return older
+          ? PlatformI18n.t('changes:step.checks.somePassedOlder', { passed: v.passCount, count: total })
+          : PlatformI18n.t('changes:step.checks.somePassed', { passed: v.passCount, count: total });
+      }
+      return older
+        ? PlatformI18n.t('changes:step.checks.allPassedOlder', { count: total })
+        : PlatformI18n.t('changes:step.checks.allPassed', { count: total });
     }
     if (g.state === 'blocked') {
-      if (cs === 'error' || (!p.staging_url && p.staging_error)) return 'Couldn’t run';
-      if (!v) return 'Failing';
+      if (cs === 'error' || (!p.staging_url && p.staging_error)) return PlatformI18n.t('changes:step.checks.couldNotRun');
+      if (!v) return PlatformI18n.t('changes:step.checks.failing');
       const blocking = v.failures.filter((f) => !f.advisory).length || v.failures.length;
-      return `${blocking} of ${v.passCount + v.failures.length} failed`;
+      return PlatformI18n.t('changes:step.checks.someFailed', { failed: blocking, count: v.passCount + v.failures.length });
     }
     if (g.state === 'active') {
-      if (!cs) return 'Starting';
+      if (!cs) return PlatformI18n.t('changes:step.checks.starting');
       // An error the gate still counts as in progress is a run that will go
       // again on its own (a run that overlapped a platform update): nothing
       // is running yet, so the line says what comes next.
-      if (cs === 'error') return 'Will run again';
+      if (cs === 'error') return PlatformI18n.t('changes:step.checks.willRunAgain');
       const prog = AppView._checksProgressView(p);
       if (prog && prog.build && !prog.build.done) {
         const steps = prog.build.steps || [];
         const at = Math.min(steps.filter((s) => s.state === 'done').length + 1, steps.length || 1);
-        return `Building preview · ${at} of ${steps.length || 5}`;
+        return PlatformI18n.t('changes:step.checks.buildingStep', { step: at, steps: steps.length || 5 });
       }
       // Built, and in line for a checks slot: where it is in the line.
       if (p.check_phase === 'queued') {
-        const place = AppView._checksQueuePlace(p);
-        return place ? `Waiting for a slot · ${place}` : 'Waiting for a slot';
+        const q = p.checks_progress && p.checks_progress.queue;
+        const ahead = q && Number.isInteger(q.ahead) && q.ahead >= 0 ? q.ahead : null;
+        if (ahead === null) return PlatformI18n.t('changes:step.checks.waiting');
+        return ahead === 0 ? PlatformI18n.t('changes:step.checks.waitingNext') : PlatformI18n.t('changes:step.checks.waitingAhead', { count: ahead });
       }
-      if (prog && prog.bar.expected) return `Running · ${prog.bar.ran} of ${prog.bar.expected}`;
-      if (prog && prog.bar.ran) return `Running · ${prog.bar.ran} so far`;
-      return p.check_phase === 'building' ? 'Building preview' : 'Running';
+      if (prog && prog.bar.expected) return PlatformI18n.t('changes:step.checks.runningOf', { ran: prog.bar.ran, expected: prog.bar.expected });
+      if (prog && prog.bar.ran) return PlatformI18n.t('changes:step.checks.runningSoFar', { ran: prog.bar.ran });
+      return p.check_phase === 'building' ? PlatformI18n.t('changes:step.checks.building') : PlatformI18n.t('changes:step.checks.running');
     }
     return null;
   },
@@ -15403,8 +15692,8 @@ const AppView = {
       || (typeof App !== 'undefined' && App.currentApp) || null;
     if (!slug) return null;
     return {
-      label: 'Resume merges',
-      title: 'Main’s unit suite is failing at this commit. Resume merges on the app anyway; the pause returns if a later merge fails the suite again.',
+      label: PlatformI18n.t('changes:step.resume.label'),
+      title: PlatformI18n.t('changes:step.resume.title'),
       act: { fn: 'resumeMainMerges', args: [slug] },
     };
   },
@@ -15416,7 +15705,7 @@ const AppView = {
   async resumeMainMerges(slug, btn) {
     if (AppView._resumeMainInFlight) return;
     AppView._resumeMainInFlight = true;
-    if (btn) { btn.disabled = true; btn.textContent = 'Resuming…'; }
+    if (btn) { btn.disabled = true; btn.textContent = PlatformI18n.t('changes:step.resume.resuming'); }
     try {
       const resp = await fetch(`/api/apps/${encodeURIComponent(slug)}/main-check/resume`, {
         method: 'POST',
@@ -15424,16 +15713,16 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || `Resume failed (HTTP ${resp.status}).`);
-        if (btn) { btn.disabled = false; btn.textContent = 'Resume merges'; }
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:step.resume.failedHttp', { status: resp.status }));
+        if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:step.resume.label'); }
         return;
       }
-      PlatformUI.toast('Merges resumed. Anything ready merges on the next pass.');
+      PlatformUI.toast(PlatformI18n.t('changes:step.resume.done'));
       AppView.refreshDevData('main-check-resume');
       return true;
     } catch (err) {
-      PlatformUI.toast(`Resume failed: ${err.message}`);
-      if (btn) { btn.disabled = false; btn.textContent = 'Resume merges'; }
+      PlatformUI.toast(PlatformI18n.t('changes:step.resume.failedWith', { error: err.message }));
+      if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:step.resume.label'); }
     } finally {
       AppView._resumeMainInFlight = false;
     }
@@ -15453,34 +15742,36 @@ const AppView = {
       // "nothing left to check" for the second is exactly the misreading this
       // whole feature exists to stop.
       if (total && done === total) {
-        return { headline: 'Live', detail: null, done, total, needsViewer: false, current: null };
+        return { headline: PlatformI18n.t('changes:step.headline.live'), detail: null, done, total, needsViewer: false, current: null };
       }
-      return { headline: 'Checking what this needs', detail: null, done, total, needsViewer: false, current: null };
+      return { headline: PlatformI18n.t('changes:step.headline.checking'), detail: null, done, total, needsViewer: false, current: null };
     }
     // The last step in flight is the merge itself.
     if (current.key === 'github' && current.state === 'active') {
-      return { headline: 'Merging', detail: noteOf(current), done, total, needsViewer: false, current: current.key };
+      return { headline: PlatformI18n.t('changes:step.headline.merging'), detail: noteOf(current), done, total, needsViewer: false, current: current.key };
     }
     // A blocked step is never "Nothing needs you".
     if (current.state === 'blocked' && current.actor === 'auto') {
-      return { headline: 'Blocked', detail: noteOf(current), done, total, needsViewer: false, current: current.key };
+      return { headline: PlatformI18n.t('changes:step.headline.blocked'), detail: noteOf(current), done, total, needsViewer: false, current: current.key };
     }
     // Anything in flight, and every 'auto' step, needs nobody at all.
     if (current.actor === 'auto' || current.state === 'active') {
       return {
-        headline: 'Nothing needs you',
-        detail: noteOf(current) || String(current.label || '').toLowerCase(),
+        headline: PlatformI18n.t('changes:step.headline.nothingNeedsYou'),
+        // A step this page worded itself carries its own line for here. A
+        // step the server sent is the server's English, lower-cased as before.
+        detail: noteOf(current) || current.detailLabel || String(current.label || '').toLowerCase(),
         done, total, needsViewer: false, current: current.key,
       };
     }
     const roles = {
-      author: { them: 'Waiting on the author', you: 'Waiting on you', is: !!v.isAuthor },
-      admin: { them: 'Waiting on an admin', you: 'Waiting on you', is: !!v.isAdmin },
-      group: { them: 'Waiting on the group', you: 'Waiting for your approval', is: !v.hasVoted },
+      author: { them: PlatformI18n.t('changes:step.headline.waitingAuthor'), you: PlatformI18n.t('changes:step.headline.waitingYouAuthor'), is: !!v.isAuthor },
+      admin: { them: PlatformI18n.t('changes:step.headline.waitingAdmin'), you: PlatformI18n.t('changes:step.headline.waitingYouAdmin'), is: !!v.isAdmin },
+      group: { them: PlatformI18n.t('changes:step.headline.waitingGroup'), you: PlatformI18n.t('changes:step.headline.waitingYourApproval'), is: !v.hasVoted },
     };
     const role = roles[current.actor];
     if (!role) {
-      return { headline: 'Waiting', detail: noteOf(current), done, total, needsViewer: false, current: current.key };
+      return { headline: PlatformI18n.t('changes:step.headline.waiting'), detail: noteOf(current), done, total, needsViewer: false, current: current.key };
     }
     return {
       headline: role.is ? role.you : role.them,
@@ -15498,16 +15789,17 @@ const AppView = {
     const bits = [];
     if (pr.source === 'imported') {
       bits.push(pr.imported_pr_author
-        ? `imported from GitHub (${pr.imported_pr_author})`
-        : 'imported from GitHub');
+        ? PlatformI18n.t('changes:card.provenance.importedBy', { author: pr.imported_pr_author })
+        : PlatformI18n.t('changes:card.provenance.imported'));
     }
-    const agent = AppView.externalAgentName(pr.external_agent);
-    if (agent) bits.push(`built with ${agent}`);
-    if (pr.source === 'maintenance') bits.push('platform maintenance');
+    const agent = AppView.externalAgentProduct(pr.external_agent);
+    if (agent) bits.push(PlatformI18n.t('changes:card.provenance.builtWith', { agent }));
+    else if (pr.external_agent) bits.push(PlatformI18n.t('changes:card.provenance.builtWithExternal'));
+    if (pr.source === 'maintenance') bits.push(PlatformI18n.t('changes:card.provenance.maintenance'));
     // The placeholder-title marker: a word, not a chip. The title-heal
     // sweeper removes it on the next refresh once AI naming is back.
-    if (pr.pr_title_fallback && !pr.revert_of_session_id) bits.push('auto-title pending');
-    return bits.join(' · ');
+    if (pr.pr_title_fallback && !pr.revert_of_session_id) bits.push(PlatformI18n.t('changes:card.provenance.autoTitle'));
+    return bits.length ? bits.reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second })) : '';
   },
 
   // #22: on a project that is just the viewer's (`audience` 'solo', from the
@@ -15533,7 +15825,7 @@ const AppView = {
   // everywhere: "Waiting for approval", and on a project that is just you,
   // whose one Yes is yours, "Waiting for your approval".
   _waitingWords(pr) {
-    return AppView._approveSolo(pr) ? 'Waiting for your approval' : 'Waiting for approval';
+    return AppView._approveSolo(pr) ? PlatformI18n.t('changes:card.waiting.yourApproval') : PlatformI18n.t('changes:card.waiting.approval');
   },
 
   // The card's Yes/No pair, and ONLY that pair. voteButtonsHtml stays as it
@@ -15556,8 +15848,8 @@ const AppView = {
     const epoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
       ? parseInt(pr.approval_epoch, 10) : null;
     const rev = epoch === null ? [] : [epoch];
-    const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
-    const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
+    const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'yes');
+    const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'no');
     // #1688: a vote of the viewer's on an EARLIER version of this proposal —
     // still on their row, no longer counted (see the /promoted subquery).
     // The button then asks "Still yes?" instead of "Vote".
@@ -15570,7 +15862,9 @@ const AppView = {
       {
         key: 'yes',
         cls: `gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}`,
-        title: yesT.tip, label: `Yes (${yesT.label})`,
+        title: yesT.tip, label: PlatformI18n.t('changes:vote.button.yes', { tally: yesT.label }),
+        // The count on its own: what draws it never reads it back out of the label.
+        tally: yesT.label,
         act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
         ...prior,
         ...AppView._voteSolo(),
@@ -15580,7 +15874,8 @@ const AppView = {
       {
         key: 'no',
         cls: `gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}`,
-        title: noT.tip, label: `No (${noT.label})`,
+        title: noT.tip, label: PlatformI18n.t('changes:vote.button.no', { tally: noT.label }),
+        tally: noT.label,
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
       },
     ];
@@ -15604,7 +15899,7 @@ const AppView = {
         || (!!ctx.isAppAdmin && !pr.requires_explicit_approval);
       if (canForceMerge && pr.status === 'promoted') {
         items.push({
-          label: 'Admin merge',
+          label: PlatformI18n.t('changes:proposal.menu.adminMerge'),
           icon: 'merge',
           title: AppView._adminMergeTitle(pr),
           danger: true,
@@ -15616,23 +15911,24 @@ const AppView = {
     // proposer — and never for an imported PR, which has no in-app session.
     if (st.mine && !st.imported) {
       items.push({
-        label: 'Open session',
+        label: PlatformI18n.t('changes:proposal.menu.openSession'),
+        sessionDoor: true,
         icon: 'session',
-        title: 'Open the agent session behind this change',
+        title: PlatformI18n.t('changes:proposal.menu.openSessionTitle'),
         act: () => AppView.openProposalSession(pr.id),
       });
     }
     if (st.mine && !ro && !isMerged && !isMerging && pr.status === 'promoted') {
       items.push({
-        label: 'Move back to Underway',
+        label: PlatformI18n.t('changes:proposal.menu.moveBack'),
         icon: 'unpromote',
-        title: 'Take this proposal out of review to keep working on it (clears its votes, keeps the PR open)',
+        title: PlatformI18n.t('changes:proposal.menu.moveBackTitle'),
         act: () => AppView.unpromoteProposal(pr.id),
       });
       items.push({
-        label: 'Withdraw',
+        label: PlatformI18n.t('changes:proposal.menu.withdraw'),
         icon: 'withdraw',
-        title: 'Withdraw this proposal (closes the PR, removes it from the vote panel)',
+        title: PlatformI18n.t('changes:proposal.menu.withdrawTitle'),
         danger: true,
         act: () => AppView.withdrawProposal(pr.id),
       });
@@ -15643,9 +15939,9 @@ const AppView = {
       // to undo (the server refuses it too): undoing the carrying change is.
       if (!pr.revert_of_session_id && !pr.revert_session_id && !pr.included_in_session_id) {
         items.push({
-          label: 'Undo',
+          label: PlatformI18n.t('changes:proposal.menu.undo'),
           icon: 'undo',
-          title: 'Open a revert PR for this merge. It still needs a merge vote to land.',
+          title: PlatformI18n.t('changes:proposal.menu.undoTitle'),
           danger: true,
           act: () => AppView.undoPr(pr.id),
         });
@@ -15664,15 +15960,17 @@ const AppView = {
       const mineKudos = !!entry.my_kudos;
       const direct = !!entry.my_kudos_direct;
       const reason = isSelf
-        ? 'You can’t give kudos to your own change'
-        : (mineKudos && !direct ? 'Credited via a bounty award, so it can’t be retracted' : '');
+        ? PlatformI18n.t('changes:proposal.menu.kudosOwnChange')
+        : (mineKudos && !direct ? PlatformI18n.t('changes:proposal.menu.kudosViaBounty') : '');
       const count = entry.count || 0;
       items.push({
-        label: (mineKudos && direct ? 'Retract kudos' : 'Give kudos') + (count ? ` (${count})` : ''),
+        label: mineKudos && direct
+          ? (count ? PlatformI18n.t('changes:proposal.menu.retractKudosCount', { count }) : PlatformI18n.t('changes:proposal.menu.retractKudos'))
+          : (count ? PlatformI18n.t('changes:proposal.menu.giveKudosCount', { count }) : PlatformI18n.t('changes:proposal.menu.giveKudos')),
         icon: 'kudos',
         title: reason || (mineKudos && direct
-          ? 'You gave kudos to this change. This retracts it'
-          : 'Thank the author of this change'),
+          ? PlatformI18n.t('changes:proposal.menu.retractKudosTitle')
+          : PlatformI18n.t('changes:proposal.menu.giveKudosTitle')),
         disabled: !!reason,
         act: reason ? null : () => {
           const live = Kudos._ensureCache(pr.id);
@@ -15690,7 +15988,7 @@ const AppView = {
     if (AppView._showExplorePill(pr) && !ro && !st.exploreOnFace) {
       items.push({
         // B8: a coding agent, beside asking Homeroom bot.
-        label: 'Explore in a coding agent',
+        label: PlatformI18n.t('changes:proposal.menu.explore'),
         icon: 'explore',
         title: AppView.EXPLORE_CHAT_TITLE,
         act: () => AppView.exploreProposalInDevChat(pr.id, null),
@@ -15698,20 +15996,22 @@ const AppView = {
     }
     if (!ro && !pr.staging_url && pr.staging_error) {
       items.push({
-        label: 'Retry preview',
+        label: PlatformI18n.t('changes:proposal.menu.retryPreview'),
+        pageShortcut: true,
         icon: 'retry',
-        title: "Try building this proposal's staging preview again",
+        title: PlatformI18n.t('changes:proposal.menu.retryPreviewTitle'),
         act: () => AppView.swapToStagingForSession(pr.id, ''),
       });
     }
     const hasShots = !!pr.shots;
     if (hasShots || AppView.visualsTilesHtml(pr.visuals)) {
       items.push({
-        label: hasShots ? 'Before & after' : 'Before/after screenshots',
+        label: hasShots ? PlatformI18n.t('changes:proposal.menu.beforeAfter') : PlatformI18n.t('changes:proposal.menu.screenshots'),
+        pageShortcut: true,
         icon: 'visuals',
         title: hasShots
-          ? 'Open the declared changes and their before & after shots'
-          : 'Open this proposal and expand its before/after captures',
+          ? PlatformI18n.t('changes:proposal.menu.beforeAfterTitle')
+          : PlatformI18n.t('changes:proposal.menu.screenshotsTitle'),
         act: () => { AppView._visualsOpen.add(pr.id); AppView.openTopic('proposal', pr.id); },
       });
     }
@@ -15719,16 +16019,17 @@ const AppView = {
       items.push(...AppView._attrMenuItems('proposal', pr.id, pr));
     }
     items.push({
-      label: 'Share to…',
+      label: PlatformI18n.t('changes:proposal.menu.share'),
       icon: 'share',
-      title: 'Share this proposal card to a chat or a discussion',
+      title: PlatformI18n.t('changes:proposal.menu.shareTitle'),
       act: () => AppView._shareCardToMessages({
         type: 'proposal', sessionId: pr.id, title: pr.session_title || pr.pr_title || null,
       }),
     });
     if (pr.pr_url) {
       items.push({
-        label: 'View PR on GitHub',
+        label: PlatformI18n.t('changes:proposal.menu.viewPr'),
+        githubPr: true,
         icon: 'github',
         title: pr.pr_url,
         act: () => window.open(pr.pr_url, '_blank', 'noopener'),
@@ -15750,8 +16051,13 @@ const AppView = {
     const imported = pr.source === 'imported';
 
     const meta = [];
-    if (pr.pr_url) meta.push({ href: pr.pr_url, parts: ['View PR on GitHub'] });
-    meta.push({ parts: [`${imported ? 'imported by' : 'proposed by'} `, { b: pr.username || '' }] });
+    if (pr.pr_url) meta.push({ href: pr.pr_url, parts: [PlatformI18n.t('changes:proposal.details.viewPr')] });
+    meta.push({
+      parts: AppView._boldLeadText(
+        imported ? 'changes:proposal.details.importedBy' : 'changes:proposal.details.proposedBy',
+        { username: pr.username || '' },
+      ).map((part) => (typeof part === 'string' ? part : { b: part.b })),
+    });
     if (pr.created_at) meta.push({ parts: [relStamp(pr.created_at).text] });
 
     const notes = [];
@@ -15772,12 +16078,12 @@ const AppView = {
     if (!pr.staging_url && pr.staging_building) {
       notes.push({
         key: 'preview', tone: 'muted',
-        parts: ["A staging preview is being built for this proposal. It usually takes a few minutes, and a Preview button appears as soon as it's ready. Automated checks run against that preview, so they'll still be pending until then."],
+        parts: [PlatformI18n.t('changes:proposal.details.previewBuilding')],
       });
     } else if (!pr.staging_url && pr.staging_error) {
       notes.push({
         key: 'preview', tone: 'warn',
-        parts: [`The staging preview couldn't be built, so there's nothing to preview and the automated checks can't run: ${String(pr.staging_error).slice(0, 300)}`],
+        parts: [PlatformI18n.t('changes:proposal.details.previewFailed', { error: String(pr.staging_error).slice(0, 300) })],
       });
     }
 
@@ -15822,13 +16128,10 @@ const AppView = {
       const eWaitsOnMember = AppView._awaitingOtherMember(pr);
       const eBody = eYes >= eReq
         ? (eWaitsOnMember
-          ? `It has the Yes votes it needs (${eYes} of ${eReq}), but none of them is from another member yet.`
-          : `It has the Yes votes it needs (${eYes} of ${eReq}) and will merge as soon as the usual checks and conflict gates clear.`)
-        : `It needs ${eReq} real Yes vote${eReq === 1 ? '' : 's'} and has ${eYes} so far.`;
-      const eLead = pr.needs_other_member_yes
-        ? AppView._explicitCopy(pr.explicit_approval_reason).sentence
-        : `It changes ${AppView._explicitCopy(pr.explicit_approval_reason).phrase || 'a protected setting'}.`;
-      explicitNote = `${eLead} It won't merge on a timer. ${eBody} It can still be voted down, and it still closes on the usual schedule if nobody engages.`;
+          ? PlatformI18n.t('changes:explicit.note.hasVotesNoMember', { yes: eYes, required: eReq })
+          : PlatformI18n.t('changes:explicit.note.hasVotes', { yes: eYes, required: eReq }))
+        : PlatformI18n.t('changes:explicit.note.needsVotes', { count: eReq, yes: eYes });
+      explicitNote = PlatformI18n.t('changes:explicit.note.full', { reason: AppView._explicitLead(pr), votes: eBody });
     }
 
     // "How voting works" explainer affordances — only on live proposals (the
@@ -15849,7 +16152,7 @@ const AppView = {
       helpHint: showHelp,
       explicitNote,
       lockedNote: (showHelp && ctx.locked && pr.status !== 'merged')
-        ? 'App is locked, so it also needs at least one admin yes before it merges.'
+        ? PlatformI18n.t('changes:proposal.details.lockedNote')
         : null,
     };
     details.ledger = AppView._topicLedgerRows(pr, details);
@@ -15863,13 +16166,25 @@ const AppView = {
   // so nothing about what a state means moved; only where it is said. Each
   // row's `key` is its data-note. (The provenance notes were in this list
   // until #2588 took them off the ledger; the hero line says them instead.)
-  TOPIC_LEDGER_LABELS: {
-    conflict: 'Conflicts with main',
-    mergeability: 'Conflicts with main',
-    checks: 'Checks',
-    env: 'Platform variables',
-    console: 'Console errors',
-    preview: 'Preview',
+  TOPIC_LEDGER_LABEL_IDS: {
+    conflict: 'changes:ledger.label.conflict',
+    mergeability: 'changes:ledger.label.conflict',
+    checks: 'changes:ledger.label.checks',
+    env: 'changes:ledger.label.env',
+    console: 'changes:ledger.label.console',
+    preview: 'changes:ledger.label.preview',
+  },
+  // The same table as words, read when a row is drawn.
+  get TOPIC_LEDGER_LABELS() {
+    return Object.fromEntries(Object.entries(AppView.TOPIC_LEDGER_LABEL_IDS)
+      .map(([key, id]) => [key, PlatformI18n.t(id)]));
+  },
+  // The failing-checks sentence, by who has to fix them: `only` when the
+  // change has one check, `some` (a plural pair on how many failed) otherwise.
+  LEDGER_FAILING_IDS: {
+    you: { only: 'changes:ledger.checks.failingOnlyYou', some: 'changes:ledger.checks.failingYou' },
+    named: { only: 'changes:ledger.checks.failingOnlyNamed', some: 'changes:ledger.checks.failingNamed' },
+    author: { only: 'changes:ledger.checks.failingOnlyAuthor', some: 'changes:ledger.checks.failingAuthor' },
   },
   _topicLedgerRows(pr, d) {
     const rows = [];
@@ -15904,25 +16219,28 @@ const AppView = {
       // rather than listing them (see _checksVerdictView).
       const total = v.failures.length + v.passCount;
       const nFail = v.failures.length;
-      const checks = (n) => `${n} check${n === 1 ? '' : 's'}`;
       // Who has to act on a red run: the author, named — or "You", when
       // the author is the reader.
       const mine = !!(typeof App !== 'undefined' && App.user && pr && pr.user_id === App.user.id);
-      const author = mine ? 'You' : ((pr && pr.username) || 'The author');
+      const failingIds = AppView.LEDGER_FAILING_IDS[mine ? 'you' : ((pr && pr.username) ? 'named' : 'author')];
       const checkedAt = pr && pr.checks_checked_at ? relTime(pr.checks_checked_at) : null;
       const row = {
-        key: 'checks', tone: v.failing ? 'bad' : 'ok', label: 'Checks',
+        key: 'checks', tone: v.failing ? 'bad' : 'ok', label: PlatformI18n.t('changes:ledger.label.checks'),
         // Under the label: when the run happened. The counts moved into the
         // sentence, and the run's timings (#2170) went with the caption they
         // narrated: a reviewer reads the verdict here, not the cost.
-        sub: checkedAt ? `Last run ${checkedAt}` : null,
+        sub: checkedAt ? PlatformI18n.t('changes:ledger.checks.lastRun', { when: checkedAt }) : null,
         // The sentence leads with its state, in the row's tone, so the
         // page scans: Failing / Passing, then what that means and who acts.
         text: v.failing
-          ? [{ b: 'Failing.', tone: 'bad' }, ` ${nFail} of ${checks(total)} failed on this build. ${author} must fix ${nFail === 1 ? 'it' : 'them'} before this proposal can land.`]
+          ? (total === 1
+            ? AppView._boldLeadText(failingIds.only, { author: pr && pr.username }, 'bad')
+            : AppView._boldLeadText(failingIds.some, { count: nFail, total, author: pr && pr.username }, 'bad'))
           : (nFail
-            ? [{ b: 'Passing.', tone: 'ok' }, ` Every merge-blocking check passed on this build. ${checks(nFail)} that only advise did not.`]
-            : [{ b: 'Passing.', tone: 'ok' }, total === 1 ? ' The one check passed on this build.' : ` All ${checks(total)} passed on this build.`]),
+            ? AppView._boldLeadText('changes:ledger.checks.passingAdvisory', { count: nFail }, 'ok')
+            : (total === 1
+              ? AppView._boldLeadText('changes:ledger.checks.passingOne', {}, 'ok')
+              : AppView._boldLeadText('changes:ledger.checks.passingAll', { count: total }, 'ok'))),
         // The advisory and superseded-base notes carry facts the sentence
         // cannot. "Last checked" is the sub now, and "pushing a fix re-runs
         // the checks" is what the sentence already says.
@@ -15952,14 +16270,16 @@ const AppView = {
       // is an ENFORCED merge gate; a soft reason here said the same thing
       // twice, once as a step that is not one.
       if (r.key === 'shots' && r.soft) continue;
-      const [label, count] = String(r.label || '').split(' · ');
-      const n = count ? parseInt(count, 10) : NaN;
+      // A reason whose label carries a second half hands over the halves and
+      // the number (`name`, `sub`, `count`); nothing splits the worded label.
+      const label = r.name || r.label || '';
+      const n = Number.isFinite(r.count) ? r.count : NaN;
       rows.push({
         key: r.key, tone: r.soft ? 'warn' : 'bad',
         label: label || r.key,
         sub: r.key === 'behind' && Number.isFinite(n)
-          ? `${n} commit${n === 1 ? '' : 's'}`
-          : (count || null),
+          ? PlatformI18n.t('changes:ledger.behind.commits', { count: n })
+          : (r.sub || null),
         count: Number.isFinite(n) ? n : null,
         text: [r.detail], foot: [],
       });
@@ -15976,8 +16296,8 @@ const AppView = {
       // has not (topic-head.tsx's Roster reads `approved`). Both numbers
       // come from the same fields the pill uses, so they cannot disagree.
       rows.push({
-        key: 'votes', tone: yes >= req ? 'ok' : 'vote', label: 'Votes',
-        sub: `${yes} of ${req} needed`,
+        key: 'votes', tone: yes >= req ? 'ok' : 'vote', label: PlatformI18n.t('changes:ledger.label.votes'),
+        sub: PlatformI18n.t('changes:ledger.votes.needed', { yes, required: req }),
         text: [], roster: { ...d.roster, approved: yes >= req }, foot: [],
         warnFoot: [d.explicitNote, d.lockedNote].filter(Boolean).map((n) => [n]),
         // "How voting works" rides at the right end of this row's line — the
@@ -15989,7 +16309,7 @@ const AppView = {
     for (const n of d.notes || []) {
       rows.push({
         key: n.key, tone: n.tone === 'warn' ? 'warn' : 'mute',
-        label: labels[n.key] || 'Note', text: n.parts, foot: [],
+        label: labels[n.key] || PlatformI18n.t('changes:ledger.label.note'), text: n.parts, foot: [],
       });
     }
     const path = AppView._topicLedgerPath(pr, rows);
@@ -16044,7 +16364,6 @@ const AppView = {
         ? pr.conflict_files
         : (Array.isArray(fresh.files) ? fresh.files : []))
       : [];
-    const creator = (pr && pr.username) || 'its author';
 
     // ── Step 1: one row for "get this branch onto current main" ─────────
     const sync = iConflict >= 0 ? rows[iConflict] : behindRow;
@@ -16063,31 +16382,49 @@ const AppView = {
     const laneWorking = !!remedy && remedy.tone === 'running';
     const served = (pr && pr.integration && Array.isArray(pr.integration.blockReasons))
       ? pr.integration.blockReasons : [];
-    const moved = behindN > 0
-      ? `Main has moved ${behindN} commit${behindN === 1 ? '' : 's'} ahead`
-      : 'Main has moved ahead';
-    const bothSides = conflictFiles.length
-      ? `${conflictFiles.length} file${conflictFiles.length === 1 ? '' : 's'} changed on both sides`
-      : 'the two changes touch the same lines';
-    sync.label = 'Sync with main';
+    // The row's sentence is one whole message for each combination of what
+    // is known: how far main moved (a count, or not known) and what overlaps
+    // (a count of files, or files not known). Every count picks its own
+    // plural form (SYNC_TEXT_IDS says how).
+    const movedKey = behindN > 0 ? 'commits' : 'ahead';
+    const filesN = conflictFiles.length;
+    const syncText = (state, tone) => {
+      if (state === 'catchingUp') {
+        return AppView._boldLeadText(AppView.SYNC_TEXT_IDS.catchingUp[movedKey], behindN > 0 ? { count: behindN } : {}, tone);
+      }
+      const ids = AppView.SYNC_TEXT_IDS[state];
+      if (behindN > 0 && filesN) {
+        return AppView._boldLeadText(ids.commitsAndFiles, {
+          moved: PlatformI18n.t('changes:ledger.sync.fact.moved', { count: behindN }),
+          overlap: PlatformI18n.t('changes:ledger.sync.fact.overlap', { count: filesN }),
+        }, tone);
+      }
+      if (behindN > 0) return AppView._boldLeadText(ids.commitsLines, { count: behindN }, tone);
+      return filesN
+        ? AppView._boldLeadText(ids.aheadFiles, { count: filesN }, tone)
+        : AppView._boldLeadText(ids.aheadLines, {}, tone);
+    };
+    sync.label = PlatformI18n.t('changes:ledger.sync.label');
     sync.tone = manual ? 'bad' : 'warn';
     // Who acts sits under the label only when it is a PERSON. An automatic
     // step has nobody to name, and "automatic, now" under every one of them
     // was the noise this ledger lost; when the sync waits on the vote, the
     // sentence says so instead.
-    sync.sub = manual ? `${creator}, now` : null;
+    sync.sub = manual
+      ? ((pr && pr.username) ? PlatformI18n.t('changes:ledger.sync.subNamed', { username: pr.username }) : PlatformI18n.t('changes:ledger.sync.subAuthor'))
+      : null;
     const afterVote = !!remedy && !laneWorking && served.includes('awaiting_approval');
     // Each sentence leads with its state, in the row's tone — the one word
     // a reader scanning the ledger is looking for.
     sync.text = manual
-      ? [{ b: 'Blocked.', tone: 'bad' }, ` ${moved}, and ${bothSides}, so the automatic sync cannot finish this one.`]
+      ? syncText('blocked', 'bad')
       : remedy
-        ? [{ b: 'Syncing.', tone: 'warn' }, laneWorking
-          ? ` ${moved}, and ${bothSides}. Homeroom is resolving it now, then it tries the merge again.`
+        ? (laneWorking
+          ? syncText('resolvingNow', 'warn')
           : (afterVote
-            ? ` ${moved}, and ${bothSides}. Homeroom resolves it once the group approves, then tries the merge again.`
-            : ` ${moved}, and ${bothSides}. Homeroom resolves it automatically, then tries the merge again.`)]
-        : [{ b: 'Syncing.', tone: 'warn' }, ` ${moved}; Homeroom is bringing this proposal up to date automatically.`];
+            ? syncText('afterVote', 'warn')
+            : syncText('automatic', 'warn')))
+        : syncText('catchingUp', 'warn');
     // The remedy sentence is the only foot line worth keeping from the box:
     // it names the person and the exact action — or says that nobody need
     // act, and how the author can hurry it. The rest restated the row's own
@@ -16131,7 +16468,7 @@ const AppView = {
       const stale = iConflict >= 0 || !!(checks.attrs && checks.attrs['data-checks-base']);
       if (stale && checks.tone === 'bad') {
         checks.tone = 'mute';
-        checks.text = [{ b: 'Waiting.', tone: 'mute' }, ' They run again by themselves once the branch is up to date. Nothing to do here.'];
+        checks.text = AppView._boldLeadText('changes:ledger.checks.waiting', {}, 'mute');
         const n = checks.notes || {};
         checks.foot = [n.advisory, n.base, n.checked].filter(Boolean).map((x) => [x]);
       }
@@ -16178,6 +16515,56 @@ const AppView = {
   // emphasis is the thing JSX is better at than a string, and it is the part
   // of this popover a reader is most likely to edit.
 
+  // What blocks a merge, by the sentence that says it in the voting help:
+  // with the approvals in hand, with the Yes votes in hand, or as a note
+  // after the rest. Each is a whole message.
+  VOTING_BLOCKER_IDS: {
+    conflictFailed: {
+      approvals: 'changes:votingHelp.approvalsBlocked.conflictFailed',
+      enough: 'changes:votingHelp.enoughBlocked.conflictFailed',
+      note: 'changes:votingHelp.note.conflictFailed',
+    },
+    resolving: {
+      approvals: 'changes:votingHelp.approvalsBlocked.resolving',
+      enough: 'changes:votingHelp.enoughBlocked.resolving',
+      note: 'changes:votingHelp.note.resolving',
+    },
+    conflict: {
+      approvals: 'changes:votingHelp.approvalsBlocked.conflict',
+      enough: 'changes:votingHelp.enoughBlocked.conflict',
+      note: 'changes:votingHelp.note.conflict',
+    },
+    checksFailing: {
+      approvals: 'changes:votingHelp.approvalsBlocked.checksFailing',
+      enough: 'changes:votingHelp.enoughBlocked.checksFailing',
+      note: 'changes:votingHelp.note.checksFailing',
+    },
+    checksPending: {
+      approvals: 'changes:votingHelp.approvalsBlocked.checksPending',
+      enough: 'changes:votingHelp.enoughBlocked.checksPending',
+      note: 'changes:votingHelp.note.checksPending',
+    },
+    checksError: {
+      approvals: 'changes:votingHelp.approvalsBlocked.checksError',
+      enough: 'changes:votingHelp.enoughBlocked.checksError',
+      note: 'changes:votingHelp.note.checksError',
+    },
+    behind: {
+      approvals: 'changes:votingHelp.approvalsBlocked.behind',
+      enough: 'changes:votingHelp.enoughBlocked.behind',
+      note: 'changes:votingHelp.note.behind',
+    },
+    locked: {
+      approvals: 'changes:votingHelp.approvalsBlocked.locked',
+      enough: 'changes:votingHelp.enoughBlocked.locked',
+      note: 'changes:votingHelp.note.locked',
+    },
+    noOtherMember: {
+      approvals: 'changes:votingHelp.approvalsBlocked.noOtherMember',
+      enough: 'changes:votingHelp.enoughBlocked.noOtherMember',
+    },
+  },
+
   // The live "This proposal, right now" line. Reads the serialized gate
   // fields the /promoted endpoint attaches (votes_required,
   // merge_window_ends_at, reject_window_ends_at, rejection_armed,
@@ -16197,41 +16584,44 @@ const AppView = {
     const required = (Number.isFinite(snap) && snap > 0)
       ? snap : (parseInt(ctx.majority) || 1);
     const active = parseInt(ctx.activeUsers) || Math.max(required, yes + no, 1);
-    const tally = `Currently ${yes} Yes, ${no} No.`;
+    const tally = PlatformI18n.t('changes:votingHelp.tally', { yes, no });
+    // The paragraph is whole sentences, each a message, joined by one more.
+    const say = (sentences) => sentences.filter(Boolean)
+      .reduce((first, second) => PlatformI18n.t('changes:votingHelp.sentences', { first, second }));
     const reached = yes >= required;
 
     // Terminal / in-flight lifecycle states win first.
-    if (pr.status === 'merged') return 'This proposal has already merged into the app.';
-    if (pr.status === 'merging') return 'This passed and is being merged into the app right now.';
+    if (pr.status === 'merged') return PlatformI18n.t('changes:votingHelp.merged');
+    if (pr.status === 'merging') return PlatformI18n.t('changes:votingHelp.merging');
 
-    // A single merge-blocking clause (lowercase, no trailing period) when
-    // one applies — folded into the "reached" sentence, or appended as a
-    // note to the others so the explainer never implies a countdown will
+    // The one thing blocking the merge, when something is (a key of
+    // VOTING_BLOCKER_IDS) — said inside the "reached" sentence, or as a
+    // note after the others so the explainer never implies a countdown will
     // merge straight past a blocked gate. Ordered by checkAndMerge's own
     // gate precedence (conflict → checks → behind → lock).
     let blocker = '';
     const mcs = pr.merge_conflict_state;
     const check = pr.check_state;
     if (mcs === 'failed') {
-      blocker = 'automatic conflict resolution failed, so the proposer must resolve it before it can merge';
+      blocker = 'conflictFailed';
     } else if (mcs === 'resolving' || pr.resolving === true) {
-      blocker = 'conflicts with the main app are being reconciled automatically before it can merge';
+      blocker = 'resolving';
     // #1442 — above the checks clause on purpose. A proposal that conflicts
     // with main cannot merge whatever its checks say, and the whole point of
     // the issue is that passing checks were the loudest thing on the screen
     // while this was true and invisible.
     } else if (AppView._freshnessOf(pr).mergeability === 'conflict') {
-      blocker = 'it conflicts with the main app, so its creator has to sync with main and resolve them before it can merge';
+      blocker = 'conflict';
     } else if (check === 'failing') {
-      blocker = 'its automated checks are failing, so it can’t merge until they pass';
+      blocker = 'checksFailing';
     } else if (check === 'pending') {
-      blocker = 'its automated checks are still running, so it can’t merge until they finish';
+      blocker = 'checksPending';
     } else if (check === 'error') {
-      blocker = 'its automated checks couldn’t run, so it can’t merge until they pass';
+      blocker = 'checksError';
     } else if ((AppView._freshnessOf(pr).behindBy || 0) > 0 || mcs === 'behind' || mcs === 'conflict') {
-      blocker = 'it’s behind the main app and will sync automatically before merging';
+      blocker = 'behind';
     } else if (reached && ctx.locked) {
-      blocker = 'the app is locked, so it also needs an admin’s Yes';
+      blocker = 'locked';
     }
 
     // #788: this proposal changes a protected setting (who runs the app,
@@ -16243,14 +16633,12 @@ const AppView = {
     // server sends no merge_window_ends_at for a flagged row.
     const noTimer = !!pr.requires_explicit_approval;
     const noTimerNote = noTimer
-      ? ` ${pr.needs_other_member_yes
-        ? AppView._explicitCopy(pr.explicit_approval_reason).sentence
-        : `It changes ${AppView._explicitCopy(pr.explicit_approval_reason).phrase || 'a protected setting'}.`} It won’t merge on a timer: it needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
-      : '';
+      ? [AppView._explicitLead(pr), PlatformI18n.t('changes:votingHelp.noTimer', { count: required })]
+      : [];
     // The member floor holds a proposal whose votes are in: say so, rather
     // than "queued to merge shortly".
     if (noTimer && reached && AppView._awaitingOtherMember(pr) && !blocker) {
-      blocker = 'none of its Yes votes is from another member yet';
+      blocker = 'noOtherMember';
     }
 
     // #646: "at least N approvals" mode — clock-free, so none of the
@@ -16258,23 +16646,23 @@ const AppView = {
     // rule, the current progress, and any merge blocker.
     if (pr.approvals_required != null) {
       const n = parseInt(pr.approvals_required) || 1;
-      const who = pr.approval_policy === 'invited'
-        ? 'its invited approvers' : 'any user';
       let s;
       if (reached) {
         s = blocker
-          ? `It has the approvals it needs (${yes} of ${n}), but it can’t merge yet: ${blocker}.`
-          : `It has the approvals it needs (${yes} of ${n}). Queued to merge shortly.`;
+          ? PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].approvals, { yes, required: n })
+          : PlatformI18n.t('changes:votingHelp.approvalsQueued', { yes, required: n });
       } else {
-        s = `This app requires at least ${n} approval${n === 1 ? '' : 's'} from ${who}. Currently ${yes} of ${n}.`;
-        if (blocker) s += ` Note: ${blocker}.`;
+        s = pr.approval_policy === 'invited'
+          ? PlatformI18n.t('changes:votingHelp.requiresInvited', { count: n, yes })
+          : PlatformI18n.t('changes:votingHelp.requiresAnyone', { count: n, yes });
+        if (blocker) s = say([s, PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].note)]);
       }
       if (pr.approval_policy === 'invited') {
-        s += ' Everyone can still vote, but only approvers’ votes count toward the target.';
+        s = say([s, PlatformI18n.t('changes:votingHelp.approversOnly')]);
       }
       // In at-least-N mode the clocks were already off, so the note just
       // explains WHY the chip is showing — it isn't a behaviour change.
-      return s + noTimerNote;
+      return say([s, ...noTimerNote]);
     }
 
     // Countdown geometry, mirroring voteCountPill.
@@ -16292,49 +16680,47 @@ const AppView = {
       // No visibility window to sit out — it merges as soon as the
       // normal threshold is met, subject to the usual blockers.
       sentence = blocker
-        ? `It has enough Yes votes (${yes} of ${required}), but it can’t merge yet: ${blocker}.`
-        : `It has the votes it needs (${yes} of ${required}). Queued to merge shortly.`;
+        ? PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].enough, { yes, required })
+        : PlatformI18n.t('changes:votingHelp.votesQueued', { yes, required });
       foldedBlocker = true;
     } else if (noTimer && pr.rejection_armed && inReject) {
       // Rejection is deliberately untouched by the no-timer modifier.
       const cd = AppView._fmtCountdown(rejectEnds - now);
-      sentence = `More No than Yes, and not enough support yet. It will be set aside in ${cd} unless support arrives. ${tally}`;
+      sentence = say([PlatformI18n.t('changes:votingHelp.setAside', { time: cd }), tally]);
     } else if (noTimer) {
-      sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
+      sentence = say([PlatformI18n.t('changes:votingHelp.needs', { required, active }), tally]);
     } else if (!contested && inMergeWindow && (reached || lazyLead)) {
       const cd = AppView._fmtCountdown(mergeEnds - now);
       sentence = reached
-        ? `There are enough Yes votes (${yes} of ${required}). It goes live in ${cd} unless someone objects.`
-        : `It has support (${yes} of ${required} needed) and nobody has objected. It goes live in ${cd} unless the vote changes. Quiet is taken as a nod, so speak up if something bothers you.`;
+        ? PlatformI18n.t('changes:votingHelp.enoughGoesLive', { yes, required, time: cd })
+        : PlatformI18n.t('changes:votingHelp.supportGoesLive', { yes, required, time: cd });
     } else if (pr.rejection_armed && inReject) {
       const cd = AppView._fmtCountdown(rejectEnds - now);
-      sentence = `More No than Yes, and not enough support yet. It will be set aside in ${cd} unless support arrives. ${tally}`;
+      sentence = say([PlatformI18n.t('changes:votingHelp.setAside', { time: cd }), tally]);
     } else if (contested) {
-      sentence = `It needs a conversation. Enough people have objected that the timer is off, so it now needs a clear majority of Yes votes to pass. ${tally}`;
+      sentence = say([PlatformI18n.t('changes:votingHelp.contested'), tally]);
     } else if (reached) {
       sentence = blocker
-        ? `It has enough Yes votes (${yes} of ${required}), but it can’t merge yet: ${blocker}.`
-        : `It has the votes it needs (${yes} of ${required}) and green checks. Queued to merge shortly.`;
+        ? PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].enough, { yes, required })
+        : PlatformI18n.t('changes:votingHelp.votesGreenQueued', { yes, required });
       foldedBlocker = true;
     } else {
-      sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
+      sentence = say([PlatformI18n.t('changes:votingHelp.needs', { required, active }), tally]);
     }
-    if (blocker && !foldedBlocker) sentence += ` Note: ${blocker}.`;
+    if (blocker && !foldedBlocker) sentence = say([sentence, PlatformI18n.t(AppView.VOTING_BLOCKER_IDS[blocker].note)]);
     // #695: invited-approver apps on the default clock — say who counts,
     // and how many recorded votes are merely advisory.
     if (pr.approval_policy === 'invited') {
-      sentence += ' Everyone can still vote, but only approvers’ votes count toward the target.';
+      sentence = say([sentence, PlatformI18n.t('changes:votingHelp.approversOnly')]);
       const advisory = pr.qualified_yes_count != null
         ? Math.max(0, (parseInt(pr.yes_count) || 0) - yes)
           + Math.max(0, (parseInt(pr.no_count) || 0) - no)
         : 0;
       if (advisory > 0) {
-        sentence += advisory === 1
-          ? ' 1 advisory vote from a non-approver is recorded but doesn’t count.'
-          : ` ${advisory} advisory votes from non-approvers are recorded but don’t count.`;
+        sentence = say([sentence, PlatformI18n.t('changes:votingHelp.advisory', { count: advisory })]);
       }
     }
-    return sentence + noTimerNote;
+    return say([sentence, ...noTimerNote]);
   },
 
   _closeVotingHelpPopover() {
@@ -16358,7 +16744,7 @@ const AppView = {
     pop.id = 'voting-help-popover';
     pop.className = 'voting-help-popover';
     pop.setAttribute('role', 'dialog');
-    pop.setAttribute('aria-label', 'How voting and merges work');
+    pop.setAttribute('aria-label', PlatformI18n.t('changes:votingHelp.dialogLabel'));
     document.body.appendChild(pop);
     // The BODY is features/dev-board/voting-help.tsx's — the head, the live
     // line and the rules — mounted as a portal where this used to be one
@@ -16462,8 +16848,53 @@ const AppView = {
   //
   // Returns the row's `parts` (NoteRow text runs) and, for the pill detail,
   // the same sentence as plain text.
+  // A message with <0></0>, <1></1> … around the words to embolden, as the
+  // parts a ledger line is drawn from: strings and `{ b }`. Parameters are
+  // filled in after the split, so a value can never be read as a tag.
+  _boldParts(id, values) {
+    const v = values || {};
+    const fill = (text) => text.replace(/{{\s*(\w+)\s*}}/g, (_all, name) => (v[name] == null ? '' : String(v[name])));
+    const marked = PlatformI18n.t(id, {
+      ...(v.count != null ? { count: v.count } : {}),
+      interpolation: { prefix: '[[unused:', suffix: ']]' },
+    });
+    const parts = [];
+    let last = 0;
+    for (const m of marked.matchAll(/<(\d+)>([\s\S]*?)<\/\1>/g)) {
+      if (m.index > last) parts.push(fill(marked.slice(last, m.index)));
+      parts.push({ b: fill(m[2]) });
+      last = m.index + m[0].length;
+    }
+    if (last < marked.length) parts.push(fill(marked.slice(last)));
+    return parts;
+  },
+
+  // `changes:remedy.leadThenRest` ("{{lead}} {{rest}}") as a list of parts:
+  // the lead sentence and the rest's own parts, each where the message puts
+  // its parameter, with the message's own text between and around them.
+  // Neighbouring plain text from the message and the lead is one string, as
+  // a ledger line's parts have always been; the rest's parts stay as given.
+  _joinLeadAndRest(lead, rest) {
+    const joiner = PlatformI18n.t('changes:remedy.leadThenRest', {
+      interpolation: { prefix: '[[unused:', suffix: ']]' },
+    });
+    const parts = [];
+    let text = '';
+    const flush = () => { if (text) { parts.push(text); text = ''; } };
+    for (const token of joiner.split(/({{\s*(?:lead|rest)\s*}})/)) {
+      const slot = /^{{\s*(lead|rest)\s*}}$/.exec(token);
+      if (!slot) text += token;
+      else if (slot[1] === 'lead') text += lead;
+      else { flush(); parts.push(...rest); }
+    }
+    flush();
+    return parts;
+  },
+
   _conflictRemedy(pr, mode) {
-    const creator = pr.username || 'the proposal’s creator';
+    // A sentence that names the author, or its own wording for an author
+    // whose name is not known.
+    const byCreator = (named, unnamed) => AppView._boldParts(pr.username ? named : unnamed, { creator: pr.username || '' });
     const home = AppView._headHome(pr);
     // The conflict lane's own verdict on this head, when it has one. Who
     // resolves a PREDICTED conflict is the lane's decision, not the card's:
@@ -16471,7 +16902,6 @@ const AppView = {
     // passes) unless the lane has recorded that it tried and could not.
     const served = (pr.integration && Array.isArray(pr.integration.blockReasons))
       ? pr.integration.blockReasons : [];
-    const sync = ': open the agent session and run "Sync with main".';
     // QA 2026-09-24: `lead` is the sentence about what the PLATFORM does and
     // `rest` is what a person can do. `parts` is both, as before. The
     // proposal's "Sync with main" step already opens with its own sentence
@@ -16482,41 +16912,44 @@ const AppView = {
     let rest;
     if (pr.source !== 'imported') {
       if (mode === 'failed') {
-        rest = [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.'];
+        rest = byCreator('changes:remedy.rest.resolveInChat', 'changes:remedy.rest.resolveInChatUnnamed');
       } else if (mode === 'conflict') {
-        lead = 'Automatic resolution may not run for this proposal. ';
-        rest = [{ b: creator }, ' needs to bring it up to date: open the agent session and run "Sync with main".'];
+        lead = PlatformI18n.t('changes:remedy.lead.mayNotRun');
+        rest = byCreator('changes:remedy.rest.needsSync', 'changes:remedy.rest.needsSyncUnnamed');
       } else if (served.includes('integrating')) {
-        lead = 'The platform is resolving it now. ';
-        rest = ['Nobody needs to do anything.'];
+        lead = PlatformI18n.t('changes:remedy.lead.resolvingNow');
+        rest = [PlatformI18n.t('changes:remedy.rest.nobody')];
       } else if (served.includes('unresolvable')) {
-        lead = 'The platform tried to resolve it and could not. ';
-        rest = [{ b: creator }, ` needs to bring it up to date${sync}`];
+        lead = PlatformI18n.t('changes:remedy.lead.triedAndFailed');
+        rest = byCreator('changes:remedy.rest.needsSync', 'changes:remedy.rest.needsSyncUnnamed');
       } else if (served.includes('awaiting_approval')) {
-        lead = 'The platform resolves it once the vote passes. ';
-        rest = [{ b: creator }, ` can bring it up to date sooner${sync}`];
+        lead = PlatformI18n.t('changes:remedy.lead.afterVote');
+        rest = byCreator('changes:remedy.rest.canSyncSooner', 'changes:remedy.rest.canSyncSoonerUnnamed');
       } else {
-        lead = 'The platform resolves it automatically. ';
-        rest = [{ b: creator }, ` can also bring it up to date sooner${sync}`];
+        lead = PlatformI18n.t('changes:remedy.lead.automatic');
+        rest = byCreator('changes:remedy.rest.canAlsoSyncSooner', 'changes:remedy.rest.canAlsoSyncSoonerUnnamed');
       }
     } else if (home === 'app_repo') {
       if (mode === 'failed') {
-        rest = [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.'];
+        rest = byCreator('changes:remedy.rest.resubmit', 'changes:remedy.rest.resubmitUnnamed');
       } else {
-        lead = 'Homeroom keeps this branch itself and will try to resolve it automatically at the next merge attempt. ';
-        rest = ['If that fails, ', { b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.'];
+        lead = PlatformI18n.t('changes:remedy.lead.nextMerge');
+        rest = byCreator('changes:remedy.rest.resubmitIfFails', 'changes:remedy.rest.resubmitIfFailsUnnamed');
       }
     } else {
-      rest = ['This branch lives in ', { b: creator }, '’s own fork, which Homeroom cannot write to, so it cannot sync it itself. ',
-        { b: creator }, ' needs to merge main into the branch and push it; the proposal follows the push.'];
+      rest = byCreator('changes:remedy.rest.fork', 'changes:remedy.rest.forkUnnamed');
     }
-    const parts = lead ? [lead, ...rest] : rest;
+    // The lead is a whole sentence and so is the rest (which carries bold
+    // runs, so it stays a list of parts). The message that joins them says
+    // where each goes and what stands between: both are placed where the
+    // catalog puts `{{lead}}` and `{{rest}}`, never appended after it.
+    const parts = lead ? AppView._joinLeadAndRest(lead, rest) : rest;
     // The pill's plain-text detail. A native row keeps the sentence the pill
     // has always carried; an imported one gets the note's sentence, since
     // that is the first time the pill has had anything true to say about it.
     const nativeDetail = {
-      failed: 'The change’s owner needs to resolve it from their agent session.',
-      conflict: 'Its creator needs to bring it up to date from their agent session ("Sync with main").',
+      failed: PlatformI18n.t('changes:remedy.detail.failed'),
+      conflict: PlatformI18n.t('changes:remedy.detail.conflict'),
     };
     // WHO RESOLVES IT DECIDES HOW THE TAG LOOKS, and it is decided right
     // here (#2221/#2222). The tag used to carry a fixed string and the
@@ -16545,7 +16978,7 @@ const AppView = {
       // The short form the tag wears. Null leaves the caller's own label
       // alone, which is what an auto-resolving conflict wants: the file
       // count is the useful part and nobody needs to do anything about it.
-      label: authorActs ? 'Needs author to sync with main' : null,
+      label: authorActs ? PlatformI18n.t('changes:remedy.label') : null,
       text: pr.source !== 'imported' && nativeDetail[mode]
         ? nativeDetail[mode]
         : parts.map((x) => (typeof x === 'string' ? x : x.b)).join(''),
@@ -16573,14 +17006,14 @@ const AppView = {
     // see `NoteRow` on why the rows are one ordered array.
     const rows = [];
     if (files.length) {
-      rows.push({ t: 'line', parts: ['Conflicting files:'] });
+      rows.push({ t: 'line', parts: [PlatformI18n.t('changes:conflictNote.files')] });
       rows.push({
         t: 'list', cls: 'mt-0.5 ml-3 list-disc space-y-0.5',
         items: files.map((f) => ({ mono: true, text: String(f) })),
       });
     }
     if (pr.conflict_checked_at) {
-      rows.push({ t: 'line', parts: [`Last attempt ${relTime(pr.conflict_checked_at)}.`], weight: 'foot' });
+      rows.push({ t: 'line', parts: [PlatformI18n.t('changes:conflictNote.lastAttempt', { when: relTime(pr.conflict_checked_at) })], weight: 'foot' });
     }
     rows.push({
       t: 'line',
@@ -16591,8 +17024,8 @@ const AppView = {
       key: 'conflict',
       tone: 'error',
       heading: mcs === 'failed'
-        ? 'Automatic conflict resolution failed.'
-        : 'A merge was attempted, but this proposal conflicts with main.',
+        ? PlatformI18n.t('changes:conflictNote.headingFailed')
+        : PlatformI18n.t('changes:conflictNote.headingConflict'),
       rows,
     };
   },
@@ -16617,10 +17050,10 @@ const AppView = {
 
     const rows = [{
       t: 'line',
-      parts: ['Main has moved on since this was written, and the two changes touch the same lines. It cannot merge until somebody reconciles them.'],
+      parts: [PlatformI18n.t('changes:mergeability.explanation')],
     }];
     if (fresh.files.length) {
-      rows.push({ t: 'line', parts: ['Changed on both sides:'] });
+      rows.push({ t: 'line', parts: [PlatformI18n.t('changes:mergeability.files')] });
       rows.push({
         t: 'list', cls: 'mt-0.5 ml-3 list-disc space-y-0.5',
         items: fresh.files.slice(0, 20).map((f) => ({ mono: true, text: String(f) })),
@@ -16631,12 +17064,12 @@ const AppView = {
       rows.push({
         t: 'line', weight: 'foot',
         parts: [fresh.filesComplete === false
-          ? 'That is a sample of the files, and some of them may merge cleanly.'
-          : 'Some of those may still merge cleanly. They are where to look first.'],
+          ? PlatformI18n.t('changes:mergeability.filesSample')
+          : PlatformI18n.t('changes:mergeability.filesHint')],
       });
     }
     if (fresh.checkedAt) {
-      rows.push({ t: 'line', parts: [`Checked ${relTime(fresh.checkedAt)}.`], weight: 'foot' });
+      rows.push({ t: 'line', parts: [PlatformI18n.t('changes:mergeability.checked', { when: relTime(fresh.checkedAt) })], weight: 'foot' });
     }
     rows.push({
       t: 'line', weight: 'foot',
@@ -16645,7 +17078,7 @@ const AppView = {
     return {
       key: 'mergeability',
       tone: 'error',
-      heading: 'This proposal no longer merges into main on its own.',
+      heading: PlatformI18n.t('changes:mergeability.heading'),
       rows,
     };
   },
@@ -16663,8 +17096,8 @@ const AppView = {
     if (state === 'error') {
       return {
         key: 'env', tone: 'neutral',
-        heading: "Platform variables couldn't be checked.",
-        rows: [{ t: 'line', parts: ['This does not block the merge. The check is re-run when votes reach the threshold.'] }],
+        heading: PlatformI18n.t('changes:envNote.errorHeading'),
+        rows: [{ t: 'line', parts: [PlatformI18n.t('changes:envNote.errorBody')] }],
       };
     }
 
@@ -16673,10 +17106,9 @@ const AppView = {
       // renders for a self-app proposal), so open it in place rather than
       // sending anyone off to a deep link. A full admin sets the value
       // outright; everyone else opens a proposal from the same panel.
-      const one = missing.length === 1;
       return {
         key: 'env', tone: 'warn',
-        heading: '⚠ New platform variables have no value set. Merge is blocked.',
+        heading: PlatformI18n.t('changes:envNote.missingHeading'),
         // The keys lead — they are what a reader has to act on — and the
         // two explanatory lines follow them.
         rows: [
@@ -16687,13 +17119,13 @@ const AppView = {
               text: (m && m.description) ? String(m.description).slice(0, 240) : '',
             })),
           },
-          { t: 'line', parts: [`Deploying without ${one ? 'it' : 'them'} would restart the platform missing configuration it now expects.`], weight: 'foot' },
-          { t: 'line', parts: [`No rebuild needed. Set the value${one ? '' : 's'} and vote again.`], weight: 'foot' },
+          { t: 'line', parts: [PlatformI18n.t('changes:envNote.deployWithout', { count: missing.length })], weight: 'foot' },
+          { t: 'line', parts: [PlatformI18n.t('changes:envNote.setAndVote', { count: missing.length })], weight: 'foot' },
         ],
         action: {
           key: 'env-fix',
           cls: 'mt-1.5 text-xs px-2 py-1 rounded border border-amber-500/50 hover:bg-amber-500/10 transition-colors',
-          label: App.user && App.user.canAdminWrite ? 'Set them now' : 'Propose a value',
+          label: App.user && App.user.canAdminWrite ? PlatformI18n.t('changes:envNote.setNow') : PlatformI18n.t('changes:envNote.proposeValue'),
           act: { fn: 'openPlatformVariables' },
         },
       };
@@ -16704,14 +17136,14 @@ const AppView = {
     // flow) read differently from keys somebody set separately: the value is
     // part of what a voter is approving, and it lands on merge.
     const carried = Array.isArray(detail.pendingValues) ? detail.pendingValues : [];
-    const rows = [{ t: 'line', parts: [`This proposal adds ${added.join(', ')}, already set and ready for the deploy.`] }];
+    const rows = [{ t: 'line', parts: [PlatformI18n.t('changes:envNote.added', { names: PlatformI18n.listText(added) })] }];
     if (carried.length) {
       rows.push({
         t: 'line',
-        parts: [`${carried.join(', ')} ${carried.length === 1 ? 'carries its value' : 'carry their values'} with this proposal, applied when it merges.`],
+        parts: [PlatformI18n.t('changes:envNote.carried', { names: PlatformI18n.listText(carried), count: carried.length })],
       });
     }
-    return { key: 'env', tone: 'ok', heading: '✓ New platform variables are configured.', rows };
+    return { key: 'env', tone: 'ok', heading: PlatformI18n.t('changes:envNote.okHeading'), rows };
   },
 
   // #381: the advisory "may break the app" note, for a proposal whose
@@ -16719,7 +17151,7 @@ const AppView = {
   _consoleCheckNote(pr) {
     if (!pr || pr.console_check_state !== 'errors') return null;
     const errors = Array.isArray(pr.console_errors) ? pr.console_errors : [];
-    const rows = [{ t: 'line', parts: ['The staging preview logged these console errors when it loaded:'] }];
+    const rows = [{ t: 'line', parts: [PlatformI18n.t('changes:consoleNote.intro')] }];
     // The errors themselves, or — when the check recorded the verdict but
     // not the messages — a line saying so in their place.
     rows.push(errors.length
@@ -16731,18 +17163,18 @@ const AppView = {
           source: (e && e.source) ? String(e.source).slice(0, 200) : null,
         })),
       }
-      : { t: 'line', parts: ['Console errors were detected on the staging preview.'], weight: 'foot' });
+      : { t: 'line', parts: [PlatformI18n.t('changes:consoleNote.detected')], weight: 'foot' });
     if (pr.console_checked_at) {
-      rows.push({ t: 'line', parts: [`Last checked ${relTime(pr.console_checked_at)}.`], weight: 'foot' });
+      rows.push({ t: 'line', parts: [PlatformI18n.t('changes:consoleNote.lastChecked', { when: relTime(pr.console_checked_at) })], weight: 'foot' });
     }
     rows.push({
       t: 'line',
-      parts: ['Pushing a fix rebuilds the preview and re-runs the check. The warning clears if the errors are gone.'],
+      parts: [PlatformI18n.t('changes:consoleNote.fix')],
       weight: 'foot',
     });
     return {
       key: 'console', tone: 'warn',
-      heading: '⚠ This change may break the app.',
+      heading: PlatformI18n.t('changes:consoleNote.heading'),
       rows,
     };
   },
@@ -16763,13 +17195,13 @@ const AppView = {
     // #607: a WS/poll-driven re-render mid-request must not resurrect an
     // enabled button — keep it disabled while the request is in flight.
     if (AppView._recheckInFlight.has(pr.id)) {
-      return { key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: 'Re-running…', disabled: true };
+      return { key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: PlatformI18n.t('changes:recheck.running'), disabled: true };
     }
     // The accent pill, as the card's own actions are: this is the one
     // thing to press on a red row.
     return {
-      key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: 'Re-run checks',
-      title: 'Rebuild the staging preview if needed and re-run the automated tests',
+      key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: PlatformI18n.t('changes:recheck.label'),
+      title: PlatformI18n.t('changes:recheck.title'),
       act: { fn: 'castRecheck', args: [pr.id] }, passNode: true,
     };
   },
@@ -16790,15 +17222,21 @@ const AppView = {
     const unit = AppView._unitSuiteProgressView(p.unit);
     const build = AppView._buildProgressView(p.build);
     if (!ran && !expected && !unit && !build) return null;
-    const of = expected ? ` of ${expected}` : '';
-    const bits = [`${ran}${of} run`, `${passed} passed`];
-    if (failed) bits.push(`${failed} failed`);
-    let sub = (ran || expected) ? bits.join(' · ') : '';
+    // One whole message per case: with or without the expected total, with or
+    // without a failure count.
+    const counts = { count: ran, expected, passed, failed };
+    let sub = '';
     // A colon, not a dash: the count is a label and this is its value (#1389).
-    const sentence = !(ran || expected) ? ''
-      : expected
-        ? `${ran} of ${expected} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`
-        : `${ran} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
+    let sentence = '';
+    if (ran || expected) {
+      if (expected) {
+        sub = failed ? PlatformI18n.t('changes:progress.checks.sub.ofExpectedFailed', counts) : PlatformI18n.t('changes:progress.checks.sub.ofExpected', counts);
+        sentence = failed ? PlatformI18n.t('changes:progress.checks.sentence.ofExpectedFailed', counts) : PlatformI18n.t('changes:progress.checks.sentence.ofExpected', counts);
+      } else {
+        sub = failed ? PlatformI18n.t('changes:progress.checks.sub.soFarFailed', counts) : PlatformI18n.t('changes:progress.checks.sub.soFar', counts);
+        sentence = failed ? PlatformI18n.t('changes:progress.checks.sentence.soFarFailed', counts) : PlatformI18n.t('changes:progress.checks.sentence.soFar', counts);
+      }
+    }
     if (unit && !sub) sub = unit.sub;
     if (build && !sub && !build.done) sub = build.sub;
     return {
@@ -16812,28 +17250,90 @@ const AppView = {
   // current step is named, the finished ones carry their time), kept
   // through the testing half as one line saying what the build cost. Past
   // the verdict the ledger row says when it last ran, not what it cost.
+  //
+  // Message ids, one whole message per place a step is named: its label in
+  // the step row (plain, made from the template, after a queued wait), its
+  // item in the list of finished steps with its time, and the three live
+  // lines that say it is the step running now.
   BUILD_STEP_COPY: {
-    source_fetch: { label: 'fetch branch', doing: 'fetching the branch', done: 'branch fetched' },
-    image_build: { label: 'build image', doing: 'building the preview image', done: 'image built' },
-    clone: { label: 'clone database', doing: 'cloning the database', done: 'database cloned' },
-    health: { label: 'start preview', doing: 'starting the preview', done: 'preview started' },
+    source_fetch: {
+      label: 'changes:progress.build.label.fetch',
+      labelTemplate: 'changes:progress.build.label.fetchTemplate',
+      labelWaited: 'changes:progress.build.label.fetchWaited',
+      done: 'changes:progress.build.done.fetch',
+      doneTemplate: 'changes:progress.build.done.fetchTemplate',
+      now: 'changes:progress.build.now.fetch',
+      nowAfter: 'changes:progress.build.nowAfter.fetch',
+      sub: 'changes:progress.build.sub.fetch',
+    },
+    image_build: {
+      label: 'changes:progress.build.label.image',
+      labelTemplate: 'changes:progress.build.label.imageTemplate',
+      labelWaited: 'changes:progress.build.label.imageWaited',
+      done: 'changes:progress.build.done.image',
+      doneTemplate: 'changes:progress.build.done.imageTemplate',
+      donePhases: 'changes:progress.build.done.imagePhases',
+      doneTemplatePhases: 'changes:progress.build.done.imageTemplatePhases',
+      now: 'changes:progress.build.now.image',
+      nowAfter: 'changes:progress.build.nowAfter.image',
+      sub: 'changes:progress.build.sub.image',
+    },
+    clone: {
+      label: 'changes:progress.build.label.clone',
+      labelTemplate: 'changes:progress.build.label.cloneTemplate',
+      labelWaited: 'changes:progress.build.label.cloneWaited',
+      done: 'changes:progress.build.done.clone',
+      doneTemplate: 'changes:progress.build.done.cloneTemplate',
+      now: 'changes:progress.build.now.clone',
+      nowAfter: 'changes:progress.build.nowAfter.clone',
+      sub: 'changes:progress.build.sub.clone',
+    },
+    health: {
+      label: 'changes:progress.build.label.start',
+      labelTemplate: 'changes:progress.build.label.startTemplate',
+      labelWaited: 'changes:progress.build.label.startWaited',
+      done: 'changes:progress.build.done.start',
+      doneTemplate: 'changes:progress.build.done.startTemplate',
+      now: 'changes:progress.build.now.start',
+      nowAfter: 'changes:progress.build.nowAfter.start',
+      sub: 'changes:progress.build.sub.start',
+    },
     // The hand-off after the container is up and before the first test
     // runs: edge verification, the ready note, and — the long case — a wait
     // behind an earlier run on the same proposal. "Prepare", not "start":
     // it is still this phase, and a queued run is not starting anything.
-    prepare_checks: { label: 'prepare checks', doing: 'preparing the checks', done: 'checks prepared' },
+    prepare_checks: {
+      label: 'changes:progress.build.label.prepare',
+      labelTemplate: 'changes:progress.build.label.prepareTemplate',
+      labelWaited: 'changes:progress.build.label.prepareWaited',
+      labelWaiting: 'changes:progress.build.label.prepareWaiting',
+      now: 'changes:progress.build.now.prepare',
+      nowAfter: 'changes:progress.build.nowAfter.prepare',
+      sub: 'changes:progress.build.sub.prepare',
+    },
   },
-  // The queued wait, as a label suffix on the step and as its live verb.
+  // The queued wait as the live line (its label is `labelWaiting` /
+  // `labelWaited` above), the image build's line when it reports what it is
+  // doing, and the line for a step this table does not know.
   PREPARE_QUEUED_COPY: {
-    label: ' (waiting for an earlier run)',
-    doneLabel: ' (waited for an earlier run)',
-    doing: 'waiting for an earlier run on this proposal to finish',
-    done: ' after waiting for an earlier run',
+    now: 'changes:progress.build.now.waiting',
+    nowAfter: 'changes:progress.build.nowAfter.waiting',
+    sub: 'changes:progress.build.sub.waiting',
+  },
+  BUILD_IMAGE_DETAIL_COPY: {
+    now: 'changes:progress.build.now.imageDetail',
+    nowAfter: 'changes:progress.build.nowAfter.imageDetail',
+    sub: 'changes:progress.build.sub.imageDetail',
+  },
+  BUILD_OTHER_STEP_COPY: {
+    now: 'changes:progress.build.now.other',
+    nowAfter: 'changes:progress.build.nowAfter.other',
+    sub: 'changes:progress.build.sub.other',
   },
   _fmtMs(ms) {
     const s = Math.max(0, Math.round(ms / 1000));
-    if (s < 60) return `${s}s`;
-    return `${Math.floor(s / 60)}m ${s % 60}s`;
+    if (s < 60) return PlatformI18n.t('changes:progress.duration.seconds', { seconds: s });
+    return PlatformI18n.t('changes:progress.duration.minutesSeconds', { minutes: Math.floor(s / 60), seconds: s % 60 });
   },
   _buildProgressView(b) {
     if (!b || typeof b !== 'object') return null;
@@ -16842,7 +17342,6 @@ const AppView = {
     const current = typeof b.step === 'string' ? b.step : null;
     const done = current === 'done';
     const queued = current === 'prepare_checks' && !!b.queued;
-    const q = AppView.PREPARE_QUEUED_COPY;
     // The image build's own progress (see _imageProgressView): live under
     // the running "build image" step, and as the finished step's phases.
     const image = current === 'image_build' ? AppView._imageProgressView(b.image) : null;
@@ -16850,11 +17349,11 @@ const AppView = {
       const copy = AppView.BUILD_STEP_COPY[key];
       const rec = doneSteps.find((s) => s.key === key);
       const state = rec ? 'done' : (key === current ? 'now' : 'todo');
-      let via = '';
-      if (rec && rec.via === 'template') via = ' (from template)';
-      else if (rec && rec.via === 'queued') via = q.doneLabel;
-      else if (key === 'prepare_checks' && queued) via = q.label;
-      const step = { key, label: copy.label + via, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state };
+      let labelId = copy.label;
+      if (rec && rec.via === 'template') labelId = copy.labelTemplate;
+      else if (rec && rec.via === 'queued') labelId = copy.labelWaited;
+      else if (key === 'prepare_checks' && queued) labelId = copy.labelWaiting;
+      const step = { key, label: PlatformI18n.t(labelId), ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state };
       if (key === 'image_build') {
         if (image) { step.phases = image.phases; step.detail = image.detail; }
         else if (rec && Array.isArray(rec.phases) && rec.phases.length) {
@@ -16866,40 +17365,56 @@ const AppView = {
     // The fifth step is not part of the build's own time, so it gets its
     // own clause rather than a place in the list (see `prepared` below).
     const prepared = doneSteps.find((s) => s.key === 'prepare_checks') || null;
+    // Each finished step is one item of a list ("branch fetched (3s)"), a
+    // whole message of its own; the list is joined by listText.
     const parts = doneSteps.filter((s) => s.key !== 'prepare_checks').map((s) => {
       const copy = AppView.BUILD_STEP_COPY[s.key];
-      const via = s.via === 'template' ? ' from template' : '';
+      const template = s.via === 'template';
+      const duration = AppView._fmtMs(s.ms);
       // The image step names its phases so a slow build says which phase
       // it spent the time in.
-      const phases = s.key === 'image_build' && Array.isArray(s.phases) && s.phases.length
-        ? `: ${s.phases.filter((ph) => Number.isFinite(ph.ms)).map((ph) => `${ph.name} ${AppView._fmtMs(ph.ms)}`).join(', ')}`
-        : '';
-      return `${copy.done}${via} (${AppView._fmtMs(s.ms)}${phases})`;
+      if (s.key === 'image_build' && Array.isArray(s.phases) && s.phases.length) {
+        const phases = PlatformI18n.listText(s.phases.filter((ph) => Number.isFinite(ph.ms))
+          .map((ph) => PlatformI18n.t('changes:progress.build.phaseTime', { phase: ph.name, duration: AppView._fmtMs(ph.ms) })));
+        return PlatformI18n.t(template ? copy.doneTemplatePhases : copy.donePhases, { duration, phases });
+      }
+      return PlatformI18n.t(template ? copy.doneTemplate : copy.done, { duration });
     });
+    const list = PlatformI18n.listText(parts);
     let sentence;
     let sub;
+    // `sub` as it reads where it is a value of its own, not a line under a
+    // label (the change page's build bar): a separate message, not this one
+    // with a capital put on it.
+    let subTitle = null;
     if (done) {
       const total = Number.isFinite(b.totalMs) ? b.totalMs
         : doneSteps.filter((s) => s.key !== 'prepare_checks').reduce((n, s) => n + (s.ms || 0), 0);
+      const duration = AppView._fmtMs(total);
       // "Preview built in 20s, checks prepared in 9m 40s": the wait is the
-      // finding, so it is a clause of its own rather than a fifth item
+      // finding, so it is said on its own rather than as a fifth item
       // inside the build's total.
-      const preparedClause = prepared && Number.isFinite(prepared.ms)
-        ? `, checks prepared in ${AppView._fmtMs(prepared.ms)}${prepared.via === 'queued' ? q.done : ''}`
-        : '';
-      sentence = `Preview built in ${AppView._fmtMs(total)}${preparedClause}: ${parts.join(', ')}.`;
-      sub = `built in ${AppView._fmtMs(total)}`;
+      if (prepared && Number.isFinite(prepared.ms)) {
+        sentence = PlatformI18n.t(prepared.via === 'queued' ? 'changes:progress.build.builtPreparedWaited' : 'changes:progress.build.builtPrepared',
+          { duration, prepared: AppView._fmtMs(prepared.ms), steps: list });
+      } else {
+        sentence = PlatformI18n.t('changes:progress.build.built', { duration, steps: list });
+      }
+      sub = PlatformI18n.t('changes:progress.build.subBuilt', { duration });
+      subTitle = PlatformI18n.t('changes:progress.build.subBuiltTitle', { duration });
     } else {
-      const copy = current && AppView.BUILD_STEP_COPY[current];
-      let doing = copy ? copy.doing : 'building';
-      if (queued) doing = q.doing;
-      if (image && image.doing) doing = `${doing} (${image.doing})`;
-      sentence = parts.length
-        ? `Preview build: ${parts.join(', ')}, now ${doing}.`
-        : `Preview build: ${doing}.`;
-      sub = `build: ${doing}`;
+      // What the build is doing now, as a whole message per step.
+      let copy = (current && AppView.BUILD_STEP_COPY[current]) || AppView.BUILD_OTHER_STEP_COPY;
+      if (queued) copy = AppView.PREPARE_QUEUED_COPY;
+      const values = { steps: list };
+      if (image && image.doing) {
+        copy = image.doing.copy;
+        Object.assign(values, image.doing.values);
+      }
+      sentence = PlatformI18n.t(parts.length ? copy.nowAfter : copy.now, values);
+      sub = PlatformI18n.t(copy.sub, values);
     }
-    return { steps, sentence, sub, done, current, image };
+    return { steps, sentence, sub, subTitle, done, current, image };
   },
 
   // Inside the "build image" step. On the cluster the image is a buildpack
@@ -16907,10 +17422,129 @@ const AppView = {
   // export) come with their own times, and the running phase's last log
   // line is the detail; on docker it is the builder's step counter. Copy
   // says which and never guesses a phase list it was not given.
+  //
+  // Message ids: the build's sentences (alone, after finished steps, and the
+  // short line) for each thing the image build can be doing, without and
+  // with its last log line. Each is a whole message.
   IMAGE_PHASE_COPY: {
-    prepare: 'fetching source', analyze: 'analyzing the last image', detect: 'detecting buildpacks',
-    restore: 'restoring cached layers', build: 'running the buildpacks', export: 'exporting the image',
-    completion: 'finishing',
+    prepare: {
+      alone: {
+        now: 'changes:progress.build.now.imagePrepare',
+        nowAfter: 'changes:progress.build.nowAfter.imagePrepare',
+        sub: 'changes:progress.build.sub.imagePrepare',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imagePrepareDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imagePrepareDetail',
+        sub: 'changes:progress.build.sub.imagePrepareDetail',
+      },
+    },
+    analyze: {
+      alone: {
+        now: 'changes:progress.build.now.imageAnalyze',
+        nowAfter: 'changes:progress.build.nowAfter.imageAnalyze',
+        sub: 'changes:progress.build.sub.imageAnalyze',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageAnalyzeDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageAnalyzeDetail',
+        sub: 'changes:progress.build.sub.imageAnalyzeDetail',
+      },
+    },
+    detect: {
+      alone: {
+        now: 'changes:progress.build.now.imageDetect',
+        nowAfter: 'changes:progress.build.nowAfter.imageDetect',
+        sub: 'changes:progress.build.sub.imageDetect',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageDetectDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageDetectDetail',
+        sub: 'changes:progress.build.sub.imageDetectDetail',
+      },
+    },
+    restore: {
+      alone: {
+        now: 'changes:progress.build.now.imageRestore',
+        nowAfter: 'changes:progress.build.nowAfter.imageRestore',
+        sub: 'changes:progress.build.sub.imageRestore',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageRestoreDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageRestoreDetail',
+        sub: 'changes:progress.build.sub.imageRestoreDetail',
+      },
+    },
+    build: {
+      alone: {
+        now: 'changes:progress.build.now.imageBuild',
+        nowAfter: 'changes:progress.build.nowAfter.imageBuild',
+        sub: 'changes:progress.build.sub.imageBuild',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageBuildDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageBuildDetail',
+        sub: 'changes:progress.build.sub.imageBuildDetail',
+      },
+    },
+    export: {
+      alone: {
+        now: 'changes:progress.build.now.imageExport',
+        nowAfter: 'changes:progress.build.nowAfter.imageExport',
+        sub: 'changes:progress.build.sub.imageExport',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageExportDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageExportDetail',
+        sub: 'changes:progress.build.sub.imageExportDetail',
+      },
+    },
+    completion: {
+      alone: {
+        now: 'changes:progress.build.now.imageCompletion',
+        nowAfter: 'changes:progress.build.nowAfter.imageCompletion',
+        sub: 'changes:progress.build.sub.imageCompletion',
+      },
+      detail: {
+        now: 'changes:progress.build.now.imageCompletionDetail',
+        nowAfter: 'changes:progress.build.nowAfter.imageCompletionDetail',
+        sub: 'changes:progress.build.sub.imageCompletionDetail',
+      },
+    },
+  },
+  IMAGE_OTHER_PHASE_COPY: {
+    alone: {
+      now: 'changes:progress.build.now.imageOtherPhase',
+      nowAfter: 'changes:progress.build.nowAfter.imageOtherPhase',
+      sub: 'changes:progress.build.sub.imageOtherPhase',
+    },
+    detail: {
+      now: 'changes:progress.build.now.imageOtherPhaseDetail',
+      nowAfter: 'changes:progress.build.nowAfter.imageOtherPhaseDetail',
+      sub: 'changes:progress.build.sub.imageOtherPhaseDetail',
+    },
+  },
+  IMAGE_STEP_COPY: {
+    step: {
+      now: 'changes:progress.build.now.imageStep',
+      nowAfter: 'changes:progress.build.nowAfter.imageStep',
+      sub: 'changes:progress.build.sub.imageStep',
+    },
+    stepIn: {
+      now: 'changes:progress.build.now.imageStepIn',
+      nowAfter: 'changes:progress.build.nowAfter.imageStepIn',
+      sub: 'changes:progress.build.sub.imageStepIn',
+    },
+    stepDetail: {
+      now: 'changes:progress.build.now.imageStepDetail',
+      nowAfter: 'changes:progress.build.nowAfter.imageStepDetail',
+      sub: 'changes:progress.build.sub.imageStepDetail',
+    },
+    stepInDetail: {
+      now: 'changes:progress.build.now.imageStepInDetail',
+      nowAfter: 'changes:progress.build.nowAfter.imageStepInDetail',
+      sub: 'changes:progress.build.sub.imageStepInDetail',
+    },
   },
   _imageProgressView(img) {
     if (!img || typeof img !== 'object') return null;
@@ -16945,14 +17579,19 @@ const AppView = {
     // A step counter is a fraction, so it draws as a bar the way the checks
     // and the unit suite do, rather than as a row of names it does not have.
     const bar = hasCounter ? { ran: img.index, expected: img.total } : null;
+    // What the build is doing now: the ids of the sentences that say it and
+    // the values they take (BUILD_IMAGE_DETAIL_COPY shows the tool's own
+    // last line when there is neither a counter nor a phase).
     let doing = null;
     if (hasCounter) {
-      doing = `step ${img.index} of ${img.total}${phase ? ` in ${phase}` : ''}${detail ? `: ${detail}` : ''}`;
+      const values = { index: img.index, total: img.total, phase, detail };
+      if (phase) doing = { copy: detail ? AppView.IMAGE_STEP_COPY.stepInDetail : AppView.IMAGE_STEP_COPY.stepIn, values };
+      else doing = { copy: detail ? AppView.IMAGE_STEP_COPY.stepDetail : AppView.IMAGE_STEP_COPY.step, values };
     } else if (phase) {
-      const copy = AppView.IMAGE_PHASE_COPY[phase] || `${phase} phase`;
-      doing = `${copy}${detail ? `: ${detail}` : ''}`;
+      const copy = (Object.prototype.hasOwnProperty.call(AppView.IMAGE_PHASE_COPY, phase) && AppView.IMAGE_PHASE_COPY[phase]) || AppView.IMAGE_OTHER_PHASE_COPY;
+      doing = { copy: detail ? copy.detail : copy.alone, values: { phase, detail } };
     } else if (detail) {
-      doing = detail;
+      doing = { copy: AppView.BUILD_IMAGE_DETAIL_COPY, values: { detail } };
     }
     return { phase, phases, bar, detail, doing, index: hasCounter ? img.index : null, total: hasCounter ? img.total : null };
   },
@@ -16969,30 +17608,32 @@ const AppView = {
     const expected = Number.isInteger(u.expected) && u.expected > 0 ? u.expected : null;
     const phase = typeof u.phase === 'string' ? u.phase : 'running';
     const done = !!u.done;
+    const counts = { count: ran, expected, passed, failed, skipped };
     let sub;
     let sentence;
     if (done && u.notRun === true) {
       // Its Job was refused or its setup stopped before any test ran
       // (services/unit-suite.js notRunOutcome): no test failed, and the
       // verdict says why once it lands.
-      sub = 'npm test could not run';
-      sentence = 'The repo unit suite (npm test) could not run, so no test result came back.';
+      sub = PlatformI18n.t('changes:progress.unit.sub.couldNotRun');
+      sentence = PlatformI18n.t('changes:progress.unit.sentence.couldNotRun');
     } else if (done) {
       const ok = u.exitOk !== false;
-      sub = ok ? `npm test finished: ${passed} passed` : `npm test finished: ${failed} failed`;
-      sentence = ok
-        ? `The repo unit suite (npm test) finished: ${passed} passed${skipped ? `, ${skipped} skipped` : ''}.`
-        : `The repo unit suite (npm test) finished with failures: ${failed} failed, ${passed} passed.`;
-    } else if (phase === 'cloning' || phase === 'installing') {
-      const what = phase === 'cloning' ? 'cloning the branch' : 'installing dependencies';
-      sub = `npm test: ${what}`;
-      sentence = `The repo unit suite (npm test) is ${what}.`;
+      sub = ok ? PlatformI18n.t('changes:progress.unit.sub.finishedPassed', { count: passed }) : PlatformI18n.t('changes:progress.unit.sub.finishedFailed', { count: failed });
+      if (!ok) sentence = PlatformI18n.t('changes:progress.unit.sentence.finishedFailed', { count: failed, passed });
+      else sentence = skipped ? PlatformI18n.t('changes:progress.unit.sentence.finishedPassedSkipped', { count: passed, skipped }) : PlatformI18n.t('changes:progress.unit.sentence.finishedPassed', { count: passed });
+    } else if (phase === 'cloning') {
+      sub = PlatformI18n.t('changes:progress.unit.sub.cloning');
+      sentence = PlatformI18n.t('changes:progress.unit.sentence.cloning');
+    } else if (phase === 'installing') {
+      sub = PlatformI18n.t('changes:progress.unit.sub.installing');
+      sentence = PlatformI18n.t('changes:progress.unit.sentence.installing');
+    } else if (expected) {
+      sub = failed ? PlatformI18n.t('changes:progress.unit.sub.ofExpectedFailed', counts) : PlatformI18n.t('changes:progress.unit.sub.ofExpected', counts);
+      sentence = failed ? PlatformI18n.t('changes:progress.unit.sentence.ofExpectedFailed', counts) : PlatformI18n.t('changes:progress.unit.sentence.ofExpected', counts);
     } else {
-      const of = expected ? ` of ~${expected}` : '';
-      const bits = [`npm test: ${ran}${of} run`, `${passed} passed`];
-      if (failed) bits.push(`${failed} failed`);
-      sub = bits.join(' · ');
-      sentence = `The repo unit suite (npm test) has run ${ran}${of} tests so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
+      sub = failed ? PlatformI18n.t('changes:progress.unit.sub.soFarFailed', counts) : PlatformI18n.t('changes:progress.unit.sub.soFar', counts);
+      sentence = failed ? PlatformI18n.t('changes:progress.unit.sentence.soFarFailed', counts) : PlatformI18n.t('changes:progress.unit.sentence.soFar', counts);
     }
     return { bar: { phase, ran, passed, failed, skipped, expected, done }, sub, sentence };
   },
@@ -17015,18 +17656,18 @@ const AppView = {
       if (['active', 'paused'].includes(pr.status)) {
         return [{
           key: 'checks', tone: 'neutral', spinner: false,
-          heading: 'No checks yet',
-          rows: [{ t: 'line', parts: ['Checks run once the agent commits a change: a staging preview is built, then the automated tests run against it.'] }],
+          heading: PlatformI18n.t('changes:checks.none.heading'),
+          rows: [{ t: 'line', parts: [PlatformI18n.t('changes:checks.none.body')] }],
           action: null,
         }];
       }
       if (!pr.console_check_state) {
         const stale = AppView._checksRunStale(pr.created_at);
-        const rows = [{ t: 'line', parts: ['The staging preview is being prepared, then automated tests run against it. Merge is blocked until all tests pass.'] }];
-        if (stale) rows.push({ t: 'line', parts: ['If this has been stuck for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
+        const rows = [{ t: 'line', parts: [PlatformI18n.t('changes:checks.starting.body')] }];
+        if (stale) rows.push({ t: 'line', parts: [PlatformI18n.t('changes:checks.starting.stuck')], weight: 'foot' });
         return [{
           key: 'checks', tone: 'neutral', spinner: true,
-          heading: 'Checks are starting…', rows, action: stale ? recheck : null,
+          heading: PlatformI18n.t('changes:checks.starting.heading'), rows, action: stale ? recheck : null,
         }];
       }
       // #447: a never-recorded legacy/clone check still offers a manual
@@ -17044,13 +17685,13 @@ const AppView = {
       // way to insist — a manual run tests the head exactly as it stands.
       const rows = [{
         t: 'line',
-        parts: ['This proposal conflicts with main, so its preview was built but the automated tests were not run: they would judge a tree that cannot merge. They run automatically once it merges cleanly, and the merge waits for them.'],
+        parts: [PlatformI18n.t('changes:checks.deferred.body')],
       }];
-      if (pr.checks_checked_at) rows.push({ t: 'line', parts: [`Preview built ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
-      rows.push({ t: 'line', parts: ['To test this head as it stands anyway, re-run the checks.'], weight: 'foot' });
+      if (pr.checks_checked_at) rows.push({ t: 'line', parts: [PlatformI18n.t('changes:checks.deferred.builtWhen', { when: relTime(pr.checks_checked_at) })], weight: 'foot' });
+      rows.push({ t: 'line', parts: [PlatformI18n.t('changes:checks.deferred.rerun')], weight: 'foot' });
       return [{
         key: 'checks', tone: 'neutral', spinner: false,
-        heading: 'Checks deferred until this merges cleanly.', rows, action: recheck,
+        heading: PlatformI18n.t('changes:checks.deferred.heading'), rows, action: recheck,
       }];
     }
 
@@ -17071,9 +17712,10 @@ const AppView = {
       // unrecognised / absent phase (legacy rows, a proposal checked before
       // this shipped) keeps the previous wording verbatim.
       const phase = AppView._checksPhaseCopy(pr.check_phase, pr);
-      const rows = [{ t: 'line', parts: [`${phase.detail} Merge is blocked until all tests pass.`] }];
+      const rows = [{ t: 'line', parts: [phase.blocked] }];
       if (pr.checks_checked_at) {
-        rows.push({ t: 'line', parts: [`${queued ? 'Waiting since' : 'Started'} ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
+        const when = relTime(pr.checks_checked_at);
+        rows.push({ t: 'line', parts: [queued ? PlatformI18n.t('changes:checks.pending.waitingSince', { when }) : PlatformI18n.t('changes:checks.pending.started', { when })], weight: 'foot' });
       }
       // …and WHY it started. "Started 4 minutes ago" answers a different
       // question from "who asked for this": a run kicked off by the
@@ -17093,16 +17735,15 @@ const AppView = {
       const freshNow = AppView._freshnessOf(pr);
       const behindNow = freshNow.behindBy || 0;
       if (behindNow > 0) {
-        const moved = `Main has moved ${behindNow} commit${behindNow === 1 ? '' : 's'} ahead`;
         rows.push({
           t: 'line',
           parts: [freshNow.mergeability === 'conflict'
-            ? `${moved} and this proposal conflicts with it. This run is judged against the commit before that, so when the platform resolves the conflict the run starts again on the resolved commit.`
-            : `${moved}. That does not restart this run: a proposal that still merges cleanly merges as it stands.`],
+            ? PlatformI18n.t('changes:checks.pending.movedConflict', { count: behindNow })
+            : PlatformI18n.t('changes:checks.pending.movedClean', { count: behindNow })],
           weight: 'foot',
         });
       }
-      if (stale) rows.push({ t: 'line', parts: ['If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
+      if (stale) rows.push({ t: 'line', parts: [PlatformI18n.t('changes:checks.pending.stuck')], weight: 'foot' });
       // Live progress, when the run has reported any. `progress` is drawn as
       // a bar by the ledger row; `sub` is the same fact as text under the
       // label. Neither exists before the first frame, so a build-phase run
@@ -17135,11 +17776,11 @@ const AppView = {
         ? String(pr.check_error_detail).slice(0, 280)
         : '';
       return [{
-        key: 'checks', tone: 'error', heading: "⚠ Checks couldn't run.",
+        key: 'checks', tone: 'error', heading: PlatformI18n.t('changes:checks.error.heading'),
         rows: [
           { t: 'line', parts: [errDetail
-            || "The staging build or the test run itself broke, so the platform can't confirm the app works."] },
-          { t: 'line', parts: ['Merge is blocked until checks pass. Pushing a fix rebuilds the preview and re-runs the checks.'], weight: 'foot' },
+            || PlatformI18n.t('changes:checks.error.generic')] },
+          { t: 'line', parts: [PlatformI18n.t('changes:checks.error.blocked')], weight: 'foot' },
         ],
         action: recheck,
       }];
@@ -17152,10 +17793,10 @@ const AppView = {
       // real run via the re-run button.
       const reason = pr.check_error_detail
         ? String(pr.check_error_detail).slice(0, 280)
-        : 'there was nothing to test';
+        : '';
       return [{
-        key: 'checks', tone: 'neutral', heading: 'Checks skipped.',
-        rows: [{ t: 'line', parts: [`Checks were skipped: ${reason}. It can still go live.`] }],
+        key: 'checks', tone: 'neutral', heading: PlatformI18n.t('changes:checks.skipped.heading'),
+        rows: [{ t: 'line', parts: [reason ? PlatformI18n.t('changes:checks.skipped.withReason', { reason }) : PlatformI18n.t('changes:checks.skipped.nothingToTest')] }],
         action: recheck,
       }];
     }
@@ -17185,10 +17826,13 @@ const AppView = {
     // this merge, and the row is green — but it is the single most useful
     // thing on the page for whoever owns that check, so it says so rather
     // than swallowing the failure to keep the panel tidy.
-    const lead = (r && r.passedOnRetry)
-      ? `Failed ${fails} of ${runs} runs on this build, then passed when re-run.`
-      : `Failed ${fails} of ${runs} runs on this build.`;
-    return base ? `${lead} ${base}` : lead;
+    // One whole message per case; a recorded reason is the check's own words
+    // and rides as a parameter after the sentence.
+    const values = { count: runs, fails, reason: base };
+    if (r && r.passedOnRetry) {
+      return base ? PlatformI18n.t('changes:checks.reason.failedThenPassedWith', values) : PlatformI18n.t('changes:checks.reason.failedThenPassed', values);
+    }
+    return base ? PlatformI18n.t('changes:checks.reason.failedRunsWith', values) : PlatformI18n.t('changes:checks.reason.failedRuns', values);
   },
 
   _flakePercent(rate) {
@@ -17222,7 +17866,7 @@ const AppView = {
       key: `${(r && r.name) || 'test'}:${i}`,
       pass: !!(r && r.status === 'pass'),
       advisory: !(r && r.status === 'pass') && !!(r && r.advisory),
-      name: String((r && r.name) || 'test'),
+      name: String((r && r.name) || PlatformI18n.t('changes:verdict.row.unnamedCheck')),
       path: (r && r.path) ? String(r.path) : null,
       // The share of this check's recorded runs that failed, as a percent,
       // or null when it has never failed or has too little history to say.
@@ -17245,7 +17889,7 @@ const AppView = {
       // a hostile stored row cannot flood the fold.
       details: (Array.isArray(r && r.failureDetails) ? r.failureDetails : []).slice(0, 10).map((d) => ({
         file: (d && d.file) ? String(d.file).slice(0, 200) : null,
-        test: String((d && d.test) || 'unnamed test').slice(0, 200),
+        test: String((d && d.test) || PlatformI18n.t('changes:verdict.row.unnamedTestLong')).slice(0, 200),
         excerpt: String((d && d.excerpt) || '').slice(0, 2048),
       })),
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
@@ -17260,7 +17904,7 @@ const AppView = {
         .filter((d) => d && d.excerpt)
         .map((d) => ({
           file: d.file ? String(d.file).slice(0, 200) : null,
-          test: String(d.test || 'test').slice(0, 200),
+          test: String(d.test || PlatformI18n.t('changes:verdict.row.unnamedTest')).slice(0, 200),
           excerpt: String(d.excerpt).slice(0, 1500),
         })),
     });
@@ -17278,22 +17922,26 @@ const AppView = {
     // under-reports the suite it is summarising.
     const weight = (r) => (r && r.count > 1 ? r.count : 1);
     const total = (rows) => rows.reduce((n, r) => n + weight(r), 0);
-    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
     const advisoryChecks = total(advisoryRows);
     const passCount = passRows.length + omittedPasses;
-    const summaryBits = [plural(total(results) + omittedPasses, 'check', 'checks'), `${passCount} passed`];
-    if (blockingRows.length) summaryBits.push(plural(total(blockingRows), 'blocking failure', 'blocking failures'));
-    if (advisoryChecks) summaryBits.push(plural(advisoryChecks, 'advisory failure', 'advisory failures'));
+    // Independent facts, each a whole message with its own count, joined by
+    // the pair message.
+    const summaryBits = [
+      PlatformI18n.t('changes:verdict.summary.checks', { count: total(results) + omittedPasses }),
+      PlatformI18n.t('changes:verdict.summary.passed', { count: passCount }),
+    ];
+    if (blockingRows.length) summaryBits.push(PlatformI18n.t('changes:verdict.summary.blocking', { count: total(blockingRows) }));
+    if (advisoryChecks) summaryBits.push(PlatformI18n.t('changes:verdict.summary.advisory', { count: advisoryChecks }));
 
     let heading;
-    if (failing) heading = '⚠ Some checks failed. Merge is blocked until they pass.';
-    else if (advisoryRows.length) heading = '✓ Every merge-blocking check passed on the staging build.';
-    else heading = '✓ All checks passed on the staging build.';
+    if (failing) heading = PlatformI18n.t('changes:verdict.heading.failed');
+    else if (advisoryRows.length) heading = PlatformI18n.t('changes:verdict.heading.blockingPassed');
+    else heading = PlatformI18n.t('changes:verdict.heading.allPassed');
 
     return {
       failing,
       heading,
-      summary: summaryBits.join(' · '),
+      summary: summaryBits.reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second })),
       failures: blockingRows.concat(advisoryRows).map(row),
       passes: passRows.map(row),
       // How many passed, which is more than `passes` holds while the row
@@ -17304,9 +17952,9 @@ const AppView = {
       // Under this many, folding costs a click and saves nothing.
       foldPasses: passCount > AppView.PASS_FOLD_AT,
       advisoryNote: (!failing && advisoryRows.length)
-        ? 'Advisory checks have not yet passed on a change that merged, so they report without blocking. Fix one, and once the fix merges it guards every change after it.'
+        ? PlatformI18n.t('changes:verdict.advisoryNote')
         : null,
-      checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
+      checkedNote: pr.checks_checked_at ? PlatformI18n.t('changes:verdict.lastChecked', { when: relTime(pr.checks_checked_at) }) : null,
       // #1442 — WHICH main the verdict is a statement about. `stale` above
       // answers the other axis (has the proposal's own head moved since);
       // this one answers "green against what?", and green against a main
@@ -17315,7 +17963,7 @@ const AppView = {
       // is the ordinary case and needs no sentence.
       baseNote: AppView._checksBaseNote(pr),
       fixNote: failing
-        ? 'Pushing a fix rebuilds the preview and re-runs the checks. The block clears when they pass.'
+        ? PlatformI18n.t('changes:verdict.fixNote')
         : null,
       action: failing ? AppView._recheckAction(pr) : null,
     };
@@ -17323,8 +17971,9 @@ const AppView = {
 
   // #1442 — one sentence for a verdict earned against a superseded base.
   // Shared by the verdict view, the status notes and the board tag so the
-  // three can never word it differently. `opts.lead` replaces the opening
-  // "These" where the sentence has to name its subject.
+  // three can never word it differently. `opts.passedBut` replaces the
+  // opening "These" with "The checks passed, but" where the sentence has to
+  // name its subject; each case is a whole message (CHECKS_BASE_NOTE_IDS).
   //
   // What the superseded base MEANS changed with the direct merge lane. It
   // used to be a warning that a sync was coming and would re-run the tests.
@@ -17342,14 +17991,24 @@ const AppView = {
     const fresh = AppView._freshnessOf(pr);
     if (fresh.baseVerdict !== 'superseded') return null;
     const n = fresh.baseBehindBy || 0;
-    const lead = (opts && opts.lead) || 'These';
-    const when = n
-      ? `main as it was ${n} commit${n === 1 ? '' : 's'} ago`
-      : 'a version of main that has since moved on';
-    const describe = `${lead} ran against ${when}, so they describe code this proposal would no longer merge into.`;
-    return fresh.mergeability === 'conflict'
-      ? `${describe} It now conflicts with main; resolving the conflict re-runs them on the resolved commit.`
-      : `${describe} That does not hold the merge: a proposal that still merges cleanly merges as it stands, and the platform runs the app’s tests on main again straight after.`;
+    const ids = AppView.CHECKS_BASE_NOTE_IDS[(opts && opts.passedBut) ? 'passedBut' : 'these'];
+    const conflict = fresh.mergeability === 'conflict';
+    if (n) return PlatformI18n.t(conflict ? ids.agoConflict : ids.agoClean, { count: n });
+    return PlatformI18n.t(conflict ? ids.movedConflict : ids.movedClean);
+  },
+  CHECKS_BASE_NOTE_IDS: {
+    these: {
+      agoConflict: 'changes:checks.baseNote.these.agoConflict',
+      agoClean: 'changes:checks.baseNote.these.agoClean',
+      movedConflict: 'changes:checks.baseNote.these.movedConflict',
+      movedClean: 'changes:checks.baseNote.these.movedClean',
+    },
+    passedBut: {
+      agoConflict: 'changes:checks.baseNote.passedBut.agoConflict',
+      agoClean: 'changes:checks.baseNote.passedBut.agoClean',
+      movedConflict: 'changes:checks.baseNote.passedBut.movedConflict',
+      movedClean: 'changes:checks.baseNote.passedBut.movedClean',
+    },
   },
 
   PASS_FOLD_AT: 8,
@@ -17382,50 +18041,60 @@ const AppView = {
   // progressing" and "this looks stuck". Anything unrecognised, including
   // NULL on rows checked before the column existed, falls back to the
   // wording this block had before, so no legacy proposal changes.
+  //
+  // Message ids. `blocked` is the detail followed by "Merge is blocked until
+  // all tests pass.", one whole message for the checks note.
   CHECKS_PHASE_COPY: {
     building: {
-      title: 'Preparing the staging preview…',
-      detail: 'The change is being built and a preview copy of the app’s data is being made.',
+      title: 'changes:checks.phase.building.title',
+      detail: 'changes:checks.phase.building.detail',
+      blocked: 'changes:checks.phase.building.blocked',
     },
     testing: {
-      title: 'Running the automated tests…',
-      detail: 'The preview is up and the automated tests are running against it.',
+      title: 'changes:checks.phase.testing.title',
+      detail: 'changes:checks.phase.testing.detail',
+      blocked: 'changes:checks.phase.testing.blocked',
     },
     // Between the two: the preview is up and the run waits its turn, because
     // the platform runs a few proposals' checks at a time
     // (services/checks-queue.js). Nothing is wrong and nobody has to act.
     // The title gains the place in line when the row carries it.
     queued: {
-      title: 'Waiting for a checks slot',
-      detail: 'The preview is up. Homeroom runs a few proposals’ checks at a time so they don’t slow each other down, and these start on their own when a slot frees up.',
+      title: 'changes:checks.phase.queued.title',
+      detail: 'changes:checks.phase.queued.detail',
+      blocked: 'changes:checks.phase.queued.blocked',
     },
     // Not a stage of a run: the run stopped on purpose after the build. The
     // head conflicts with main, so the preview exists for reviewers and the
     // tests wait for a head that can merge. No spinner belongs on this.
     deferred: {
-      title: 'Checks deferred',
-      detail: 'The preview is up, but the tests were not run: this proposal conflicts with main, and they would judge a tree that cannot merge. They run once it merges cleanly.',
+      title: 'changes:checks.phase.deferred.title',
+      detail: 'changes:checks.phase.deferred.detail',
+      blocked: 'changes:checks.phase.deferred.blocked',
     },
+  },
+  CHECKS_PHASE_OTHER_COPY: {
+    title: 'changes:checks.phase.other.title',
+    detail: 'changes:checks.phase.other.detail',
+    blocked: 'changes:checks.phase.other.blocked',
   },
 
   // `pr` is optional: a queued run's title says how many runs are ahead of
   // it when the row carries that (checks_progress.queue.ahead).
   _checksPhaseCopy(phase, pr) {
-    const copy = AppView.CHECKS_PHASE_COPY[phase] || {
-      title: 'Checks are still running…',
-      detail: 'The staging build is being tested.',
-    };
+    const ids = AppView.CHECKS_PHASE_COPY[phase] || AppView.CHECKS_PHASE_OTHER_COPY;
+    const copy = { title: PlatformI18n.t(ids.title), detail: PlatformI18n.t(ids.detail), blocked: PlatformI18n.t(ids.blocked) };
     if (phase !== 'queued') return copy;
-    const place = AppView._checksQueuePlace(pr);
-    return place ? { ...copy, title: `${copy.title} (${place})` } : copy;
-  },
-
-  // "2 ahead", "next in line", or '' when the row does not say.
-  _checksQueuePlace(pr) {
+    // The title with the place in line is a whole message per case.
     const q = pr && pr.checks_progress && pr.checks_progress.queue;
     const ahead = q && Number.isInteger(q.ahead) && q.ahead >= 0 ? q.ahead : null;
-    if (ahead === null) return '';
-    return ahead === 0 ? 'next in line' : `${ahead} ahead`;
+    if (ahead === null) return copy;
+    return {
+      ...copy,
+      title: ahead === 0
+        ? PlatformI18n.t('changes:checks.phase.queued.titleNext')
+        : PlatformI18n.t('changes:checks.phase.queued.titleAhead', { count: ahead }),
+    };
   },
 
   // Why the run in flight started (chat_sessions.check_trigger). Written in
@@ -17433,19 +18102,20 @@ const AppView = {
   // knows what a "stuck sweep" is. Unknown/NULL renders nothing rather than
   // a placeholder: no caption is honest, a wrong one is not.
   CHECKS_TRIGGER_COPY: {
-    'proposal-open': 'Triggered by this proposal being opened.',
-    'commit-push': 'Triggered by a new commit on this proposal.',
-    'sync-main': 'Triggered by this proposal being updated from main.',
-    'pr-import': 'Triggered by a new commit on the imported pull request.',
-    'manual-recheck': 'Triggered by someone asking for a re-run.',
-    'promote-kick': 'Triggered by this proposal being put to a vote.',
-    'boot-reconcile': 'Restarted by the platform after it came back up.',
-    'stuck-sweep': 'Restarted automatically by the platform.',
-    'fleet-maintenance': 'Triggered by scheduled platform maintenance.',
+    'proposal-open': 'changes:checks.trigger.proposalOpen',
+    'commit-push': 'changes:checks.trigger.commitPush',
+    'sync-main': 'changes:checks.trigger.syncMain',
+    'pr-import': 'changes:checks.trigger.prImport',
+    'manual-recheck': 'changes:checks.trigger.manualRecheck',
+    'promote-kick': 'changes:checks.trigger.promoteKick',
+    'boot-reconcile': 'changes:checks.trigger.bootReconcile',
+    'stuck-sweep': 'changes:checks.trigger.stuckSweep',
+    'fleet-maintenance': 'changes:checks.trigger.fleetMaintenance',
   },
 
   _checksTriggerCopy(trigger) {
-    return AppView.CHECKS_TRIGGER_COPY[trigger] || '';
+    const id = AppView.CHECKS_TRIGGER_COPY[trigger];
+    return id ? PlatformI18n.t(id) : '';
   },
 
 
@@ -17473,7 +18143,7 @@ const AppView = {
   async castRecheck(sessionId, btn) {
     if (AppView._recheckInFlight.has(sessionId)) return;
     AppView._recheckInFlight.add(sessionId);
-    if (btn) { btn.disabled = true; btn.textContent = 'Re-running…'; }
+    if (btn) { btn.disabled = true; btn.textContent = PlatformI18n.t('changes:recheck.running'); }
     try {
       const resp = await fetch(`/api/sessions/${sessionId}/recheck`, {
         method: 'POST',
@@ -17481,21 +18151,21 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Re-run failed (HTTP ${resp.status}).`);
-        if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:checks.recheck.failedHttp', { status: resp.status }));
+        if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:recheck.label'); }
         return;
       }
       const data = await resp.json().catch(() => ({}));
       // Rechecks can't run inside a staging preview of the platform itself.
       if (data.status === 'unavailable') {
-        PlatformUI.toast('Re-running checks is unavailable in this preview.');
-        if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+        PlatformUI.toast(PlatformI18n.t('changes:checks.recheck.unavailable'));
+        if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:recheck.label'); }
         return;
       }
       // A run of this commit is still on the cluster and its result is on
       // the way, so the server left it to finish rather than start over.
       // Say so: the card keeps showing that run, not a new one.
-      if (data.collecting) PlatformUI.toast('These checks are still running, so they were not started again. The result will show here when they finish.');
+      if (data.collecting) PlatformUI.toast(PlatformI18n.t('changes:checks.recheck.stillRunning'));
       // #607: the server stamped 'pending' before responding — refresh so
       // the spinning "Checks running…" badge renders immediately (the WS
       // pending broadcast covers everyone else's screens).
@@ -17503,8 +18173,8 @@ const AppView = {
       if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(sessionId) }));
       return true;
     } catch (err) {
-      PlatformUI.toast(`Re-run failed: ${err.message}`);
-      if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+      PlatformUI.toast(PlatformI18n.t('changes:checks.recheck.failedWith', { error: err.message }));
+      if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:recheck.label'); }
     } finally {
       AppView._recheckInFlight.delete(sessionId);
     }
@@ -17554,17 +18224,25 @@ const AppView = {
 
   // Per-kind status copy. The verb has to name the actual side effect —
   // "Applying…" tells a voter nothing about whether their issue is closing.
-  _govApplyLabel(kind, targetIssueNumber) {
-    if (kind === 'close_issue') {
-      return targetIssueNumber
-        ? `Closing issue #${targetIssueNumber}…`
-        : 'Closing issue…';
+  // `slow` asks for the same status once it has run long ("…, still working,
+  // GitHub may be slow…"): a whole message per kind, not this one with a
+  // tail joined on.
+  GOV_APPLY_LABEL_IDS: {
+    close_issue: { now: 'changes:governance.apply.closingIssue', slow: 'changes:governance.apply.closingIssueSlow' },
+    secret_change: { now: 'changes:governance.apply.envVar', slow: 'changes:governance.apply.envVarSlow' },
+    rename: { now: 'changes:governance.apply.rename', slow: 'changes:governance.apply.renameSlow' },
+    maintenance_campaign: { now: 'changes:governance.apply.campaign', slow: 'changes:governance.apply.campaignSlow' },
+    featured_illustration: { now: 'changes:governance.apply.illustration', slow: 'changes:governance.apply.illustrationSlow' },
+  },
+  _govApplyLabel(kind, targetIssueNumber, slow) {
+    if (kind === 'close_issue' && targetIssueNumber) {
+      return slow
+        ? PlatformI18n.t('changes:governance.apply.closingIssueNumberSlow', { number: targetIssueNumber })
+        : PlatformI18n.t('changes:governance.apply.closingIssueNumber', { number: targetIssueNumber });
     }
-    if (kind === 'secret_change') return 'Applying env-var change…';
-    if (kind === 'rename') return 'Renaming app…';
-    if (kind === 'maintenance_campaign') return 'Starting campaign…';
-    if (kind === 'featured_illustration') return 'Updating illustration…';
-    return 'Applying…';
+    const ids = Object.prototype.hasOwnProperty.call(AppView.GOV_APPLY_LABEL_IDS, kind) ? AppView.GOV_APPLY_LABEL_IDS[kind] : null;
+    if (ids) return PlatformI18n.t(slow ? ids.slow : ids.now);
+    return slow ? PlatformI18n.t('changes:governance.apply.otherSlow') : PlatformI18n.t('changes:governance.apply.other');
   },
 
   // The local (actor-side) descriptor for one proposal, or null.
@@ -17576,36 +18254,34 @@ const AppView = {
       return {
         spinner: false, tone: 'amber', busy: false,
         label: st.kind === 'close_issue'
-          ? 'Close didn\'t complete. Try voting again'
-          : 'Didn\'t complete. Try voting again',
+          ? PlatformI18n.t('changes:governance.failed.closeLabel')
+          : PlatformI18n.t('changes:governance.failed.label'),
         title: st.error
-          ? `The apply didn't finish: ${st.error}`
-          : 'The apply didn\'t finish. Voting again re-drives it.',
+          ? PlatformI18n.t('changes:governance.failed.titleWith', { error: st.error })
+          : PlatformI18n.t('changes:governance.failed.title'),
       };
     }
     if (st.phase === 'stalled') {
       return {
         spinner: false, tone: 'amber', busy: false,
         label: st.kind === 'close_issue'
-          ? 'Still closing. Refresh to check'
-          : 'Still applying. Refresh to check',
-        title: 'This is taking much longer than usual. The apply may still '
-          + 'be running on the server. Refresh to see where it landed.',
+          ? PlatformI18n.t('changes:governance.stalled.closeLabel')
+          : PlatformI18n.t('changes:governance.stalled.label'),
+        title: PlatformI18n.t('changes:governance.stalled.title'),
       };
     }
     if (st.phase === 'slow') {
       return {
         spinner: true, tone: 'amber', busy: true,
-        label: `${label.replace(/…$/, '')}, still working, GitHub may be slow…`,
-        title: 'Still working. GitHub can be slow to accept the close; '
-          + 'nothing is lost while this runs.',
+        label: AppView._govApplyLabel(st.kind, st.targetIssueNumber, true),
+        title: PlatformI18n.t('changes:governance.slow.title'),
       };
     }
     return {
       spinner: true, tone: 'amber', busy: true, label,
       title: issue.kind === 'close_issue'
-        ? 'The vote passed. The issue is being closed here and on GitHub.'
-        : 'The vote passed. This change is being applied.',
+        ? PlatformI18n.t('changes:governance.applying.closeTitle')
+        : PlatformI18n.t('changes:governance.applying.title'),
     };
   },
 
@@ -17676,17 +18352,16 @@ const AppView = {
       return {
         spinner: false, tone: 'neutral', busy: false,
         label: issue.kind === 'close_issue'
-          ? 'Close pending, will retry automatically'
-          : 'Apply pending, will retry automatically',
-        title: 'The vote passed, but the change hasn\'t gone through yet. '
-          + 'The platform retries automatically.',
+          ? PlatformI18n.t('changes:governance.pending.closeLabel')
+          : PlatformI18n.t('changes:governance.pending.label'),
+        title: PlatformI18n.t('changes:governance.pending.title'),
       };
     }
     return {
       spinner: true, tone: 'amber', busy: true, label,
       title: issue.kind === 'close_issue'
-        ? 'The vote passed. The issue is being closed here and on GitHub.'
-        : 'The vote passed. This change is being applied.',
+        ? PlatformI18n.t('changes:governance.applying.closeTitle')
+        : PlatformI18n.t('changes:governance.applying.title'),
     };
   },
 
@@ -17801,24 +18476,35 @@ const AppView = {
     const isRename = issue.kind === 'rename';
     const isCloseIssue = issue.kind === 'close_issue';
     const titleText = isRename
-      ? `Rename to "${(issue.payload && issue.payload.newName) || issue.title}"`
+      ? PlatformI18n.t('changes:governance.title.rename', { name: (issue.payload && issue.payload.newName) || issue.title })
       : isCloseIssue
-        ? `Close issue #${(issue.payload && issue.payload.issueNumber) || '?'}: "${(issue.payload && issue.payload.issueTitle) || issue.title}"`
+        ? PlatformI18n.t('changes:governance.title.closeIssue', { number: (issue.payload && issue.payload.issueNumber) || '?', title: (issue.payload && issue.payload.issueTitle) || issue.title })
         : issue.title;
     // A settled (applied/closed) governance row — a close-issue proposal
     // opened from the Completed list. The vote is history: no Yes/No/
     // admin/withdraw controls, no countdown; the pill is a snapshot.
     const settled = !!issue.status && issue.status !== 'open';
     const applied = !!(issue.payload && issue.payload.appliedAt);
-    const meta = [{ t: 'text', s: 'Governance proposal' }];
+    const meta = [{ t: 'text', s: PlatformI18n.t('changes:governance.meta.kind') }];
     if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
     const issueAge = issue.created_at ? AppView._agePart(issue.created_at) : null;
     if (issueAge) meta.push(issueAge);
     if (settled && applied) {
-      const how = String(issue.payload.appliedBy || '').startsWith('admin:')
-        ? 'closed by admin' : 'closed by vote';
-      const settledAge = AppView._agePart(issue.payload.appliedAt, `${how} `);
-      meta.push(settledAge || { t: 'text', s: how });
+      // Who closed it and when is one message; without a readable time, the
+      // message that names only who.
+      const byAdmin = String(issue.payload.appliedBy || '').startsWith('admin:');
+      const stamp = relStamp(issue.payload.appliedAt);
+      if (stamp.text) {
+        meta.push({
+          t: 'span', cls: '',
+          s: byAdmin
+            ? PlatformI18n.t('changes:governance.meta.closedByAdminWhen', { when: stamp.text })
+            : PlatformI18n.t('changes:governance.meta.closedByVoteWhen', { when: stamp.text }),
+          title: stamp.title,
+        });
+      } else {
+        meta.push({ t: 'text', s: byAdmin ? PlatformI18n.t('changes:governance.meta.closedByAdmin') : PlatformI18n.t('changes:governance.meta.closedByVote') });
+      }
     }
     // The governance row is shaped into the same fields statusPillState
     // reads, so a rename / secret-change / close-issue proposal gets the
@@ -17863,13 +18549,14 @@ const AppView = {
     // the server's toggle-off branch and silently retract the vote.
     const applyState = settled ? null : AppView._govApplyState(issue);
     const busy = !!(applyState && applyState.busy);
-    const upT = AppView._voteBtnTally(issue.qualified_yes_count, upCount, issue.approval_policy, 'Yes');
-    const downT = AppView._voteBtnTally(issue.qualified_no_count, downCount, issue.approval_policy, 'No');
+    const upT = AppView._voteBtnTally(issue.qualified_yes_count, upCount, issue.approval_policy, 'yes');
+    const downT = AppView._voteBtnTally(issue.qualified_no_count, downCount, issue.approval_policy, 'no');
     const actions = ro ? [] : [
       {
         key: 'yes',
         cls: `gc-vote-btn gc-vote-btn-yes${issue.my_vote === 'up' ? ' gc-vote-active' : ''}`,
-        label: `Yes (${upT.label})`,
+        label: PlatformI18n.t('changes:governance.vote.yes', { tally: upT.label }),
+        tally: upT.label,
         title: busy ? applyState.label : upT.tip,
         disabled: busy,
         act: { fn: 'castIssueVote', args: [issue.id, 'up'] },
@@ -17878,7 +18565,8 @@ const AppView = {
       {
         key: 'no',
         cls: `gc-vote-btn gc-vote-btn-no${issue.my_vote === 'down' ? ' gc-vote-active' : ''}`,
-        label: `No (${downT.label})`,
+        label: PlatformI18n.t('changes:governance.vote.no', { tally: downT.label }),
+        tally: downT.label,
         title: busy ? applyState.label : downT.tip,
         disabled: busy,
         act: { fn: 'castIssueVote', args: [issue.id, 'down'] },
@@ -17893,9 +18581,9 @@ const AppView = {
     if (!ro && (issue.kind === 'secret_change' || isCloseIssue || isCampaign || isIllustration)
         && App.user?.canAdminWrite) {
       menu.push({
-        label: 'Admin merge',
+        label: PlatformI18n.t('changes:governance.menu.adminMerge'),
         icon: 'merge',
-        title: busy ? (applyState.title || applyState.label) : 'Admin: apply this change right now, bypassing the vote majority',
+        title: busy ? (applyState.title || applyState.label) : PlatformI18n.t('changes:governance.menu.adminMergeTitle'),
         disabled: busy,
         danger: true,
         act: () => AppView.castIssueAdminApply(issue.id),
@@ -17906,9 +18594,9 @@ const AppView = {
     // /admin is admin-gated.
     if (isCampaign && issue.payload && issue.payload.campaignId && App.user?.canAdminWrite) {
       menu.push({
-        label: 'View campaign',
+        label: PlatformI18n.t('changes:governance.menu.viewCampaign'),
         icon: 'campaign',
-        title: "Open this campaign's per-app progress",
+        title: PlatformI18n.t('changes:governance.menu.viewCampaignTitle'),
         act: () => window.open(`/admin#campaign-${issue.payload.campaignId}`, '_blank', 'noopener'),
       });
     }
@@ -17916,9 +18604,9 @@ const AppView = {
     // withdraw it (creator-scoped POST /api/issues/:id/close).
     if (!ro && !!(App.user && issue.created_by === App.user.id)) {
       menu.push({
-        label: 'Withdraw',
+        label: PlatformI18n.t('changes:governance.menu.withdraw'),
         icon: 'withdraw',
-        title: busy ? (applyState.title || applyState.label) : 'Withdraw this proposal (removes it from the vote panel)',
+        title: busy ? (applyState.title || applyState.label) : PlatformI18n.t('changes:governance.menu.withdrawTitle'),
         disabled: busy,
         danger: true,
         act: () => AppView.withdrawGovProposal(issue.id),
@@ -17931,7 +18619,7 @@ const AppView = {
       || (isCloseIssue && issue.payload ? issue.payload.issueNumber : null);
     const attrs = { 'data-gov-row': String(issue.id) };
     if (refIssueN) attrs['data-ref-issue'] = String(refIssueN);
-    if (!noNav) attrs.title = "Open this proposal's discussion";
+    if (!noNav) attrs.title = PlatformI18n.t('changes:governance.card.openTitle');
     return {
       key: `gov:${issue.id}`,
       cls: `gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${busy ? ' opacity-70' : ''}`,
@@ -18062,7 +18750,6 @@ const AppView = {
       const res = await fetch(`/api/sessions/${sessionId}/votes`, fresh ? { cache: 'no-cache' } : undefined);
       if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
-      const ctx = AppView._proposalsCtx || {};
       // #646: on invited-approver apps the endpoint lists which voters'
       // votes QUALIFY — tag those names so advisory votes are legible.
       const approverSet = new Set(data.approvers || []);
@@ -18072,24 +18759,20 @@ const AppView = {
       // The head leaves that side out (topic-head.tsx's Roster), so the line
       // reads "Yes (2): @a, @b" rather than "Yes (2): @a, @b No (0): —".
       const fmt = (arr) => (arr && arr.length
-        ? arr.map((u) => '@' + u + (approverSet.has(u) ? '\u00a0✓' : '')).join(', ')
+        ? PlatformI18n.listText(arr.map((u) => '@' + u + (approverSet.has(u) ? '\u00a0✓' : '')))
         : '');
       // #695: on invited apps the headline count splits into approver
       // votes (✓, the ones that count) + the advisory surplus; under the
       // default policy it stays the plain total.
-      const rosterCount = (arr) => {
+      // The side's word and its count are one message per case (`ids` is the
+      // Yes or the No set of AppView.VOTE_ROSTER_LABEL_IDS).
+      const rosterLabel = (ids, arr) => {
         const names = arr || [];
-        if (!data.approvers) return `(${names.length})`;
+        if (!data.approvers) return PlatformI18n.t(ids.all, { count: names.length });
         const q = names.filter((u) => approverSet.has(u)).length;
         const a = names.length - q;
-        return a > 0 ? `(${q}✓ + ${a} advisory)` : `(${q}✓)`;
+        return a > 0 ? PlatformI18n.t(ids.approversAdvisory, { approvers: q, count: a }) : PlatformI18n.t(ids.approvers, { count: q });
       };
-      const pr = (AppView._proposals || []).find((p) => p.id === sessionId) || {};
-      const needs = pr.approvals_required != null
-        ? ` · needs at least ${pr.approvals_required} approval${pr.approvals_required === 1 ? '' : 's'}${data.approvers ? ' from invited approvers (✓)' : ''}`
-        : (data.approvers
-          ? ` · only invited approvers' (✓) votes count`
-          : ` · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users`);
       // #1688: each voter's own line, under the names, and the people whose
       // vote was on an earlier version of the proposal.
       const reasons = (Array.isArray(data.reasons) ? data.reasons : [])
@@ -18097,17 +18780,19 @@ const AppView = {
         .map((q) => ({ who: '@' + q.username, vote: q.vote === 'no' ? 'no' : 'yes', text: String(q.reason) }));
       const earlierYes = Array.isArray(data.earlier?.yes) ? data.earlier.yes : [];
       const earlierNo = Array.isArray(data.earlier?.no) ? data.earlier.no : [];
-      const earlierParts = [];
-      if (earlierYes.length) earlierParts.push(`${earlierYes.map((u) => '@' + u).join(', ')} said yes`);
-      if (earlierNo.length) earlierParts.push(`${earlierNo.map((u) => '@' + u).join(', ')} said no`);
-      const earlier = earlierParts.length
-        ? `Earlier version: ${earlierParts.join('; ')}. Not counted until they take another look.`
-        : null;
+      const earlierValues = {
+        count: earlierYes.length + earlierNo.length,
+        yes: PlatformI18n.listText(earlierYes.map((u) => '@' + u)),
+        no: PlatformI18n.listText(earlierNo.map((u) => '@' + u)),
+      };
+      let earlier = null;
+      if (earlierYes.length && earlierNo.length) earlier = PlatformI18n.t('changes:vote.roster.earlier.both', earlierValues);
+      else if (earlierYes.length) earlier = PlatformI18n.t('changes:vote.roster.earlier.yes', earlierValues);
+      else if (earlierNo.length) earlier = PlatformI18n.t('changes:vote.roster.earlier.no', earlierValues);
       publish({
         phase: 'ready',
-        yes: { label: `Yes ${rosterCount(data.yes)}`, names: fmt(data.yes) },
-        no: { label: `No ${rosterCount(data.no)}`, names: fmt(data.no) },
-        needs,
+        yes: { label: rosterLabel(AppView.VOTE_ROSTER_LABEL_IDS.yes, data.yes), names: fmt(data.yes) },
+        no: { label: rosterLabel(AppView.VOTE_ROSTER_LABEL_IDS.no, data.no), names: fmt(data.no) },
         reasons,
         earlier,
         // The same people by name, which the Discussion reads to mark their
@@ -18130,6 +18815,10 @@ const AppView = {
   // every paint, and publishing repaints), keyed by issue id. The tally
   // headline and the countdown stay the card's; this is the names and the
   // sentences, which no list endpoint carries.
+  VOTE_ROSTER_LABEL_IDS: {
+    yes: { all: 'changes:vote.roster.yes.all', approvers: 'changes:vote.roster.yes.approvers', approversAdvisory: 'changes:vote.roster.yes.approversAdvisory' },
+    no: { all: 'changes:vote.roster.no.all', approvers: 'changes:vote.roster.no.approvers', approversAdvisory: 'changes:vote.roster.no.approversAdvisory' },
+  },
   _govVoteRoster: Object.create(null),
   _govVoteRosterInFlight: new Set(),
   _govVoteRosterStale: new Set(),
@@ -18198,7 +18887,7 @@ const AppView = {
       const data = await res.json();
       // A non-breaking space is not needed here (no approver ticks on a
       // governance roster), and an empty side is left out the same way.
-      const fmt = (arr) => (arr && arr.length ? arr.map((u) => '@' + u).join(', ') : '');
+      const fmt = (arr) => (arr && arr.length ? PlatformI18n.listText(arr.map((u) => '@' + u)) : '');
       const yes = Array.isArray(data.yes) ? data.yes : [];
       const no = Array.isArray(data.no) ? data.no : [];
       const reasons = (Array.isArray(data.reasons) ? data.reasons : [])
@@ -18207,8 +18896,8 @@ const AppView = {
       if (!yes.length && !no.length) { publish({ phase: 'hidden' }); return; }
       publish({
         phase: 'ready',
-        yes: { label: `Yes (${yes.length})`, names: fmt(yes) },
-        no: { label: `No (${no.length})`, names: fmt(no) },
+        yes: { label: PlatformI18n.t('changes:governance.roster.yes', { count: yes.length }), names: fmt(yes) },
+        no: { label: PlatformI18n.t('changes:governance.roster.no', { count: no.length }), names: fmt(no) },
         reasons,
       });
     } catch {
@@ -18249,14 +18938,14 @@ const AppView = {
     const oldText = btn ? btn.textContent : '';
     if (btn) {
       btn.disabled = true;
-      btn.textContent = 'Sharing with the group…';
+      btn.textContent = PlatformI18n.t('changes:proposal.askApproval.sharing');
     }
     try {
       const resp = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
         if (window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(data.error || `Could not ask for approval on this change (HTTP ${resp.status}).`);
+          PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.askApproval.failedHttp', { status: resp.status }));
         }
         if (btn) {
           btn.disabled = false;
@@ -18267,7 +18956,7 @@ const AppView = {
       await AppView.openTopic('proposal', sessionId);
     } catch (err) {
       if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(`Could not ask for approval on this change: ${err.message}`);
+        PlatformUI.toast(PlatformI18n.t('changes:proposal.askApproval.failedWith', { error: err.message }));
       }
       if (btn) {
         btn.disabled = false;
@@ -18289,9 +18978,9 @@ const AppView = {
     const pr = (AppView._proposals || []).find((p) => p.id === sessionId);
     const prNum = pr ? (pr.pr_number || pr.id) : sessionId;
     const ok = await ConfirmModal.show({
-      title: 'Withdraw this proposal?',
-      message: `This closes PR #${prNum} and removes it from the vote panel. You can propose it again later.`,
-      confirmLabel: 'Withdraw',
+      title: PlatformI18n.t('changes:proposal.withdraw.title'),
+      message: PlatformI18n.t('changes:proposal.withdraw.message', { number: prNum }),
+      confirmLabel: PlatformI18n.t('changes:proposal.withdraw.confirm'),
       danger: true,
     });
     if (!ok) return;
@@ -18299,11 +18988,11 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Withdraw failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.withdraw.failedHttp', { status: resp.status }));
         return;
       }
     } catch (err) {
-      PlatformUI.toast(`Withdraw failed: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:proposal.withdraw.failedWith', { error: err.message }));
       return;
     }
     await AppView._loadDevFeed();
@@ -18326,20 +19015,20 @@ const AppView = {
     const pr = (AppView._proposals || []).find((p) => p.id === sessionId);
     const prNum = pr ? (pr.pr_number || pr.id) : sessionId;
     const ok = await ConfirmModal.show({
-      title: 'Move back to Underway?',
-      message: `This takes PR #${prNum} out of review so you can keep working on it. Its votes are cleared and it cannot be merged until you propose it again. The pull request stays open.`,
-      confirmLabel: 'Move back',
+      title: PlatformI18n.t('changes:proposal.moveBack.title'),
+      message: PlatformI18n.t('changes:proposal.moveBack.message', { number: prNum }),
+      confirmLabel: PlatformI18n.t('changes:proposal.moveBack.confirm'),
     });
     if (!ok) return;
     try {
       const resp = await fetch(`/api/sessions/${sessionId}/unpromote`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Could not move it back (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.moveBack.failedHttp', { status: resp.status }));
         return;
       }
     } catch (err) {
-      PlatformUI.toast(`Could not move it back: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:proposal.moveBack.failedWith', { error: err.message }));
       return;
     }
     await AppView._loadDevFeed();
@@ -18358,9 +19047,9 @@ const AppView = {
   async withdrawGovProposal(issueId) {
     if (!issueId) return;
     const ok = await ConfirmModal.show({
-      title: 'Withdraw this proposal?',
-      message: 'This removes it from the vote panel and stops the vote. You can propose it again later.',
-      confirmLabel: 'Withdraw',
+      title: PlatformI18n.t('changes:governance.withdraw.title'),
+      message: PlatformI18n.t('changes:governance.withdraw.message'),
+      confirmLabel: PlatformI18n.t('changes:governance.withdraw.confirm'),
       danger: true,
     });
     if (!ok) return;
@@ -18368,11 +19057,11 @@ const AppView = {
       const resp = await fetch(`/api/issues/${issueId}/close`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Withdraw failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:governance.withdraw.failedHttp', { status: resp.status }));
         return;
       }
     } catch (err) {
-      PlatformUI.toast(`Withdraw failed: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:governance.withdraw.failedWith', { error: err.message }));
       return;
     }
     await AppView._loadDevFeed();
@@ -18443,9 +19132,9 @@ const AppView = {
   // hover the linked-issue pills use, never a brightness filter.
   _priorityMeta(value) {
     switch (value) {
-      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
-      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
-      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
+      case 'high': return { label: PlatformI18n.t('changes:attributes.priority.high'), cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
+      case 'medium': return { label: PlatformI18n.t('changes:attributes.priority.medium'), cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
+      case 'low': return { label: PlatformI18n.t('changes:attributes.priority.low'), cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
       default: return null;
     }
   },
@@ -18516,12 +19205,12 @@ const AppView = {
   // USER INPUT for custom categories — every caller must escapeHtml it.
   _categoryMeta(value) {
     switch (value) {
-      case 'feature': return { label: 'Feature', cls: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', hover: 'hover:bg-emerald-500/20' };
-      case 'bug': return { label: 'Bug', cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
-      case 'improvement': return { label: 'Improvement', cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
-      case 'design': return { label: 'Design', cls: 'bg-violet-500/10 text-violet-700 dark:text-violet-400', hover: 'hover:bg-violet-500/20' };
-      case 'docs': return { label: 'Docs', cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
-      case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', hover: 'hover:bg-zinc-500/20' };
+      case 'feature': return { label: PlatformI18n.t('changes:attributes.category.feature'), cls: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', hover: 'hover:bg-emerald-500/20' };
+      case 'bug': return { label: PlatformI18n.t('changes:attributes.category.bug'), cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
+      case 'improvement': return { label: PlatformI18n.t('changes:attributes.category.improvement'), cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
+      case 'design': return { label: PlatformI18n.t('changes:attributes.category.design'), cls: 'bg-violet-500/10 text-violet-700 dark:text-violet-400', hover: 'hover:bg-violet-500/20' };
+      case 'docs': return { label: PlatformI18n.t('changes:attributes.category.docs'), cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
+      case 'chore': return { label: PlatformI18n.t('changes:attributes.category.chore'), cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', hover: 'hover:bg-zinc-500/20' };
       default: break;
     }
     if (!value) return null;
@@ -18616,7 +19305,7 @@ const AppView = {
     if (field === 'priority') {
       const meta = AppView._priorityMeta(s.top);
       if (meta) { label = { kind: 'glyph', glyph: '⚑', text: meta.label }; cls = meta.cls; hover = meta.hover; }
-      else { label = { kind: 'glyph', glyph: '⚑', text: 'Set priority' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
+      else { label = { kind: 'glyph', glyph: '⚑', text: PlatformI18n.t('changes:attributes.chip.setPriority') }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
     } else if (field === 'category') {
       // #504: lead with the small colour swatch (the same attr-dot used in
       // the popover) so the category reads at a glance, then the label.
@@ -18634,7 +19323,7 @@ const AppView = {
         label = { kind: 'dot', cls: tint.cls, text: placed.name };
         cls = tint.cls; hover = tint.hover || 'hover:bg-zinc-500/20';
       }
-      else { label = { kind: 'dot', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', text: 'Set category' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
+      else { label = { kind: 'dot', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', text: PlatformI18n.t('changes:attributes.chip.setCategory') }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
     } else if (s.top) {
       // #489: the assignee leads with a coloured initial-avatar (an at-a-
       // glance "who owns this"); the empty state reads as an explicit
@@ -18649,19 +19338,19 @@ const AppView = {
       cls = 'bg-violet-500/10 text-violet-700 dark:text-violet-400';
       hover = 'hover:bg-violet-500/20';
     } else {
-      label = { kind: 'avatarEmpty', text: 'Unassigned' };
+      label = { kind: 'avatarEmpty', text: PlatformI18n.t('changes:attributes.chip.unassigned') };
       cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400';
       hover = 'hover:bg-zinc-500/20';
     }
     let title;
     if (field === 'priority') {
-      title = 'Vote on this card\'s priority';
+      title = PlatformI18n.t('changes:attributes.chip.priorityTitle');
     } else if (field === 'category') {
       title = (!s.top && AppView._placedCategoryFor(targetType, targetRef))
-        ? 'Placed automatically. Tap to vote for a different category'
-        : 'Vote on this card\'s category';
+        ? PlatformI18n.t('changes:attributes.chip.categoryPlacedTitle')
+        : PlatformI18n.t('changes:attributes.chip.categoryTitle');
     } else {
-      title = s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task';
+      title = s.top ? PlatformI18n.t('changes:attributes.chip.assigneeTitle') : PlatformI18n.t('changes:attributes.chip.assignTitle');
     }
     return {
       t: 'attr', key: `attr:${field}`, field, targetType, targetRef,
@@ -18717,10 +19406,12 @@ const AppView = {
   _attrMenuItems(targetType, targetRef, item, opts) {
     if (AppView.readOnly || (opts && opts.readonly)) return [];
     const it = item || {};
+    // Message ids: the row when the field is unset, when it is set, and its
+    // tooltip.
     const labels = {
-      priority: ['Set priority…', 'Change priority…'],
-      category: ['Set category…', 'Change category…'],
-      assignee: ['Assign someone…', 'Change assignee…'],
+      priority: ['changes:attributes.menu.setPriority', 'changes:attributes.menu.changePriority', 'changes:attributes.menu.priorityTitle'],
+      category: ['changes:attributes.menu.setCategory', 'changes:attributes.menu.changeCategory', 'changes:attributes.menu.categoryTitle'],
+      assignee: ['changes:attributes.menu.assign', 'changes:attributes.menu.changeAssignee', 'changes:attributes.menu.assigneeTitle'],
     };
     // No separate grouping row: the card's own CATEGORY chip is the
     // affordance now — tapping it opens this same popover — so a fourth row
@@ -18728,15 +19419,11 @@ const AppView = {
     return ['priority', 'category', 'assignee'].map((field) => {
       const set = !!(it[field] && it[field].top);
       return {
-        label: labels[field][set ? 1 : 0],
+        label: PlatformI18n.t(labels[field][set ? 1 : 0]),
         // Each field's icon matches the chip it sets, so the row and the
         // chip it produces are recognisably the same thing.
         icon: field,
-        title: field === 'assignee'
-          ? 'Suggest or vote on who should take this'
-          : (field === 'category'
-            ? 'Vote on which category this card belongs to'
-            : `Vote on this card's ${field}`),
+        title: PlatformI18n.t(labels[field][2]),
         act: () => AppView._openAttrMenuPopover(field, targetType, targetRef),
       };
     });
@@ -18989,7 +19676,7 @@ const AppView = {
     let add = null;
     if (field === 'priority') {
       groups.push({
-        head: 'Priority',
+        head: PlatformI18n.t('changes:attributes.picker.priorityHead'),
         divided: false,
         options: AppView.ATTR_PRIORITY_VALUES.map((v) => {
           const meta = AppView._priorityMeta(v);
@@ -19006,18 +19693,18 @@ const AppView = {
         return row(v, meta.cls, meta.label);
       };
       groups.push({
-        head: 'Category',
+        head: PlatformI18n.t('changes:attributes.picker.categoryHead'),
         divided: false,
         options: AppView.ATTR_CATEGORY_VALUES.map(catRow),
       });
       const customs = AppView._customCategories();
       if (customs.length) {
-        groups.push({ head: 'Custom', divided: true, options: customs.map((c) => catRow(c.value)) });
+        groups.push({ head: PlatformI18n.t('changes:attributes.picker.customHead'), divided: true, options: customs.map((c) => catRow(c.value)) });
       }
       add = {
         inputId: 'attr-category-input',
         buttonId: 'attr-category-add',
-        placeholder: 'Type a category…',
+        placeholder: PlatformI18n.t('changes:attributes.picker.categoryPlaceholder'),
         maxLength: AppView.ATTR_CATEGORY_MAX_LEN,
         defaultValue: '',
         suggest: false,
@@ -19025,7 +19712,7 @@ const AppView = {
     } else {
       const opts = data.options || [];
       groups.push({
-        head: 'Assigned person',
+        head: PlatformI18n.t('changes:attributes.picker.assigneeHead'),
         divided: false,
         // `dot: null` is what tells the component to draw `@name` instead of
         // a swatch and a word.
@@ -19033,7 +19720,7 @@ const AppView = {
           value: o.value, dot: null, label: o.value, count: o.count, mine: !!o.mine,
         })),
       });
-      if (!opts.length) emptyNote = 'No suggestions yet.';
+      if (!opts.length) emptyNote = PlatformI18n.t('changes:attributes.picker.noSuggestions');
       // #600: default the name box to the signed-in user's own username so
       // "assign it to me" is one click of Add — but only when the viewer has
       // no current pick, so a vote they already made is never quietly
@@ -19043,7 +19730,7 @@ const AppView = {
       add = {
         inputId: 'attr-assignee-input',
         buttonId: 'attr-assignee-add',
-        placeholder: 'Type a name…',
+        placeholder: PlatformI18n.t('changes:attributes.picker.namePlaceholder'),
         maxLength: 64,
         defaultValue: (me && !data.myValue) ? me : '',
         suggest: true,
@@ -19132,7 +19819,7 @@ const AppView = {
         body: JSON.stringify({ field, value }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { PlatformUI.toast(data.error || 'Could not save your vote.'); return; }
+      if (!res.ok) { PlatformUI.toast(data.error || PlatformI18n.t('changes:attributes.vote.saveFailed')); return; }
       // #780: adopt the refreshed vocabulary FIRST — a just-typed category
       // has no entry yet, and the chip repaint below needs its label+colour.
       AppView._setAppCategories(data.categories);
@@ -19146,7 +19833,7 @@ const AppView = {
         AppView._renderAttrPopoverBody(data);
       }
     } catch (err) {
-      PlatformUI.toast(`Could not save your vote: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:attributes.vote.saveFailedWith', { error: err.message }));
     }
   },
 
@@ -19164,7 +19851,7 @@ const AppView = {
         method: 'DELETE',
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { PlatformUI.toast(data.error || 'Could not remove your vote.'); return; }
+      if (!res.ok) { PlatformUI.toast(data.error || PlatformI18n.t('changes:attributes.vote.removeFailed')); return; }
       AppView._applyAttrSummary(targetType, targetRef, field, data);
       AppView._refreshAttrCards();
       if (AppView._attrPopover && AppView._attrPopover.field === field
@@ -19172,7 +19859,7 @@ const AppView = {
         AppView._renderAttrPopoverBody(data);
       }
     } catch (err) {
-      PlatformUI.toast(`Could not remove your vote: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:attributes.vote.removeFailedWith', { error: err.message }));
     }
   },
 
@@ -19302,12 +19989,10 @@ const AppView = {
     const key = `undo:${sessionId}`;
     if (AppView._voteInFlight.has(key)) return;
     const ok = await ConfirmModal.show({
-      title: 'Undo this merge?',
-      message:
-        'This opens a revert PR that backs out this merged change.\n\n'
-        + 'It still needs a merge vote to land. Undoing is a proposal the group votes on, just like any other change.',
-      confirmLabel: 'Open revert PR',
-      cancelLabel: 'Cancel',
+      title: PlatformI18n.t('changes:proposal.undo.title'),
+      message: PlatformI18n.t('changes:proposal.undo.message'),
+      confirmLabel: PlatformI18n.t('changes:proposal.undo.confirm'),
+      cancelLabel: PlatformI18n.t('core:common.cancel'),
       danger: true,
     });
     if (!ok) return;
@@ -19322,11 +20007,11 @@ const AppView = {
         // 409 means a revert is already in flight, or eligibility was
         // lost between render and click. Show the message and re-fetch
         // so the UI reflects reality.
-        PlatformUI.toast(data.error || `Undo failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:proposal.undo.failedHttp', { status: resp.status }));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
-      PlatformUI.toast(`Undo failed: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:proposal.undo.failedWith', { error: err.message }));
     } finally {
       AppView._voteInFlight.delete(key);
     }
@@ -19348,24 +20033,29 @@ const AppView = {
     const isCampaign = gov?.kind === 'maintenance_campaign';
     const isIllustration = gov?.kind === 'featured_illustration';
     const targetN = gov?.payload?.issueNumber;
+    let closeTitle = null;
+    if (isCloseIssue) {
+      closeTitle = targetN
+        ? PlatformI18n.t('changes:governance.adminApply.closeTitleNumber', { number: targetN })
+        : PlatformI18n.t('changes:governance.adminApply.closeTitle');
+    }
     const ok = await ConfirmModal.show({
       title: isCloseIssue
-        ? `Close issue ${targetN ? `#${targetN} ` : ''}now?`
+        ? closeTitle
         : isCampaign
-          ? 'Start this maintenance campaign now?'
+          ? PlatformI18n.t('changes:governance.adminApply.campaignTitle')
           : isIllustration
-            ? 'Apply this illustration change now?'
-            : 'Apply this env-var change now?',
-      message: (isCloseIssue
-        ? 'This bypasses the active-user vote majority and closes the issue right now, here and on GitHub.\n\n'
+            ? PlatformI18n.t('changes:governance.adminApply.illustrationTitle')
+            : PlatformI18n.t('changes:governance.adminApply.envVarTitle'),
+      message: isCloseIssue
+        ? PlatformI18n.t('changes:governance.adminApply.closeMessage')
         : isCampaign
-          ? 'This bypasses the platform vote and starts the campaign right now: an AI will open one maintenance PR per app across the fleet.\n\n'
+          ? PlatformI18n.t('changes:governance.adminApply.campaignMessage')
           : isIllustration
-            ? 'This bypasses the active-user vote majority and changes the featured illustration on Discover right now.\n\n'
-            : 'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n')
-        + 'Use only when you\'re confident the change should ship. The override is announced in group chat with your username.',
-      confirmLabel: isCloseIssue ? 'Close now' : isCampaign ? 'Start now' : 'Apply now',
-      cancelLabel: 'Cancel',
+            ? PlatformI18n.t('changes:governance.adminApply.illustrationMessage')
+            : PlatformI18n.t('changes:governance.adminApply.envVarMessage'),
+      confirmLabel: isCloseIssue ? PlatformI18n.t('changes:governance.adminApply.closeConfirm') : isCampaign ? PlatformI18n.t('changes:governance.adminApply.campaignConfirm') : PlatformI18n.t('changes:governance.adminApply.applyConfirm'),
+      cancelLabel: PlatformI18n.t('core:common.cancel'),
       danger: true,
     });
     if (!ok) return;
@@ -19377,11 +20067,11 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Admin apply failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:governance.adminApply.failedHttp', { status: resp.status }));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
-      PlatformUI.toast(`Admin apply failed: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:governance.adminApply.failedWith', { error: err.message }));
     } finally {
       AppView._voteInFlight.delete(key);
     }
@@ -19435,11 +20125,11 @@ const AppView = {
     if (age) meta.push(age);
     if (issue.bounty_count) {
       meta.push({
-        t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'Kudos pledged on this request',
+        t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: PlatformI18n.t('changes:issue.card.kudosTitle'),
         s: `★ ${parseInt(issue.bounty_count, 10) || 0}`,
       });
     }
-    if (issue.title_fallback) meta.push({ t: 'text', s: 'auto-title pending' });
+    if (issue.title_fallback) meta.push({ t: 'text', s: PlatformI18n.t('changes:issue.card.autoTitlePending') });
 
     // ── Icon ──
     // #250: mirrors the auto-solve state so proposal issues read at a
@@ -19448,11 +20138,11 @@ const AppView = {
     // session cloned off it, plain amber issue chip otherwise.
     const h = issue.headless;
     const icon = h && h.status === 'generating'
-      ? AppView._devCardIcon('issueProposal', { pulse: true, title: 'A proposal is being generated for this issue' })
+      ? AppView._devCardIcon('issueProposal', { pulse: true, title: PlatformI18n.t('changes:issue.card.icon.generating') })
       : h && h.status === 'ready'
         ? (h.mySessionId
-            ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue. Go to it.' })
-            : AppView._devCardIcon('issueProposal', { title: 'Proposal ready. Review it to start a session' }))
+            ? AppView._devCardIcon('issueProposalMine', { title: PlatformI18n.t('changes:issue.card.icon.mine') })
+            : AppView._devCardIcon('issueProposal', { title: PlatformI18n.t('changes:issue.card.icon.ready') }))
         : AppView._devCardIcon('issue');
 
     // "Propose to close" — opens the reason modal and files a close_issue
@@ -19472,12 +20162,12 @@ const AppView = {
     const closeBadge = closeApplying && closeApplying.busy
       ? {
         t: 'chip', key: 'close', cls: 'gc-merging-badge', spinner: true,
-        label: 'Closing…', title: closeApplying.title || closeApplying.label,
+        label: PlatformI18n.t('changes:issue.card.closing'), title: closeApplying.title || closeApplying.label,
       }
       : closeProposal
         ? {
           t: 'chip', key: 'close', cls: 'gc-checks-running-badge',
-          label: 'Close proposed', title: 'Closing this request is waiting for approval',
+          label: PlatformI18n.t('changes:issue.card.closeProposed'), title: PlatformI18n.t('changes:issue.card.closeProposedTitle'),
         }
         : null;
 
@@ -19488,8 +20178,8 @@ const AppView = {
     const closedBadge = closed
       ? {
         t: 'chip', key: 'closed', cls: `dev-badge ${AppView._WORK_TONE_CLS.zinc}`,
-        label: 'Closed',
-        title: issue.closedAt ? `Closed ${relTime(issue.closedAt)}` : 'This request is closed',
+        label: PlatformI18n.t('changes:issue.card.closed'),
+        title: issue.closedAt ? PlatformI18n.t('changes:issue.card.closedWhen', { when: relTime(issue.closedAt) }) : PlatformI18n.t('changes:issue.card.closedTitle'),
       }
       : null;
 
@@ -19573,7 +20263,7 @@ const AppView = {
     // delegated open handler. The check is cosmetic (decides whether the
     // pencil renders); the PATCH route's author check is authoritative.
     const rowTitle = issue.created_by_username
-      ? `${issue.title} · ${issue.created_by_username}`
+      ? PlatformI18n.t('changes:facts.pair', { first: issue.title, second: issue.created_by_username })
       : issue.title;
     const canEditTitle = !!(noNav && AppView._canEditIssueAuthor(issue));
     const editing = canEditTitle && AppView._editingIssueTitle === n;
@@ -19581,7 +20271,7 @@ const AppView = {
     const attrs = { 'data-ref-issue': String(n) };
     if (!noNav) {
       attrs['data-issue-row'] = String(n);
-      attrs.title = 'Open this request';
+      attrs.title = PlatformI18n.t('changes:issue.card.openTitle');
     }
     return {
       key: `issue:${n}`,
@@ -19657,31 +20347,33 @@ const AppView = {
       // B8: whoever it is being built for can follow it in their chat.
       if (issue.bot.mine) {
         return {
-          key: 'primary', cls: 'gc-vote-btn', label: 'See progress',
-          title: 'Open your chat with Homeroom bot, where this request\'s card is',
+          key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.seeProgress'),
+          title: PlatformI18n.t('changes:issue.action.seeProgressTitle'),
           act: { fn: 'openBotChatFromRequest', args: [] },
         };
       }
       return {
         key: 'primary', cls: 'gc-vote-btn', disabled: true,
         // B8: asked, and waiting for a free builder.
-        label: issue.bot.what === 'queued' ? 'Homeroom bot is on it' : reading ? 'Homeroom bot is reading…' : 'Homeroom bot is building…',
+        label: issue.bot.what === 'queued' ? PlatformI18n.t('changes:issue.action.botOnIt') : reading ? PlatformI18n.t('changes:issue.action.botReading') : PlatformI18n.t('changes:issue.action.botBuilding'),
         title: reading
-          ? 'The Homeroom bot is reading this request now'
-          : 'The Homeroom bot is building this request now',
+          ? PlatformI18n.t('changes:issue.action.botReadingTitle')
+          : PlatformI18n.t('changes:issue.action.botBuildingTitle'),
       };
     }
     if (h && h.status === 'generating') {
       return {
-        key: 'primary', cls: 'gc-vote-btn', disabled: true, label: 'Generating proposal…',
-        title: `A headless AI session is working on this issue${h.username ? ` (started by ${h.username})` : ''}`,
+        key: 'primary', cls: 'gc-vote-btn', disabled: true, label: PlatformI18n.t('changes:issue.action.generating'),
+        title: h.username
+          ? PlatformI18n.t('changes:issue.action.generatingTitleBy', { username: h.username })
+          : PlatformI18n.t('changes:issue.action.generatingTitle'),
       };
     }
     if (h && h.status === 'ready') {
       if (h.mySessionId) {
         return {
-          key: 'primary', cls: 'gc-vote-btn', label: 'Go to session',
-          title: 'You already started a session from this proposal. Open it',
+          key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.goToSession'),
+          title: PlatformI18n.t('changes:issue.action.goToSessionTitle'),
           act: { fn: 'goToAutoSessionClone', args: [h.mySessionId] },
         };
       }
@@ -19702,8 +20394,8 @@ const AppView = {
         // was already on screen and the button read as broken.
         if (h.mine && h.sessionId) {
           return {
-            key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
-            title: 'Your auto-solve run is waiting on an answer. Open its session to read the question and reply',
+            key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.answer'),
+            title: PlatformI18n.t('changes:issue.action.answerMineTitle'),
             act: { fn: 'openAutoRunSession', args: [h.sessionId] },
           };
         }
@@ -19714,24 +20406,26 @@ const AppView = {
         // discussion is the one place they can contribute — a real
         // navigation from the board, and nothing at all from the head,
         // which already IS that discussion.
-        if (noNav) return { key: 'primary', cls: 'gc-vote-btn', label: 'Start work', act: { fn: 'chooseIssueWork', args: [n] } };
+        if (noNav) return { key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.startWork'), act: { fn: 'chooseIssueWork', args: [n] } };
         return {
-          key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
-          title: 'This auto-solve run has a question. Answer it on this issue',
+          key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.answer'),
+          title: PlatformI18n.t('changes:issue.action.answerOthersTitle'),
           act: { fn: 'openTopic', args: ['issue', n] },
         };
       }
-      const outcomeNote = h.outcome === 'spec' ? 'it drafted a plan'
-        : h.outcome === 'code' ? 'it pushed a code change'
-          : h.outcome === 'spec_code' ? 'it drafted a plan and pushed a code change'
-            : 'it finished a run';
+      // What the run did is part of the tooltip's sentence: one whole
+      // message per outcome.
+      const runTitle = h.outcome === 'spec' ? PlatformI18n.t('changes:issue.action.runFinished.spec')
+        : h.outcome === 'code' ? PlatformI18n.t('changes:issue.action.runFinished.code')
+          : h.outcome === 'spec_code' ? PlatformI18n.t('changes:issue.action.runFinished.specCode')
+            : PlatformI18n.t('changes:issue.action.runFinished.other');
       // #2779: a finished run used to be cloned into a classic dev chat of
       // the viewer's ("Review & start session"). Classic sessions are no
       // longer created, so the button starts an agent session on this
       // request, as Start work does, and the title says what the run did.
       return {
-        key: 'primary', cls: 'gc-vote-btn', label: 'Start work',
-        title: `An auto-solve run finished here (${outcomeNote}). Start an agent session on this request`,
+        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.startWork'),
+        title: runTitle,
         act: { fn: 'startFromAutoSession', args: [h.sessionId, n] },
       };
     }
@@ -19746,7 +20440,7 @@ const AppView = {
       if (waiting) {
         return {
           key: 'primary', cls: 'gc-vote-btn',
-          label: waiting.kind === 'question' ? 'Answer Homeroom bot\'s question' : 'Reply to Homeroom bot',
+          label: waiting.kind === 'question' ? PlatformI18n.t('changes:issue.action.answerBotQuestion') : PlatformI18n.t('changes:issue.action.replyToBot'),
           title: AppView._botWaitingHint(waiting),
           act: { fn: 'answerBotOnRequest', args: [n, Number(waiting.messageId) || 0, noNav ? 1 : 0] },
         };
@@ -19757,7 +20451,7 @@ const AppView = {
       // change" (_requestStatusView), as the non-door path below does.
       if (AppView._issueAwaitingApproval(issue)) return null;
       return {
-        key: 'primary', cls: 'gc-vote-btn', label: 'Ask Homeroom bot to build this',
+        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.askBot'),
         title: AppView._botDoorHint(door),
         act: { fn: 'askBotToBuild', args: [n] },
       };
@@ -19771,14 +20465,14 @@ const AppView = {
     if (!issue.myPrSessionId && AppView._issueAwaitingApproval(issue)) return null;
     return issue.myPrSessionId
       ? {
-        key: 'primary', cls: 'gc-vote-btn', label: 'Start more work',
-        title: 'Start another agent session on this request',
+        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.startMore'),
+        title: PlatformI18n.t('changes:issue.action.startMoreTitle'),
         act: { fn: 'chooseIssueWork', args: [n] },
       }
       : {
         // B8: building it yourself, with a coding agent, beside asking the bot.
-        key: 'primary', cls: 'gc-vote-btn', label: 'Build it now',
-        title: 'Start an agent session on this request',
+        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.buildNow'),
+        title: PlatformI18n.t('changes:issue.action.buildNowTitle'),
         act: { fn: 'chooseIssueWork', args: [n] },
       };
   },
@@ -19839,7 +20533,7 @@ const AppView = {
   /** B8: the line under the bot's button: how long it usually takes. */
   _botDoorHint(door) {
     const minutes = Number(door && door.typicalMinutes) > 0 ? Number(door.typicalMinutes) : 8;
-    return `Usually ready to try in about ${minutes} minutes.`;
+    return PlatformI18n.t('changes:issue.bot.hint', { count: minutes });
   },
 
   /**
@@ -19853,9 +20547,9 @@ const AppView = {
 
   /** #4530: the line under "Answer Homeroom bot's question": what it waits for. */
   _botWaitingHint(waiting) {
-    if (waiting.kind === 'question') return 'Homeroom bot asked a question here. Answer it, and it reads the request again.';
-    if (waiting.kind === 'person') return 'Homeroom bot said a person needs to decide this one. Reply to it once that is settled, and it reads the request again.';
-    return 'Homeroom bot found nothing to build here yet. Reply to it with more to go on, and it reads the request again.';
+    if (waiting.kind === 'question') return PlatformI18n.t('changes:issue.bot.waiting.question');
+    if (waiting.kind === 'person') return PlatformI18n.t('changes:issue.bot.waiting.person');
+    return PlatformI18n.t('changes:issue.bot.waiting.empty');
   },
 
   /**
@@ -19905,18 +20599,18 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || `Couldn't ask Homeroom bot just now (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.bot.askFailedHttp', { status: resp.status }));
         // #4530: it is waiting on an answer this page did not know about:
         // read again, so the card offers to answer it instead.
         if (data.code === 'awaiting_reply') AppView.refreshDevData('issue');
         return;
       }
       PlatformUI.toast(data.mine
-        ? 'Homeroom bot is on it. Its card is in your chat with it.'
-        : 'Homeroom bot is on it.');
+        ? PlatformI18n.t('changes:issue.bot.onItMine')
+        : PlatformI18n.t('changes:issue.bot.onIt'));
       AppView.refreshDevData('issue');
     } catch (err) {
-      PlatformUI.toast(`Couldn't ask Homeroom bot just now: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:issue.bot.askFailedWith', { error: err.message }));
     } finally {
       AppView._askingBot = false;
     }
@@ -19949,13 +20643,13 @@ const AppView = {
     const mine = claims.some((c) => c.mine);
     return mine
       ? {
-        key: 'claim', cls: 'gc-vote-btn', label: 'Stop working on this',
-        title: 'Stop working on this so somebody else can pick it up',
+        key: 'claim', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.stopWorking'),
+        title: PlatformI18n.t('changes:issue.action.stopWorkingTitle'),
         act: { fn: 'clearIssueClaim', args: [n] },
       }
       : {
-        key: 'claim', cls: 'gc-vote-btn', label: 'Claim it',
-        title: "Let everyone know you'll work on this. It's not a promise of progress. It clears itself after about 7 days with no activity; talking about it in the request's thread keeps it going.",
+        key: 'claim', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.claim'),
+        title: PlatformI18n.t('changes:issue.action.claimTitle'),
         act: { fn: 'markIssueInProgress', args: [n] },
       };
   },
@@ -19976,25 +20670,25 @@ const AppView = {
       // available through the same two-choice launcher, never a second AI CTA.
       // Not while the Homeroom bot is building it: that would build it twice.
       if (h?.status === 'ready' && !h.mySessionId && !issue.bot) items.push({
-        label: 'Start more work', icon: 'generate', act: () => AppView.chooseIssueWork(n),
+        label: PlatformI18n.t('changes:issue.menu.startMore'), work: 'more', icon: 'generate', act: () => AppView.chooseIssueWork(n),
       });
       // B8: with Homeroom bot's button on the face, building it yourself is
       // the ≡'s first row, the same launcher; left out while the bot is on
       // it, as Start work is, so it is never built twice.
       else if (AppView._botDoor() && !issue.bot && !AppView._issueAwaitingApproval(issue)) items.unshift({
-        label: 'Build it now', icon: 'generate', act: () => AppView.chooseIssueWork(n),
+        label: PlatformI18n.t('changes:issue.menu.buildNow'), work: 'build', icon: 'generate', act: () => AppView.chooseIssueWork(n),
       });
       // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.
       const budgetSpent = meta.myRemaining === 0;
       const kudosReason = issue.my_bounty
-        ? 'You already placed a bounty on this issue'
-        : (budgetSpent ? 'Weekly kudos allowance spent' : '');
+        ? PlatformI18n.t('changes:issue.menu.alreadyBountied')
+        : (budgetSpent ? PlatformI18n.t('changes:issue.menu.allowanceSpent') : '');
       items.push({
-        label: issue.my_bounty ? 'Bountied' : 'Pledge kudos',
+        label: issue.my_bounty ? PlatformI18n.t('changes:issue.menu.bountied') : PlatformI18n.t('changes:issue.menu.pledgeKudos'),
         icon: 'kudos',
         title: kudosReason
-          || 'Pledge kudos to whoever’s change makes this happen',
+          || PlatformI18n.t('changes:issue.menu.pledgeKudosTitle'),
         disabled: !!kudosReason,
         act: kudosReason ? null : () => AppView.giveIssueBounty(n),
       });
@@ -20012,15 +20706,17 @@ const AppView = {
       if (!st.progressOnFace) {
         items.push(myClaim
           ? {
-            label: 'Stop working on this',
+            label: PlatformI18n.t('changes:issue.menu.stopWorking'),
+            work: 'stop',
             icon: 'clear',
-            title: 'Stop working on this so somebody else can pick it up',
+            title: PlatformI18n.t('changes:issue.menu.stopWorkingTitle'),
             act: () => AppView.clearIssueClaim(n),
           }
           : {
-            label: 'Claim it',
+            label: PlatformI18n.t('changes:issue.menu.claim'),
+            work: 'claim',
             icon: 'progress',
-            title: 'Let everyone know you’ll work on this. It’s not a promise of progress. It clears itself after about 7 days with no activity; talking about it in the request’s thread keeps it going.',
+            title: PlatformI18n.t('changes:issue.menu.claimTitle'),
             act: () => AppView.markIssueInProgress(n),
           });
       }
@@ -20036,22 +20732,22 @@ const AppView = {
       const closeApplying = closeProposal ? AppView._govApplyState(closeProposal) : null;
       items.push(closeApplying && closeApplying.busy
         ? {
-          label: 'Closing…',
+          label: PlatformI18n.t('changes:issue.menu.closing'),
           icon: 'close',
           title: closeApplying.title || closeApplying.label,
           disabled: true,
         }
         : closeProposal
           ? {
-            label: 'Close proposed',
+            label: PlatformI18n.t('changes:issue.menu.closeProposed'),
             icon: 'close',
-            title: 'Closing this request is waiting for approval',
+            title: PlatformI18n.t('changes:issue.menu.closeProposedTitle'),
             disabled: true,
           }
           : {
-            label: 'Propose to close',
+            label: PlatformI18n.t('changes:issue.menu.proposeClose'),
             icon: 'close',
-            title: 'Ask the group to close this request. If they approve, it\'s closed',
+            title: PlatformI18n.t('changes:issue.menu.proposeCloseTitle'),
             danger: true,
             act: () => AppView.promptCloseIssue(n),
           });
@@ -20060,14 +20756,15 @@ const AppView = {
       }
     }
     items.push({
-      label: 'Share to…',
+      label: PlatformI18n.t('changes:issue.menu.share'),
       icon: 'share',
-      title: 'Share this request to a chat or a discussion',
+      title: PlatformI18n.t('changes:issue.menu.shareTitle'),
       act: () => AppView._shareCardToMessages({ type: 'issue', issueNumber: n, title: issue.title || null }),
     });
     if (issue.htmlUrl) {
       items.push({
-        label: 'Open on GitHub',
+        label: PlatformI18n.t('changes:issue.menu.openOnGithub'),
+        githubIssue: true,
         icon: 'github',
         title: issue.htmlUrl,
         act: () => window.open(issue.htmlUrl, '_blank', 'noopener'),
@@ -20137,13 +20834,13 @@ const AppView = {
         body: JSON.stringify({ title: newTitle }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) return showError(data.error || 'Failed to update the title');
+      if (!res.ok) return showError(data.error || PlatformI18n.t('changes:issue.title.updateFailed'));
       issue.title = data.title || newTitle;
       issue.title_fallback = false;
       AppView._editingIssueTitle = null;
       AppView._renderTopicHead();
     } catch {
-      showError('Network error');
+      showError(PlatformI18n.t('changes:issue.title.networkError'));
     }
   },
 
@@ -20202,7 +20899,7 @@ const AppView = {
     if (!input || input.disabled || !session) return;
     const newTitle = input.value.replace(/\s+/g, ' ').trim();
     const currentTitle = String(
-      session.session_title || session.pr_title || session.branch_name || `Session #${id}`
+      session.session_title || session.pr_title || session.branch_name || PlatformI18n.t('changes:session.fallbackTitle', { id })
     );
     if (!newTitle || newTitle === currentTitle) {
       AppView._editingSessionTitle = null;
@@ -20224,12 +20921,12 @@ const AppView = {
         body: JSON.stringify({ title: newTitle }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) return showError(data.error || 'Failed to update the title');
+      if (!res.ok) return showError(data.error || PlatformI18n.t('changes:proposal.title.updateFailed'));
       AppView._cacheSessionTitle(id, data.title || newTitle, data.prTitle || null);
       AppView._editingSessionTitle = null;
       AppView._renderTopicHead();
     } catch {
-      showError('Network error');
+      showError(PlatformI18n.t('changes:proposal.title.networkError'));
     }
   },
 
@@ -20327,8 +21024,8 @@ const AppView = {
     // it is not this year) instead of a bare numeric `toLocaleDateString`,
     // which said 06/16/2025 on a row whose neighbours all said "3d ago".
     const date = AppView._agePart(pr.created_at);
-    const mergedLabel = pr.pr_title ? pr.pr_title : `Change by ${pr.username}`;
-    const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
+    const mergedLabel = pr.pr_title ? pr.pr_title : PlatformI18n.t('changes:proposal.merged.fallbackTitle', { username: pr.username });
+    const mergedQuoteTitle = pr.pr_title || PlatformI18n.t('changes:proposal.merged.prTitle', { number: pr.pr_number || pr.id });
     const mine = !!(App.user && pr.user_id === App.user.id);
 
     // ── Meta line ──
@@ -20341,7 +21038,7 @@ const AppView = {
     if (pr.username) meta.push({ t: 'text', s: pr.username });
     if (date) meta.push(date);
     if (pr.revert_of_session_id) {
-      meta.push({ t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'This PR is itself a revert', s: '↩ revert' });
+      meta.push({ t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: PlatformI18n.t('changes:proposal.merged.revertTitle'), s: PlatformI18n.t('changes:proposal.merged.revert') });
     } else if (pr.revert_session_id) {
       const rs = pr.revert_status;
       const rpr = pr.revert_pr_number || pr.revert_session_id;
@@ -20349,10 +21046,10 @@ const AppView = {
         t: 'link', href: pr.revert_pr_url || '#',
         cls: 'text-amber-800 hover:text-amber-400 font-medium dark:text-amber-300',
         s: rs === 'merged'
-          ? `Undone by PR#${rpr}`
+          ? PlatformI18n.t('changes:proposal.merged.undoneBy', { number: rpr })
           : rs === 'merging'
-            ? `Revert merging (PR#${rpr})`
-            : `Revert in vote · PR#${rpr}`,
+            ? PlatformI18n.t('changes:proposal.merged.revertMerging', { number: rpr })
+            : PlatformI18n.t('changes:proposal.merged.revertInVote', { number: rpr }),
       });
     }
 
@@ -20385,7 +21082,7 @@ const AppView = {
         'data-completed': '1',
         'data-ref-pr': String(pr.pr_number || pr.id),
         'data-proposal-row': String(pr.id),
-        title: "Open this proposal's discussion",
+        title: PlatformI18n.t('changes:proposal.merged.openTitle'),
       },
       icon: AppView._devCardIcon('done'),
       title: { text: mergedLabel, title: mergedQuoteTitle },
@@ -20395,7 +21092,7 @@ const AppView = {
       // so the Board's "Closed #N" links can open their Homeroom topic just
       // like live proposal links do. Keep the completed-card emerald tone.
       linked: AppView.issueChipSpecs(pr.linked_issues, {
-        label: 'Closed',
+        says: 'closed',
         cls: 'dev-badge font-mono bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400',
       }),
       badges: [
@@ -20429,17 +21126,28 @@ const AppView = {
     const p = row.payload || {};
     const issueN = p.issueNumber || null;
     const titleText = issueN
-      ? `Close issue #${issueN}: "${p.issueTitle || row.title}"`
-      : (row.title || 'Close issue');
-    const how = String(p.appliedBy || '').startsWith('admin:')
-      ? 'closed by admin' : 'closed by vote';
+      ? PlatformI18n.t('changes:governance.done.title', { number: issueN, title: p.issueTitle || row.title })
+      : (row.title || PlatformI18n.t('changes:governance.done.fallbackTitle'));
+    // Who closed it and when is one message; without a readable time, the
+    // message that names only who.
+    const byAdmin = String(p.appliedBy || '').startsWith('admin:');
+    const how = byAdmin ? PlatformI18n.t('changes:governance.done.closedByAdmin') : PlatformI18n.t('changes:governance.done.closedByVote');
     const when = p.appliedAt || row.created_at;
-    const date = when ? AppView._agePart(when, `${how} · `) : null;
+    const stamp = when ? relStamp(when) : null;
+    const date = stamp && stamp.text
+      ? {
+        t: 'span', cls: '',
+        s: byAdmin
+          ? PlatformI18n.t('changes:governance.done.closedByAdminWhen', { when: stamp.text })
+          : PlatformI18n.t('changes:governance.done.closedByVoteWhen', { when: stamp.text }),
+        title: stamp.title,
+      }
+      : null;
     // GitHub link for the closed target, normalized like the kanban Issues
     // footer's repo link.
     const repo = (AppView.appData && AppView.appData.repo_url) || '';
     const base = repo ? repo.replace(/\.git$/, '').replace(/\/$/, '') : '';
-    const meta = [{ t: 'text', s: 'Issue close' }];
+    const meta = [{ t: 'text', s: PlatformI18n.t('changes:governance.done.kind') }];
     if (issueN) {
       meta.push(base
         ? { t: 'link', href: `${base}/issues/${issueN}`, s: `#${issueN}`, cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400' }
@@ -20456,7 +21164,7 @@ const AppView = {
     const attrs = {
       'data-completed': '1',
       'data-gov-row': String(row.id),
-      title: "Open this proposal's discussion",
+      title: PlatformI18n.t('changes:governance.done.openTitle'),
     };
     if (issueN) attrs['data-ref-issue'] = String(issueN);
     return {
@@ -20511,7 +21219,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || `Couldn't place bounty (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.bounty.failedHttp', { status: resp.status }));
         return;
       }
       // Reflect the new state locally: mark this issue bountied, set its
@@ -20528,7 +21236,7 @@ const AppView = {
       window.Kudos?.Budget?.refresh?.();
       AppView._repaintCards();
     } catch (err) {
-      PlatformUI.toast(`Couldn't place bounty: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:issue.bounty.failedWith', { error: err.message }));
     } finally {
       AppView._bountyInFlight.delete(key);
     }
@@ -20549,12 +21257,12 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || `Couldn't pick this up (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.claim.failedHttp', { status: resp.status }));
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) {
-        const me = (typeof App !== 'undefined' && App.user) ? App.user : { id: 0, username: 'you' };
+        const me = (typeof App !== 'undefined' && App.user) ? App.user : { id: 0, username: PlatformI18n.t('changes:issue.claim.you') };
         const ip = issue.in_progress || { count: 0, users: [], mine: false, claims: [], target: null };
         if (!Array.isArray(ip.claims)) ip.claims = [];
         if (!ip.claims.some((c) => c.mine)) {
@@ -20569,7 +21277,7 @@ const AppView = {
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
     } catch (err) {
-      PlatformUI.toast(`Couldn't pick this up: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:issue.claim.failedWith', { error: err.message }));
     }
   },
 
@@ -20592,7 +21300,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        PlatformUI.toast(data.error || `Couldn't stop working on this (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.claim.clearFailedHttp', { status: resp.status }));
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -20610,7 +21318,7 @@ const AppView = {
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
     } catch (err) {
-      PlatformUI.toast(`Couldn't stop working on this: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:issue.claim.clearFailedWith', { error: err.message }));
     }
   },
 
@@ -20653,7 +21361,7 @@ const AppView = {
     let prefs = {};
     try {
       if (typeof DevChat === 'undefined' || !DevChat._prepareDefaultCodingAgentForBuild) {
-        throw new Error('Coding-agent setup is still loading. Try again.');
+        throw new Error(PlatformI18n.t('changes:issue.autoRun.setupLoading'));
       }
       // This click is the first real work request, so it is also the safe
       // point to create an eligible user's included OpenRouter key. The
@@ -20668,7 +21376,7 @@ const AppView = {
         });
         const catalog = await catalogRes.json().catch(() => ({}));
         if (!catalogRes.ok) {
-          throw new Error(catalog.error || 'Could not load OpenRouter models.');
+          throw new Error(catalog.error || PlatformI18n.t('changes:issue.autoRun.openRouterModelsFailed'));
         }
         models = Array.isArray(catalog.models) ? catalog.models : [];
         const saved = prefs.backends && prefs.backends.codex_openrouter;
@@ -20680,18 +21388,18 @@ const AppView = {
       } else {
         const res = await fetch('/api/models');
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'Could not load the model list.');
+        if (!res.ok) throw new Error(data.error || PlatformI18n.t('changes:issue.autoRun.modelListFailed'));
         models = Array.isArray(data.models) ? data.models : [];
         defaultModel = data.default || (models[0] && models[0].id) || '';
       }
     } catch (err) {
-      PlatformUI.toast(err.message || "Couldn't load the model list. Try again.");
+      PlatformUI.toast(err.message || PlatformI18n.t('changes:issue.autoRun.modelListRetry'));
       return;
     }
     if (!models.length || !defaultModel) {
       PlatformUI.toast(provider === 'openrouter'
-        ? 'No OpenRouter models are available under your key.'
-        : "Couldn't load the model list. Try again.");
+        ? PlatformI18n.t('changes:issue.autoRun.noOpenRouterModels')
+        : PlatformI18n.t('changes:issue.autoRun.noModels'));
       return;
     }
     const stored = provider === 'claude' ? localStorage.getItem('usernode:dc:model') : null;
@@ -20720,7 +21428,7 @@ const AppView = {
         // read and dismiss. Every other failure keeps the toast.
         if (data.code === 'budget_exceeded') {
           if (provider === 'openrouter') {
-            PlatformUI.toast(data.error || 'The OpenRouter run could not start.');
+            PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.autoRun.openRouterStartFailed'));
             return;
           }
           AppView._showCreditOptionsModal(data.error, {
@@ -20728,7 +21436,7 @@ const AppView = {
           });
           return;
         }
-        PlatformUI.toast(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:issue.autoRun.startFailedHttp', { status: resp.status }));
         return;
       }
       // Deliberate flag/beta policy fallbacks are still reported. Credential,
@@ -20743,7 +21451,7 @@ const AppView = {
       // the cached issue row, so the card advances to its outcome label on
       // its own — on every open board, not just this one.
     } catch (err) {
-      PlatformUI.toast(`Couldn't start generating the proposal: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:issue.autoRun.startFailedWith', { error: err.message }));
     }
   },
 
@@ -20757,7 +21465,7 @@ const AppView = {
     const existing = document.getElementById('credit-options-modal');
     if (existing) existing.remove();
     if (!window.CreditOptions) {
-      PlatformUI.toast(errorText || "You're out of today's free AI credits.");
+      PlatformUI.toast(errorText || PlatformI18n.t('changes:issue.autoRun.outOfCredits'));
       return;
     }
     const react = AppView._reactDevBoard();
@@ -20838,35 +21546,42 @@ const AppView = {
     root.id = 'auto-session-modal';
     root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
     const openRouter = modalOptions.provider === 'openrouter';
+    // One whole message per case: the cost tier alone, and the cost tier of
+    // a recommended model.
     const costLabels = {
-      free: 'Free',
-      low: 'Low cost',
-      medium: 'Medium cost',
-      high: 'High cost',
+      free: { alone: 'changes:issue.autoRun.model.free', recommended: 'changes:issue.autoRun.model.recommendedFree' },
+      low: { alone: 'changes:issue.autoRun.model.low', recommended: 'changes:issue.autoRun.model.recommendedLow' },
+      medium: { alone: 'changes:issue.autoRun.model.medium', recommended: 'changes:issue.autoRun.model.recommendedMedium' },
+      high: { alone: 'changes:issue.autoRun.model.high', recommended: 'changes:issue.autoRun.model.recommendedHigh' },
     };
     const options = models.map((m) => {
       const name = m.name || m.label || m.id;
-      const summaryParts = openRouter
-        ? [m.isRecommended ? 'Recommended' : '', costLabels[m.costTier] || '']
-        : [(m.changeSize && m.changeSize.short) || 'Available model'];
+      let summary;
+      if (openRouter) {
+        const cost = Object.prototype.hasOwnProperty.call(costLabels, m.costTier) ? costLabels[m.costTier] : null;
+        if (cost) summary = PlatformI18n.t(m.isRecommended ? cost.recommended : cost.alone);
+        else summary = m.isRecommended ? PlatformI18n.t('changes:issue.autoRun.model.recommended') : PlatformI18n.t('changes:issue.autoRun.model.openRouter');
+      } else {
+        summary = (m.changeSize && m.changeSize.short) || PlatformI18n.t('changes:issue.autoRun.model.available');
+      }
       return {
         id: m.id,
         name,
-        summary: summaryParts.filter(Boolean).join(' · ') || 'Available through OpenRouter',
+        summary,
         searchText: [name, m.id, m.provider, m.canonicalSlug].filter(Boolean).join(' '),
         isRecommended: m.isRecommended === true,
       };
     });
     const billingNote = openRouter
       ? (modalOptions.openrouterCredentialSource === 'usernode_managed'
-        ? 'Uses your included OpenRouter credits.'
-        : 'Uses your OpenRouter account.')
-      : 'Uses your available Homeroom credits.';
+        ? PlatformI18n.t('changes:issue.autoRun.billing.included')
+        : PlatformI18n.t('changes:issue.autoRun.billing.openRouter'))
+      : PlatformI18n.t('changes:issue.autoRun.billing.homeroom');
 
     document.body.appendChild(root);
     react.mountAutoSessionModal(root, {
       issueNumber,
-      intro: 'Homeroom will inspect the issue and repository, then create a proposal for review.',
+      intro: PlatformI18n.t('changes:issue.autoRun.intro'),
       billingNote,
       options,
       preselect: preselect || (options[0] && options[0].id) || '',
@@ -21132,8 +21847,8 @@ const AppView = {
         key: 'conflict_failed',
         // Says what to do, not what the platform did. A reader seeing a card
         // needs the next action; "failed" reported our history at them.
-        label: 'Needs manual resolution',
-        detail: `The last automatic conflict resolution failed. ${AppView._conflictRemedy(p, 'failed').text}`,
+        label: PlatformI18n.t('changes:badge.reason.conflictFailed.label'),
+        detail: PlatformI18n.t('changes:badge.reason.conflictFailed.detail', { remedy: AppView._conflictRemedy(p, 'failed').text }),
       });
     } else if (p.merge_conflict_state === 'conflict') {
       const r = AppView._conflictRemedy(p, 'conflict');
@@ -21150,10 +21865,10 @@ const AppView = {
         // above already answered by becoming "Needs manual resolution". The
         // label now comes from the remedy, so it names the next action when
         // there is one and keeps the plain statement when the lane has it.
-        label: r.label || 'GitHub refused the merge',
+        label: r.label || PlatformI18n.t('changes:badge.reason.mergeRefused.label'),
         soft: r.tone === 'soft',
         running: r.tone === 'running',
-        detail: `This proposal passed every gate and the platform tried to merge it, but GitHub refused. ${r.text}`,
+        detail: PlatformI18n.t('changes:badge.reason.mergeRefused.detail', { remedy: r.text }),
       });
     }
     // #1442 — GitHub's PREDICTION that this proposal no longer merges, made
@@ -21168,9 +21883,21 @@ const AppView = {
         && p.merge_conflict_state !== 'failed' && p.merge_conflict_state !== 'conflict') {
       const n = fresh.files.length;
       const shown = fresh.files.slice(0, 6);
-      const more = n > shown.length ? ` and ${n - shown.length} more` : '';
+      const hidden = n - shown.length;
       const predicted = AppView._conflictRemedy(p, 'predicted');
       const remedy = predicted.text;
+      // One whole message per case: no file list, the list, the list and how
+      // many more, and each of the last two when the list is only a sample.
+      const sample = fresh.filesComplete === false;
+      const fileValues = { remedy, files: PlatformI18n.listText(shown), count: hidden };
+      let conflictDetail;
+      if (!n) conflictDetail = PlatformI18n.t('changes:badge.reason.conflicts.detail', fileValues);
+      else if (hidden > 0) conflictDetail = sample ? PlatformI18n.t('changes:badge.reason.conflicts.detailFilesMoreSample', fileValues) : PlatformI18n.t('changes:badge.reason.conflicts.detailFilesMore', fileValues);
+      else conflictDetail = sample ? PlatformI18n.t('changes:badge.reason.conflicts.detailFilesSample', fileValues) : PlatformI18n.t('changes:badge.reason.conflicts.detailFiles', fileValues);
+      // `name`, `sub` and `count` are the label's two halves and its number
+      // for a reader that draws them apart (_topicLedgerRows), so nothing
+      // has to split the worded label.
+      const conflictsName = PlatformI18n.t('changes:badge.reason.conflicts.label');
       out.push({
         key: 'mergeability_conflict',
         // #2222: amber, not red, while the lane owns it. The count stays —
@@ -21184,10 +21911,9 @@ const AppView = {
         // the same card as "Behind main · 118" in the same grammar, one
         // counting FILES and the other COMMITS, and read as 10 commits.
         label: predicted.label
-          || (n ? `Conflicts with main · ${n} file${n === 1 ? '' : 's'}` : 'Conflicts with main'),
-        detail: n
-          ? `This proposal no longer merges into main on its own. ${remedy} Changed on both sides: ${shown.join(', ')}${more}.${fresh.filesComplete === false ? ' That list is a sample, not the whole set.' : ''}`
-          : `This proposal no longer merges into main on its own. ${remedy}`,
+          || (n ? PlatformI18n.t('changes:badge.reason.conflicts.labelFiles', { count: n }) : conflictsName),
+        ...(!predicted.label && n ? { name: conflictsName, sub: PlatformI18n.t('changes:badge.reason.conflicts.files', { count: n }), count: n } : {}),
+        detail: conflictDetail,
       });
     }
     // Preview lifecycle and checks execution are separate facts. A staging
@@ -21198,26 +21924,28 @@ const AppView = {
     if (p.preview_state === 'failed' || p.staging_error) {
       out.push({
         key: 'preview_failed',
-        label: 'Preview won’t boot',
+        label: PlatformI18n.t('changes:badge.reason.previewFailed.label'),
         detail: p.staging_error
-          ? `The staging preview failed to start, so automated checks can’t run: ${String(p.staging_error).slice(0, 300)}`
-          : 'The staging preview failed to start, so automated checks couldn’t run.',
+          ? PlatformI18n.t('changes:badge.reason.previewFailed.detailWith', { error: String(p.staging_error).slice(0, 300) })
+          : PlatformI18n.t('changes:badge.reason.previewFailed.detail'),
       });
     } else if (AppView._checksWillRetry(p)) {
       // In flight and nobody need act, so it reads like a running check.
       out.push({
         key: 'checks_retry',
-        label: 'Checks will run again',
+        label: PlatformI18n.t('changes:badge.reason.checksRetry.label'),
         running: true,
-        detail: `${p.check_error_detail ? `${String(p.check_error_detail).slice(0, 300)} ` : ''}Merge is blocked until they pass.`,
+        detail: p.check_error_detail
+          ? PlatformI18n.t('changes:badge.reason.checksRetry.detailWith', { reason: String(p.check_error_detail).slice(0, 300) })
+          : PlatformI18n.t('changes:badge.reason.checksRetry.detail'),
       });
     } else if (p.check_state === 'error') {
       out.push({
         key: 'checks_error',
-        label: 'Checks couldn’t run',
+        label: PlatformI18n.t('changes:badge.reason.checksError.label'),
         detail: p.check_error_detail
-          ? `The automated check run ended before it could produce a verdict: ${String(p.check_error_detail).slice(0, 300)}`
-          : 'The automated check run ended before it could produce a verdict. The preview may still be available.',
+          ? PlatformI18n.t('changes:badge.reason.checksError.detailWith', { reason: String(p.check_error_detail).slice(0, 300) })
+          : PlatformI18n.t('changes:badge.reason.checksError.detail'),
       });
     } else if (p.check_state === 'failing') {
       const failed = Array.isArray(p.test_results)
@@ -21225,10 +21953,14 @@ const AppView = {
       const n = failed.length;
       out.push({
         key: 'checks_failing',
-        label: n ? `Checks failing · ${n}` : 'Checks failing',
+        label: n ? PlatformI18n.t('changes:badge.reason.checksFailing.labelCount', { count: n }) : PlatformI18n.t('changes:badge.reason.checksFailing.label'),
+        ...(n ? { name: PlatformI18n.t('changes:badge.reason.checksFailing.label'), sub: String(n), count: n } : {}),
         detail: n
-          ? `${n} automated test${n === 1 ? '' : 's'} failed on the staging build: ${failed.map((r) => r.name || r.path || 'test').join(', ')}.`
-          : 'Automated tests are not passing on the staging build.',
+          ? PlatformI18n.t('changes:badge.reason.checksFailing.detailNames', {
+            count: n,
+            tests: PlatformI18n.listText(failed.map((r) => r.name || r.path || PlatformI18n.t('changes:badge.reason.checksFailing.unnamed'))),
+          })
+          : PlatformI18n.t('changes:badge.reason.checksFailing.detail'),
       });
     }
     // Behind main is information, not a block: a head that merges cleanly
@@ -21242,15 +21974,22 @@ const AppView = {
     // proposal that read "0" for eight commits is what this fixes.
     const behind = fresh.behindBy || 0;
     if (behind > 0 || p.merge_conflict_state === 'behind') {
-      const count = behind
-        ? `This proposal is ${behind} commit${behind === 1 ? '' : 's'} behind main`
-        : 'This proposal is behind main';
+      const conflicting = fresh.mergeability === 'conflict';
+      let behindDetail;
+      if (behind) {
+        behindDetail = conflicting
+          ? PlatformI18n.t('changes:badge.reason.behind.detailCountConflict', { count: behind })
+          : PlatformI18n.t('changes:badge.reason.behind.detailCountClean', { count: behind });
+      } else {
+        behindDetail = conflicting
+          ? PlatformI18n.t('changes:badge.reason.behind.detailConflict')
+          : PlatformI18n.t('changes:badge.reason.behind.detailClean');
+      }
       out.push({
         key: 'behind',
-        label: behind ? `Behind main · ${behind}` : 'Behind main',
-        detail: fresh.mergeability === 'conflict'
-          ? `${count}. The conflict is what stands between it and merging; the distance itself does not.`
-          : `${count} but still merges cleanly. It merges as it stands; nothing needs syncing.`,
+        label: behind ? PlatformI18n.t('changes:badge.reason.behind.labelCount', { count: behind }) : PlatformI18n.t('changes:badge.reason.behind.label'),
+        ...(behind ? { name: PlatformI18n.t('changes:badge.reason.behind.label'), sub: String(behind), count: behind } : {}),
+        detail: behindDetail,
         soft: true,
       });
     }
@@ -21263,8 +22002,9 @@ const AppView = {
       const n = fresh.baseBehindBy || 0;
       out.push({
         key: 'checks_base_superseded',
-        label: n ? `Checks ran on older main · ${n}` : 'Checks ran on older main',
-        detail: AppView._checksBaseNote(p, { lead: 'The checks passed, but' }),
+        label: n ? PlatformI18n.t('changes:badge.reason.olderMain.labelCount', { count: n }) : PlatformI18n.t('changes:badge.reason.olderMain.label'),
+        ...(n ? { name: PlatformI18n.t('changes:badge.reason.olderMain.label'), sub: String(n), count: n } : {}),
+        detail: AppView._checksBaseNote(p, { passedBut: true }),
         soft: true,
       });
     }
@@ -21282,24 +22022,21 @@ const AppView = {
     if (served.includes('integrating')) {
       out.push({
         key: 'integrating',
-        label: 'Bringing up to date…',
+        label: PlatformI18n.t('changes:badge.reason.integrating.label'),
         // Only a conflict is ever brought up to date: this is the conflict
         // lane merging main into the head. The result is previewed and
         // checked like any other push, and merges once the vote passes.
-        detail: 'The platform is merging main into this proposal to resolve a conflict. '
-          + 'The result is previewed and checked, and it merges on its own once the '
-          + 'vote passes. Nobody needs to do anything.',
+        detail: PlatformI18n.t('changes:badge.reason.integrating.detail'),
         running: true,
       });
     }
     if (served.includes('budget')) {
       out.push({
         key: 'budget',
-        label: 'Waiting on shared budget',
+        label: PlatformI18n.t('changes:badge.reason.budget.label'),
         // #3230: the reset in the viewer's own clock (window.ResetTime).
         detail: (window.ResetTime ? window.ResetTime.localizeResetText : (t) => t)(
-          'This proposal needs merging with main, but the platform’s shared '
-          + 'token budget is spent for today. It resumes after the midnight UTC reset.'),
+          PlatformI18n.t('changes:badge.reason.budget.detail')),
         soft: true,
       });
     }
@@ -21316,9 +22053,13 @@ const AppView = {
     if (mainPause) {
       out.push({
         key: 'main_paused',
-        label: mainPause.confirming ? 'Going live is paused · re-checking main' : 'Going live is paused',
-        detail: `${mainPause.note ? mainPause.note.charAt(0).toUpperCase() + mainPause.note.slice(1) : 'Main’s unit suite is failing, so going live is paused for this app'}. `
-          + 'Nothing about this change is wrong; it goes live once the app is healthy again or an admin resumes.',
+        label: mainPause.confirming ? PlatformI18n.t('changes:badge.reason.mainPaused.labelRechecking') : PlatformI18n.t('changes:badge.reason.mainPaused.label'),
+        ...(mainPause.confirming ? { name: PlatformI18n.t('changes:badge.reason.mainPaused.label'), sub: PlatformI18n.t('changes:badge.reason.mainPaused.rechecking'), count: null } : {}),
+        // The server's own note leads when there is one (its first letter
+        // raised, as before); otherwise the whole default.
+        detail: mainPause.note
+          ? PlatformI18n.t('changes:badge.reason.mainPaused.detailNote', { note: mainPause.note.charAt(0).toUpperCase() + mainPause.note.slice(1) })
+          : PlatformI18n.t('changes:badge.reason.mainPaused.detail'),
       });
     }
 
@@ -21339,16 +22080,16 @@ const AppView = {
       const enforced = AppView.appData?.shotsEnforced === true;
       out.push({
         key: 'shots',
-        label: retrying ? 'Trying the shots again'
-          : running ? 'Taking before & after shots'
-            : notStarted ? 'Before & after not started'
-              : shots.state === 'failed' ? 'Couldn\u2019t take the shots' : 'Before & after needed',
+        label: retrying ? PlatformI18n.t('changes:badge.reason.shots.retrying')
+          : running ? PlatformI18n.t('changes:badge.reason.shots.running')
+            : notStarted ? PlatformI18n.t('changes:badge.reason.shots.notStarted')
+              : shots.state === 'failed' ? PlatformI18n.t('changes:badge.reason.shots.failed') : PlatformI18n.t('changes:badge.reason.shots.needed'),
         detail: (retrying
-          ? 'Homeroom restarted while taking these shots, so it starts them again on its own in a moment.'
+          ? PlatformI18n.t('changes:badge.reason.shots.retryingDetail')
           : notStarted ? AppView._shotsNotStartedReason(shots) : shots.failureReason)
           || (enforced
-            ? 'Voting and merging wait for before & after shots of the current proposal commit.'
-            : 'This proposal has no before & after shots for its current commit yet.'),
+            ? PlatformI18n.t('changes:badge.reason.shots.enforcedDetail')
+            : PlatformI18n.t('changes:badge.reason.shots.missingDetail')),
         running,
         soft: !enforced,
       });
@@ -21394,28 +22135,44 @@ const AppView = {
   // out of how many — or, while the run does not know its total yet and is
   // in flight, an indeterminate bar (#4628): the build and prepare phase at
   // the start of a run lasts minutes and the chip drew no bar for any of
-  // it. `text` is the count in words, for the tooltip and the bar's name.
+  // it. `text` is the count in words, for the tooltip and the bar's name:
+  // one whole message per case (done of total, done so far, starting).
   _checksChipProgress(live, inFlight) {
     const bar = live && live.bar;
     if (bar && bar.expected) {
       const done = Math.min(bar.ran, bar.expected);
-      return { done, total: bar.expected, text: `${done} of ${bar.expected} checks done` };
+      return { done, total: bar.expected, text: PlatformI18n.t('changes:chips.checks.progress.of', { done, count: bar.expected }) };
     }
     if (inFlight) {
-      const text = live && live.bar.ran ? `${live.bar.ran} checks done so far` : 'Checks starting';
+      const text = live && live.bar.ran
+        ? PlatformI18n.t('changes:chips.checks.progress.soFar', { count: live.bar.ran })
+        : PlatformI18n.t('changes:chips.checks.progress.starting');
       return { done: 0, total: 0, indeterminate: true, text };
     }
     return null;
+  },
+  // The tooltip of a chip that draws that bar: the count in words, then why
+  // the merge waits ("12 of 523 checks done. Automated tests are still
+  // running…"). A whole message for each of the bar's cases, chosen as
+  // `text` is; with no bar, the reason alone.
+  _checksChipTitle(live, progress) {
+    if (!progress) return PlatformI18n.t('changes:chips.checks.runningTitle');
+    if (!progress.indeterminate) {
+      return PlatformI18n.t('changes:chips.checks.progressTitle.of', { done: progress.done, count: progress.total });
+    }
+    return live && live.bar.ran
+      ? PlatformI18n.t('changes:chips.checks.progressTitle.soFar', { count: live.bar.ran })
+      : PlatformI18n.t('changes:chips.checks.progressTitle.starting');
   },
   // The same bar as markup, for the chips still drawn as strings.
   checksChipBarHtml(progress) {
     if (!progress || (!progress.total && !progress.indeterminate)) return '';
     if (progress.indeterminate) {
       // The ARIA indeterminate form: no valuenow or valuemax, and no fill.
-      return `<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="${progress.text}"></span>`;
+      return `<span class="checks-chip-bar checks-chip-bar-busy" role="progressbar" aria-valuemin="0" aria-label="${escapeAttr(progress.text)}"></span>`;
     }
     const pct = Math.round((progress.done / progress.total) * 100);
-    return `<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.done}" aria-label="${progress.text}"><span class="checks-chip-bar-fill" style="width:${pct}%"></span></span>`;
+    return `<span class="checks-chip-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.done}" aria-label="${escapeAttr(progress.text)}"><span class="checks-chip-bar-fill" style="width:${pct}%"></span></span>`;
   },
   STATUS_TAG_CLS: {
     blocking: 'dev-badge bg-red-500/10 text-red-700 dark:text-red-400',
@@ -21436,9 +22193,9 @@ const AppView = {
     if (p.merge_conflict_state === 'resolving' || p.resolving === true) {
       out.push({
         t: 'chip', key: 'tag-resolving', cls: AppView.STATUS_TAG_CLS.running,
-        label: 'Resolving conflicts automatically…', spinner: true, meta: true,
+        label: PlatformI18n.t('changes:badge.tag.resolving'), spinner: true, meta: true,
         data: { 'data-status-tag': 'resolving' },
-        title: 'Reconciling conflicts with main automatically, then retrying the merge.',
+        title: PlatformI18n.t('changes:badge.tag.resolvingTitle'),
       });
     }
     // Every reason, not just the top one. `soft` is blockReasons' own word for
@@ -21488,13 +22245,12 @@ const AppView = {
       const fresh = p.check_state !== 'pending';
       const live = !fresh ? AppView._checksProgressView(p) : null;
       const progress = AppView._checksChipProgress(live, true);
-      const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
-        label: fresh ? 'Checks starting…' : 'Checks',
+        label: fresh ? PlatformI18n.t('changes:badge.tag.checksStarting') : PlatformI18n.t('changes:badge.tag.checks'),
         spinner: true, meta: true, progress,
         data: { 'data-status-tag': 'checks-running' },
-        title: `${progress.text}. ${why}`,
+        title: AppView._checksChipTitle(live, progress),
       });
     }
     return out;
@@ -21539,7 +22295,7 @@ const AppView = {
     const was = parseInt(p.votes_required_at_promote, 10);
     const now = parseInt(majority, 10);
     if (!Number.isFinite(was) || was < 1 || !Number.isFinite(now) || was === now) return null;
-    return `Needs ${now}, was ${was} when voting opened`;
+    return PlatformI18n.t('changes:badge.pill.thresholdWas', { now, was });
   },
 
   statusPillState(item, opts) {
@@ -21589,29 +22345,29 @@ const AppView = {
     // spine is green again too.
     if (p.status === 'merged') {
       if (p.deployment_state === 'deployed') {
-        return { ...base, tier: 0, key: 'deployed', label: '✓ Live', tone: 'ok', lock: false, advisory: 0,
-          title: 'This change is live in the app.' };
+        return { ...base, tier: 0, key: 'deployed', label: PlatformI18n.t('changes:badge.pill.live'), tone: 'ok', lock: false, advisory: 0,
+          title: PlatformI18n.t('changes:badge.pill.liveTitle') };
       }
       // A merge of Homeroom itself waits for the platform's next release:
       // the pill's title says when (_releaseSentence), where a child app's
       // says only that the app is still on the version before.
       const releaseWords = AppView._releaseSentence(p);
       if (p.deployment_state === 'deploying') {
-        return { ...base, tier: 0, key: 'deploying', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
-          title: releaseWords ? `${releaseWords}.` : 'This change was approved. The app is still running the version before it.' };
+        return { ...base, tier: 0, key: 'deploying', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'progress', spinner: true, lock: false, advisory: 0,
+          title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
       if (p.deployment_state === 'stalled') {
-        return { ...base, tier: 0, key: 'deployment_stalled', label: 'Stuck going live', tone: 'blocked', lock: false, advisory: 0,
-          title: 'This change was approved, but the update that makes it live is stuck.' };
+        return { ...base, tier: 0, key: 'deployment_stalled', label: PlatformI18n.t('changes:badge.pill.stuck'), tone: 'blocked', lock: false, advisory: 0,
+          title: PlatformI18n.t('changes:badge.pill.stuckTitle') };
       }
       if (p.deployment_kind === 'child') {
         if (p.deployment_state === 'pending') {
-          return { ...base, tier: 0, key: 'delivery_pending', label: 'Going live…', tone: 'neutral', lock: false, advisory: 0,
-            title: 'This change was approved. The app is still running the version before it.' };
+          return { ...base, tier: 0, key: 'delivery_pending', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'neutral', lock: false, advisory: 0,
+            title: PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
         }
         if (p.deployment_state === 'failed') {
-          return { ...base, tier: 0, key: 'delivery_failed', label: 'Couldn’t go live', tone: 'blocked', lock: false, advisory: 0,
-            title: 'This change was approved, but the app failed to rebuild with it.' };
+          return { ...base, tier: 0, key: 'delivery_failed', label: PlatformI18n.t('changes:badge.pill.failed'), tone: 'blocked', lock: false, advisory: 0,
+            title: PlatformI18n.t('changes:badge.pill.failedTitle') };
         }
         // `unknown` falls through to the plain settled pill below: without
         // evidence of a pending or failed rollout there is nothing to warn
@@ -21622,15 +22378,15 @@ const AppView = {
       // it does (the merge-followups workflow machine). A row without the
       // field reads as it always did.
       if (p.live_at === null) {
-        return { ...base, tier: 0, key: 'deploying', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
-          title: releaseWords ? `${releaseWords}.` : 'This change was approved. The app is still running the version before it.' };
+        return { ...base, tier: 0, key: 'deploying', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'progress', spinner: true, lock: false, advisory: 0,
+          title: releaseWords ? PlatformI18n.t('changes:badge.pill.releaseTitle', { release: releaseWords }) : PlatformI18n.t('changes:badge.pill.goingLiveTitle') };
       }
-      return { ...base, tier: 0, key: 'merged', label: '✓ Live', tone: 'ok', lock: false, advisory: 0 };
+      return { ...base, tier: 0, key: 'merged', label: PlatformI18n.t('changes:badge.pill.live'), tone: 'ok', lock: false, advisory: 0 };
     }
     // 1 — in flight.
     if (p.status === 'merging') {
-      return { ...base, tier: 1, key: 'merging', label: 'Going live…', tone: 'progress', spinner: true, lock: false, advisory: 0,
-        title: 'This change was approved and is going into the app now.' };
+      return { ...base, tier: 1, key: 'merging', label: PlatformI18n.t('changes:badge.pill.goingLive'), tone: 'progress', spinner: true, lock: false, advisory: 0,
+        title: PlatformI18n.t('changes:badge.pill.mergingTitle') };
     }
     // opts.kind ∈ 'proposal' (default) | 'gov'. A governance proposal has no
     // branch, no staging build and no checks, so the block reasons below are
@@ -21660,8 +22416,8 @@ const AppView = {
     const reasons = isCode ? AppView.blockReasons(p) : [];
     // 3 — contested: the timed path is off, it needs a straight majority.
     if (isOpenRow && p.contested) {
-      return { ...base, tier: 3, key: 'contested', label: `Needs a conversation · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
-        title: 'Enough people have objected that the timer is off. This needs a straight majority of Yes votes, so talk it through.' };
+      return { ...base, tier: 3, key: 'contested', label: PlatformI18n.t('changes:badge.pill.contested', { yes, majority: maj }), tone: 'attention', fill: true, reasons,
+        title: PlatformI18n.t('changes:badge.pill.contestedTitle') };
     }
     // The member floor: a flagged row whose votes are in still waits for a
     // Yes from someone other than its author, so it is not "reached" green.
@@ -21671,13 +22427,13 @@ const AppView = {
       const n = parseInt(p.approvals_required, 10) || 1;
       const reached = yes >= n;
       return { ...base, tier: 6, key: 'approvals', majority: n, fill: true, reached,
-        label: `${yes} of ${n} approval${n === 1 ? '' : 's'}`,
+        label: PlatformI18n.t('changes:badge.pill.approvals', { yes, count: n }),
         tone: reached && !waitsOnMember ? 'ok' : 'progress', reasons,
         title: reached && waitsOnMember
           ? AppView._explicitCopy(p.explicit_approval_reason).sentence
           : reached
-            ? `Approval target reached (${yes} of ${n}). Merges as soon as checks pass`
-            : `Needs at least ${n} approval${n === 1 ? '' : 's'} to merge` };
+            ? PlatformI18n.t('changes:badge.pill.approvalsReachedTitle', { yes, count: n })
+            : PlatformI18n.t('changes:badge.pill.approvalsNeededTitle', { count: n }) };
     }
     // 4 — counting down. A flagged row never merges on a clock, so it
     // must never promise one even from a stale cached row.
@@ -21687,25 +22443,28 @@ const AppView = {
     const lazyLead = !reachedMaj && yes >= 1 && yes > no;
     if (isOpenRow && !p.requires_explicit_approval && inWindow && (reachedMaj || lazyLead)) {
       const suffix = reachedMaj ? '' : ` · ${yes}/${maj}`;
+      const time = AppView._fmtCountdown(windowEndsMs - Date.now());
       return { ...base, tier: 4, key: 'merge_countdown', tone: 'ok', fill: 'full-yes', countdown: windowEndsMs,
-        label: `Goes live in ${AppView._fmtCountdown(windowEndsMs - Date.now())}${suffix}`,
+        label: reachedMaj
+          ? PlatformI18n.t('changes:badge.pill.goesLiveIn', { time })
+          : PlatformI18n.t('changes:badge.pill.goesLiveInTally', { time, yes, majority: maj }),
         suffix, reasons,
         title: reachedMaj
-          ? `Enough Yes votes (${yes} / ${maj}). Goes live when the visibility window ends unless someone objects`
-          : `Has support (${yes} / ${maj} yes) and nobody has objected. Goes live when the countdown ends unless more votes come in` };
+          ? PlatformI18n.t('changes:badge.pill.enoughYesTitle', { yes, majority: maj })
+          : PlatformI18n.t('changes:badge.pill.hasSupportTitle', { yes, majority: maj }) };
     }
     const rejectEndsMs = p.reject_window_ends_at ? Date.parse(p.reject_window_ends_at) : NaN;
     if (isOpenRow && p.rejection_armed && Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now()) {
       return { ...base, tier: 4, key: 'reject_countdown', tone: 'blocked', fill: 'full-no', countdown: rejectEndsMs, reject: true,
-        label: `Set aside in ${AppView._fmtCountdown(rejectEndsMs - Date.now())}`, reasons,
-        title: `More No than Yes and not much support yet (${yes} / ${maj}). It will be set aside when this runs out unless someone speaks up` };
+        label: PlatformI18n.t('changes:badge.pill.setAsideIn', { time: AppView._fmtCountdown(rejectEndsMs - Date.now()) }), reasons,
+        title: PlatformI18n.t('changes:badge.pill.setAsideTitle', { yes, majority: maj }) };
     }
     // 5 — needs your vote. Absorbs the standalone pulsing "Vote" badge.
     if (p.status === 'promoted' && !p.my_vote && !AppView.readOnly) {
       // B7: on a project that is just the viewer's, it waits for their approval.
       if (AppView._approveSolo(p)) {
-        return { ...base, tier: 5, key: 'needs_vote', label: 'Waiting for your approval', tone: 'progress', fill: true, dot: true, reasons,
-          title: 'Approve it, and it goes live' };
+        return { ...base, tier: 5, key: 'needs_vote', label: PlatformI18n.t('changes:badge.pill.yourApproval'), tone: 'progress', fill: true, dot: true, reasons,
+          title: PlatformI18n.t('changes:badge.pill.yourApprovalTitle') };
       }
       // The member floor (#3826): the tally reads full and the vote is
       // still open, which reads as a mistake. Where this viewer's Yes
@@ -21716,14 +22475,17 @@ const AppView = {
       if (yes >= maj && waitsOnMember) {
         const counts = p.approval_policy !== 'invited';
         return { ...base, tier: 5, key: 'needs_vote',
-          label: counts ? `Needs your Yes · ${yes}/${maj}` : `Vote · ${yes}/${maj}`,
+          label: counts ? PlatformI18n.t('changes:badge.pill.needsYourYes', { yes, majority: maj }) : PlatformI18n.t('changes:badge.pill.vote', { yes, majority: maj }),
+          // The label is the plain "Vote · 1/2": the wait itself and nothing more.
+          // Readers that leave that out ask this field, never the words.
+          ...(counts ? {} : { plainVote: true }),
           tone: 'progress', fill: true, dot: true, reasons,
           title: counts
-            ? `It has the Yes votes it needs (${yes} of ${maj}), but none is from another member yet. Your Yes would be it.`
-            : 'It has the Yes votes it needs, but a Yes from another member is still missing.' };
+            ? PlatformI18n.t('changes:badge.pill.needsYourYesTitle', { yes, majority: maj })
+            : PlatformI18n.t('changes:badge.pill.memberMissingTitle') };
       }
-      return { ...base, tier: 5, key: 'needs_vote', label: `Vote · ${yes}/${maj}`, tone: 'progress', fill: true, dot: true, reasons,
-        title: 'You haven’t voted on this yet' };
+      return { ...base, tier: 5, key: 'needs_vote', plainVote: true, label: PlatformI18n.t('changes:badge.pill.vote', { yes, majority: maj }), tone: 'progress', fill: true, dot: true, reasons,
+        title: PlatformI18n.t('changes:badge.pill.notVotedTitle') };
     }
     // 6 — plain tally. The member floor's wait gets WORDS (#3826): the
     // votes are in, so a bare "3 / 3" reads as passed, and the lock glyph
@@ -21733,14 +22495,14 @@ const AppView = {
     // the amber the conversation tier wears.
     if (yes >= maj && waitsOnMember) {
       return { ...base, tier: 6, key: 'needs_member',
-        label: `Needs another member’s Yes · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
+        label: PlatformI18n.t('changes:badge.pill.needsMember', { yes, majority: maj }), tone: 'attention', fill: true, reasons,
         title: AppView._explicitCopy(p.explicit_approval_reason).sentence };
     }
     const outcome = yes >= maj ? 'ok' : no >= maj ? 'blocked' : 'progress';
     const activeAtMerge = parseInt(p.active_users_at_merge, 10);
     return { ...base, tier: 6, key: 'tally', label: `${yes} / ${maj}`, tone: outcome, fill: true, reasons,
       title: (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
-        ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
+        ? PlatformI18n.t('changes:badge.pill.neededAtMerge', { needed: snap, count: activeAtMerge }) : undefined };
   },
 
   // The pill's MARKUP moved to card/dev-card.tsx (`StatusPill`), which
@@ -21779,7 +22541,7 @@ const AppView = {
         && pr.status !== 'merged' && pr.status !== 'merging')
       ? Math.max(0, (parseInt(pr.yes_count) || 0) - yes) : 0;
     const advisoryChip = advisoryYes > 0
-      ? `<span class="gc-vote-advisory" title="${advisoryYes} advisory Yes vote${advisoryYes === 1 ? '' : 's'} from non-approvers. They don't count toward merging">+${advisoryYes} advisory</span>`
+      ? `<span class="gc-vote-advisory" title="${PlatformI18n.htmlText('changes:badge.votePill.advisoryTitle', { count: advisoryYes })}">${PlatformI18n.htmlText('changes:badge.votePill.advisory', { count: advisoryYes })}</span>`
       : '';
 
     // #788: this proposal changes a protected setting. The app's normal
@@ -21789,7 +22551,7 @@ const AppView = {
     // history there).
     const explicitChip = (pr.requires_explicit_approval
         && pr.status !== 'merged' && pr.status !== 'merging')
-      ? `<span class="gc-vote-explicit" title="${escapeAttr(AppView._lockTitle(pr))}">Explicit approval</span>`
+      ? `<span class="gc-vote-explicit" title="${escapeAttr(AppView._lockTitle(pr))}">${PlatformI18n.htmlText('changes:badge.votePill.explicit')}</span>`
       : '';
 
     // #646: "at least N" mode — a clock-free approvals-progress pill
@@ -21798,16 +22560,18 @@ const AppView = {
     if (pr.approvals_required != null && pr.status !== 'merged' && pr.status !== 'merging') {
       const n = parseInt(pr.approvals_required) || 1;
       const reached = yes >= n;
-      const who = pr.approval_policy === 'invited' ? 'invited approvers' : 'any user';
+      // Escaped whole: it goes into the title attribute below.
       const title = reached
-        ? `Approval target reached (${yes} of ${n}). Merges as soon as checks pass`
-        : `Needs at least ${n} approval${n === 1 ? '' : 's'} from ${who} to merge`;
+        ? PlatformI18n.htmlText('changes:badge.votePill.approvalsReachedTitle', { yes, count: n })
+        : pr.approval_policy === 'invited'
+          ? PlatformI18n.htmlText('changes:badge.votePill.approvalsNeededInvitedTitle', { count: n })
+          : PlatformI18n.htmlText('changes:badge.votePill.approvalsNeededAnyoneTitle', { count: n });
       const fills = reached
         ? `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
         : `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${AppView.voteFillWidths(yes, 0, n).yes}%"></span>`;
       return `<span class="gc-vote-count gc-vote-count-${reached ? 'yes' : 'pending'}" title="${title}">`
         + fills
-        + `<span class="gc-vote-count-label">${yes} of ${n} approval${n === 1 ? '' : 's'}</span>`
+        + `<span class="gc-vote-count-label">${PlatformI18n.htmlText('changes:badge.votePill.approvals', { yes, count: n })}</span>`
         + `</span>` + advisoryChip + explicitChip;
     }
 
@@ -21833,9 +22597,10 @@ const AppView = {
     if (isOpenRow && !pr.requires_explicit_approval
       && !pr.contested && inWindow && (state === 'yes' || lazyLead)) {
       const label = AppView._fmtCountdown(windowEndsMs - Date.now());
+      // Escaped whole: it goes into the title attribute below.
       const title = state === 'yes'
-        ? `Enough Yes votes (${yes} / ${maj}). Goes live when the visibility window ends unless someone objects`
-        : `Has support (${yes} / ${maj} yes) and nobody has objected. Goes live when the countdown ends unless more votes come in`;
+        ? PlatformI18n.htmlText('changes:badge.votePill.enoughYesTitle', { yes, majority: maj })
+        : PlatformI18n.htmlText('changes:badge.votePill.hasSupportTitle', { yes, majority: maj });
       // Below threshold the tally rides along in the label so it's clear
       // the vote is still open and can be swung either way. The suffix is
       // mirrored into data-label-suffix so the 30s ticker preserves it when
@@ -21845,7 +22610,9 @@ const AppView = {
       return `<span class="gc-vote-count gc-vote-count-yes gc-merge-countdown" data-window-ends="${windowEndsMs}"${suffixAttr}`
         + ` title="${title}">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
-        + `<span class="gc-vote-count-label">Goes live in ${label}${suffix}</span>`
+        + `<span class="gc-vote-count-label">${state === 'yes'
+          ? PlatformI18n.htmlText('changes:badge.votePill.goesLiveIn', { time: label })
+          : PlatformI18n.htmlText('changes:badge.votePill.goesLiveInTally', { time: label, yes, majority: maj })}</span>`
         + `</span>` + advisoryChip + explicitChip;
     }
 
@@ -21859,16 +22626,16 @@ const AppView = {
     if (isOpenRow && pr.rejection_armed && inReject) {
       const label = AppView._fmtCountdown(rejectEndsMs - Date.now());
       return `<span class="gc-vote-count gc-vote-count-no gc-reject-countdown" data-window-ends="${rejectEndsMs}"`
-        + ` title="More No than Yes and not much support yet (${yes} / ${maj}). It will be set aside when this runs out unless someone speaks up">`
+        + ` title="${PlatformI18n.htmlText('changes:badge.votePill.setAsideTitle', { yes, majority: maj })}">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
-        + `<span class="gc-vote-count-label">Set aside in ${label}</span>`
+        + `<span class="gc-vote-count-label">${PlatformI18n.htmlText('changes:badge.votePill.setAsideIn', { time: label })}</span>`
         + `</span>` + advisoryChip + explicitChip;
     }
     // #58: when both at-merge figures are present, surface the historical
     // context as a hover tooltip on the pill. Only merged rows carry these.
     const activeAtMerge = parseInt(pr.active_users_at_merge);
     const titleAttr = (hasSnap && Number.isFinite(activeAtMerge) && activeAtMerge > 0)
-      ? ` title="needed ${snap} of ${activeAtMerge} active users at merge time"`
+      ? ` title="${PlatformI18n.htmlText('changes:badge.votePill.neededAtMerge', { needed: snap, count: activeAtMerge })}"`
       : '';
     let fills;
     if (state === 'yes' || state === 'no') {
@@ -21892,14 +22659,14 @@ const AppView = {
   // once a PR crosses the threshold and the merge pipeline is in flight.
   // Shared by the vote panel rows and the inline group-chat rows.
   mergingBadgeHtml() {
-    return `<span class="gc-merging-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Merging…</span>`;
+    return `<span class="gc-merging-badge"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${PlatformI18n.htmlText('changes:badge.merge.merging')}</span>`;
   },
 
   // "Merged" badge — the settled counterpart of the merging badge, shown
   // next to the (now read-only) tally pill / "You voted X" box on group-chat
   // rows after a PR lands so the voting info doesn't disappear.
   mergedBadgeHtml() {
-    return `<span class="gc-merged-badge">✓ Merged</span>`;
+    return `<span class="gc-merged-badge">${PlatformI18n.htmlText('changes:badge.merge.merged')}</span>`;
   },
 
   // #361's persistent merge-status badges (conflictFailedBadgeHtml /
@@ -21918,23 +22685,34 @@ const AppView = {
   // an unrecognised value renders the generic label rather than whatever
   // string reached the row — a provenance badge that prints server data
   // verbatim is a provenance badge worth spoofing.
+  // The two product names stay as they are. Anything else is "an external
+  // coding agent", which is a phrase and so a message; a sentence that names
+  // the agent has one entry for a product and one for that phrase
+  // (`externalAgentProduct` tells them apart).
   EXTERNAL_AGENT_NAMES: {
     'claude-code': 'Claude Code',
     codex: 'Codex',
-    external: 'an external coding agent',
+  },
+
+  externalAgentProduct(value) {
+    return (value === 'claude-code' || value === 'codex') ? AppView.EXTERNAL_AGENT_NAMES[value] : '';
   },
 
   externalAgentName(value) {
     if (!value) return '';
-    return AppView.EXTERNAL_AGENT_NAMES[value] || AppView.EXTERNAL_AGENT_NAMES.external;
+    return AppView.externalAgentProduct(value) || PlatformI18n.t('changes:badge.agent.external');
   },
 
   externalAgentBadgeHtml(value) {
-    const name = AppView.externalAgentName(value);
-    if (!name) return '';
-    const label = (value === 'claude-code' || value === 'codex')
-      ? `Built with ${name}` : 'Built with a coding agent';
-    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Homeroom opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
+    if (!value) return '';
+    const agent = AppView.externalAgentProduct(value);
+    const label = agent
+      ? PlatformI18n.htmlText('changes:badge.agent.builtWith', { agent })
+      : PlatformI18n.htmlText('changes:badge.agent.builtWithOther');
+    const title = agent
+      ? PlatformI18n.htmlText('changes:badge.agent.title', { agent })
+      : PlatformI18n.htmlText('changes:badge.agent.titleOther');
+    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-400 shrink-0" title="${title}">${label}</span>`;
   },
 
   // #381: advisory "may break the app" warning. Shown alongside (not
@@ -21945,11 +22723,13 @@ const AppView = {
   consoleWarningBadgeHtml(pr) {
     if (!pr || pr.console_check_state !== 'errors') return '';
     const n = Array.isArray(pr.console_errors) ? pr.console_errors.length : 0;
-    const label = n ? `Console errors · ${n}` : 'Console errors';
+    // Both are escaped whole by htmlText; the warning sign is part of the
+    // label's message.
+    const label = n ? PlatformI18n.htmlText('changes:badge.console.labelCount', { count: n }) : PlatformI18n.htmlText('changes:badge.console.label');
     const title = n
-      ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'}. This change may break the app. Open the discussion to see them.`
-      : 'The staging preview logged console errors. This change may break the app.';
-    return `<span class="gc-warning-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
+      ? PlatformI18n.htmlText('changes:badge.console.titleCount', { count: n })
+      : PlatformI18n.htmlText('changes:badge.console.title');
+    return `<span class="gc-warning-badge" title="${title}">${label}</span>`;
   },
 
   // NOTE: the dev board no longer renders this badge — the composite status
@@ -21985,7 +22765,7 @@ const AppView = {
       if (!pr.console_check_state) {
         // #4628: the build phase keeps its words (a declared check reads
         // them on the board) and gains the pulsing bar.
-        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…${AppView.checksChipBarHtml(AppView._checksChipProgress(null, true))}</span>`;
+        return `<span class="gc-checks-running-badge" title="${PlatformI18n.htmlText('changes:chips.checks.startingTitle')}"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${PlatformI18n.htmlText('changes:chips.checks.starting')}${AppView.checksChipBarHtml(AppView._checksChipProgress(null, true))}</span>`;
       }
       return AppView.consoleWarningBadgeHtml(pr);
     }
@@ -21993,27 +22773,29 @@ const AppView = {
       // Its own class, not .gc-merged-badge: sharing that class is what
       // made the PASSING badge inherit the violet 'Merged' colour. Both are
       // the `ok` token now, but separate classes keep them independent.
-      return `<span class="gc-checks-passing-badge" title="All automated tests passed on the staging build">✓ Checks passing</span>`;
+      return `<span class="gc-checks-passing-badge" title="${PlatformI18n.htmlText('changes:chips.checks.passingTitle')}">${PlatformI18n.htmlText('changes:chips.checks.passing')}</span>`;
     }
     if (state === 'failing') {
       const n = Array.isArray(pr.test_results)
         ? pr.test_results.filter((r) => r && r.status !== 'pass').length : 0;
-      const label = n ? `Checks failing · ${n}` : 'Checks failing';
+      const label = n
+        ? PlatformI18n.t('changes:chips.checks.failingCount', { count: n })
+        : PlatformI18n.t('changes:chips.checks.failing');
       const title = n
-        ? `${n} automated test${n === 1 ? '' : 's'} failed on the staging build. Merge is blocked until checks pass. Open the discussion to see them.`
-        : 'Automated tests failed on the staging build. Merge is blocked until checks pass.';
-      return `<span class="gc-blocked-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
+        ? PlatformI18n.t('changes:chips.checks.failingCountTitle', { count: n })
+        : PlatformI18n.t('changes:chips.checks.failingTitle');
+      return `<span class="gc-blocked-badge" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
     }
     if (state === 'error') {
-      return `<span class="gc-conflict-badge" title="The staging build or the test run itself broke, so the platform can't confirm the app works. Merge is blocked until checks pass.">⚠ Checks couldn't run</span>`;
+      return `<span class="gc-conflict-badge" title="${PlatformI18n.htmlText('changes:chips.checks.errorTitle')}">${PlatformI18n.htmlText('changes:chips.checks.error')}</span>`;
     }
     if (state === 'skipped') {
       // #461: explicit terminal "nothing to test" verdict — grey, no
       // spinner, and NON-blocking (the merge gate treats it like passing).
       const why = pr.check_error_detail
-        ? `Checks were skipped: ${String(pr.check_error_detail).slice(0, 280)}. It can still go live.`
-        : 'Checks were skipped: there was nothing to test. It can still go live.';
-      return `<span class="gc-checks-running-badge" title="${escapeHtml(why)}">Checks skipped</span>`;
+        ? PlatformI18n.t('changes:chips.checks.skippedBecauseTitle', { reason: String(pr.check_error_detail).slice(0, 280) })
+        : PlatformI18n.t('changes:chips.checks.skippedTitle');
+      return `<span class="gc-checks-running-badge" title="${escapeHtml(why)}">${PlatformI18n.htmlText('changes:chips.checks.skipped')}</span>`;
     }
     // 'pending' (or anything else): tests are still running. #405: grey
     // (gc-checks-running-badge), not amber, so a not-yet-started check is
@@ -22026,10 +22808,14 @@ const AppView = {
     const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
     const inFlight = state === 'pending' && pr.check_phase !== 'deferred';
     const progress = AppView._checksChipProgress(live, inFlight);
-    const count = !progress && live && live.bar.ran ? ` ${live.bar.ran}` : '';
-    const why = 'Automated tests are still running on the staging build. Merge is blocked until they pass.';
-    const label = progress ? 'Checks' : `Checks running…${count}`;
-    return `<span class="gc-checks-running-badge" title="${progress ? `${progress.text}. ${why}` : why}"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${label}${AppView.checksChipBarHtml(progress)}</span>`;
+    // With a bar, the chip is "Checks" and the bar says how far; with none
+    // (a deferred run), its words, and the count of those that ran.
+    const label = progress
+      ? PlatformI18n.htmlText('changes:chips.checks.label')
+      : (live && live.bar.ran
+        ? PlatformI18n.htmlText('changes:chips.checks.runningRan', { ran: live.bar.ran })
+        : PlatformI18n.htmlText('changes:chips.checks.running'));
+    return `<span class="gc-checks-running-badge" title="${escapeAttr(AppView._checksChipTitle(live, progress))}"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${label}${AppView.checksChipBarHtml(progress)}</span>`;
   },
 
   // #2380: claim-first, exact-revision before & after shots. The server already
@@ -22060,7 +22846,7 @@ const AppView = {
   _shotsNotStartedReason(shots) {
     const e = shots || {};
     const reason = typeof e.notStartedReason === 'string' ? e.notStartedReason.trim() : '';
-    return reason || 'Nothing has picked this preview up yet.';
+    return reason || PlatformI18n.t('changes:shots.state.notStarted.detail');
   },
 
   // How many declared changes the shots on this commit show failing: the
@@ -22078,34 +22864,87 @@ const AppView = {
   // the verified/pending card below and the change page's strip.
   _shotsStateCopy(shots) {
     const e = shots || {};
-    const taking = ['Taking the shots', 'The shots agent is following each declared change on the before and after builds.'];
+    const t = PlatformI18n.t;
+    const taking = [t('changes:shots.state.taking.label'), t('changes:shots.state.taking.detail')];
     return {
       planned: AppView._shotsNotStarted(e)
-        ? ['Before & after not started', AppView._shotsNotStartedReason(e)]
-        : ['Before & after queued', 'Getting ready to take the shots.'],
-      provisioning: ['Building before and after', 'Homeroom is starting private copies of the app from before and after this change.'],
+        ? [t('changes:shots.state.notStarted.label'), AppView._shotsNotStartedReason(e)]
+        : [t('changes:shots.state.queued.label'), t('changes:shots.state.queued.detail')],
+      provisioning: [t('changes:shots.state.building.label'), t('changes:shots.state.building.detail')],
       exploring: taking,
       // Runs from before shots; a current run never enters this state.
       replaying: taking,
-      reviewing: ['Saving the shots', 'The shots are being saved to the proposal.'],
+      reviewing: [t('changes:shots.state.saving.label'), t('changes:shots.state.saving.detail')],
       // A restart interrupted the run and the recovery sweep starts it
       // again by itself, so it is not a failure to act on yet.
       // The shots agent did what the change says it does on the after
       // build, and the app broke: the change does not work.
       failed: e.failureCode === 'shots_change_failed'
-        ? ['Something didn\u2019t work', e.failureReason || 'The shots agent tried this change on the after build, and the app broke.']
+        ? [t('changes:shots.state.changeFailed.label'), e.failureReason || t('changes:shots.state.changeFailed.detail')]
         : e.failureCode === 'shots_stopped'
-        ? ['Shots stopped', e.failureReason || 'Stopped before it finished. No shots were taken for this commit.']
+        ? [t('changes:shots.state.stopped.label'), e.failureReason || t('changes:shots.state.stopped.detail')]
         : e.automaticRetryPending === true
-          ? ['Trying the shots again', 'Homeroom restarted while taking these shots, so it starts them again on its own in a moment.']
-          : ['Couldn\u2019t take the shots', e.failureReason || 'The shots agent could not take the before & after shots.'],
-      stale: ['Shots are out of date', e.failureReason || 'A newer revision of this proposal replaced these shots.'],
-      cancelled: ['Shots cancelled', e.failureReason || 'A newer run replaced this one before it finished.'],
+          ? [t('changes:shots.state.retrying.label'), t('changes:shots.state.retrying.detail')]
+          : [t('changes:shots.state.couldNot.label'), e.failureReason || t('changes:shots.state.couldNot.detail')],
+      stale: [t('changes:shots.state.stale.label'), e.failureReason || t('changes:shots.state.stale.detail')],
+      cancelled: [t('changes:shots.state.cancelled.label'), e.failureReason || t('changes:shots.state.cancelled.detail')],
       // The author's reasoning is for the reviewers of the declaration, not
       // for someone reading the proposal: it says only that nothing shows.
-      not_required: ['No before & after needed', 'This proposal has no visual changes.'],
-      overridden: ['Shots waived', e.overrideReason || 'An app administrator let review continue without before & after shots.'],
+      not_required: [t('changes:shots.state.notRequired.label'), t('changes:shots.state.notRequired.detail')],
+      overridden: [t('changes:shots.state.waived.label'), e.overrideReason || t('changes:shots.state.waived.detail')],
     };
+  },
+
+  // The change page's one sentence about the run, as a whole message per
+  // state. A reason the server recorded is quoted as written, less its final
+  // period, inside the message that names the state.
+  _shotsSentence(shots, state, { notStarted, running }) {
+    const e = shots || {};
+    const t = PlatformI18n.t;
+    const quoted = (value) => String(value || '').replace(/\.\s*$/, '');
+    if (notStarted) {
+      const reason = typeof e.notStartedReason === 'string' ? e.notStartedReason.trim() : '';
+      return reason
+        ? t('changes:shots.sentence.notStartedBecause', { reason: quoted(reason) })
+        : t('changes:shots.sentence.notStarted');
+    }
+    if (state === 'not_required') return t('changes:shots.state.notRequired.detail');
+    if (state === 'overridden') {
+      return e.overrideReason ? `${quoted(e.overrideReason)}.` : t('changes:shots.state.waived.detail');
+    }
+    if (running) {
+      if (state === 'planned') return t('changes:shots.sentence.queued');
+      if (state === 'provisioning') return t('changes:shots.sentence.building');
+      if (state === 'reviewing') return t('changes:shots.sentence.saving');
+      return t('changes:shots.sentence.taking');
+    }
+    if (state === 'failed') {
+      if (e.failureCode === 'shots_change_failed') {
+        return e.failureReason
+          ? t('changes:shots.sentence.changeFailedBecause', { reason: quoted(e.failureReason) })
+          : t('changes:shots.sentence.changeFailed');
+      }
+      if (e.failureCode === 'shots_stopped') {
+        return e.failureReason
+          ? t('changes:shots.sentence.stoppedBecause', { reason: quoted(e.failureReason) })
+          : t('changes:shots.sentence.stopped');
+      }
+      if (e.automaticRetryPending === true) return t('changes:shots.sentence.retrying');
+      return e.failureReason
+        ? t('changes:shots.sentence.couldNotBecause', { reason: quoted(e.failureReason) })
+        : t('changes:shots.sentence.couldNot');
+    }
+    if (state === 'stale') {
+      return e.failureReason
+        ? t('changes:shots.sentence.staleBecause', { reason: quoted(e.failureReason) })
+        : t('changes:shots.sentence.stale');
+    }
+    if (state === 'cancelled') {
+      return e.failureReason
+        ? t('changes:shots.sentence.cancelledBecause', { reason: quoted(e.failureReason) })
+        : t('changes:shots.sentence.cancelled');
+    }
+    return t('changes:shots.sentence.pending');
   },
 
   // The change page's reading of a proposal's before/after shots, under
@@ -22116,11 +22955,9 @@ const AppView = {
   _shotsView(shots) {
     if (!shots || typeof shots !== 'object') return null;
     const state = String(shots.state || 'planned');
-    const copy = AppView._shotsStateCopy(shots)[state] || ['Shots pending', 'The before & after shots are not ready yet.'];
-    const detail = String(copy[1] || '').replace(/\.\s*$/, '');
+    const copy = AppView._shotsStateCopy(shots)[state] || [PlatformI18n.t('changes:shots.state.pending.label'), PlatformI18n.t('changes:shots.state.pending.detail')];
     const claims = (Array.isArray(shots.claims) ? shots.claims : [])
       .slice(0, 3).map((c) => String((c && c.claim) || '').trim()).filter(Boolean);
-    const settled = state === 'not_required' || state === 'overridden';
     // #2601/#2558: a 'planned' run that never started is not in flight, so
     // it neither spins nor promises shots are being taken. It reads as its
     // own state, with whatever reason the server recorded.
@@ -22133,16 +22970,10 @@ const AppView = {
       verified: state === 'verified',
       retrying,
       notStarted,
-      label: state === 'verified' ? 'Shots ready' : copy[0],
+      label: state === 'verified' ? PlatformI18n.t('changes:shots.sentence.readyLabel') : copy[0],
       // A reason the server recorded is quoted as written; only a run that
       // is still under way promises shots.
-      sentence: notStarted
-        ? `${copy[0]}. ${detail}. None have been taken for this commit yet.`
-        : settled
-          ? `${detail}.`
-          : running
-            ? `Before & after: ${detail.charAt(0).toLowerCase()}${detail.slice(1)}. Homeroom shows each declared change before and after, on this exact proposal build.`
-            : `${copy[0]}. ${detail}.`,
+      sentence: AppView._shotsSentence(shots, state, { notStarted, running }),
       claims,
     };
   },
@@ -22177,9 +23008,104 @@ const AppView = {
   //   zoom       — a Close-up / Whole screen switch on screens that have a
   //                close-up. The radios hold it; the caller lays the sides out.
   // `key` makes the ids unique on the page, so a spec and a card can share one.
+  SHOTS_SIZE_NAME_IDS: {
+    desktop: 'changes:shots.size.desktop',
+    phone: 'changes:shots.size.phone',
+    screen: 'changes:shots.size.screen',
+  },
+
+  // The same sizes inside a line of text, where English writes them small.
+  SHOTS_SIZE_WORD_IDS: {
+    desktop: 'changes:shots.sizeWord.desktop',
+    phone: 'changes:shots.sizeWord.phone',
+  },
+
+  SHOTS_SCREEN_PICK_IDS: {
+    desktop: 'changes:shots.viewer.pickDesktop',
+    phone: 'changes:shots.viewer.pickPhone',
+  },
+
+  // "seen as …" under a shot, whole, by the people the screen's changes were
+  // viewed as, in the order they come up (persona keys joined with '+').
+  SHOTS_SEEN_AS_IDS: {
+    'member': 'changes:shots.seenAs.member',
+    'readOnlyAdmin': 'changes:shots.seenAs.readOnlyAdmin',
+    'fullAdmin': 'changes:shots.seenAs.fullAdmin',
+    'guest': 'changes:shots.seenAs.guest',
+    'member+readOnlyAdmin': 'changes:shots.seenAs.memberReadOnlyAdmin',
+    'member+fullAdmin': 'changes:shots.seenAs.memberFullAdmin',
+    'member+guest': 'changes:shots.seenAs.memberGuest',
+    'readOnlyAdmin+member': 'changes:shots.seenAs.readOnlyAdminMember',
+    'readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.readOnlyAdminFullAdmin',
+    'readOnlyAdmin+guest': 'changes:shots.seenAs.readOnlyAdminGuest',
+    'fullAdmin+member': 'changes:shots.seenAs.fullAdminMember',
+    'fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.fullAdminReadOnlyAdmin',
+    'fullAdmin+guest': 'changes:shots.seenAs.fullAdminGuest',
+    'guest+member': 'changes:shots.seenAs.guestMember',
+    'guest+readOnlyAdmin': 'changes:shots.seenAs.guestReadOnlyAdmin',
+    'guest+fullAdmin': 'changes:shots.seenAs.guestFullAdmin',
+    'member+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.memberReadOnlyAdminFullAdmin',
+    'member+readOnlyAdmin+guest': 'changes:shots.seenAs.memberReadOnlyAdminGuest',
+    'member+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.memberFullAdminReadOnlyAdmin',
+    'member+fullAdmin+guest': 'changes:shots.seenAs.memberFullAdminGuest',
+    'member+guest+readOnlyAdmin': 'changes:shots.seenAs.memberGuestReadOnlyAdmin',
+    'member+guest+fullAdmin': 'changes:shots.seenAs.memberGuestFullAdmin',
+    'readOnlyAdmin+member+fullAdmin': 'changes:shots.seenAs.readOnlyAdminMemberFullAdmin',
+    'readOnlyAdmin+member+guest': 'changes:shots.seenAs.readOnlyAdminMemberGuest',
+    'readOnlyAdmin+fullAdmin+member': 'changes:shots.seenAs.readOnlyAdminFullAdminMember',
+    'readOnlyAdmin+fullAdmin+guest': 'changes:shots.seenAs.readOnlyAdminFullAdminGuest',
+    'readOnlyAdmin+guest+member': 'changes:shots.seenAs.readOnlyAdminGuestMember',
+    'readOnlyAdmin+guest+fullAdmin': 'changes:shots.seenAs.readOnlyAdminGuestFullAdmin',
+    'fullAdmin+member+readOnlyAdmin': 'changes:shots.seenAs.fullAdminMemberReadOnlyAdmin',
+    'fullAdmin+member+guest': 'changes:shots.seenAs.fullAdminMemberGuest',
+    'fullAdmin+readOnlyAdmin+member': 'changes:shots.seenAs.fullAdminReadOnlyAdminMember',
+    'fullAdmin+readOnlyAdmin+guest': 'changes:shots.seenAs.fullAdminReadOnlyAdminGuest',
+    'fullAdmin+guest+member': 'changes:shots.seenAs.fullAdminGuestMember',
+    'fullAdmin+guest+readOnlyAdmin': 'changes:shots.seenAs.fullAdminGuestReadOnlyAdmin',
+    'guest+member+readOnlyAdmin': 'changes:shots.seenAs.guestMemberReadOnlyAdmin',
+    'guest+member+fullAdmin': 'changes:shots.seenAs.guestMemberFullAdmin',
+    'guest+readOnlyAdmin+member': 'changes:shots.seenAs.guestReadOnlyAdminMember',
+    'guest+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.guestReadOnlyAdminFullAdmin',
+    'guest+fullAdmin+member': 'changes:shots.seenAs.guestFullAdminMember',
+    'guest+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.guestFullAdminReadOnlyAdmin',
+    'member+readOnlyAdmin+fullAdmin+guest': 'changes:shots.seenAs.memberReadOnlyAdminFullAdminGuest',
+    'member+readOnlyAdmin+guest+fullAdmin': 'changes:shots.seenAs.memberReadOnlyAdminGuestFullAdmin',
+    'member+fullAdmin+readOnlyAdmin+guest': 'changes:shots.seenAs.memberFullAdminReadOnlyAdminGuest',
+    'member+fullAdmin+guest+readOnlyAdmin': 'changes:shots.seenAs.memberFullAdminGuestReadOnlyAdmin',
+    'member+guest+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.memberGuestReadOnlyAdminFullAdmin',
+    'member+guest+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.memberGuestFullAdminReadOnlyAdmin',
+    'readOnlyAdmin+member+fullAdmin+guest': 'changes:shots.seenAs.readOnlyAdminMemberFullAdminGuest',
+    'readOnlyAdmin+member+guest+fullAdmin': 'changes:shots.seenAs.readOnlyAdminMemberGuestFullAdmin',
+    'readOnlyAdmin+fullAdmin+member+guest': 'changes:shots.seenAs.readOnlyAdminFullAdminMemberGuest',
+    'readOnlyAdmin+fullAdmin+guest+member': 'changes:shots.seenAs.readOnlyAdminFullAdminGuestMember',
+    'readOnlyAdmin+guest+member+fullAdmin': 'changes:shots.seenAs.readOnlyAdminGuestMemberFullAdmin',
+    'readOnlyAdmin+guest+fullAdmin+member': 'changes:shots.seenAs.readOnlyAdminGuestFullAdminMember',
+    'fullAdmin+member+readOnlyAdmin+guest': 'changes:shots.seenAs.fullAdminMemberReadOnlyAdminGuest',
+    'fullAdmin+member+guest+readOnlyAdmin': 'changes:shots.seenAs.fullAdminMemberGuestReadOnlyAdmin',
+    'fullAdmin+readOnlyAdmin+member+guest': 'changes:shots.seenAs.fullAdminReadOnlyAdminMemberGuest',
+    'fullAdmin+readOnlyAdmin+guest+member': 'changes:shots.seenAs.fullAdminReadOnlyAdminGuestMember',
+    'fullAdmin+guest+member+readOnlyAdmin': 'changes:shots.seenAs.fullAdminGuestMemberReadOnlyAdmin',
+    'fullAdmin+guest+readOnlyAdmin+member': 'changes:shots.seenAs.fullAdminGuestReadOnlyAdminMember',
+    'guest+member+readOnlyAdmin+fullAdmin': 'changes:shots.seenAs.guestMemberReadOnlyAdminFullAdmin',
+    'guest+member+fullAdmin+readOnlyAdmin': 'changes:shots.seenAs.guestMemberFullAdminReadOnlyAdmin',
+    'guest+readOnlyAdmin+member+fullAdmin': 'changes:shots.seenAs.guestReadOnlyAdminMemberFullAdmin',
+    'guest+readOnlyAdmin+fullAdmin+member': 'changes:shots.seenAs.guestReadOnlyAdminFullAdminMember',
+    'guest+fullAdmin+member+readOnlyAdmin': 'changes:shots.seenAs.guestFullAdminMemberReadOnlyAdmin',
+    'guest+fullAdmin+readOnlyAdmin+member': 'changes:shots.seenAs.guestFullAdminReadOnlyAdminMember',
+  },
+
   _shotsSizeName(size) {
     const value = String(size || 'screen');
+    const id = Object.prototype.hasOwnProperty.call(AppView.SHOTS_SIZE_NAME_IDS, value) ? AppView.SHOTS_SIZE_NAME_IDS[value] : '';
+    if (id) return PlatformI18n.t(id);
+    // A size this build has no name for is shown as the server named it.
     return value.charAt(0).toUpperCase() + value.slice(1);
+  },
+
+  _shotsSizeWord(size) {
+    const value = String(size);
+    const id = Object.prototype.hasOwnProperty.call(AppView.SHOTS_SIZE_WORD_IDS, value) ? AppView.SHOTS_SIZE_WORD_IDS[value] : '';
+    return id ? PlatformI18n.t(id) : value;
   },
 
   // `barLead` (#4455): markup at the start of each screen's toolbar — a
@@ -22207,14 +23133,14 @@ const AppView = {
     const stepper = (index) => {
       const same = indexesOf(list[index].viewport);
       const at = same.indexOf(index);
-      const prev = at > 0 ? `<label for="${pickId(same[at - 1])}" class="shots-screen-step" title="Previous screen">‹</label>`
+      const prev = at > 0 ? `<label for="${pickId(same[at - 1])}" class="shots-screen-step" title="${PlatformI18n.htmlText('changes:shots.viewer.previousScreen')}">‹</label>`
         : '<span class="shots-screen-step shots-screen-step-off">‹</span>';
-      const next = at < same.length - 1 ? `<label for="${pickId(same[at + 1])}" class="shots-screen-step" title="Next screen">›</label>`
+      const next = at < same.length - 1 ? `<label for="${pickId(same[at + 1])}" class="shots-screen-step" title="${PlatformI18n.htmlText('changes:shots.viewer.nextScreen')}">›</label>`
         : '<span class="shots-screen-step shots-screen-step-off">›</span>';
-      return `<span class="shots-screen-nav" aria-hidden="true">${prev}<span class="shots-screen-count">${at + 1} of ${same.length}</span>${next}</span>`;
+      return `<span class="shots-screen-nav" aria-hidden="true">${prev}<span class="shots-screen-count">${PlatformI18n.htmlText('changes:shots.viewer.screenCount', { index: at + 1, total: same.length })}</span>${next}</span>`;
     };
     const both = sideBySide
-      ? `<label for="${sideId('both')}" class="shots-seg-btn shots-seg-both" title="Side by side">${bothIcon}<span class="shots-seg-label">Side by side</span></label>`
+      ? `<label for="${sideId('both')}" class="shots-seg-btn shots-seg-both" title="${PlatformI18n.htmlText('changes:shots.viewer.sideBySide')}">${bothIcon}<span class="shots-seg-label">${PlatformI18n.htmlText('changes:shots.viewer.sideBySide')}</span></label>`
       : '';
     const views = list.map((screen, screenIndex) => {
       const sizeSwitch = shownSizes.length > 1
@@ -22224,25 +23150,27 @@ const AppView = {
         }).join('')}</span>`
         : '';
       const zoomSwitch = zooming && screen.zoomable
-        ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="Close-up">${closeIcon}<span class="shots-seg-label">Close-up</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="Whole screen">${wholeIcon}<span class="shots-seg-label">Whole screen</span></label></span>`
+        ? `<span class="shots-seg shots-seg-zoom" aria-hidden="true"><label for="${zoomId('close')}" class="shots-seg-btn shots-seg-close" title="${PlatformI18n.htmlText('changes:shots.viewer.closeUp')}">${closeIcon}<span class="shots-seg-label">${PlatformI18n.htmlText('changes:shots.viewer.closeUp')}</span></label><label for="${zoomId('whole')}" class="shots-seg-btn shots-seg-whole" title="${PlatformI18n.htmlText('changes:shots.viewer.wholeScreen')}">${wholeIcon}<span class="shots-seg-label">${PlatformI18n.htmlText('changes:shots.viewer.wholeScreen')}</span></label></span>`
         : '';
       return `<figure class="shots-view" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
-        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">Before</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">After</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
+        <div class="shots-bar">${barLead}<span class="shots-seg shots-seg-side" aria-hidden="true"><label for="${sideId('before')}" class="shots-seg-btn shots-seg-before">${PlatformI18n.htmlText('changes:shots.viewer.before')}</label><label for="${sideId('after')}" class="shots-seg-btn shots-seg-after">${PlatformI18n.htmlText('changes:shots.viewer.after')}</label>${both}</span>${sizeSwitch}${zoomSwitch}${stepping ? stepper(screenIndex) : ''}</div>
         <div class="shots-stage">
           ${screen.afterHtml || ''}
           ${screen.beforeHtml || ''}
-          <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="Click to see before" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="Click to see after" aria-hidden="true"></label>
-          <span class="shots-flip-chip shots-flip-chip-after">${esc(screen.afterChip || 'After')}</span><span class="shots-flip-chip shots-flip-chip-before">${esc(screen.beforeChip || 'Before')}</span>
+          <label for="${sideId('before')}" class="shots-flip-to shots-flip-to-before" title="${PlatformI18n.htmlText('changes:shots.viewer.clickBefore')}" aria-hidden="true"></label><label for="${sideId('after')}" class="shots-flip-to shots-flip-to-after" title="${PlatformI18n.htmlText('changes:shots.viewer.clickAfter')}" aria-hidden="true"></label>
+          <span class="shots-flip-chip shots-flip-chip-after">${esc(screen.afterChip || PlatformI18n.t('changes:shots.viewer.chipAfter'))}</span><span class="shots-flip-chip shots-flip-chip-before">${esc(screen.beforeChip || PlatformI18n.t('changes:shots.viewer.chipBefore'))}</span>
         </div>
         <figcaption class="shots-view-notes">${screen.notesHtml || ''}</figcaption>
       </figure>`;
     });
-    const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="Show the screen before the change"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="Show the screen after the change"${autoSide ? '' : ' checked'}>${sideBySide ? `<input type="radio" class="shots-side-pick shots-side-both" name="shots-${key}-side" id="${sideId('both')}" aria-label="Show before and after side by side">` : ''}${autoSide ? `<input type="radio" class="shots-side-pick shots-side-auto" name="shots-${key}-side" id="${sideId('auto')}" aria-label="Show side by side when there is room, otherwise after" checked>` : ''}</span>`;
+    const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showBefore')}"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showAfter')}"${autoSide ? '' : ' checked'}>${sideBySide ? `<input type="radio" class="shots-side-pick shots-side-both" name="shots-${key}-side" id="${sideId('both')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showBoth')}">` : ''}${autoSide ? `<input type="radio" class="shots-side-pick shots-side-auto" name="shots-${key}-side" id="${sideId('auto')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showAuto')}" checked>` : ''}</span>`;
     const zoomPicks = zooming
-      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="Show a close-up of what changes" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="Show the whole screen"></span>`
+      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showCloseUp')}" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showWhole')}"></span>`
       : '';
     const screenPicks = list.length > 1
-      ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(`Screen ${index + 1} of ${list.length}: ${screen.viewport}`)}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
+      ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(Object.prototype.hasOwnProperty.call(AppView.SHOTS_SCREEN_PICK_IDS, String(screen.viewport))
+          ? PlatformI18n.t(AppView.SHOTS_SCREEN_PICK_IDS[String(screen.viewport)], { index: index + 1, total: list.length })
+          : PlatformI18n.t('changes:shots.viewer.pickOther', { index: index + 1, total: list.length, size: screen.viewport }))}"${index === 0 ? ' checked' : ''}>`).join('')}</span>`
       : '';
     return `<div class="shots-viewer${className ? ` ${attr(className)}` : ''}">${sidePicks}${zoomPicks}${screenPicks}<div class="shots-views${list.length === 1 ? ' shots-views-one' : ''}">${views.join('')}</div></div>`;
   },
@@ -22266,7 +23194,7 @@ const AppView = {
     const esc = escapeHtml;
     const attr = escapeAttr;
     const shortSha = (sha) => /^[0-9a-f]{40}$/i.test(String(sha || ''))
-      ? String(sha).slice(0, 8) : 'unknown';
+      ? String(sha).slice(0, 8) : PlatformI18n.t('changes:shots.card.unknownCommit');
     const shotsUrl = (url) => {
       const value = String(url || '');
       const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}$/.exec(value);
@@ -22275,12 +23203,13 @@ const AppView = {
     };
     const stateCopy = AppView._shotsStateCopy(shots);
     const badge = state === 'verified'
-      ? '<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">Shots ready</span>'
-      : `<span class="dev-badge ${state === 'failed' && shots.failureCode !== 'shots_stopped' && shots.automaticRetryPending !== true ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || ['Shots pending'])[0])}</span>`;
-    const provenance = `<span>before <code>${esc(shortSha(shots.baseSha))}</code></span><span aria-hidden="true">→</span><span>after <code>${esc(shortSha(shots.headSha))}</code></span>`;
+      ? `<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">${PlatformI18n.htmlText('changes:shots.card.readyBadge')}</span>`
+      : `<span class="dev-badge ${state === 'failed' && shots.failureCode !== 'shots_stopped' && shots.automaticRetryPending !== true ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || [PlatformI18n.t('changes:shots.state.pending.label')])[0])}</span>`;
+    const code = (inner) => `<code>${inner}</code>`;
+    const provenance = `<span>${PlatformI18n.htmlRich('changes:shots.card.beforeCommit', { commit: shortSha(shots.baseSha) }, [code])}</span><span aria-hidden="true">→</span><span>${PlatformI18n.htmlRich('changes:shots.card.afterCommit', { commit: shortSha(shots.headSha) }, [code])}</span>`;
 
     if (state !== 'verified') {
-      const copy = stateCopy[state] || ['Shots pending', 'The before & after shots are not ready yet.'];
+      const copy = stateCopy[state] || [PlatformI18n.t('changes:shots.state.pending.label'), PlatformI18n.t('changes:shots.state.pending.detail')];
       const declared = claims.map((claim) => `<li>${esc(claim.claim || '')}</li>`).join('');
       // #2601/#2558: the same control a failed run offers, on a run that
       // never started. The rerun route already accepts a 'planned' run (it
@@ -22292,15 +23221,15 @@ const AppView = {
           && (shots.repairAvailable === true || shots.failureCode === 'shots_stopped'))
         || AppView._shotsNotStarted(shots);
       const retry = retryable && Number.isInteger(sessionId) && sessionId > 0
-        ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">Take the shots again</button>`
+        ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
         : '';
       const stoppable = ['provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)
         && Number.isInteger(sessionId) && sessionId > 0;
       const stop = stoppable
-        ? `<button type="button" data-shots-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopShots(${sessionId}, this)">Stop</button>`
+        ? `<button type="button" data-shots-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.stop')}</button>`
         : '';
       const override = state === 'overridden' && shots.overriddenAt
-        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">Overridden ${esc(new Date(shots.overriddenAt).toLocaleString())}</div>`
+        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString() })}</div>`
         : '';
       return `<section data-shots="1" data-shots-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
@@ -22322,9 +23251,19 @@ const AppView = {
     const failed = (claim) => resultOf(claim)?.status === 'failed';
     const skipped = (claim) => resultOf(claim)?.status === 'skipped' || failed(claim);
     const numberOf = (storyId) => claims.findIndex((claim) => claim.id === storyId) + 1;
-    const persona = (claim) => (claim.persona === 'read_only_admin' ? 'read-only admin'
-      : claim.persona === 'full_admin' ? 'full admin'
-        : claim.persona === 'guest' ? 'signed-out visitor' : 'member');
+    // Who the shots agent was signed in as. `personaId` is the word on its
+    // own; `seenAs` is the whole "seen as …" fact for one or more of them.
+    const personaKey = (claim) => (claim.persona === 'read_only_admin' ? 'readOnlyAdmin'
+      : claim.persona === 'full_admin' ? 'fullAdmin'
+        : claim.persona === 'guest' ? 'guest' : 'member');
+    const personaId = {
+      readOnlyAdmin: 'changes:shots.persona.readOnlyAdmin',
+      fullAdmin: 'changes:shots.persona.fullAdmin',
+      guest: 'changes:shots.persona.guest',
+      member: 'changes:shots.persona.member',
+    };
+    const seenAs = (names) => PlatformI18n.t(AppView.SHOTS_SEEN_AS_IDS[names.length ? names.join('+') : 'member']);
+    const persona = (claim) => PlatformI18n.t(personaId[personaKey(claim)]);
     const videoStyle = 'display:block;width:100%;max-height:360px;border-radius:6px;background:rgba(0,0,0,0.35)';
 
     // One screen at a time, in a frame that keeps its size: a phone screen
@@ -22395,7 +23334,7 @@ const AppView = {
       const result = resultOf(claim);
       // What the shots agent said its shots leave out of the claim.
       const shotNote = result && result.status === 'ready' && typeof result.note === 'string' ? result.note : '';
-      return shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Not in these shots:</span> ${esc(shotNote)}</p>` : '';
+      return shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlRich('changes:shots.claim.notInShots', { note: shotNote }, [(inner) => `<span class="font-medium text-zinc-700 dark:text-zinc-300">${inner}</span>`])}</p>` : '';
     };
     const viewportsOf = (claim) => (Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop']);
     const clipsOf = (claim, viewports) => viewports.map((viewport) => {
@@ -22405,17 +23344,21 @@ const AppView = {
       const headClip = by(claim.id, viewport, 'head', 'animation', 'webm');
       const pairedClip = by(claim.id, viewport, 'paired', 'animation', 'webm');
       const poster = (side) => { const shot = by(claim.id, viewport, side, 'context'); return shot ? shotsUrl(shot.url) : ''; };
-      const clip = (label, artifact, posterUrl) => `<figure style="flex:1 1 240px;min-width:0;margin:0">
-          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label} clip · ${esc(viewport)}</figcaption>
-          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`
-            : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:120px">No clip</div>`}
+      const clipIds = {
+        base: { caption: 'changes:shots.clip.beforeCaption', label: 'changes:shots.clip.beforeLabel' },
+        head: { caption: 'changes:shots.clip.afterCaption', label: 'changes:shots.clip.afterLabel' },
+      };
+      const clip = (which, artifact, posterUrl) => `<figure style="flex:1 1 240px;min-width:0;margin:0">
+          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText(clipIds[which].caption, { size: AppView._shotsSizeWord(viewport) })}</figcaption>
+          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(PlatformI18n.t(clipIds[which].label, { claim: claim.claim || '' }))}" style="${videoStyle}"></video>`
+            : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:120px">${PlatformI18n.htmlText('changes:shots.clip.none')}</div>`}
         </figure>`;
       if (baseClip || headClip) {
-        return `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${clip('Before', baseClip, poster('base'))}${clip('After', headClip, poster('head'))}</div>`;
+        return `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${clip('base', baseClip, poster('base'))}${clip('head', headClip, poster('head'))}</div>`;
       }
       if (pairedClip) {
         const videoKind = claim.animation === 'motion' ? 'animation' : 'interaction';
-        return `<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play ${videoKind}</summary><video src="${attr(shotsUrl(pairedClip.url))}" controls preload="none" muted playsinline aria-label="${videoKind === 'animation' ? 'Animation' : 'Interaction'} for ${attr(claim.claim || '')}" style="${videoStyle};margin-top:6px"></video></details>`;
+        return `<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">${videoKind === 'animation' ? PlatformI18n.htmlText('changes:shots.clip.playAnimation') : PlatformI18n.htmlText('changes:shots.clip.playInteraction')}</summary><video src="${attr(shotsUrl(pairedClip.url))}" controls preload="none" muted playsinline aria-label="${attr(videoKind === 'animation' ? PlatformI18n.t('changes:shots.clip.animationLabel', { claim: claim.claim || '' }) : PlatformI18n.t('changes:shots.clip.interactionLabel', { claim: claim.claim || '' }))}" style="${videoStyle};margin-top:6px"></video></details>`;
       }
       return '';
     }).join('');
@@ -22425,15 +23368,15 @@ const AppView = {
       const before = by(screen.shot, screen.viewport, 'base', 'context');
       const after = by(screen.shot, screen.viewport, 'head', 'context');
       const absent = onScreen.length > 0 && onScreen.every((claim) => claim.baseState === 'not_present');
-      const who = [...new Set(onScreen.map(persona))].map((name) => `a ${name}`).join(' and ') || 'a member';
+      const who = seenAs([...new Set(onScreen.map(personaKey))]);
       const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
       const described = onScreen.map((claim) => claim.claim || '').join(' ');
       const drawn = { base: outlines(screen, 'base'), head: outlines(screen, 'head') };
-      const side = (which, artifact, label) => {
+      const side = (which, artifact, altId) => {
         const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
-        if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">No shot</span>`;
+        if (!artifact) return `<span class="shots-flip-side ${cls} shots-flip-missing">${PlatformI18n.htmlText('changes:shots.screen.noShot')}</span>`;
         const shape = shapeOf(artifact, screen.width, which === 'base' ? screen.heightBefore : screen.heightAfter, narrow);
-        return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}"><img src="${attr(shotsUrl(artifact.url))}" alt="${attr(`${label}: ${described}`)}" loading="lazy">${drawn[which]}</span>`;
+        return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}"><img src="${attr(shotsUrl(artifact.url))}" alt="${attr(PlatformI18n.t(altId, { changes: described }))}" loading="lazy">${drawn[which]}</span>`;
       };
       const changes = onScreen.map((claim) => {
         const n = numberOf(claim.id);
@@ -22444,19 +23387,21 @@ const AppView = {
       // A dashed outline or line needs its words the first time it shows.
       const shown = drawn.base + drawn.head;
       const keys = [
-        shown.includes('shots-box-other') ? '<span class="shots-key"><i class="shots-key-box"></i>Dashed outline: also changed here, but no change on this list describes it</span>' : '',
-        shown.includes('shots-mark') ? '<span class="shots-key"><i class="shots-key-line"></i>Dashed line: where the change begins on a side that doesn’t have it</span>' : '',
+        shown.includes('shots-box-other') ? `<span class="shots-key"><i class="shots-key-box"></i>${PlatformI18n.htmlText('changes:shots.screen.keyOutline')}</span>` : '',
+        shown.includes('shots-mark') ? `<span class="shots-key"><i class="shots-key-line"></i>${PlatformI18n.htmlText('changes:shots.screen.keyLine')}</span>` : '',
       ].join('');
       const width = Number(after && after.width);
       const height = Number(after && after.height);
-      const dims = width > 0 && height > 0 ? `, ${Math.round(width)} × ${Math.round(height)}` : '';
+      const meta = width > 0 && height > 0
+        ? PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.t('changes:shots.screen.sized', { size: sizeName(screen.viewport), width: Math.round(width), height: Math.round(height) }), second: who })
+        : PlatformI18n.htmlText('changes:facts.pair', { first: sizeName(screen.viewport), second: who });
       return {
         viewport: screen.viewport,
-        afterHtml: side('head', after, 'After'),
-        beforeHtml: side('base', before, absent ? 'Before, not there yet' : 'Before'),
-        afterChip: 'After',
-        beforeChip: absent ? 'Before · not there yet' : 'Before',
-        notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}${thread ? '' : `<div class="shots-view-meta">${esc(sizeName(screen.viewport))}${dims} · seen as ${esc(who)}</div>`}`,
+        afterHtml: side('head', after, 'changes:shots.screen.altAfter'),
+        beforeHtml: side('base', before, absent ? 'changes:shots.screen.altBeforeAbsent' : 'changes:shots.screen.altBefore'),
+        afterChip: PlatformI18n.t('changes:shots.viewer.chipAfter'),
+        beforeChip: absent ? PlatformI18n.t('changes:shots.viewer.chipBeforeAbsent') : PlatformI18n.t('changes:shots.viewer.chipBefore'),
+        notesHtml: `${changes ? `<ol class="shots-changes">${changes}</ol>` : ''}${keys ? `<div class="shots-keys">${keys}</div>` : ''}${thread ? '' : `<div class="shots-view-meta">${meta}</div>`}`,
       };
     });
 
@@ -22470,15 +23415,15 @@ const AppView = {
       if (failed(claim)) {
         return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="failed" class="shots-claim">
           <span class="shots-claim-n">${n}</span>
-          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-red-500/10 text-red-700 dark:text-red-400">Didn\u2019t work</span></div>
-          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || 'The shots agent tried this on the after build, and the app broke.')}</p></div>
+          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-red-500/10 text-red-700 dark:text-red-400">${PlatformI18n.htmlText('changes:shots.claim.failedBadge')}</span></div>
+          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || PlatformI18n.t('changes:shots.claim.failedReason'))}</p></div>
         </li>`;
       }
       if (skipped(claim)) {
         return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="skipped" class="shots-claim">
           <span class="shots-claim-n">${n}</span>
-          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400">Skipped</span></div>
-          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || 'The shots agent could not get to this change.')}</p></div>
+          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.claim.skippedBadge')}</span></div>
+          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || PlatformI18n.t('changes:shots.claim.skippedReason'))}</p></div>
         </li>`;
       }
       const viewports = viewportsOf(claim);
@@ -22490,7 +23435,7 @@ const AppView = {
         <span class="shots-claim-n">${n}</span>
         <div class="min-w-0 flex-1">
           <strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>
-          ${thread ? '' : `<div class="mt-0.5 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewports.join(', '))} · ${esc(persona(claim))}</div>`}
+          ${thread ? '' : `<div class="mt-0.5 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.claim.where', { sizes: PlatformI18n.listText(viewports.map((viewport) => AppView._shotsSizeWord(viewport))), persona: persona(claim) })}</div>`}
           ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
           ${noteOf(claim)}
           ${clips}
@@ -22498,23 +23443,23 @@ const AppView = {
       </li>`;
     }).filter(Boolean);
     if (!screenParts.length && !claims.some(skipped)) {
-      return `<section data-shots="1" data-shots-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">These before & after shots are missing their details, so none can be shown.</section>`;
+      return `<section data-shots="1" data-shots-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">${PlatformI18n.htmlText('changes:shots.card.missingDetails')}</section>`;
     }
     const lookCopy = artifacts.some((artifact) => artifact?.variant === 'animation')
-      ? 'Look at the shots and clips to decide whether they show the change.'
-      : 'Look at the shots to decide whether they show the change.';
+      ? PlatformI18n.htmlText('changes:shots.card.introClips')
+      : PlatformI18n.htmlText('changes:shots.card.intro');
     if (detailsOnly) {
       // Shot details (#4455): the steps and sizes the card leaves out.
       const rows = claims.map((claim) => {
         const flow = flowOf(claim);
         return `<li class="dev-shot-details-claim" data-shots-detail="${attr(claim.id || '')}"><strong>${esc(claim.claim || '')}</strong>
-          <div class="dev-shot-details-meta">${esc(viewportsOf(claim).map(sizeName).join(', '))} · seen as a ${esc(persona(claim))}</div>
+          <div class="dev-shot-details-meta">${PlatformI18n.htmlText('changes:facts.pair', { first: PlatformI18n.listText(viewportsOf(claim).map(sizeName)), second: seenAs([personaKey(claim)]) })}</div>
           ${flow ? `<div class="dev-shot-details-flow">${flow}</div>` : ''}</li>`;
       }).join('');
-      return `${rows ? `<ol class="dev-shot-details-claims">${rows}</ol>` : ''}<p class="dev-shot-details-builds">Taken on the exact before and after builds of this change: ${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span></p>`;
+      return `${rows ? `<ol class="dev-shot-details-claims">${rows}</ol>` : ''}<p class="dev-shot-details-builds">${PlatformI18n.htmlText('changes:shots.details.builds')} ${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span></p>`;
     }
     const viewer = AppView._shotsViewerHtml(thread
-      ? { key, screens: screenParts, sideBySide: true, autoSide: true, className: 'shots-viewer-spec dev-change-viewer', barLead: '<span class="dev-change-card-name">Before and after</span>' }
+      ? { key, screens: screenParts, sideBySide: true, autoSide: true, className: 'shots-viewer-spec dev-change-viewer', barLead: `<span class="dev-change-card-name">${PlatformI18n.htmlText('changes:shots.thread.title')}</span>` }
       : { key, screens: screenParts });
     // What the shots agent noticed broken on the after build besides the
     // declared changes (note_problem): quiet lines under a small-caps label,
@@ -22522,30 +23467,32 @@ const AppView = {
     // They are not part of the change and decide nothing.
     const notices = (Array.isArray(shots.shotNotices) ? shots.shotNotices : [])
       .filter((entry) => entry && typeof entry.text === 'string' && entry.text.trim()).slice(0, 5);
+    // The meta line's facts are each a whole message, joined by the pair.
+    const noticedTitle = PlatformI18n.htmlText('changes:shots.noticed.title');
     const noticed = notices.length
-      ? `<section class="shots-noticed" data-shots-noticed="${notices.length}" aria-label="Also noticed"><h3 class="shots-noticed-head">Also noticed</h3><ul class="shots-noticed-list">${notices.map((entry) => {
+      ? `<section class="shots-noticed" data-shots-noticed="${notices.length}" aria-label="${noticedTitle}"><h3 class="shots-noticed-head">${noticedTitle}</h3><ul class="shots-noticed-list">${notices.map((entry) => {
         const n = numberOf(entry.change);
         const also = entry.alsoBefore === true ? 'true' : entry.alsoBefore === false ? 'false' : 'unknown';
         const meta = [
-          claims.length > 1 && n > 0 ? `Change ${n}` : '',
+          claims.length > 1 && n > 0 ? PlatformI18n.t('changes:shots.noticed.change', { number: n }) : '',
           sizeName(entry.screen),
-          also === 'true' ? 'Also on the before build' : also === 'false' ? 'Not on the before build' : '',
-        ].filter(Boolean).join(' · ');
+          also === 'true' ? PlatformI18n.t('changes:shots.noticed.alsoBefore') : also === 'false' ? PlatformI18n.t('changes:shots.noticed.notBefore') : '',
+        ].filter(Boolean).reduce((first, second) => PlatformI18n.t('changes:facts.pair', { first, second }));
         return `<li class="shots-noticed-item" data-shots-notice="${attr(entry.change || '')}" data-also-before="${also}"><p class="shots-noticed-text">${esc(entry.text.trim())}</p><div class="shots-noticed-meta">${esc(meta)}</div></li>`;
       }).join('')}</ul></section>`
       : '';
     if (thread) {
-      return `<section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body">${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}</section>`;
+      return `<section data-shots="1" data-shots-state="verified" aria-label="${PlatformI18n.htmlText('changes:shots.thread.title')}" class="dev-change-shots-body">${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}</section>`;
     }
     // Ready shots can be taken again too: after better steps or hints, or to
     // outline a run from before outlines were worked out. The route lets only
     // the author or an app manager do it.
     const retake = Number.isInteger(sessionId) && sessionId > 0
-      ? `<button type="button" data-shots-retake="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">Take the shots again</button>`
+      ? `<button type="button" data-shots-retake="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
       : '';
-    return `<section data-shots="1" data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3"><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">Taken on the exact before and after builds of this proposal. ${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}
-      <div class="flex flex-wrap items-start justify-between gap-3"><details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">Shot details</summary>
-        <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span>${shotResults.length ? '<span>taken by the shots agent</span>' : ''}</div>
+    return `<section data-shots="1" data-shots-state="verified" aria-label="${PlatformI18n.htmlText('changes:shots.card.label')}" class="space-y-3"><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}
+      <div class="flex flex-wrap items-start justify-between gap-3"><details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">${PlatformI18n.htmlText('changes:shots.card.details')}</summary>
+        <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span>${shotResults.length ? `<span>${PlatformI18n.htmlText('changes:shots.card.takenByAgent')}</span>` : ''}</div>
       </details>${retake}</div></section>`;
   },
 
@@ -22559,14 +23506,24 @@ const AppView = {
     const before = urlOk(d.beforeUrl) ? d.beforeUrl : '';
     const head = urlOk(d.headUrl) ? d.headUrl : '';
     if (!before && !head) return;
-    const label = `${d.claim || 'Before & after'}${d.viewport ? ` · ${d.viewport}` : ''}`;
+    const named = d.claim || PlatformI18n.t('changes:shots.compare.fallbackTitle');
+    const label = d.viewport
+      ? PlatformI18n.t('changes:facts.pair', { first: named, second: AppView._shotsSizeWord(d.viewport) })
+      : named;
     const baseAbsent = d.baseAbsent === '1';
     const colStyle = 'flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:6px';
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
-    const column = (side, url, missing) => `<div style="${colStyle}"><div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${side}</div>${url
-      ? `<img src="${escapeAttr(url)}" alt="${escapeAttr(`${side}: ${d.claim || 'before/after shot'}`)}" style="${mediaStyle}"><a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 dark:text-violet-400">Open original ↗</a>`
-      : `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">${missing}</div>`}</div>`;
-    const bodyHtml = `<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column(baseAbsent ? 'Before · Not there yet' : 'Before', before, baseAbsent ? 'Not there yet' : 'No shot')}${column('After', head, 'No shot')}</div>`;
+    // Each side's heading, the picture's description with and without the
+    // change's own words, and what stands in for a missing picture.
+    const sides = {
+      before: { heading: 'changes:shots.compare.before', alt: 'changes:shots.compare.altBefore', altUnnamed: 'changes:shots.compare.altBeforeUnnamed', missing: 'changes:shots.compare.noShot' },
+      beforeAbsent: { heading: 'changes:shots.compare.beforeAbsent', alt: 'changes:shots.compare.altBeforeAbsent', altUnnamed: 'changes:shots.compare.altBeforeAbsentUnnamed', missing: 'changes:shots.compare.notThereYet' },
+      after: { heading: 'changes:shots.compare.after', alt: 'changes:shots.compare.altAfter', altUnnamed: 'changes:shots.compare.altAfterUnnamed', missing: 'changes:shots.compare.noShot' },
+    };
+    const column = (side, url) => `<div style="${colStyle}"><div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText(sides[side].heading)}</div>${url
+      ? `<img src="${escapeAttr(url)}" alt="${escapeAttr(d.claim ? PlatformI18n.t(sides[side].alt, { claim: d.claim }) : PlatformI18n.t(sides[side].altUnnamed))}" style="${mediaStyle}"><a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 dark:text-violet-400">${PlatformI18n.htmlText('changes:shots.compare.openOriginal')}</a>`
+      : `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">${PlatformI18n.htmlText(sides[side].missing)}</div>`}</div>`;
+    const bodyHtml = `<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column(baseAbsent ? 'beforeAbsent' : 'before', before)}${column('after', head)}</div>`;
     const compare = AppView._visualCompare();
     compare.open({ label, bodyHtml, openedAt: Date.now() });
     compare.setHandlers({
@@ -22595,10 +23552,10 @@ const AppView = {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `HTTP ${response.status}`);
-      PlatformUI.toast('Taking the before & after shots again.');
+      PlatformUI.toast(PlatformI18n.t('changes:shots.toast.takingAgain'));
       AppView.refreshDevData('shots');
     } catch (error) {
-      PlatformUI.toast(`Could not take the shots again: ${error.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:shots.toast.takeAgainFailed', { error: error.message }));
     } finally {
       if (button) button.disabled = false;
     }
@@ -22617,10 +23574,10 @@ const AppView = {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `HTTP ${response.status}`);
-      PlatformUI.toast(result.stopped ? 'Stopped the before & after shots.' : 'The before & after shots had already finished.');
+      PlatformUI.toast(result.stopped ? PlatformI18n.t('changes:shots.toast.stopped') : PlatformI18n.t('changes:shots.toast.alreadyFinished'));
       AppView.refreshDevData('shots');
     } catch (error) {
-      PlatformUI.toast(`Could not stop the before & after shots: ${error.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:shots.toast.stopFailed', { error: error.message }));
     } finally {
       if (button) button.disabled = false;
     }
@@ -22703,10 +23660,12 @@ const AppView = {
       // Gallery mode makes a missing recording visible rather than invisible
       // (the whole point of the reliability work) — a still-only tile is
       // marked "no recording" beside its label.
-      const marker = (clickToPlay && !v.webm)
-        ? ' <span class="text-zinc-500 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
+      // The label and its marker are one message, the marker inside <0></0>.
+      const marked = (clickToPlay && !v.webm)
+        ? PlatformI18n.htmlRich(side === 'before' ? 'changes:shots.tiles.beforeNoRecording' : 'changes:shots.tiles.afterNoRecording', {},
+          [(inner) => `<span class="text-zinc-500 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">${inner}</span>`])
         : '';
-      const labelHtml = `<div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
+      const labelHtml = `<div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${marked || label}</div>`;
       // #768's `mobile` was a text suffix on the row label — "(mobile)" —
       // which a reader takes in AFTER deciding the tile looks oddly cropped.
       // The outline says it before they read anything.
@@ -22730,7 +23689,7 @@ const AppView = {
         a && a.webm ? `data-after-webm="${a.webm}"` : '',
         a && a.gif ? `data-after-gif="${a.gif}"` : '',
       ].filter(Boolean).join(' ');
-      return `<button type="button" ${dataAttrs} title="${label}: open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
+      return `<button type="button" ${dataAttrs} title="${side === 'before' ? PlatformI18n.htmlText('changes:shots.tiles.openBefore') : PlatformI18n.htmlText('changes:shots.tiles.openAfter')}" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
         <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
         ${framed(media)}
       </button>`;
@@ -22743,10 +23702,12 @@ const AppView = {
       const a = sideIds(g.after);
       const path = g.path || '/';
       const mobile = g.viewport === 'mobile';
-      const before = tile('Before', 'before', b, a, path, mobile)
-        || (a ? emptyTile('Before', mobile) : '');
-      const after = tile('After', 'after', b, a, path, mobile)
-        || (b ? emptyTile('After', mobile) : '');
+      const beforeLabel = PlatformI18n.htmlText('changes:shots.tiles.before');
+      const afterLabel = PlatformI18n.htmlText('changes:shots.tiles.after');
+      const before = tile(beforeLabel, 'before', b, a, path, mobile)
+        || (a ? emptyTile(beforeLabel, mobile) : '');
+      const after = tile(afterLabel, 'after', b, a, path, mobile)
+        || (b ? emptyTile(afterLabel, mobile) : '');
       if (!a && !b) continue;
       // Label the row with its captured path unless it's the single
       // root-only DESKTOP group (unchanged from the pre-#270 single-tile
@@ -22754,16 +23715,16 @@ const AppView = {
       // frame needs calling out even at the root.
       const label = (single && (path === '/' || !path) && !mobile)
         ? ''
-        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
+        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">${PlatformI18n.htmlRich(mobile ? 'changes:shots.tiles.rowMobile' : 'changes:shots.tiles.row', { path }, [(inner) => `<code>${inner}</code>`])}</div>`;
       // Honest-pair captions: explain a missing "before" (route is new —
       // there's no production version to compare) and a fell-back "before"
       // (the deep route 404'd on production, so the tile shows the home
       // page) so a mismatched-looking comparison isn't read as a bug.
       let note = '';
       if (a && !b) {
-        note = 'New page (no production version to compare)';
+        note = PlatformI18n.t('changes:shots.tiles.newPage');
       } else if (b && g.beforeFellBack) {
-        note = '"Before" shows the home page. This page didn’t exist in production yet';
+        note = PlatformI18n.t('changes:shots.tiles.beforeFellBack');
       }
       const noteHtml = note
         ? `<div class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" style="margin:2px 0 0">${esc(note)}</div>`
@@ -22780,7 +23741,7 @@ const AppView = {
     // recording at once, and hiding four fifths of it would defeat it.
     if (rows.length > 1 && !clickToPlay) {
       const [first, ...rest] = rows;
-      return `${first}<details class="usn-visual-more"><summary class="usn-visual-more-summary">All ${rows.length} screens</summary>${rest.join('')}</details>`;
+      return `${first}<details class="usn-visual-more"><summary class="usn-visual-more-summary">${PlatformI18n.htmlText('changes:shots.tiles.allScreens', { count: rows.length })}</summary>${rest.join('')}</details>`;
     }
     return rows.join('');
   },
@@ -22820,30 +23781,31 @@ const AppView = {
     const path = d.path || '/';
     const mobile = d.viewport === 'mobile';
     const base = (path && path !== '/') ? path : (mobile ? '/' : '');
-    const label = base ? `${base}${mobile ? ' (mobile)' : ''}` : '';
+    const label = base ? (mobile ? PlatformI18n.t('changes:shots.overlay.titleMobile', { path: base }) : base) : '';
 
     const colStyle = 'flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:6px';
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
-    const column = (label, v) => {
+    const column = (side, v) => {
       const has = v && (v.png || v.webm || v.gif);
+      const label = side === 'before' ? PlatformI18n.htmlText('changes:shots.overlay.before') : PlatformI18n.htmlText('changes:shots.overlay.after');
       const heading = `<div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${label}</div>`;
       if (!has) {
-        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
+        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">${side === 'before' ? PlatformI18n.htmlText('changes:shots.overlay.noBefore') : PlatformI18n.htmlText('changes:shots.overlay.noAfter')}</div></div>`;
       }
       const media = v.webm
         ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline controls style="${mediaStyle}"></video>`
         : `<img src="/visuals/${v.png || v.gif}" alt="${label}" style="${mediaStyle}">`;
       const orig = pick(v.webm, v.gif, v.png);
       const origLink = orig
-        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">Open original ↗</a>`
+        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">${PlatformI18n.htmlText('changes:shots.overlay.openOriginal')}</a>`
         : '';
       return `<div style="${colStyle}">${heading}${media}${origLink}</div>`;
     };
 
     const pathLabel = ((path && path !== '/') || mobile)
-      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="margin-bottom:10px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="margin-bottom:10px">${PlatformI18n.htmlRich(mobile ? 'changes:shots.overlay.pathMobile' : 'changes:shots.overlay.path', { path }, [(inner) => `<code>${inner}</code>`])}</div>`
       : '';
-    const bodyHtml = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
+    const bodyHtml = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('before', before)}${column('after', after)}</div>`;
 
     // Reveal now + stamp openedAt so modalDismissGuarded can swallow the
     // opening tap's ghost click (same as the share/members modals). The
@@ -23066,56 +24028,210 @@ const AppView = {
       return null;
     }
 
-    const LABELS = {
-      in_review: 'Waiting for approval',
-      working: 'Being worked on',
-      auto_solving: 'Auto-solving…',
+    const LABEL_IDS = {
+      in_review: 'changes:chips.work.inReview',
+      working: 'changes:chips.work.working',
+      auto_solving: 'changes:chips.work.autoSolving',
       // The key stays 'paused' (it orders the states and dates the
       // self-clear), but the word is not shown (#2779 follow-up): the
       // platform pauses any session a few idle minutes after it was used,
       // so what this state means to a reader is "started, not being
       // worked on now".
-      paused: 'Started',
-      answer_needed: 'Needs an answer',
-      draft_ready: 'Draft ready to review',
-      claimed: 'Picked up',
-      bot: bot && bot.what === 'queued' ? 'Homeroom bot will build this'
-        : AppView._botWorkReading(bot) ? 'Homeroom bot is reading this' : 'Homeroom bot is building this',
+      paused: 'changes:chips.work.started',
+      answer_needed: 'changes:chips.work.answerNeeded',
+      draft_ready: 'changes:chips.work.draftReady',
+      claimed: 'changes:chips.work.pickedUp',
+      bot: bot && bot.what === 'queued' ? 'changes:chips.work.botQueued'
+        : AppView._botWorkReading(bot) ? 'changes:chips.work.botReading' : 'changes:chips.work.botBuilding',
     };
     // The bot states name nobody: there is no person to name, and
     // "Auto-solving… · maya" would imply maya is at a keyboard.
     const namesAPerson = key === 'in_review' || key === 'working'
       || key === 'paused' || key === 'claimed';
-    let label = LABELS[key];
+    let label = PlatformI18n.t(LABEL_IDS[key]);
     if (namesAPerson && who) {
-      label += ` · ${who}`;
-      if (people > 1) label += ` +${people - 1}`;
+      // `who` is the viewer ('you') or a username; the chip says either.
+      const person = who === 'you' ? PlatformI18n.t('changes:chips.work.you') : who;
+      label = people > 1
+        ? PlatformI18n.t('changes:chips.work.labelWhoMore', { state: label, who: person, count: people - 1 })
+        : PlatformI18n.t('changes:chips.work.labelWho', { state: label, who: person });
     }
 
     const note = AppView._workStateNote({
       key, who, at, clearAt, claimUsers, headlessLive, bot: bot ? (bot.what || 'building') : null,
-      botAskedBy: bot ? (bot.mine ? 'You' : (bot.askedBy || null)) : null,
+      botMine: !!(bot && bot.mine),
+      botAskedBy: bot && !bot.mine ? (bot.askedBy || null) : null,
       otherClaims: key !== 'claimed' && claims.length > 0,
     });
     return { key, label, tone, spinner, who, people, at, clearAt, tip: note, note };
   },
 
-  // Plain-English age for the work-state sentences. relTime()'s "5d ago" is
-  // right for a dense meta line and wrong inside a sentence, so this spells
-  // the units out. Returns '' for an unusable timestamp, and every caller
-  // omits its clause in that case rather than printing a gap.
-  _workAgeText(iso) {
+  // The age a work-state sentence states, as the wording it needs and the
+  // number or date that goes in it. relTime()'s "5d ago" is right for a dense
+  // meta line and wrong inside a sentence, so each sentence has its own
+  // message per wording (`unit`). Returns null for an unusable timestamp, and
+  // every caller says its sentence without an age in that case.
+  _workAge(iso) {
     const then = Date.parse(iso || '');
-    if (!Number.isFinite(then)) return '';
+    if (!Number.isFinite(then)) return null;
     const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
-    if (mins < 2) return 'just now';
-    if (mins < 60) return `${mins} minutes ago`;
+    if (mins < 2) return { unit: 'justNow', values: {} };
+    if (mins < 60) return { unit: 'minutes', values: { count: mins } };
     const hrs = Math.round(mins / 60);
-    if (hrs < 24) return hrs === 1 ? 'an hour ago' : `${hrs} hours ago`;
+    if (hrs < 24) return { unit: 'hours', values: { count: hrs } };
     const days = Math.round(hrs / 24);
-    if (days <= 1) return 'yesterday';
-    if (days < 30) return `${days} days ago`;
-    return `on ${AppView._workDateText(then)}`;
+    if (days <= 1) return { unit: 'yesterday', values: {} };
+    if (days < 30) return { unit: 'days', values: { count: days } };
+    return { unit: 'onDate', values: { date: AppView._workDateText(then) } };
+  },
+
+  // The work-state sentences, whole, by who they are about: the viewer, a
+  // named person, or nobody known. A key ending in `When` holds one message
+  // for each wording of the age (_workAge's `unit`).
+  WORK_NOTE_IDS: {
+    inReview: { you: 'changes:chips.workNote.inReview.you', named: 'changes:chips.workNote.inReview.named', someone: 'changes:chips.workNote.inReview.someone' },
+    working: { you: 'changes:chips.workNote.working.you', named: 'changes:chips.workNote.working.named', someone: 'changes:chips.workNote.working.someone' },
+    workingWhen: {
+      you: {
+        justNow: 'changes:chips.workNote.workingWhen.you.justNow',
+        minutes: 'changes:chips.workNote.workingWhen.you.minutes',
+        hours: 'changes:chips.workNote.workingWhen.you.hours',
+        yesterday: 'changes:chips.workNote.workingWhen.you.yesterday',
+        days: 'changes:chips.workNote.workingWhen.you.days',
+        onDate: 'changes:chips.workNote.workingWhen.you.onDate',
+      },
+      named: {
+        justNow: 'changes:chips.workNote.workingWhen.named.justNow',
+        minutes: 'changes:chips.workNote.workingWhen.named.minutes',
+        hours: 'changes:chips.workNote.workingWhen.named.hours',
+        yesterday: 'changes:chips.workNote.workingWhen.named.yesterday',
+        days: 'changes:chips.workNote.workingWhen.named.days',
+        onDate: 'changes:chips.workNote.workingWhen.named.onDate',
+      },
+      someone: {
+        justNow: 'changes:chips.workNote.workingWhen.someone.justNow',
+        minutes: 'changes:chips.workNote.workingWhen.someone.minutes',
+        hours: 'changes:chips.workNote.workingWhen.someone.hours',
+        yesterday: 'changes:chips.workNote.workingWhen.someone.yesterday',
+        days: 'changes:chips.workNote.workingWhen.someone.days',
+        onDate: 'changes:chips.workNote.workingWhen.someone.onDate',
+      },
+    },
+    paused: { you: 'changes:chips.workNote.paused.you', named: 'changes:chips.workNote.paused.named', someone: 'changes:chips.workNote.paused.someone' },
+    pausedWhen: {
+      you: {
+        justNow: 'changes:chips.workNote.pausedWhen.you.justNow',
+        minutes: 'changes:chips.workNote.pausedWhen.you.minutes',
+        hours: 'changes:chips.workNote.pausedWhen.you.hours',
+        yesterday: 'changes:chips.workNote.pausedWhen.you.yesterday',
+        days: 'changes:chips.workNote.pausedWhen.you.days',
+        onDate: 'changes:chips.workNote.pausedWhen.you.onDate',
+      },
+      named: {
+        justNow: 'changes:chips.workNote.pausedWhen.named.justNow',
+        minutes: 'changes:chips.workNote.pausedWhen.named.minutes',
+        hours: 'changes:chips.workNote.pausedWhen.named.hours',
+        yesterday: 'changes:chips.workNote.pausedWhen.named.yesterday',
+        days: 'changes:chips.workNote.pausedWhen.named.days',
+        onDate: 'changes:chips.workNote.pausedWhen.named.onDate',
+      },
+      someone: {
+        justNow: 'changes:chips.workNote.pausedWhen.someone.justNow',
+        minutes: 'changes:chips.workNote.pausedWhen.someone.minutes',
+        hours: 'changes:chips.workNote.pausedWhen.someone.hours',
+        yesterday: 'changes:chips.workNote.pausedWhen.someone.yesterday',
+        days: 'changes:chips.workNote.pausedWhen.someone.days',
+        onDate: 'changes:chips.workNote.pausedWhen.someone.onDate',
+      },
+    },
+    claimed: { you: 'changes:chips.workNote.claimed.you', named: 'changes:chips.workNote.claimed.named', someone: 'changes:chips.workNote.claimed.someone' },
+    claimedWhen: {
+      you: {
+        justNow: 'changes:chips.workNote.claimedWhen.you.justNow',
+        minutes: 'changes:chips.workNote.claimedWhen.you.minutes',
+        hours: 'changes:chips.workNote.claimedWhen.you.hours',
+        yesterday: 'changes:chips.workNote.claimedWhen.you.yesterday',
+        days: 'changes:chips.workNote.claimedWhen.you.days',
+        onDate: 'changes:chips.workNote.claimedWhen.you.onDate',
+      },
+      named: {
+        justNow: 'changes:chips.workNote.claimedWhen.named.justNow',
+        minutes: 'changes:chips.workNote.claimedWhen.named.minutes',
+        hours: 'changes:chips.workNote.claimedWhen.named.hours',
+        yesterday: 'changes:chips.workNote.claimedWhen.named.yesterday',
+        days: 'changes:chips.workNote.claimedWhen.named.days',
+        onDate: 'changes:chips.workNote.claimedWhen.named.onDate',
+      },
+      someone: {
+        justNow: 'changes:chips.workNote.claimedWhen.someone.justNow',
+        minutes: 'changes:chips.workNote.claimedWhen.someone.minutes',
+        hours: 'changes:chips.workNote.claimedWhen.someone.hours',
+        yesterday: 'changes:chips.workNote.claimedWhen.someone.yesterday',
+        days: 'changes:chips.workNote.claimedWhen.someone.days',
+        onDate: 'changes:chips.workNote.claimedWhen.someone.onDate',
+      },
+    },
+  },
+
+  // What the Homeroom bot started doing, as its own sentence: after "… asked
+  // Homeroom bot to build this." (`it`) or on its own (`bot`).
+  WORK_BOT_STARTED_IDS: {
+    it: {
+      reading: 'changes:chips.workNote.bot.itStartedReading',
+      readingWhen: {
+        justNow: 'changes:chips.workNote.bot.itStartedReadingWhen.justNow',
+        minutes: 'changes:chips.workNote.bot.itStartedReadingWhen.minutes',
+        hours: 'changes:chips.workNote.bot.itStartedReadingWhen.hours',
+        yesterday: 'changes:chips.workNote.bot.itStartedReadingWhen.yesterday',
+        days: 'changes:chips.workNote.bot.itStartedReadingWhen.days',
+        onDate: 'changes:chips.workNote.bot.itStartedReadingWhen.onDate',
+      },
+      building: 'changes:chips.workNote.bot.itStartedBuilding',
+      buildingWhen: {
+        justNow: 'changes:chips.workNote.bot.itStartedBuildingWhen.justNow',
+        minutes: 'changes:chips.workNote.bot.itStartedBuildingWhen.minutes',
+        hours: 'changes:chips.workNote.bot.itStartedBuildingWhen.hours',
+        yesterday: 'changes:chips.workNote.bot.itStartedBuildingWhen.yesterday',
+        days: 'changes:chips.workNote.bot.itStartedBuildingWhen.days',
+        onDate: 'changes:chips.workNote.bot.itStartedBuildingWhen.onDate',
+      },
+    },
+    bot: {
+      reading: 'changes:chips.workNote.bot.startedReading',
+      readingWhen: {
+        justNow: 'changes:chips.workNote.bot.startedReadingWhen.justNow',
+        minutes: 'changes:chips.workNote.bot.startedReadingWhen.minutes',
+        hours: 'changes:chips.workNote.bot.startedReadingWhen.hours',
+        yesterday: 'changes:chips.workNote.bot.startedReadingWhen.yesterday',
+        days: 'changes:chips.workNote.bot.startedReadingWhen.days',
+        onDate: 'changes:chips.workNote.bot.startedReadingWhen.onDate',
+      },
+      building: 'changes:chips.workNote.bot.startedBuilding',
+      buildingWhen: {
+        justNow: 'changes:chips.workNote.bot.startedBuildingWhen.justNow',
+        minutes: 'changes:chips.workNote.bot.startedBuildingWhen.minutes',
+        hours: 'changes:chips.workNote.bot.startedBuildingWhen.hours',
+        yesterday: 'changes:chips.workNote.bot.startedBuildingWhen.yesterday',
+        days: 'changes:chips.workNote.bot.startedBuildingWhen.days',
+        onDate: 'changes:chips.workNote.bot.startedBuildingWhen.onDate',
+      },
+    },
+  },
+
+  // The closing "Also: …" sentence, by what else is going on: other people
+  // who picked the request up, an auto-solve run, and the Homeroom bot.
+  WORK_ALSO_IDS: {
+    'claims||': 'changes:chips.workNote.also.claims',
+    'claims|auto|': 'changes:chips.workNote.also.claimsAuto',
+    'claims||reading': 'changes:chips.workNote.also.claimsBotReading',
+    'claims||building': 'changes:chips.workNote.also.claimsBotBuilding',
+    'claims|auto|reading': 'changes:chips.workNote.also.claimsAutoBotReading',
+    'claims|auto|building': 'changes:chips.workNote.also.claimsAutoBotBuilding',
+    '|auto|': 'changes:chips.workNote.also.auto',
+    '|auto|reading': 'changes:chips.workNote.also.autoBotReading',
+    '|auto|building': 'changes:chips.workNote.also.autoBotBuilding',
+    '||reading': 'changes:chips.workNote.also.botReading',
+    '||building': 'changes:chips.workNote.also.botBuilding',
   },
 
   _workDateText(ms) {
@@ -23129,55 +24245,62 @@ const AppView = {
   // single most-asked question about the old chip ("is anyone actually on
   // this, or did someone press a button last month?").
   _workStateNote(s) {
-    const isYou = s.who === 'you';
-    const subj = isYou ? 'You' : (s.who || 'Someone');
-    const has = isYou ? 'have' : 'has';
-    const is = isYou ? 'are' : 'is';
-    const age = AppView._workAgeText(s.at);
-    const when = age ? ` ${age}` : '';
+    const t = PlatformI18n.t;
+    const subject = s.who === 'you' ? 'you' : (s.who ? 'named' : 'someone');
+    const age = AppView._workAge(s.at);
     const clears = s.clearAt ? AppView._workDateText(s.clearAt) : '';
+    // One whole sentence about the person, with or without its age.
+    const about = (plain, timed) => (age
+      ? t(AppView.WORK_NOTE_IDS[timed][subject][age.unit], { name: s.who || '', ...age.values })
+      : t(AppView.WORK_NOTE_IDS[plain][subject], { name: s.who || '' }));
+    // What the bot started doing, with its age when there is one.
+    const started = (ids, doing) => (age ? t(ids[doing][age.unit], age.values) : t(ids[doing]));
+    // Two whole sentences, one after the other.
+    const then = (first, second) => t('changes:chips.workNote.then', { first, second });
     let main;
     if (s.key === 'in_review') {
-      main = `${subj} ${has} put this up for review as a proposal, so it is waiting on reviewers rather than on more work.`;
+      main = t(AppView.WORK_NOTE_IDS.inReview[subject], { name: s.who || '' });
     } else if (s.key === 'working') {
-      main = `${subj} ${is} working on this in an agent session${age ? `, last active ${age}` : ''}.`;
+      main = about('working', 'workingWhen');
     } else if (s.key === 'bot') {
       // B8: and who asked it to, when somebody did.
+      const doing = s.bot === 'reading'
+        ? (age ? 'readingWhen' : 'reading')
+        : (age ? 'buildingWhen' : 'building');
+      const asked = s.botMine
+        ? t('changes:chips.workNote.bot.askedYou')
+        : (s.botAskedBy ? t('changes:chips.workNote.bot.askedNamed', { name: s.botAskedBy }) : '');
       if (s.bot === 'queued') {
-        main = `${s.botAskedBy ? `${s.botAskedBy} asked` : 'Somebody asked'} Homeroom bot to build this. It starts as soon as a builder is free.`;
+        main = then(asked || t('changes:chips.workNote.bot.askedSomebody'), t('changes:chips.workNote.bot.startsSoon'));
       } else {
-        main = s.botAskedBy
-          ? `${s.botAskedBy} asked Homeroom bot to build this. It started ${s.bot === 'reading' ? 'reading' : 'building'} it${when}.`
-          : `The Homeroom bot started ${s.bot === 'reading' ? 'reading' : 'building'} this request${when}.`;
+        main = asked
+          ? then(asked, started(AppView.WORK_BOT_STARTED_IDS.it, doing))
+          : started(AppView.WORK_BOT_STARTED_IDS.bot, doing);
       }
       // #4190: Claim is offered beside the bot, and a claim made now does not
       // stop it. Said only while nobody has (the "Also:" below names them).
-      if (!s.otherClaims) main += ' Anyone can still pick it up and work on it alongside the bot.';
+      if (!s.otherClaims) main = then(main, t('changes:chips.workNote.bot.anyoneCan'));
     } else if (s.key === 'auto_solving') {
-      main = 'An auto-solve run is working on this right now.';
+      main = t('changes:chips.workNote.autoSolving');
     } else if (s.key === 'paused') {
-      main = `${subj} started work on this${age ? ` and last worked on it ${age}` : ''}, so nobody is working on it at the moment.`
-        + (clears ? ` This clears itself on ${clears} unless the session picks up again.` : '');
+      main = about('paused', 'pausedWhen');
+      if (clears) main = then(main, t('changes:chips.workNote.pausedClears', { date: clears }));
     } else if (s.key === 'answer_needed') {
-      main = 'An auto-solve run got part way and asked a question. It needs an answer from someone before it can go further.';
+      main = t('changes:chips.workNote.answerNeeded');
     } else if (s.key === 'draft_ready') {
-      main = 'An auto-solve run finished and left a draft here for someone to look over.';
+      main = t('changes:chips.workNote.draftReady');
     } else {
       // B10c: in the words of the button that said it.
-      main = `${subj} said ${isYou ? 'you' : 'they'}'d work on this${when} but ${isYou ? 'haven' : 'hasn'}'t started building it yet.`
-        + (clears ? ` It opens up for others again on ${clears} if nothing happens.` : '');
+      main = about('claimed', 'claimedWhen');
+      if (clears) main = then(main, t('changes:chips.workNote.claimedClears', { date: clears }));
     }
-    const also = [];
-    if (s.otherClaims && s.claimUsers && s.claimUsers.length) {
-      also.push(`picked up by ${s.claimUsers.join(', ')}`);
-    }
-    if (s.headlessLive && s.key !== 'auto_solving' && s.key !== 'answer_needed' && s.key !== 'draft_ready') {
-      also.push('an auto-solve run is on it too');
-    }
-    if (s.bot && s.key !== 'bot') {
-      also.push(`the Homeroom bot is ${s.bot === 'reading' ? 'reading' : 'building'} it`);
-    }
-    return also.length ? `${main} Also: ${also.join('; ')}.` : main;
+    const alsoClaims = !!(s.otherClaims && s.claimUsers && s.claimUsers.length);
+    const alsoAuto = !!(s.headlessLive && s.key !== 'auto_solving' && s.key !== 'answer_needed' && s.key !== 'draft_ready');
+    const alsoBot = (s.bot && s.key !== 'bot') ? (s.bot === 'reading' ? 'reading' : 'building') : '';
+    const alsoId = AppView.WORK_ALSO_IDS[`${alsoClaims ? 'claims' : ''}|${alsoAuto ? 'auto' : ''}|${alsoBot}`];
+    return alsoId
+      ? then(main, t(alsoId, { names: alsoClaims ? PlatformI18n.listText(s.claimUsers) : '' }))
+      : main;
   },
 
   // The work-state chip on an issue card — a thin painter over
@@ -23225,7 +24348,7 @@ const AppView = {
     if (target && targetId) {
       return {
         t: 'chipBtn', key: 'work', cls: `dev-badge ${tone}`, hover,
-        label: st.label, title: `${st.tip}. Open the linked work`,
+        label: st.label, title: PlatformI18n.t('changes:chips.work.openTitle', { note: st.tip }),
         spinner: !!st.spinner, data,
         act: { fn: 'openInProgressTarget', args: [String(target.kind), targetId] },
       };
@@ -23252,16 +24375,23 @@ const AppView = {
   // per linked issue, opening the issue's IN-APP discussion topic (the
   // same navigation as tapping the issue row). Unlike closesPillSpecs
   // below this never needs pr_url (session cards have none pre-PR) and
-  // never leaves the app. opts.label prefixes each chip (proposal cards use
-  // 'Closes' / 'Closed'); opts.cls preserves the completed card's emerald
+  // never leaves the app. opts.cls preserves the completed card's emerald
   // tone while reusing the same navigation behavior.
+  // opts.says is 'closes' or 'closed' where the chip says what the change
+  // does to the request; without it the chip is the bare "#N".
+  ISSUE_CHIP_IDS: {
+    closes: 'changes:chips.issue.closes',
+    closed: 'changes:chips.issue.closed',
+  },
+
   issueChipSpecs(linkedIssues, opts) {
-    const prefix = opts && opts.label ? `${opts.label} ` : '';
+    const says = opts && Object.prototype.hasOwnProperty.call(AppView.ISSUE_CHIP_IDS, opts.says) ? AppView.ISSUE_CHIP_IDS[opts.says] : '';
     const cls = (opts && opts.cls)
       || 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
     return AppView._sanitizeIssueNumbers(linkedIssues).map((n) => ({
-      t: 'issueChip', key: `issue:${n}`, n, prefix, cls,
-      title: `Open issue #${n}'s discussion`,
+      t: 'issueChip', key: `issue:${n}`, n, cls,
+      label: says ? PlatformI18n.t(says, { number: n }) : `#${n}`,
+      title: PlatformI18n.t('changes:chips.issue.openTitle', { number: n }),
     }));
   },
 
@@ -23287,7 +24417,7 @@ const AppView = {
   closesPillSpecs(pr) {
     if (!pr || !pr.pr_url) return [];
     const merged = pr.status === 'merged';
-    const verb = merged ? 'Closed' : 'Closes';
+
     // Match the PR-number link tint at each site: emerald for merged,
     // violet for open.
     const cls = merged
@@ -23298,8 +24428,9 @@ const AppView = {
       const href = AppView.issueUrlFromPrUrl(pr.pr_url, n);
       if (!href) continue;
       out.push({
-        t: 'issueLink', key: `closes:${n}`, n, href, verb, cls,
-        title: `${verb} issue #${n} on GitHub`,
+        t: 'issueLink', key: `closes:${n}`, n, href, cls,
+        label: merged ? PlatformI18n.t('changes:chips.issue.closedLink', { number: n }) : PlatformI18n.t('changes:chips.issue.closesLink', { number: n }),
+        title: merged ? PlatformI18n.t('changes:chips.issue.closedTitle', { number: n }) : PlatformI18n.t('changes:chips.issue.closesTitle', { number: n }),
       });
     }
     return out;
@@ -23314,8 +24445,8 @@ const AppView = {
     // full Preview/Yes/No/Admin-merge set (with the chosen side highlighted)
     // so voters can re-cast or preview after voting.
     if (opts && opts.collapseVoted && (pr.my_vote === 'yes' || pr.my_vote === 'no')) {
-      const choice = pr.my_vote === 'yes' ? 'Yes' : 'No';
-      return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">You voted ${choice}</span>${AppView._uncountedVoteNoteHtml(pr)}`;
+      const voted = pr.my_vote === 'yes' ? PlatformI18n.htmlText('changes:vote.row.votedYes') : PlatformI18n.htmlText('changes:vote.row.votedNo');
+      return `<span class="gc-vote-voted-box gc-vote-voted-box-${pr.my_vote}">${voted}</span>${AppView._uncountedVoteNoteHtml(pr)}`;
     }
     // In the chat, a merging/merged PR has closed voting — don't render live
     // (now no-op) Yes/No buttons for someone who never voted; the pill +
@@ -23328,7 +24459,7 @@ const AppView = {
     // collab-gated), so the unavailable chip renders bare for them.
     if (AppView.readOnly) return preview;
     const retryPreview = (!pr.staging_url && pr.staging_error)
-      ? `<button class="gc-vote-btn" title="Try building this proposal's staging preview again" onclick="AppView.swapToStagingForSession(${pr.id}, '')">Retry preview</button>`
+      ? `<button class="gc-vote-btn" title="${PlatformI18n.htmlText('changes:vote.row.retryPreviewTitle')}" onclick="AppView.swapToStagingForSession(${pr.id}, '')">${PlatformI18n.htmlText('changes:vote.row.retryPreview')}</button>`
       : '';
     // #788: force-merge is available to platform admins AND to the app's
     // own declared admins (ctx.canManage covers creator + app admins,
@@ -23341,7 +24472,7 @@ const AppView = {
     const canForceMerge = App.user?.canAdminWrite
       || (!!vbCtx.isAppAdmin && !pr.requires_explicit_approval);
     const adminMerge = canForceMerge
-      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${escapeAttr(AppView._adminMergeTitle(pr))}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
+      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${escapeAttr(AppView._adminMergeTitle(pr))}" onclick="AppView.castAdminMerge(${pr.id})">${PlatformI18n.htmlText('changes:vote.row.adminMerge')}</button>`
       : '';
     // The vote carries the approval epoch this card was rendered with, so a
     // proposal that genuinely changed under the voter is still refused —
@@ -23350,10 +24481,10 @@ const AppView = {
     const voteEpoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
       ? parseInt(pr.approval_epoch, 10) : null;
     const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
-    const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
-    const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`;
+    const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'yes');
+    const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'no');
+    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">${PlatformI18n.htmlText('changes:vote.row.yes', { tally: yesT.label })}</button>`;
+    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">${PlatformI18n.htmlText('changes:vote.row.no', { tally: noT.label })}</button>`;
     return preview + retryPreview + yesBtn + noBtn + adminMerge + AppView._uncountedVoteNoteHtml(pr);
   },
 
@@ -23362,7 +24493,7 @@ const AppView = {
   // The board card's picker carries the same words (VotePicker).
   _uncountedVoteNoteHtml(pr) {
     return pr && pr.my_vote_uncounted === true
-      ? '<span class="gc-vote-uncounted" data-vote-uncounted="">Test account: this vote won’t count.</span>'
+      ? `<span class="gc-vote-uncounted" data-vote-uncounted="">${PlatformI18n.htmlText('changes:vote.row.uncounted')}</span>`
       : '';
   },
 
@@ -23410,11 +24541,13 @@ const AppView = {
   // the shell's design-system gate keeps every path in one module, and this
   // affordance has no string renderer left to feed.
 
-  PREVIEW_TITLES: {
-    proposal: 'Open this proposal’s staging preview',
-    'own-session': 'Open this session’s staging preview (rebuilds it if it went to sleep)',
-    'shared-session': 'Open this session’s staging preview',
-    'issue-run': 'Open the generated proposal’s staging preview',
+  // `live` names a preview that is up; `rebuild` one that this press may
+  // have to build again first.
+  PREVIEW_TITLE_IDS: {
+    proposal: { live: 'changes:frame.open.proposal', rebuild: 'changes:frame.open.proposalRebuild' },
+    'own-session': { live: 'changes:frame.open.ownSession', rebuild: 'changes:frame.open.ownSessionRebuild' },
+    'shared-session': { live: 'changes:frame.open.sharedSession', rebuild: 'changes:frame.open.sharedSessionRebuild' },
+    'issue-run': { live: 'changes:frame.open.issueRun', rebuild: 'changes:frame.open.issueRunRebuild' },
   },
 
   // Keep testing guidance out of DOM attributes. Every preview surface —
@@ -23452,24 +24585,26 @@ const AppView = {
     // trigger that POST, so for them a live URL is required.
     const canRebuild = !AppView.readOnly && (it.can_preview || (kind === 'own-session' && it.pr_number));
     const live = !!url || canRebuild;
-    const label = AppView.PREVIEW_TITLES[kind] || AppView.PREVIEW_TITLES.proposal;
+    const labelIds = AppView.PREVIEW_TITLE_IDS[kind] || AppView.PREVIEW_TITLE_IDS.proposal;
 
     if (it.preview_state === 'failed' || it.staging_error) {
       return {
         state: 'error', iconOnly,
-        title: `Preview unavailable: ${String(it.staging_error || 'the submitted preview did not start').slice(0, 280)}`,
+        title: it.staging_error
+          ? PlatformI18n.t('changes:frame.open.unavailableBecause', { error: String(it.staging_error).slice(0, 280) })
+          : PlatformI18n.t('changes:frame.open.unavailableDidNotStart'),
       };
     }
     if (live) {
       return {
         state: 'live', sessionId, url, iconOnly,
-        title: url ? label : `${label} (rebuilds it if it went to sleep)`,
+        title: url ? PlatformI18n.t(labelIds.live) : PlatformI18n.t(labelIds.rebuild),
       };
     }
     if (it.staging_building) {
       return {
         state: 'building', iconOnly,
-        title: 'The staging preview is being built. This usually takes a few minutes. A Preview button appears here as soon as it’s ready.',
+        title: PlatformI18n.t('changes:frame.open.building'),
       };
     }
     return null;
@@ -23484,14 +24619,14 @@ const AppView = {
   _previewAffordanceHtml(pr) {
     if (!pr) return '';
     if (pr.staging_url) {
-      return `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`;
+      return `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">${PlatformI18n.htmlText('changes:vote.row.preview')}</button>`;
     }
     if (pr.staging_building) {
-      return '<span class="gc-checks-running-badge" title="The staging preview for this proposal is being built. This usually takes a few minutes. A Preview button appears here as soon as it&#39;s ready.">'
-        + '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Preview building…</span>';
+      return `<span class="gc-checks-running-badge" title="${PlatformI18n.htmlText('changes:vote.row.previewBuildingTitle')}">`
+        + `<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${PlatformI18n.htmlText('changes:vote.row.previewBuilding')}</span>`;
     }
     if (pr.staging_error) {
-      return `<span class="gc-conflict-badge" title="${escapeAttr(String(pr.staging_error).slice(0, 300))}">Preview unavailable</span>`;
+      return `<span class="gc-conflict-badge" title="${escapeAttr(String(pr.staging_error).slice(0, 300))}">${PlatformI18n.htmlText('changes:vote.row.previewUnavailable')}</span>`;
     }
     return '';
   },
@@ -23505,6 +24640,12 @@ const AppView = {
   // `title` is the READY-TO-CONCATENATE attribute (leading space included)
   // the remaining string builders splice in; `tip` is the same text bare,
   // for a React card that passes it as a prop.
+  // `side` is 'yes' or 'no': which of the two sides of the vote is counted.
+  VOTE_TALLY_IDS: {
+    yes: { approver: 'changes:vote.tally.approverYes', advisory: 'changes:vote.tally.advisoryYes' },
+    no: { approver: 'changes:vote.tally.approverNo', advisory: 'changes:vote.tally.advisoryNo' },
+  },
+
   _voteBtnTally(qualified, raw, policy, side) {
     if (policy !== 'invited' || qualified == null) {
       return { label: `${raw}`, title: '', tip: undefined };
@@ -23512,8 +24653,13 @@ const AppView = {
     const q = parseInt(qualified) || 0;
     const a = Math.max(0, (parseInt(raw) || 0) - q);
     const label = a > 0 ? `${q}✓ +${a}` : `${q}✓`;
-    const tip = `${q} approver ${side} vote${q === 1 ? '' : 's'} · ${a} advisory ${side} vote${a === 1 ? '' : 's'} (advisory votes don't count toward merging)`;
-    return { label, title: ` title="${tip}"`, tip };
+    // The side is a key; it is never shown.
+    const ids = AppView.VOTE_TALLY_IDS[side] || AppView.VOTE_TALLY_IDS.yes;
+    const tip = PlatformI18n.t('changes:vote.tally.tip', {
+      approvers: PlatformI18n.t(ids.approver, { count: q }),
+      advisory: PlatformI18n.t(ids.advisory, { count: a }),
+    });
+    return { label, title: ` title="${escapeAttr(tip)}"`, tip };
   },
 
   // Admin force-merge: bypass the active-user vote majority entirely
@@ -23527,12 +24673,10 @@ const AppView = {
     const key = `admin-merge:${sessionId}`;
     if (AppView._voteInFlight.has(key)) return;
     const ok = await ConfirmModal.show({
-      title: 'Force-merge this PR?',
-      message:
-        'This bypasses the active-user vote majority and merges the PR right now.\n\n'
-        + 'Use only when you\'re confident the change should ship. The override is announced in group chat with your username.',
-      confirmLabel: 'Force-merge',
-      cancelLabel: 'Cancel',
+      title: PlatformI18n.t('changes:vote.forceMerge.title'),
+      message: PlatformI18n.t('changes:vote.forceMerge.message'),
+      confirmLabel: PlatformI18n.t('changes:vote.forceMerge.confirm'),
+      cancelLabel: PlatformI18n.t('core:common.cancel'),
       danger: true,
     });
     if (!ok) return;
@@ -23544,11 +24688,11 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        PlatformUI.toast(data.error || `Force-merge failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || PlatformI18n.t('changes:vote.forceMerge.failedHttp', { status: resp.status }));
       }
       AppView.refreshDevData('vote');
     } catch (err) {
-      PlatformUI.toast(`Force-merge failed: ${err.message}`);
+      PlatformUI.toast(PlatformI18n.t('changes:vote.forceMerge.failed', { error: err.message }));
     } finally {
       AppView._voteInFlight.delete(key);
     }
@@ -23611,18 +24755,18 @@ const AppView = {
     const pu = window.PlatformUI;
     if (!pu || typeof pu.prompt !== 'function') return null;
     const answer = await pu.prompt({
-      title: no ? 'What’s not working for you?' : 'Add a line for the group?',
+      title: no ? PlatformI18n.t('changes:vote.reason.noTitle') : PlatformI18n.t('changes:vote.reason.yesTitle'),
       message: no
-        ? 'One line is plenty. It goes to the proposer with your vote.'
-        : 'Optional. It shows beside your vote.',
-      placeholder: no ? 'What would you want to change?' : 'What do you like about it?',
-      confirmLabel: no ? 'Vote No' : 'Vote Yes',
-      cancelLabel: no ? 'Cancel' : 'Skip',
+        ? PlatformI18n.t('changes:vote.reason.noMessage')
+        : PlatformI18n.t('changes:vote.reason.yesMessage'),
+      placeholder: no ? PlatformI18n.t('changes:vote.reason.noPlaceholder') : PlatformI18n.t('changes:vote.reason.yesPlaceholder'),
+      confirmLabel: no ? PlatformI18n.t('changes:vote.reason.voteNo') : PlatformI18n.t('changes:vote.reason.voteYes'),
+      cancelLabel: no ? PlatformI18n.t('core:common.cancel') : PlatformI18n.t('changes:vote.reason.skip'),
     });
     if (answer === null) return no ? false : null;
     const line = String(answer).replace(/\s+/g, ' ').trim();
     if (no && !line) {
-      pu.toast('A No comes with a line: what is not working for you?');
+      pu.toast(PlatformI18n.t('changes:vote.reason.noNeedsLine'));
       return false;
     }
     return line || null;
@@ -23747,7 +24891,7 @@ const AppView = {
         // #1688: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
-          || data.error || `Vote failed (HTTP ${res.status}).`);
+          || data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         return false;
       }
       AppView._seenEpoch.delete(sessionId);
@@ -23774,7 +24918,7 @@ const AppView = {
       // QA 2026-09-24 Q3: a vote that never reached the server used to put
       // the card back without a word, which read as the button doing
       // nothing. Say so, in the same place a refusal is said.
-      window.PlatformUI?.toast?.('Your vote did not go through. Check your connection and try again.');
+      window.PlatformUI?.toast?.(PlatformI18n.t('changes:vote.toast.notSent'));
       return false;
     }
     finally {
@@ -23863,7 +25007,7 @@ const AppView = {
         // #2603: a No the server would not take without its line says so in
         // the server's own words rather than as an opaque failure.
         PlatformUI.toast((data.error === 'reason_required' && data.message)
-          || data.error || `Vote failed (HTTP ${res.status}).`);
+          || data.error || PlatformI18n.t('changes:vote.toast.failedHttp', { status: res.status }));
         AppView.refreshDevData('vote');
         return;
       }
@@ -23886,22 +25030,22 @@ const AppView = {
       finish();
       if (outcome && outcome.applied) {
         if (kind === 'close_issue') {
-          PlatformUI.toast(`Issue #${outcome.issueNumber || targetN || '?'} closed by group vote.`);
+          PlatformUI.toast(PlatformI18n.t('changes:vote.toast.issueClosed', { number: outcome.issueNumber || targetN || '?' }));
         } else if (kind === 'featured_illustration') {
           PlatformUI.toast(outcome.illustration
-            ? 'Featured illustration changed by group vote.'
-            : 'Featured illustration removed by group vote.');
+            ? PlatformI18n.t('changes:vote.toast.illustrationChanged')
+            : PlatformI18n.t('changes:vote.toast.illustrationRemoved'));
         }
       } else if (outcome && outcome.superseded) {
         // Not an error: the guard found the target already closed and
         // retired the proposal instead of applying it.
         PlatformUI.toast(
-          `Issue #${targetN || '?'} was already closed. The proposal was resolved automatically.`
+          PlatformI18n.t('changes:vote.toast.issueAlreadyClosed', { number: targetN || '?' })
         );
       } else if (outcome && outcome.awaitingAdmin) {
-        PlatformUI.toast('Vote passed. An admin still needs to approve before it applies.');
+        PlatformUI.toast(PlatformI18n.t('changes:vote.toast.awaitingAdmin'));
       } else if (outcome && outcome.error) {
-        PlatformUI.toast(`The change didn't complete: ${outcome.error}`);
+        PlatformUI.toast(PlatformI18n.t('changes:vote.toast.applyFailed', { error: outcome.error }));
       }
       // Anything else (vote recorded, gate not met yet, toggled off) needs no
       // toast — the refreshed card's tally / countdown pill says it all.
@@ -23914,7 +25058,9 @@ const AppView = {
       // Network/abort: the server-side apply may well have completed, so
       // park on the failure copy rather than pretending nothing happened.
       finish('failed', err && err.message);
-      PlatformUI.toast(`Vote failed: ${(err && err.message) || 'connection lost'}`);
+      PlatformUI.toast((err && err.message)
+        ? PlatformI18n.t('changes:vote.toast.failed', { error: err.message })
+        : PlatformI18n.t('changes:vote.toast.failedConnection'));
     } finally {
       AppView._voteInFlight.delete(key);
       AppView._publishVoteSending(`castIssueVote:${issueId}`, null);
@@ -24065,8 +25211,8 @@ const AppView = {
   _renderAppUnavailable(host, idBase, onRetry) {
     host.innerHTML = `
       <div id="${idBase}" class="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 py-10 text-center">
-        <p class="text-sm text-zinc-600 dark:text-zinc-300">This app could not be loaded. Check your connection and try again.</p>
-        <button type="button" id="${idBase}-retry" class="inline-flex h-9 items-center rounded-full bg-violet-600 px-4 text-sm font-semibold text-white hover:bg-violet-500 un-touch-target">Try again</button>
+        <p class="text-sm text-zinc-600 dark:text-zinc-300">${PlatformI18n.htmlText('changes:appUnavailable.message')}</p>
+        <button type="button" id="${idBase}-retry" class="inline-flex h-9 items-center rounded-full bg-violet-600 px-4 text-sm font-semibold text-white hover:bg-violet-500 un-touch-target">${PlatformI18n.htmlText('core:common.tryAgain')}</button>
       </div>`;
     const retry = host.querySelector(`#${idBase}-retry`);
     if (retry) {
@@ -24101,7 +25247,7 @@ const AppView = {
       if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
         // Longer than the kit's 2.2s default: it arrives as the page does,
         // while the eye is still finding its way round the board.
-        PlatformUI.toast('That session is private or no longer exists.', { duration: 6000 });
+        PlatformUI.toast(PlatformI18n.t('changes:session.unavailable'), { duration: 6000 });
       }
       return undefined;
     };
@@ -24259,7 +25405,7 @@ const AppView = {
       if (!data.manifestKnown) {
         // Pre-first-deploy hint — distinct from "everything's fine"
         // because the manifest just hasn't been ingested yet.
-        setLabel('No manifest yet', 'neutral');
+        setLabel(PlatformI18n.t('changes:menu.secrets.noManifest'), 'neutral');
         return;
       }
       // Only `required && !hasValue` is actionable: it blocks deploys.
@@ -24280,7 +25426,7 @@ const AppView = {
       const missing = list.filter((s) => s.required && !s.hasValue
         && !s.unwritable && s.state !== 'proposed').length;
       if (missing > 0) {
-        setLabel(`${missing} required missing`, 'err');
+        setLabel(PlatformI18n.t('changes:menu.secrets.requiredMissing', { count: missing }), 'err');
       } else {
         setLabel('', 'neutral');
       }
@@ -24544,7 +25690,7 @@ const AppView = {
     // case (a preview that is live and answers in well under a second) was
     // fronted by a screen promising a minute's wait. The rebuild copy now
     // lives in the `rebuilding` branch below, where it is actually true.
-    AppView._setStagingLoader(true, { title: 'Opening preview…', sub: '' });
+    AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.opening'), sub: '' });
     staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
     // #3413: every terminal failure below covers the page with the loader, so
     // the card's own "Retry preview" (swapToStagingForSession → this function)
@@ -24575,12 +25721,12 @@ const AppView = {
         AppView._finishStagingTelemetry(telemetryAttempt, 'failure', {
           errorCode: window.UITelemetry?.errorCodeFor?.(res.status),
         });
-        AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.', retry);
+        AppView._showStagingUnavailable(loadId, data.error || PlatformI18n.t('changes:frame.unavailable.notRebuilt'), retry);
         return;
       }
     } catch {
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'network' });
-      AppView._showStagingUnavailable(loadId, 'Network error while rebuilding the preview. Try again in a moment.', retry);
+      AppView._showStagingUnavailable(loadId, PlatformI18n.t('changes:frame.unavailable.network'), retry);
       return;
     }
     // Backed out while we waited on the POST.
@@ -24610,17 +25756,17 @@ const AppView = {
     }
     if (data.status === 'unavailable') {
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'unavailable' });
-      const unavailableCopy = {
-        demo: 'Live previews can’t be rebuilt in this demo environment.',
-        unhealthy: 'The submitted preview is running but is not answering its health check. Try again in a moment.',
-        edge: 'The submitted preview is not reachable through its public address. Try again in a moment.',
+      const unavailableIds = {
+        demo: 'changes:frame.unavailable.demo',
+        unhealthy: 'changes:frame.unavailable.unhealthy',
+        edge: 'changes:frame.unavailable.edge',
         missing: readOnly
-          ? 'This preview is no longer running. A collaborator can rebuild it.'
-          : 'This preview isn’t available right now.',
+          ? 'changes:frame.unavailable.missingReader'
+          : 'changes:frame.unavailable.notNow',
       };
       AppView._showStagingUnavailable(
         loadId,
-        unavailableCopy[data.reason] || 'This preview isn’t available right now.',
+        PlatformI18n.t(Object.prototype.hasOwnProperty.call(unavailableIds, data.reason) ? unavailableIds[data.reason] : 'changes:frame.unavailable.notNow'),
         // A demo environment can never rebuild, so a retry would only loop.
         data.reason === 'demo' ? null : retry
       );
@@ -24628,7 +25774,7 @@ const AppView = {
     }
     if (data.status !== 'rebuilding') {
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
-      AppView._showStagingUnavailable(loadId, 'This preview returned an unexpected response.', retry);
+      AppView._showStagingUnavailable(loadId, PlatformI18n.t('changes:frame.unavailable.unexpected'), retry);
       return;
     }
     // status === 'rebuilding' — the ONE case where a real rebuild is
@@ -24638,9 +25784,8 @@ const AppView = {
     // event never lands (the server rebuild is still allowed to finish on
     // its own).
     AppView._setStagingLoader(true, {
-      title: 'Spinning the preview back up…',
-      sub: 'The preview was paused after a while of inactivity. Rebuilding it '
-        + 'from the session’s latest changes. This usually takes 20–60 seconds.',
+      title: PlatformI18n.t('changes:frame.loader.rebuilding'),
+      sub: PlatformI18n.t('changes:frame.loader.rebuildingSub'),
     });
     AppView._pendingStagingPreview = {
       sessionId, slug, jump, testing, dock, loadId, retry,
@@ -24653,9 +25798,8 @@ const AppView = {
       if (loadId !== AppView._stagingLoadId) return;
       if (!AppView._pendingStagingPreview || AppView._pendingStagingPreview.loadId !== loadId) return;
       AppView._setStagingLoader(true, {
-        title: 'This is taking longer than expected',
-        sub: 'The rebuild is still running on the server. Close this and click '
-          + 'Preview again in a moment.',
+        title: PlatformI18n.t('changes:frame.loader.slow'),
+        sub: PlatformI18n.t('changes:frame.loader.slowRebuild'),
       });
     }, 180000);
   },
@@ -24668,7 +25812,7 @@ const AppView = {
     if (loadId !== AppView._stagingLoadId) return;
     AppView._pendingStagingPreview = null;
     AppView._setStagingLoader(true, {
-      title: 'Preview unavailable',
+      title: PlatformI18n.t('changes:frame.unavailable.title'),
       sub: message,
       ...AppView._offerStagingPreviewRetry(retry),
     });
@@ -24681,7 +25825,7 @@ const AppView = {
   _offerStagingPreviewRetry(retry) {
     if (typeof retry !== 'function') return {};
     AppView._staging().setHandlers({ onRetry: retry });
-    return { retry: true, retryLabel: 'Retry preview' };
+    return { retry: true, retryLabel: PlatformI18n.t('changes:frame.loader.retryPreview') };
   },
 
   // #439: called by the staging_ready / staging_failed WS handlers when a
@@ -24701,8 +25845,8 @@ const AppView = {
     if (failed) {
       AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       AppView._setStagingLoader(true, {
-        title: 'Preview couldn’t be rebuilt',
-        sub: error || 'The preview failed to build. See the agent session for details.',
+        title: PlatformI18n.t('changes:frame.unavailable.rebuildFailedTitle'),
+        sub: error || PlatformI18n.t('changes:frame.unavailable.rebuildFailed'),
         ...AppView._offerStagingPreviewRetry(pending.retry),
       });
       return;
@@ -24721,7 +25865,7 @@ const AppView = {
       });
     }
     AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
-    AppView._showStagingUnavailable(pending.loadId, 'This preview did not provide a usable address.', pending.retry);
+    AppView._showStagingUnavailable(pending.loadId, PlatformI18n.t('changes:frame.unavailable.noAddress'), pending.retry);
   },
 
   // Open staging in the overlay (fullscreen, or docked beside dev chat).
@@ -24795,7 +25939,7 @@ const AppView = {
     staging.clearSrc();
     const loadId = ++AppView._stagingLoadId;
     const current = () => loadId === AppView._stagingLoadId && AppView._stagingSameApp(opts, slug);
-    AppView._setStagingLoader(true, { title: 'Signing in to the preview…', sub: '' });
+    AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.signingIn'), sub: '' });
 
     // Join the app's in-flight mint (or its fresh cache entry). Capture this
     // result locally: a different app's later refresh must never choose the
@@ -24809,8 +25953,8 @@ const AppView = {
         if (current()) return AppView.swapToStaging(stagingUrl, testing, opts);
       } });
       AppView._setStagingLoader(true, {
-        title: 'Could not sign in to the preview',
-        sub: 'Check your connection, then try again.',
+        title: PlatformI18n.t('changes:frame.loader.signInFailed'),
+        sub: PlatformI18n.t('changes:frame.loader.signInFailedSub'),
         retry: true,
       });
       return;
@@ -24874,7 +26018,7 @@ const AppView = {
         pending.src = next;
         const frame = staging.frame();
         if (frame && frame.src) {
-          AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
+          AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.loading'), sub: '' });
           AppView._watchStagingIframeLoad(frame, loadId, null);
           staging.setSrc(next);
         }
@@ -24892,9 +26036,9 @@ const AppView = {
     // _watchStagingIframeLoad takes it down the instant the page paints.
     if (opts && opts.verified) {
       AppView._setStagingLoader(true, {
-        title: 'Loading the preview…',
+        title: PlatformI18n.t('changes:frame.loader.loading'),
         sub: checksRunning
-          ? 'Automated checks are running against this preview, so the first load may be a little slower.'
+          ? PlatformI18n.t('changes:frame.loader.checksRunning')
           : '',
       });
       AppView._watchStagingIframeLoad(staging.frame(), loadId, opts && opts.telemetryAttempt);
@@ -24914,7 +26058,7 @@ const AppView = {
       if (!current()) return;
       if (!ready) return;
       // Keep the spinner up across the render, same as the fast path.
-      AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
+      AppView._setStagingLoader(true, { title: PlatformI18n.t('changes:frame.loader.loading'), sub: '' });
       AppView._watchStagingIframeLoad(staging.frame(), loadId, opts && opts.telemetryAttempt);
       staging.setSrc(pending.src);
     });
@@ -24956,18 +26100,16 @@ const AppView = {
       if (loadId !== AppView._stagingLoadId) return;
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       AppView._setStagingLoader(true, {
-        title: 'This is taking longer than expected',
-        sub: 'The preview didn’t finish loading. Close this and click Preview '
-          + 'again in a moment.',
+        title: PlatformI18n.t('changes:frame.loader.slow'),
+        sub: PlatformI18n.t('changes:frame.loader.slowLoadFailed'),
       });
     };
     AppView._stagingIframeTimer = setTimeout(() => {
       AppView._stagingIframeTimer = null;
       if (loadId !== AppView._stagingLoadId) return;
       AppView._setStagingLoader(true, {
-        title: 'This is taking longer than expected',
-        sub: 'The preview is still loading. Close this and click Preview '
-          + 'again in a moment.',
+        title: PlatformI18n.t('changes:frame.loader.slow'),
+        sub: PlatformI18n.t('changes:frame.loader.slowStillLoading'),
       });
     }, AppView.STAGING_IFRAME_LOAD_TIMEOUT_MS);
   },
@@ -25090,7 +26232,9 @@ const AppView = {
       app && open && open.slug === app.slug ? open.name : null,
     ];
     const found = candidates.find((v) => typeof v === 'string' && v.trim());
-    return found ? `${found.trim()} · Preview` : 'Preview';
+    return found
+      ? PlatformI18n.t('changes:frame.title.named', { app: found.trim() })
+      : PlatformI18n.t('changes:frame.title.plain');
   },
 
   _stagingReadOnly(opts) {
@@ -25215,10 +26359,10 @@ const AppView = {
       && AppView._stagingDockViewport();
     staging.setFullscreenBtn({
       hidden: !overlayOpen || (!docked && !canRedock),
-      text: docked ? 'Full screen' : 'Exit full screen',
+      text: docked ? PlatformI18n.t('changes:frame.fullscreen.enter') : PlatformI18n.t('changes:frame.fullscreen.exit'),
       title: docked
-        ? 'Expand the preview to fill the screen'
-        : 'Dock the preview back beside the chat',
+        ? PlatformI18n.t('changes:frame.fullscreen.enterTitle')
+        : PlatformI18n.t('changes:frame.fullscreen.exitTitle'),
     });
     // #970: docking / un-docking moves the preview frame's rect, so the
     // insets that apply to it change (a docked panel is nowhere near the
@@ -25261,12 +26405,12 @@ const AppView = {
         ? DevChat.renderMarkdown(t.md)
         : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`);
     } else {
-      staging.setTestHtml('<span class="text-zinc-500 dark:text-zinc-400">Use the button above to jump to the changed feature.</span>');
+      staging.setTestHtml(`<span class="text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:frame.testing.useButton')}</span>`);
     }
 
     staging.setTestBtn({
       hidden: false,
-      title: t.path ? 'Open the preview at the changed feature' : 'Show the testing instructions',
+      title: t.path ? PlatformI18n.t('changes:frame.testing.openAtFeature') : PlatformI18n.t('changes:frame.testing.showInstructions'),
     });
     staging.setHandlers({
       onTest: () => {
@@ -25402,7 +26546,7 @@ const AppView = {
     setClock() { return false; },
     setLoader(visible, { title, sub, retry = false, retryLabel } = {}) {
       this._setHidden('staging-retry-btn', !visible || !retry);
-      this._setText('staging-retry-btn', retryLabel || 'Retry sign-in');
+      this._setText('staging-retry-btn', retryLabel || PlatformI18n.t('changes:frame.loader.retrySignIn'));
       this._setHidden('staging-loader', !visible);
       if (title !== undefined) this._setText('staging-loader-title', title);
       if (sub !== undefined) this._setText('staging-loader-sub', sub);
@@ -25579,9 +26723,9 @@ const AppView = {
   async _waitForStagingReady(resolved, loadId, opts) {
     const checksRunning = !!(opts && opts.checksRunning);
     AppView._setStagingLoader(true, {
-      title: 'Waiting for the preview to respond…',
+      title: PlatformI18n.t('changes:frame.loader.waiting'),
       sub: checksRunning
-        ? 'Automated checks are running against this preview, so the first load may be a little slower.'
+        ? PlatformI18n.t('changes:frame.loader.checksRunning')
         : '',
     });
     const startedAt = Date.now();
@@ -25603,13 +26747,13 @@ const AppView = {
         // No cause is asserted — we genuinely don't know one here.
         if (elapsed >= 60) {
           AppView._setStagingLoader(true, {
-            title: 'Still waiting on the preview',
-            sub: `The preview hasn’t responded yet (${elapsed}s). Hang tight, this keeps retrying automatically.`,
+            title: PlatformI18n.t('changes:frame.loader.stillWaiting'),
+            sub: PlatformI18n.t('changes:frame.loader.stillWaitingSub', { count: elapsed }),
           });
         } else if (elapsed >= 20) {
           AppView._setStagingLoader(true, {
-            title: 'Waiting for the preview to respond…',
-            sub: `Taking a little longer than usual (${elapsed}s).`,
+            title: PlatformI18n.t('changes:frame.loader.waiting'),
+            sub: PlatformI18n.t('changes:frame.loader.waitingLonger', { count: elapsed }),
           });
         }
         await new Promise((r) => setTimeout(r, AppView._stagingPollBackoffMs(attempt)));
@@ -26297,7 +27441,7 @@ const AppView = {
 
     const slug = AppView.appSlugForFrame(frameId);
     if (!slug) {
-      reply(null, 'This app could not be identified. Reopen it and try again.');
+      reply(null, PlatformI18n.t('changes:bridge.appNotIdentified'));
       return;
     }
 
@@ -26312,8 +27456,8 @@ const AppView = {
       info = await r.json();
     } catch (err) {
       reply(null, err && err.message === 'signed-out'
-        ? 'Sign in to Homeroom to give an app access to AI.'
-        : 'Failed to load AI permission state.');
+        ? PlatformI18n.t('changes:bridge.llmSignedOut')
+        : PlatformI18n.t('changes:bridge.llmLoadFailed'));
       return;
     }
 
@@ -26362,7 +27506,7 @@ const AppView = {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        reply(null, j.error || 'Failed to save permission.');
+        reply(null, j.error || PlatformI18n.t('changes:bridge.saveFailed'));
         return;
       }
       reply({
@@ -26371,7 +27515,7 @@ const AppView = {
         allowByok: j.grant.allowByok,
       });
     } catch (err) {
-      reply(null, 'Network error saving permission.');
+      reply(null, PlatformI18n.t('changes:bridge.saveNetwork'));
     }
   },
 
@@ -26463,7 +27607,7 @@ const AppView = {
 
     const slug = AppView.appSlugForFrame(frameId);
     if (!slug) {
-      reply(null, 'This app could not be identified. Reopen it and try again.');
+      reply(null, PlatformI18n.t('changes:bridge.appNotIdentified'));
       return;
     }
 
@@ -26494,8 +27638,8 @@ const AppView = {
       info = await r.json();
     } catch (err) {
       reply(null, err && err.message === 'signed-out'
-        ? 'Sign in to Homeroom to give an app access to this.'
-        : 'Failed to load permission state.');
+        ? PlatformI18n.t('changes:bridge.permissionSignedOut')
+        : PlatformI18n.t('changes:bridge.permissionLoadFailed'));
       return;
     }
 
@@ -26536,10 +27680,14 @@ const AppView = {
     const entry = (info.catalogue || []).find((c) => c.name === capability) || null;
     const declaration = (info.declared || []).find((d) => d.capability === capability) || null;
     const decision = await AppView.showPermissionConsentModal({
-      appName: info.app?.name || info.app?.slug || 'This app',
+      // The app's own name, or none: the dialog's sentences have a wording
+      // of their own for an app that cannot be named.
+      appName: info.app?.name || info.app?.slug || '',
       capability,
       label: entry?.label || capability,
-      blurb: entry?.blurb || `use ${capability}`,
+      // What the app may then do, in the catalogue's words; without them the
+      // dialog names the capability itself.
+      blurb: entry?.blurb || null,
       reason: declaration?.reason || null,
       // The App tab is the only surface that can put a gated capability
       // into force, and only by re-navigating. Anywhere else the grant is
@@ -26561,11 +27709,11 @@ const AppView = {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        reply(null, j.error || 'Failed to save permission.');
+        reply(null, j.error || PlatformI18n.t('changes:bridge.saveFailed'));
         return;
       }
     } catch (err) {
-      reply(null, 'Network error saving permission.');
+      reply(null, PlatformI18n.t('changes:bridge.saveNetwork'));
       return;
     }
 
@@ -26633,7 +27781,7 @@ const AppView = {
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          reply(null, j.error || `Upload failed (${r.status}).`);
+          reply(null, j.error || PlatformI18n.t('changes:bridge.uploadFailed', { status: r.status }));
           return;
         }
         reply(j);
@@ -26643,7 +27791,7 @@ const AppView = {
       if (type === 'delete') {
         const fileId = String(data.fileId || '');
         if (!/^[a-f0-9]{32}$/.test(fileId)) {
-          reply(null, 'File not found.');
+          reply(null, PlatformI18n.t('changes:bridge.fileNotFound'));
           return;
         }
         const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/${fileId}`, {
@@ -26652,7 +27800,7 @@ const AppView = {
         });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) {
-          reply(null, j.error || `Delete failed (${r.status}).`);
+          reply(null, j.error || PlatformI18n.t('changes:bridge.deleteFailed', { status: r.status }));
           return;
         }
         reply({ ok: true });
@@ -26665,12 +27813,12 @@ const AppView = {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        reply(null, j.error || `Usage read failed (${r.status}).`);
+        reply(null, j.error || PlatformI18n.t('changes:bridge.usageFailed', { status: r.status }));
         return;
       }
       reply(j);
     } catch {
-      reply(null, 'Network error talking to the platform.');
+      reply(null, PlatformI18n.t('changes:bridge.network'));
     }
   },
 
@@ -26735,12 +27883,12 @@ const AppView = {
       const r = await fetch(url, { credentials: 'same-origin' });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
-        reply(null, j.error || `Directory lookup failed (${r.status}).`);
+        reply(null, j.error || PlatformI18n.t('changes:bridge.directoryLookupFailed', { status: r.status }));
         return;
       }
       reply(j);
     } catch {
-      reply(null, 'Network error talking to the platform.');
+      reply(null, PlatformI18n.t('changes:bridge.network'));
     }
   },
 
@@ -26843,7 +27991,10 @@ const AppView = {
       document.body.appendChild(root);
       AppView._llmModalEl = root;
 
-      const appName = info.app?.name || info.app?.slug || 'This app';
+      // The name shown on its own falls back to a label; the sentences below
+      // have an unnamed wording instead of taking that label as a name.
+      const realAppName = info.app?.name || info.app?.slug || '';
+      const appName = realAppName || PlatformI18n.t('changes:dialog.llm.fallbackApp');
       const suggested = info.llm?.suggestedCapCents ?? null;
       const prefillCents = suggested ?? info.defaultCapCents ?? 100;
       // Zero is intentional for an unverified account with no BYOK key;
@@ -26858,24 +28009,30 @@ const AppView = {
 
       react.mountLlmConsentModal(root, {
         appName,
+        // The title is a sentence: with no real name it has its own wording.
+        appUnnamed: !realAppName,
         purpose: info.llm?.purpose ? String(info.llm.purpose) : null,
         intro: byokOnly
-          ? `This lets ${appName} use your own Anthropic API key, without exposing the key to the app.`
-          : `This lets ${appName} spend from your daily AI budget (the same one your agent sessions use) up to the daily cap below.`,
+          ? (realAppName
+            ? PlatformI18n.t('changes:dialog.llm.introOwnKey', { app: realAppName })
+            : PlatformI18n.t('changes:dialog.llm.introOwnKeyUnnamed'))
+          : (realAppName
+            ? PlatformI18n.t('changes:dialog.llm.introBudget', { app: realAppName })
+            : PlatformI18n.t('changes:dialog.llm.introBudgetUnnamed')),
         capacity: noCapacity
           ? { t: 'blocked', eligibilityUnavailable }
           : {
             t: 'cap',
             prefill: (prefillCents / 100).toFixed(2),
             suggestedNote: suggested != null
-              ? 'Suggested by this app. You can change it.'
-              : 'You can change this anytime in Settings.',
+              ? PlatformI18n.t('changes:dialog.llm.capSuggested')
+              : PlatformI18n.t('changes:dialog.llm.capChangeLater'),
             byok: info.hasApiKey
               ? {
                 checked: byokOnly,
                 label: byokOnly
-                  ? 'Use my own API key for this app (required until platform credits are unlocked; still limited by the cap above).'
-                  : 'If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).',
+                  ? PlatformI18n.t('changes:dialog.llm.ownKeyRequired')
+                  : PlatformI18n.t('changes:dialog.llm.ownKeyFallback'),
               }
               : null,
           },
@@ -26917,16 +28074,16 @@ const AppView = {
           errEl.classList.remove('hidden');
         };
         if (!Number.isFinite(dollars) || !Number.isInteger(cents) || cents <= 0) {
-          fail('Enter a valid daily cap (at least $0.01).');
+          fail(PlatformI18n.t('changes:dialog.llm.capInvalid'));
           return;
         }
         if (cents > maxCents) {
-          fail(`The cap can't exceed your own daily limit ($${(maxCents / 100).toFixed(2)}).`);
+          fail(PlatformI18n.t('changes:dialog.llm.capTooHigh', { limit: `$${(maxCents / 100).toFixed(2)}` }));
           return;
         }
         const byokInput = root.querySelector('#llm-consent-byok');
         if (byokOnly && !(byokInput && byokInput.checked)) {
-          fail('Your own API key must be enabled while platform credits are locked.');
+          fail(PlatformI18n.t('changes:dialog.llm.ownKeyMustBeOn'));
           return;
         }
         done({ dailyCapCents: cents, allowByok: !!(byokInput && byokInput.checked) });
@@ -26968,14 +28125,24 @@ const AppView = {
       react.mountPermissionConsentModal(root, {
         capability: view.capability,
         label: view.label,
-        title: `Allow ${view.appName} to ${view.blurb}?`,
+        title: view.blurb
+          ? (view.appName
+            ? PlatformI18n.t('changes:dialog.permission.title', { app: view.appName, action: view.blurb })
+            : PlatformI18n.t('changes:dialog.permission.titleUnnamed', { action: view.blurb }))
+          : (view.appName
+            ? PlatformI18n.t('changes:dialog.permission.titleCapability', { app: view.appName, capability: view.capability })
+            : PlatformI18n.t('changes:dialog.permission.titleCapabilityUnnamed', { capability: view.capability })),
         reason: view.reason,
         note: view.surfaced
-          ? 'This preview cannot turn the permission on, but your answer is saved for the app itself.'
+          ? PlatformI18n.t('changes:dialog.permission.notePreview')
           : (view.needsReload
-            ? `Only ${view.appName} gets this, and you can take it back anytime in Settings. The app will reopen so the change takes effect.`
-            : `Only ${view.appName} gets this, and you can take it back anytime in Settings.`),
-        confirmLabel: view.needsReload ? 'Allow and reopen' : 'Allow',
+            ? (view.appName
+              ? PlatformI18n.t('changes:dialog.permission.noteReopen', { app: view.appName })
+              : PlatformI18n.t('changes:dialog.permission.noteReopenUnnamed'))
+            : (view.appName
+              ? PlatformI18n.t('changes:dialog.permission.note', { app: view.appName })
+              : PlatformI18n.t('changes:dialog.permission.noteUnnamed'))),
+        confirmLabel: view.needsReload ? PlatformI18n.t('changes:dialog.permission.allowReopen') : PlatformI18n.t('changes:dialog.permission.allow'),
       });
 
       const done = (result) => {
@@ -27140,12 +28307,12 @@ function relStamp(iso, now) {
   // A future instant (server/browser clock skew) clamps to "just now" rather
   // than printing a negative age.
   const seconds = Math.max(0, Math.floor(elapsed / 1000));
-  if (seconds < 60) return { text: 'just now', title };
+  if (seconds < 60) return { text: PlatformI18n.t('changes:age.justNow'), title };
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { text: `${minutes}m ago`, title };
+  if (minutes < 60) return { text: PlatformI18n.t('changes:age.minutes', { count: minutes }), title };
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { text: `${hours}h ago`, title };
-  return { text: `${Math.floor(hours / 24)}d ago`, title };
+  if (hours < 24) return { text: PlatformI18n.t('changes:age.hours', { count: hours }), title };
+  return { text: PlatformI18n.t('changes:age.days', { count: Math.floor(hours / 24) }), title };
 }
 
 // The text alone, for the callers that have nowhere to hang a title.
@@ -27161,6 +28328,26 @@ function relTime(iso) { return relStamp(iso).text; }
 // staging debug overlay: "drawer-row-members CLICK fired → window.AppView MISSING".)
 // Guarded so requiring this file in node (for the pure-helper unit tests,
 // see the module.exports block above) doesn't crash on a missing `window`.
+// The words this module hands the project's page (a card's actions, a change
+// page's hero, steps and ledger, the board's own lines) are read as each view
+// is built: build them again, from the data already held, when the language
+// on screen changes or this module's text arrives. The ONE language listener
+// for this file; both repaints no-op off their own screen.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => {
+    if (!AppView.appData) return;
+    AppView._repaintDevBody();
+    // The vote rosters hold worded labels ("Yes (2)", the earlier-version
+    // line) from when they were read: mark them stale so the head reads
+    // them again in the language now on screen.
+    for (const id of Object.keys(AppView._voteRoster)) AppView._invalidateVoteRoster(id);
+    for (const id of Object.keys(AppView._govVoteRoster)) AppView._invalidateGovVoteRoster(id);
+    AppView._renderTopicHead();
+    // The preview bar's Full screen button, when a preview is up.
+    if (AppView._staging().isOpen()) AppView._updateStagingModeUi();
+  });
+}
+
 if (typeof window !== 'undefined') {
   window.AppView = AppView;
   // #1038: wire the Dev board's card surfaces to live session state. Both

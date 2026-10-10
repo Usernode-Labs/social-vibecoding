@@ -36,6 +36,7 @@ const vm = require('node:vm');
 
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const JOIN_ID = 41;
 
@@ -136,6 +137,7 @@ function makeHome({ joinOk = true, holdPanels = false } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   installPanelsStore(sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);

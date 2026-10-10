@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -77,7 +78,7 @@ test('the made screen reads the project under `app`, past the service worker\'s 
 
 test('a waiting plan is one small "Needs you" card under the project, with the way to the chat', () => {
   const { PlanWaitsCard, PLAN_LABEL, planWaitsLine } = loadTsx(`${DIR}/made.tsx`);
-  assert.equal(PLAN_LABEL, 'Needs you');
+  assert.equal(message(PLAN_LABEL), 'Needs you');
   assert.equal(planWaitsLine('Plant Pal'), 'Homeroom bot has a plan for Plant Pal');
   let opened = 0;
   const html = renderToHtml(createElement(PlanWaitsCard, { name: 'Plant Pal', onOpenChat() { opened += 1; } }));
@@ -90,7 +91,7 @@ test('a waiting plan is one small "Needs you" card under the project, with the w
   // The plan itself, and its Build it, are the chat's.
   assert.doesNotMatch(html, /Build it|data-bot-plan|<li>/);
   assert.equal(opened, 0);
-  for (const words of [PLAN_LABEL, planWaitsLine('Plant Pal')]) assert.ok(!/—/.test(words), words);
+  for (const words of [message(PLAN_LABEL), planWaitsLine('Plant Pal')]) assert.ok(!/—/.test(words), words);
   const src = read(`${DIR}/made.tsx`);
   assert.doesNotMatch(src, /PlanCardView|decideBotAction|PlanSection|Build it'/, 'the made screen decides nothing');
   // Under the project card, never above it, so the sketch does not move when it lands.
@@ -164,7 +165,9 @@ test('the made screen has two ways on and nothing under them: no "look around Ho
   assert.ok(madeBlock.length > 100, 'the made screen\'s block is findable');
   assert.doesNotMatch(madeBlock, /onLookAround/, 'nothing hands it a third way off');
   // The make screen's own "Look around first" is a different answer, and stays.
-  assert.match(read(`${DIR}/make.tsx`), />Look around first<\/button>/);
+  assert.match(read(`${DIR}/make.tsx`), /id="onboarding:firstSession\.make\.lookAround"\s+components=\{\[<button type="button" onClick=\{onLookAround\}/);
+  assert.equal(message('onboarding:firstSession.make.lookAround'), 'Not sure yet? <0>Look around first</0>');
+  assert.match(renderToHtml(createElement(loadTsx(`${DIR}/make.tsx`).MakeScreen, { who: '', onMade() {}, onLookAround() {} })), />Look around first<\/button>/);
   const html = renderToHtml(createElement(made.MadeScreen, {
     made: { slug: 'plant-pal', name: 'Plant Pal', emoji: '🪴', description: null, example: null, conversationId: 12 },
     me: 'Maya', onContinue() {}, onOpenChat() {},

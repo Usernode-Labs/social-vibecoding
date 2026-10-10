@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message: englishText } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -723,8 +724,10 @@ test('every phase and ending has words', () => {
   assert.deepEqual(Object.keys(PHASE_LABELS).sort(), [...tray.PHASES].sort());
   assert.deepEqual(Object.keys(SHORT_PHASES).sort(), [...tray.PHASES].sort());
   assert.deepEqual(Object.keys(LAST_WORDS).sort(), [...tray.OUTCOMES].sort());
-  for (const outcome of tray.OUTCOMES) assert.match(LAST_WORDS[outcome]('Ear Trainer #3'), /Ear Trainer #3/, outcome);
-  assert.equal(SHORT_PHASES.merging, 'going live');
+  for (const outcome of tray.OUTCOMES) assert.match(englishText(LAST_WORDS[outcome], { job: 'Ear Trainer #3' }), /Ear Trainer #3/, outcome);
+  for (const phase of tray.PHASES) assert.ok(englishText(PHASE_LABELS[phase]) && englishText(SHORT_PHASES[phase], { job: 'X' }), phase);
+  // The job and its stage are one whole message.
+  assert.equal(englishText(SHORT_PHASES.merging, { job: 'Ear Trainer #3' }), 'Working on Ear Trainer #3 · going live');
   assert.equal(WORK_CHANGED_EVENT, 'homeroom-bot-work-changed');
   assert.equal(jobTitle(job({ firstVersion: true, title: 'ignored' })), 'Ear Trainer first version');
   assert.equal(jobTitle(job({ issueNumber: 3, title: 'Sort' })), 'Ear Trainer #3: Sort');
@@ -742,7 +745,10 @@ test('the status line\'s last thing says the activity card\'s ending, in the per
   const { ACTIVITY_OUTCOME_LABELS } = loadTsx('frontend/src/features/messages/bot-activity.tsx');
   const activity = require('../src/services/homeroom-bot-activity');
   const plain = (s) => s.replace(/’/g, '\'').toLowerCase();
-  assert.deepEqual(Object.fromEntries(tray.OUTCOMES.map((o) => [o, LAST_WORDS[o]('Ear Trainer #3')])), {
+  // Each is one whole message that starts "Last: " (the catalog holds the sentence, not a clause).
+  const last = (o, job) => englishText(LAST_WORDS[o], { job });
+  for (const o of tray.OUTCOMES) assert.match(last(o, 'X'), /^Last: /, o);
+  assert.deepEqual(Object.fromEntries(tray.OUTCOMES.map((o) => [o, last(o, 'Ear Trainer #3').slice('Last: '.length)])), {
     question: 'asked you about Ear Trainer #3',
     proposed: 'Ear Trainer #3 waiting for approval',
     live: 'Ear Trainer #3 went live',
@@ -773,13 +779,13 @@ test('the status line\'s last thing says the activity card\'s ending, in the per
   for (const outcome of tray.OUTCOMES) {
     const words = SHARED[outcome];
     assert.ok(plain(activity.OUTCOME_LABELS[outcome]).includes(words), `server card: ${outcome}`);
-    assert.ok(plain(ACTIVITY_OUTCOME_LABELS[outcome]).includes(words), `client card: ${outcome}`);
-    assert.ok(plain(LAST_WORDS[outcome]('X')).includes(words), `status line: ${outcome}`);
+    assert.ok(plain(englishText(ACTIVITY_OUTCOME_LABELS[outcome])).includes(words), `client card: ${outcome}`);
+    assert.ok(plain(last(outcome, 'X')).includes(words), `status line: ${outcome}`);
   }
   // None of the platform's words, anywhere the header or the tray says them.
   const said = [
-    ...tray.OUTCOMES.map((o) => LAST_WORDS[o]('X')), ...Object.values(PHASE_LABELS), ...Object.values(SHORT_PHASES),
-    ...Object.values(ACTIVITY_OUTCOME_LABELS), ...Object.values(activity.OUTCOME_LABELS), ...Object.values(activity.TONE_WORDS),
+    ...tray.OUTCOMES.map((o) => last(o, 'X')), ...Object.values(PHASE_LABELS).map((id) => englishText(id)), ...Object.values(SHORT_PHASES).map((id) => englishText(id, { job: 'X' })),
+    ...Object.values(ACTIVITY_OUTCOME_LABELS).map((id) => englishText(id)), ...Object.values(activity.OUTCOME_LABELS), ...Object.values(activity.TONE_WORDS),
   ];
   for (const line of said) assert.doesNotMatch(line, /propos|merg|\bPR\b|pull request|staging|\u2014/i, line);
 });

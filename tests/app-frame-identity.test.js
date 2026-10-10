@@ -378,6 +378,7 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
       'usernode:offline-ready', JSON.stringify({ [SLUG]: Date.now() }),
     );
   }
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;

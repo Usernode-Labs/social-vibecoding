@@ -36,6 +36,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC: HOME, PANELS_SRC: SRC, PANELS_RAW } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const INDEX = read('public/index.html');
 const ISLAND = read('frontend/src/features/home/index.tsx');
 const SW = read('public/sw.js');
@@ -152,6 +153,7 @@ function makeHomePanels({
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home-panels.js imports its view-model store; ./helpers/home-modules strips
   // the line so the source runs as classic script text, and this supplies the
@@ -401,6 +403,10 @@ test('the rank rule is named on HomePanels, as the tab names its own', () => {
   const G = HP.CHALLENGE_GROUPS;
   assert.deepEqual(
     [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.heading),
+    ['home:challenges.group.setup', 'home:challenges.group.week', 'home:challenges.group.always', 'home:challenges.group.other'],
+    'the table holds message ids');
+  assert.deepEqual(
+    [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => message(g.heading)),
     ['First challenges', 'This week', 'Always open', 'Season challenges']);
   assert.deepEqual(
     [G.ONBOARDING, G.WEEKLY, G.PERSISTENT, HP.OTHER_GROUP].map((g) => g.key),
@@ -545,7 +551,8 @@ test('challengesView: the finished fill sits last under one Done header, with no
   assert.deepEqual([...view.rows].map((r) => r.id), ['3', '4', '1', '2'], "`rows` is the groups' sequence");
   assert.deepEqual([...view.rows].map((r) => r.deadline), [null, null, null, null]);
   assert.deepEqual([...groups[2].rows].map((r) => r.stateLabel), ['Done', 'Done']);
-  assert.equal(HP.DONE_GROUP.heading, 'Done');
+  assert.equal(HP.DONE_GROUP.heading, 'home:challenges.group.done');
+  assert.equal(message(HP.DONE_GROUP.heading), 'Done');
   assert.equal(view.expandable, true, 'the fifth card is behind the toggle');
 });
 
@@ -804,17 +811,21 @@ test('QA 2026-09-24 Q17: the season progress counts the whole season, as the pro
   const { HP } = makeHomePanels({ slots: [] });
   const season = { id: 1, name: 'Season 1' };
   const whole = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15, all_done: 4 }));
-  assert.deepEqual({ ...whole.season }, { done: 4, total: 15, caption: 'done in Season 1' });
+  // The words are the shared SeasonProgress's (leaderboard:progress.*); the
+  // panel names the scope and the season.
+  assert.deepEqual({ ...whole.season }, { done: 4, total: 15, scope: 'season', name: 'Season 1' });
+  assert.equal(message('leaderboard:progress.seasonLabel', { done: 4, count: 15, season: 'Season 1' }), '4 of 15 done in Season 1');
   const expanded = HP.seasonView(panel({ season, total: 15, done: 4, all_total: 15, all_done: 4 }));
   assert.deepEqual({ ...expanded }, { ...whole.season }, 'expanding the block does not change it');
   const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15 }));
-  assert.deepEqual({ ...older.season }, { done: 2, total: 6, caption: 'done in Season 1' },
+  assert.deepEqual({ ...older.season }, { done: 2, total: 6, scope: 'season', name: 'Season 1' },
     'no all_done: the open counts, as before');
   const gated = HP.seasonView(panel({
     season, total: 6, done: 2, all_total: 15, all_done: 4,
     onboarding: { unlocked: false, total: 3, completed: 1 },
   }));
-  assert.deepEqual({ ...gated }, { done: 1, total: 3, caption: 'done in First challenges' },
+  assert.equal(message('leaderboard:progress.firstLabel', { done: 1, count: 3 }), '1 of 3 done in First challenges');
+  assert.deepEqual({ ...gated }, { done: 1, total: 3, scope: 'first' },
     'setup still gates the scope while it is closed');
 });
 
@@ -828,24 +839,24 @@ test('#4565: the season view carries the points figures, or nothing new', () => 
     points_total: 2000, points_earned: 1000 };
   const withPoints = HP.challengesView(panel({ season, ...figures }));
   assert.deepEqual({ ...withPoints.season, points: { ...withPoints.season.points } },
-    { done: 4, total: 15, caption: 'done in Season 1', points: { earned: 1000, total: 2000 } });
+    { done: 4, total: 15, scope: 'season', name: 'Season 1', points: { earned: 1000, total: 2000 } });
   const expanded = HP.seasonView(panel({ season, ...figures }));
   assert.deepEqual({ ...expanded, points: { ...expanded.points } },
-    { done: 4, total: 15, caption: 'done in Season 1', points: { earned: 1000, total: 2000 } },
+    { done: 4, total: 15, scope: 'season', name: 'Season 1', points: { earned: 1000, total: 2000 } },
     'expanding the block does not change it');
   const gated = HP.seasonView(panel({
     season, ...figures, onboarding: { unlocked: false, total: 3, completed: 1 },
   }));
   assert.deepEqual({ ...gated, points: { ...gated.points } }, {
-    done: 1, total: 3, caption: 'done in First challenges', points: { earned: 1000, total: 2000 },
+    done: 1, total: 3, scope: 'first', points: { earned: 1000, total: 2000 },
   }, 'the points ride the same scope the count does');
   const older = HP.challengesView(panel({ season, total: 6, done: 2, all_total: 15, all_done: 4 }));
-  assert.deepEqual({ ...older.season }, { done: 4, total: 15, caption: 'done in Season 1' },
+  assert.deepEqual({ ...older.season }, { done: 4, total: 15, scope: 'season', name: 'Season 1' },
     'an older payload without the figures draws nothing new');
   const none = HP.challengesView(panel({
     season, total: 6, done: 2, all_total: 15, all_done: 4, points_total: null, points_earned: null,
   }));
-  assert.deepEqual({ ...none.season }, { done: 4, total: 15, caption: 'done in Season 1' },
+  assert.deepEqual({ ...none.season }, { done: 4, total: 15, scope: 'season', name: 'Season 1' },
     'no numeric reward anywhere: no line, not "0 of 0 pts"');
   const over = HP.challengesView(panel({
     season, total: 6, done: 2, all_total: 15, all_done: 4, points_total: 2000, points_earned: 2500,
@@ -862,10 +873,10 @@ test('the season progress names its scope, and leaves deadlines to the cards and
     total: 1, done: 1,
     challenges: [challenge({ progress: { done: true, current: null, target: null } })],
   }));
-  assert.deepEqual({ ...allDone.season }, { done: 1, total: 1, caption: 'done in Season 1' },
+  assert.deepEqual({ ...allDone.season }, { done: 1, total: 1, scope: 'season', name: 'Season 1' },
     'every card finished: still just the tally, no "3d left" moved onto it');
   const open = HP.challengesView(panel({ season: { id: 1, name: 'Season 1', ends_at: ends } }));
-  assert.equal(open.season.caption, 'done in Season 1');
+  assert.deepEqual([open.season.scope, open.season.name], ['season', 'Season 1']);
   assert.equal(open.groups[0].meta, '3d left', 'the group header says the deadline');
   assert.equal(open.rows[0].deadline, null, 'and its card leaves it to the header');
   const setup = HP.challengesView(panel({
@@ -874,7 +885,8 @@ test('the season progress names its scope, and leaves deadlines to the cards and
   }));
   assert.equal(setup.rows[0].deadline, '3d left', 'a First challenges card says its own');
   const unnamed = HP.challengesView(panel({ season: { id: 1, name: '' } }));
-  assert.equal(unnamed.season.caption, 'done', 'no name, no scope words');
+  assert.deepEqual([unnamed.season.scope, unnamed.season.name], [null, null], 'no name, no scope words');
+  assert.equal(message('leaderboard:progress.plainLabel', { done: 1, count: 6 }), '1 of 6 done');
 });
 
 // ── Group headers ─────────────────────────────────────────────────
@@ -2549,7 +2561,8 @@ test('the Discover section is headed Discover Communities; the tab and the link 
     'the label truncates rather than wraps at 320px, beside the link');
   assert.match(heading, />Browse all apps<\/span>/);
   const bar = fs.readFileSync(path.join(__dirname, '../frontend/src/features/nav/tab-bar.tsx'), 'utf8');
-  assert.match(bar, /key: 'discover' as const, label: 'Discover', href: '#apps'/);
+  assert.match(bar, /key: 'discover' as const, label: 'core:tabs\.discover', href: '#apps'/);
+  assert.equal(message('core:tabs.discover'), 'Discover');
 });
 
 test('Discover’s degenerate states: cards, or the note — never both', () => {

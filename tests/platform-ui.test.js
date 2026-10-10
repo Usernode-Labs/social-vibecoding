@@ -44,6 +44,7 @@ function makeSandbox({ kit } = {}) {
   if (kit) sandbox.unNative = kit;
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(SRC, sandbox);
   return { PlatformUI: sandbox.PlatformUI, calls, sandbox };
@@ -498,7 +499,7 @@ test('the Improve row is retired; what it led to is in the menu', () => {
   assert.ok(!INDEX.includes('id="app-menu-sessions"') && !INDEX.includes('id="improve-row-new-session"'),
     'Agent chats is not in the prerender');
   assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'),
-    /<div id="app-menu-sessions">\s*<div className=\{SECTION\}>Agent chats<\/div>\s*\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/,
+    /<div id="app-menu-sessions">\s*<div className=\{SECTION\}>\{t\('agent:appContext\.agentChats\.heading'\)\}<\/div>\s*\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/,
     'Build it now leads the Agent chats section');
   assert.ok(!/\bhidden\b/.test(band[0].slice(0, band[0].indexOf('>'))),
     'the band itself ships visible');

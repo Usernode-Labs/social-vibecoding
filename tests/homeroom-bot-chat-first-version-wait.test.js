@@ -32,6 +32,7 @@ const path = require('node:path');
 const { Pool } = require('pg');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -90,7 +91,10 @@ test('a Reading chip the moments missed catches up with the card', () => {
 });
 
 test('what the card and the chip say while it waits', () => {
-  const { BotStatusChip, BotRequestCardView, cardWords, FIRST_VERSION_WAIT_LINE } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const { BotStatusChip, BotRequestCardView, cardWords } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  // The wait line is the end of a whole catalog message that starts with what was taken.
+  const FIRST_VERSION_WAIT_LINE = message('chat:group.botCard.filed.firstVersionWait', { title: 'X' }).slice('Got it: X. '.length);
+  assert.equal(message('chat:group.botCard.filed.firstVersionWait', { title: 'X' }), `Got it: X. ${WAIT}`);
   assert.equal(FIRST_VERSION_WAIT_LINE, WAIT);
   // The DM card's own words (homeroom-bot-activity.js), in the chat card's typography.
   const { FIRST_VERSION_WAIT_WORDS } = require('../src/services/homeroom-bot-activity');

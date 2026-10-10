@@ -33,6 +33,7 @@ function context(user = { id: 42, username: 'Builder' }, globals = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     location: { search: '', hash: '' }, URLSearchParams, ...globals };
   c.window = c;
+  c.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(c);
   for (const p of ['public/js/merge-status.js', 'public/js/app-view.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, p), 'utf8'), c);
@@ -395,7 +396,7 @@ test('#4452: the Testing card is one bar, split by how long each part usually ta
   const deferred = { ...PR, check_state: 'pending', check_phase: 'deferred' };
   const deferredView = testing(deferred);
   assert.deepEqual(deferredView.note, ['Checks deferred']);
-  assert.equal(deferredView.noteDetail, av.CHECKS_PHASE_COPY.deferred.detail);
+  assert.equal(deferredView.noteDetail, av._checksPhaseCopy('deferred').detail);
   assert.match(deferredView.noteDetail, /conflicts with main/);
   assert.match(deferredView.noteDetail, /run once it merges cleanly/);
   const deferredPage = render(av, deferred).page;

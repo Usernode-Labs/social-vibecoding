@@ -60,6 +60,7 @@ import {
   PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { callAppView } from './card/fold';
 import { Improve } from '../improve/improve-controller.js';
 import { FeaturedIllustrationEditor } from '../apps/featured-illustration-editor';
@@ -249,6 +250,7 @@ export function DevPlusMenu({
   onLeave = null,
   appName = null,
 }: DevActionsRowProps): ReactNode {
+  const t = useMessages('project');
   const [editingIllustration, setEditingIllustration] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   useEffect(() => {
@@ -279,8 +281,8 @@ export function DevPlusMenu({
       replaces the node's attributes wholesale, so the two owners do not meet.
   */
   const plusLabel = readOnly
-    ? 'Remix: make your own copy'
-    : 'Suggest an improvement, import a PR or manage this app';
+    ? t('project:menu.button.remix')
+    : t('project:menu.button.manage');
   return (
     <>
   {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
@@ -350,27 +352,22 @@ export function DevPlusMenu({
               data-plus="issue"
               lit
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Suggest an improvement"
-              sub="Report a problem or idea without building it yourself"
+              title={t('project:menu.suggest.title')}
+              sub={t('project:menu.suggest.sub')}
             />
             <PlusRow
               data-plus="new-change"
               icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Build it now"
-              sub="With a coding agent, then ask for approval"
+              title={t('project:menu.build.title')}
+              sub={t('project:menu.build.sub')}
               onClick={() => { callAppView('_closePlusMenu'); void Improve.startSession(); }}
             />
             {canCollaborate ? (
               <PlusRow
                 data-plus="import-pr"
                 icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title="Import Feature from a PR"
-                sub={(
-                  <>
-                    Your computer &middot; your own tools. You have already built it, so
-                    there is no chat for this one
-                  </>
-                )}
+                title={t('project:menu.importPr.title')}
+                sub={t('project:menu.importPr.sub')}
                 dividerCls={PLUS_ROW_DIVIDER_CLS}
               />
             ) : null}
@@ -389,7 +386,7 @@ export function DevPlusMenu({
               data-plus="settings"
               group="settings"
               icon={<CogIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Settings &amp; rules"
+              title={t('project:menu.settings.title')}
               trailing={<ChevronRightIcon className="shrink-0 mt-0.5 w-4 h-4 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />}
               dividerCls={PLUS_ROW_DIVIDER_CLS}
             />
@@ -397,18 +394,18 @@ export function DevPlusMenu({
             <button
               type="button"
               data-plus-back=""
-              aria-label="Back to the menu"
+              aria-label={t('project:menu.settings.back')}
               className="w-full text-left flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
             >
               <ChevronLeftIcon className="shrink-0 w-4 h-4" aria-hidden="true" />
-              Settings &amp; rules
+              {t('project:menu.settings.heading')}
             </button>
             {onMakePublic ? (
               <PlusRow
                 data-plus="make-public"
                 icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title="Make it public"
-                sub="Anyone can find it on Discover and join."
+                title={t('project:menu.makePublic.title')}
+                sub={t('project:menu.makePublic.sub')}
                 // Rendered after the menu was wired (once the community read
                 // answers), so it closes the menu itself.
                 onClick={() => { callAppView('_closePlusMenu'); onMakePublic(); }}
@@ -418,8 +415,8 @@ export function DevPlusMenu({
               <PlusRow
                 data-plus="make-private"
                 icon={<LockIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title="Make it private"
-                sub="Only invited people can open and build it. Code stays public on GitHub."
+                title={t('project:menu.makePrivate.title')}
+                sub={t('project:menu.makePrivate.sub')}
                 // It renders after the menu was wired (once the community
                 // read answers), so it closes the menu itself.
                 onClick={() => { callAppView('_closePlusMenu'); onMakePrivate(); }}
@@ -429,7 +426,7 @@ export function DevPlusMenu({
               <PlusRow
                 data-plus="leave"
                 icon={<ArrowRightIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title={appName ? `Leave ${appName}` : 'Leave'}
+                title={appName ? t('project:menu.leave.named', { project: appName }) : t('project:menu.leave.plain')}
                 // Home.setMembership asks before it takes them out.
                 onClick={() => { callAppView('_closePlusMenu'); onLeave(); }}
               />
@@ -439,8 +436,8 @@ export function DevPlusMenu({
               || window.AppView?.appData?.delete_block === 'shared') ? <PlusRow
               data-plus="app-settings"
               icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="App settings"
-              sub="Manage who can use and build this app"
+              title={t('project:menu.appSettings.title')}
+              sub={t('project:menu.appSettings.sub')}
             /> : null}
             {/* #4405: a project's own web address. Owner-set, like secrets,
                 so the same people who manage the app see it; never for the
@@ -448,14 +445,14 @@ export function DevPlusMenu({
             {typeof window !== 'undefined' && window.AppView?.appData?.can_manage && !selfHosted ? <PlusRow
               data-plus="domain"
               icon={<GlobeIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Custom domain"
-              sub="Use your own web address for this project"
+              title={t('project:menu.domain.title')}
+              sub={t('project:menu.domain.sub')}
             /> : null}
             {canManageIllustration ? <PlusRow
               data-plus="featured-illustration"
               icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Featured illustration"
-              sub="Preview and adjust the Discover card image"
+              title={t('project:menu.illustration.title')}
+              sub={t('project:menu.illustration.sub')}
               onClick={() => setEditingIllustration(true)}
             /> : null}
             {showsMembers ? (
@@ -464,15 +461,15 @@ export function DevPlusMenu({
                   <PlusRow
                     data-plus="members"
                     icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                    title="Proposal approvals"
-                    sub="Who approves proposals and how many approvals are needed"
+                    title={t('project:menu.approvals.title')}
+                    sub={t('project:menu.approvals.sub')}
                   />
                 ) : (
                   <PlusRow
                     data-plus="members"
                     icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                    title="Members &amp; approvals"
-                    sub="Manage collaborators, app admins and proposal approvals"
+                    title={t('project:menu.members.title')}
+                    sub={t('project:menu.members.sub')}
                   />
                 )}
               </>
@@ -480,8 +477,8 @@ export function DevPlusMenu({
             <PlusRow
               data-plus="rename"
               icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="App display name"
-              sub="Renames are proposals, applied once voted in"
+              title={t('project:menu.rename.title')}
+              sub={t('project:menu.rename.sub')}
               dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
             />
             {/* #4417: the project's topics, its lasting conversations: each
@@ -491,8 +488,8 @@ export function DevPlusMenu({
             <PlusRow
               data-plus="topics"
               icon={<HashIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-              title="Topics"
-              sub="The project's channels, and the categories requests are filed under"
+              title={t('project:menu.topics.title')}
+              sub={t('project:menu.topics.sub')}
               onClick={() => {
                 callAppView('_closePlusMenu');
                 window.UsernodeReact?.dialogs?.topics?.open({ slug: window.AppView?.appData?.slug });
@@ -506,7 +503,7 @@ export function DevPlusMenu({
                   data-plus-title
                   className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200"
                 >
-                  {selfHosted ? 'Platform variables' : 'App secrets'}
+                  {selfHosted ? t('project:menu.secrets.platformTitle') : t('project:menu.secrets.appTitle')}
                   {/* Filled by AppView.refreshDevChatSecretsState() — a
                       legacy-owned leaf, so it renders empty and React never
                       writes its text again. */}
@@ -517,8 +514,8 @@ export function DevPlusMenu({
                 </span>
               )}
               sub={selfHosted
-                ? "The platform's own env, applied on its next deploy"
-                : 'Set or update secret values'}
+                ? t('project:menu.secrets.platformSub')
+                : t('project:menu.secrets.appSub')}
               dividerCls={PLUS_ROW_DIVIDER_CLS}
             />
             {/* Suggest this back and Remix (#4045, the owner, 7 Oct): the
@@ -528,8 +525,8 @@ export function DevPlusMenu({
               <PlusRow
                 data-plus="suggest-back"
                 icon={<ArrowUpTrayIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title="Suggest this back"
-                sub={`Send your changes to ${suggestTarget.name} as a proposal`}
+                title={t('project:menu.suggestBack.title')}
+                sub={t('project:menu.suggestBack.sub', { project: suggestTarget.name })}
                 dividerCls={PLUS_ROW_DIVIDER_CLS}
                 onClick={() => { callAppView('_closePlusMenu'); setSuggesting(true); }}
               />
@@ -538,8 +535,8 @@ export function DevPlusMenu({
               <PlusRow
                 data-plus="fork"
                 icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                title="Remix"
-                sub="Make your own copy"
+                title={t('project:menu.remix.title')}
+                sub={t('project:menu.remix.sub')}
                 dividerCls={PLUS_ROW_DIVIDER_CLS}
               />
             )}
@@ -551,8 +548,8 @@ export function DevPlusMenu({
           <PlusRow
             data-plus="fork"
             icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-            title="Remix"
-            sub="Make your own copy"
+            title={t('project:menu.remix.title')}
+            sub={t('project:menu.remix.sub')}
           />
         ) : null}
       </div>

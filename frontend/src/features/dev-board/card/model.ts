@@ -65,6 +65,8 @@ export interface StatusPillState {
   tier: number;
   key: string;
   label: string;
+  /** The label is the plain vote wait ("Vote · 1/2"), which some lines leave out because they say it themselves. */
+  plainVote?: boolean;
   tone: string;
   fill?: boolean | 'full-yes' | 'full-no';
   yes: number;
@@ -120,6 +122,12 @@ export type PreviewSpec =
 export interface ActionSpec {
   key: string;
   label: string;
+  /**
+   * A vote button's count ("2", "1✓ +2"), beside the label that also says
+   * it ("Yes (2)"). What draws the count reads this; a label is words in
+   * the language on screen and is never parsed.
+   */
+  tally?: string;
   /** Rendered as text, so a label with an entity in it arrives decoded. */
   title?: string;
   cls?: string;
@@ -185,8 +193,8 @@ export type BadgeSpec =
   /** A metadata chip (priority / assignee / category). */
   | { t: 'attr'; key: string; field: 'priority' | 'assignee' | 'category'; targetType: string; targetRef: string | number; cls: string; hover: string; title: string; count: number; readonly: boolean; label: AttrLabel }
   /** Closes #N — in-app (button) or on GitHub (anchor). */
-  | { t: 'issueChip'; key: string; n: number; prefix: string; cls: string; title: string }
-  | { t: 'issueLink'; key: string; n: number; href: string; verb: string; cls: string; title: string }
+  | { t: 'issueChip'; key: string; n: number; label: string; cls: string; title: string }
+  | { t: 'issueLink'; key: string; n: number; href: string; label: string; cls: string; title: string }
   /** MergeStatus.badgeHtml's descriptor, as data. */
   | { t: 'ms'; key: string; tone: string; label: string; title?: string; spinner?: boolean; glyph?: string; votes?: { yes: number; majority: number; reached: boolean } }
   /** BuildVenues.chipHtml — where this session's turns run. */
@@ -387,7 +395,8 @@ export interface RowTag {
 export interface RowBrief {
   /** The neutral tile's glyph. */
   kind: 'request' | 'change' | 'live' | 'vote';
-  noun: string;
+  /** Which word names it ("Change #4456", "Request"): a key, the row reads the message. */
+  noun: 'change' | 'request' | 'vote';
   n: number | null;
   /** Who made it ('' when nobody is named). */
   by: string;
@@ -545,8 +554,8 @@ export interface DevWorkshopView {
      * is the one it needs (ActionSpec.approve, B7): the item reads Approve
      * and Don't approve instead of a vote.
      */
-    yes: { label: string; act: { fn: string; args: unknown[] } | null; approve?: boolean } | null;
-    no: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    yes: { label: string; tally?: string; act: { fn: string; args: unknown[] } | null; approve?: boolean } | null;
+    no: { label: string; tally?: string; act: { fn: string; args: unknown[] } | null } | null;
     /** The caption's facts, lifted off the card's meta line. */
     who?: string | null;
     ago?: string;

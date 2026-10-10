@@ -5,6 +5,8 @@ import {
   PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { listText } from '../../lib/i18n/runtime';
 import { openReport } from '../dialogs/report';
 import {
   deleteMessage, discardFailed, edit, markUnread, messageAddress, openThread, react, retrySend, scopeKey, setReply,
@@ -56,6 +58,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
  */
 
 function Attachment({ attachment }: { attachment: ConversationMessage['attachments'][number] }) {
+  const t = useMessages('messages');
   const image = attachment.contentType.startsWith('image/');
   const html = attachment.contentType === 'text/html' || /\.html?$/i.test(attachment.name);
   // #3286: a plain tap opens the picture in the app's own viewer, which has
@@ -66,7 +69,7 @@ function Attachment({ attachment }: { attachment: ConversationMessage['attachmen
       {image ? <a href={attachment.url} target="_blank" rel="noopener noreferrer" data-image-open="" onClick={(event) => openInViewer(event, () => setViewing(true))}><img src={attachment.url} alt={attachment.name} loading="lazy" /></a> : <span className="messages-file-icon" aria-hidden="true">{html ? '</>' : '↓'}</span>}
       {viewing ? <ImageViewer src={attachment.url} alt={attachment.name} onClose={() => setViewing(false)} /> : null}
       <div className="min-w-0 flex-1"><a className="font-medium truncate block" href={attachment.url} download>{attachment.name}</a><span>{fileSize(attachment.size)}</span></div>
-      {html && attachment.viewUrl ? <a className="messages-attachment-view" href={attachment.viewUrl} target="_blank" rel="noopener noreferrer">Preview</a> : null}
+      {html && attachment.viewUrl ? <a className="messages-attachment-view" href={attachment.viewUrl} target="_blank" rel="noopener noreferrer">{t('messages:row.attachmentPreview')}</a> : null}
     </div>
   );
 }
@@ -117,6 +120,7 @@ export const MessageRow = memo(function MessageRow({
    */
   block?: ChangeBlock | null;
 }) {
+  const t = useMessages('messages');
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
   // #4655: in a direct message people are named bare ("ada", not "@ada"),
   // everywhere this row names someone — its author line, a quote, the sheet
@@ -154,7 +158,7 @@ export const MessageRow = memo(function MessageRow({
     if (!content || content === message.content) { setEditing(false); return; }
     setBusy(true); setNotice('');
     try { await edit(message.id, content); setEditing(false); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Your edit wasn’t saved.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.edit')); }
     finally { setBusy(false); }
   }
 
@@ -163,7 +167,7 @@ export const MessageRow = memo(function MessageRow({
   async function toggle(emoji: string) {
     setPicker(null); setNotice('');
     try { await react(message.id, emoji); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t update the reaction.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.reaction')); }
   }
 
   // A pick from the full picker ADDS the reaction (and makes it recent); it
@@ -177,42 +181,42 @@ export const MessageRow = memo(function MessageRow({
   async function save() {
     setNotice('');
     try { await toggleSaved(message.id); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t update your saved messages.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.saved')); }
   }
 
   async function blockSender() {
     if (mine || !message.sender.id) return;
     // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
     const ok = await confirmAction({
-      title: `Block ${senderName(message.sender, { bare })}?`,
-      message: 'Their messages in shared chats and app discussions will be hidden, and they won’t be able to message you directly.',
-      confirmLabel: 'Block',
+      title: message.sender.unnamed ? (message.sender.id ? t('messages:row.block.titleUnknownHandle') : t('messages:row.block.titleUnknown')) : t('messages:row.block.title', { name: senderName(message.sender, { bare }) }),
+      message: t('messages:row.block.message'),
+      confirmLabel: t('messages:row.block.confirm'),
       danger: true,
     });
     if (!ok) return;
     setBusy(true); setNotice('');
     try { await setUserBlocked(message.sender.id, true); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t block this person.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.block')); }
     finally { setBusy(false); }
   }
 
   async function remove() {
     const ok = await confirmAction({
-      title: 'Delete this message?',
-      message: 'Everyone will see “Message deleted” in its place. This can’t be undone.',
-      confirmLabel: 'Delete',
+      title: t('messages:row.delete.title'),
+      message: t('messages:row.delete.message'),
+      confirmLabel: t('messages:row.delete.confirm'),
       danger: true,
     });
     if (!ok) return;
     setNotice('');
     try { await deleteMessage(message.id); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t delete this message.'); }
+    catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.delete')); }
   }
 
   async function unread() {
     setNotice('');
-    try { await markUnread(message.id); toast('Marked unread'); }
-    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t mark this unread.'); }
+    try { await markUnread(message.id); toast(t('messages:row.markedUnread')); }
+    catch (err) { setNotice(err instanceof Error ? err.message : t('messages:row.error.unread')); }
   }
 
   function startEdit() { setEditValue(message.content); setEditing(true); }
@@ -220,36 +224,36 @@ export const MessageRow = memo(function MessageRow({
   // The ⋯ menu, by whose message it is and what kind of chat it sits in.
   const items: MenuItem[] = [];
   if (canThread) {
-    items.push({ key: 'thread', label: message.thread ? 'View thread' : 'Reply in thread', icon: ThreadIcon, onSelect: () => openThread(message.id) });
+    items.push({ key: 'thread', label: message.thread ? t('messages:row.menu.viewThread') : t('messages:row.menu.replyInThread'), icon: ThreadIcon, onSelect: () => openThread(message.id) });
   }
-  if (mine && message.content && live) items.push({ key: 'edit', label: 'Edit message', icon: PencilSquareIcon, onSelect: startEdit });
+  if (mine && message.content && live) items.push({ key: 'edit', label: t('messages:row.menu.edit'), icon: PencilSquareIcon, onSelect: startEdit });
   if (message.content) {
-    items.push({ key: 'copy', label: 'Copy text', icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, 'Message text copied'); } });
+    items.push({ key: 'copy', label: t('messages:row.menu.copyText'), icon: CopyIcon, onSelect: () => { void copyToClipboard(message.content, t('messages:row.textCopied')); } });
   }
   // #4055: its pictures onto the device, whoever sent them.
   const pictures = downloadableImages(images.map((att) => ({ src: att.url, name: att.name })));
   if (pictures.length) items.push({ key: 'download', label: downloadLabel(pictures.length), icon: DownloadIcon, onSelect: () => { void saveImages(pictures); } });
   items.push({
-    key: 'link', label: 'Copy link to message', icon: LinkIcon,
-    onSelect: () => { void copyToClipboard(absoluteLink(messageAddress(conversationId, message.id)), 'Link copied'); },
+    key: 'link', label: t('messages:row.menu.copyLink'), icon: LinkIcon,
+    onSelect: () => { void copyToClipboard(absoluteLink(messageAddress(conversationId, message.id)), t('messages:row.linkCopied')); },
   });
-  if (!mine && !inThread) items.push({ key: 'unread', label: 'Mark unread', icon: EnvelopeIcon, onSelect: () => { void unread(); } });
+  if (!mine && !inThread) items.push({ key: 'unread', label: t('messages:row.menu.markUnread'), icon: EnvelopeIcon, onSelect: () => { void unread(); } });
   if (mine) {
-    items.push({ key: 'delete', label: 'Delete message', icon: DraftTrashIcon, danger: true, separated: true, onSelect: () => { void remove(); } });
+    items.push({ key: 'delete', label: t('messages:row.menu.delete'), icon: DraftTrashIcon, danger: true, separated: true, onSelect: () => { void remove(); } });
   } else {
     items.push({
-      key: 'report', label: 'Report message', icon: FlagIcon, separated: true,
-      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: `Message from ${senderName(message.sender, { bare })}`, userId: message.sender.id }),
+      key: 'report', label: t('messages:row.menu.report'), icon: FlagIcon, separated: true,
+      onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: message.sender.unnamed ? (message.sender.id ? t('messages:row.reportLabelUnknownHandle') : t('messages:row.reportLabelUnknown')) : t('messages:row.reportLabel', { name: senderName(message.sender, { bare }) }), userId: message.sender.id }),
     });
     if (message.sender.id) {
-      items.push({ key: 'block', label: `Block ${senderName(message.sender, { bare })}`, icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
+      items.push({ key: 'block', label: message.sender.unnamed ? (message.sender.id ? t('messages:row.menu.blockUnknownHandle') : t('messages:row.menu.blockUnknown')) : t('messages:row.menu.block', { name: senderName(message.sender, { bare }) }), icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
     }
   }
 
   // The phone's sheet: the bar's Reply and Save first, then the same menu.
   const sheetItems: MenuItem[] = [
-    { key: 'reply', label: 'Reply', icon: ReplyArrowIcon, onSelect: () => setReply(scope, message) },
-    { key: 'save', label: message.saved ? 'Unsave' : 'Save', icon: message.saved ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => { void save(); } },
+    { key: 'reply', label: t('messages:row.sheet.reply'), icon: ReplyArrowIcon, onSelect: () => setReply(scope, message) },
+    { key: 'save', label: message.saved ? t('messages:row.sheet.unsave') : t('messages:row.sheet.save'), icon: message.saved ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => { void save(); } },
     ...items,
   ];
 
@@ -281,7 +285,9 @@ export const MessageRow = memo(function MessageRow({
   // card the message carries by it (a hidden head filters nothing).
   if (dropHead && head) head.hidden = true;
   const spokenLabel = dropHead && head
-    ? (head.title ? `Request #${head.issueNumber}: ${head.title}` : `Request #${head.issueNumber}`)
+    ? (head.title
+      ? t('messages:row.botBlock.requestLabel', { number: String(head.issueNumber), title: head.title })
+      : t('messages:row.botBlock.requestLabelUntitled', { number: String(head.issueNumber) }))
     : null;
   const words = !message.content ? null : head
     ? <BotHeadWords head={head} objects={message.objects} channels={channels} />
@@ -291,12 +297,12 @@ export const MessageRow = memo(function MessageRow({
   // message that stands as the row's text. A deleted message says so in its
   // place and nothing else (#2387).
   const body = message.deleted ? (
-    <p className="messages-deleted">Message deleted</p>
+    <p className="messages-deleted">{t('messages:row.deleted')}</p>
   ) : (
     <>
-      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare })}</span><p>{message.reply.deleted ? 'Message deleted' : plainText(message.reply.content) || 'Attachment'}</p></button> : null}
+      {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}
       {editing ? (
-        <div className="messages-edit"><textarea ref={editRef} aria-label="Edit message" value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
+        <div className="messages-edit"><textarea ref={editRef} aria-label={t('messages:row.editLabel')} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>{t('core:common.save')}</button><button type="button" onClick={() => setEditing(false)}>{t('core:common.cancel')}</button></div></div>
       ) : isThanksMessage(message) ? (
         // #4392: the activity card Build it moved under a plan is the bot's
         // thanks: its words over the app's card and build line.
@@ -335,7 +341,7 @@ export const MessageRow = memo(function MessageRow({
       {/* #3660: a link in the words to one of Homeroom's own pages, as the
           card it names — for this reader, and never one already above. */}
       {message.content && !message.moderated ? <LinkEmbeds text={message.content} exclude={message.objects} /> : null}
-      {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users?.join(', ')} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
+      {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users ? listText(reaction.users) : undefined} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
       {message.thread && !inThread ? (
         <ThreadSummaryChip
           replyCount={message.thread.replyCount}
@@ -345,6 +351,7 @@ export const MessageRow = memo(function MessageRow({
           lastReply={message.thread.lastReply ? {
             face: <span className="msgx-thread-face"><UserAvatar user={message.thread.lastReply.sender} size="sm" shape="square" /></span>,
             name: message.thread.lastReply.sender.username,
+            ...(message.thread.lastReply.sender.unnamed ? { unnamed: 'unknown' as const } : {}),
             text: message.thread.lastReply.content,
           } : null}
           onOpen={() => openThread(message.id)}
@@ -391,16 +398,16 @@ export const MessageRow = memo(function MessageRow({
   // NO "sending…" (#2907). A message in flight says so by being faded
   // (app.css), which changes no line's height; the word came and went in a
   // line of its own on a continuation row and moved the transcript twice.
-  const status = message.editedAt && !message.deleted ? <span title={fullTime(message.editedAt)}>edited</span> : null;
+  const status = message.editedAt && !message.deleted ? <span title={fullTime(message.editedAt)}>{t('messages:row.edited')}</span> : null;
 
   // A send that failed says so under its text, with the two things to do
   // about it: send it again (the same idempotency key, so never twice) or
   // drop it. Its own line, not the header's: three more words beside the
   // name and time wrapped the header on a phone.
   const failedNote = message.failed ? <div className="messages-message-meta messages-message-failed-note" role="status">
-    <span className="text-red-700 dark:text-red-400">Not sent</span>
-    {message.clientKey ? <button type="button" className="messages-retry" onClick={() => void retrySend(message.clientKey as string)}>Retry</button> : null}
-    {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>Discard</button> : null}
+    <span className="text-red-700 dark:text-red-400">{t('messages:row.notSent')}</span>
+    {message.clientKey ? <button type="button" className="messages-retry" onClick={() => void retrySend(message.clientKey as string)}>{t('core:common.retry')}</button> : null}
+    {message.clientKey ? <button type="button" className="messages-discard" onClick={() => discardFailed(message.clientKey as string)}>{t('messages:row.discard')}</button> : null}
   </div> : null;
 
   // #4564: the change block this row belongs to, as classes and data its
@@ -415,7 +422,7 @@ export const MessageRow = memo(function MessageRow({
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : <UserAvatar user={message.sender} size="md" shape="square" />}
       <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : 'min-w-0 flex-1'}>
-        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender, { bare })}</span>{message.sender.bot ? <span className="messages-bot-badge">AI</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
+        {grouped ? null : <div className="messages-message-head"><span className={`messages-message-author ${mine ? 'text-violet-700 dark:text-violet-300' : ''}`}>{senderName(message.sender, { bare })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}</div>}
         {/* #4564: the dropped card's own label, spoken: a screen reader still
             hears which request these words are about, as the block's top
             shows. */}

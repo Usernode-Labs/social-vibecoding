@@ -56,6 +56,7 @@ import type { KeyboardEvent } from 'react';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Input } from '@/components/ui/input';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { settingsNavStore } from './settings-nav-store.js';
 
@@ -195,6 +196,7 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
   hits: FilterHit[];
   signOutHit: boolean;
 }) {
+  const t = useMessages('settings');
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && hits[0]) {
       e.preventDefault();
@@ -213,8 +215,8 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
       id={id}
       type="search"
       data-settings-filter=""
-      aria-label="Find a setting"
-      placeholder="Find a setting"
+      aria-label={t('settings:nav.filter.field')}
+      placeholder={t('settings:nav.filter.field')}
       autoComplete="off"
       spellCheck={false}
       value={query}
@@ -226,9 +228,10 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
 
 /** The one line both hosts show when nothing matches. */
 function NoMatch({ query, className }: { query: string; className: string }) {
+  const t = useMessages('settings');
   return (
     <p data-settings-filter-empty="" role="status" className={className}>
-      {`No settings match “${query.trim()}”.`}
+      {t('settings:nav.filter.noMatch', { query: query.trim() })}
     </p>
   );
 }
@@ -277,6 +280,7 @@ function NavRow({ item }: { item: NavItem }) {
  * ../index.tsx so the whole subtree has one owner.
  */
 export function SettingsNavDesktop() {
+  const t = useMessages('settings');
   const { desktop, visit } = useStoreState(settingsNavStore) as NavState;
   const [query, setQuery] = useFilterQuery(visit);
   const groups = desktop || [];
@@ -284,7 +288,7 @@ export function SettingsNavDesktop() {
   const signOutHit = matchesSignOut(query);
   const filtering = query.trim() !== '';
   return (
-    <nav id="settings-nav-desktop" aria-label="Settings sections" className="space-y-1">
+    <nav id="settings-nav-desktop" aria-label={t('settings:nav.sectionsName')} className="space-y-1">
       {desktop ? (
         <div className="pb-3">
           <FilterField id="settings-filter-desktop" query={query} setQuery={setQuery} hits={hits} signOutHit={signOutHit} />
@@ -308,7 +312,7 @@ export function SettingsNavDesktop() {
           ))}
           {signOutHit ? (
             <button type="button" data-settings-sign-out="" className={SIGN_OUT_HIT_ROW} onClick={() => signOut(setQuery)}>
-              Sign out
+              {t('settings:nav.filter.signOut')}
             </button>
           ) : null}
           {hits.length || signOutHit ? null : (
@@ -331,6 +335,7 @@ export function SettingsNavDesktop() {
  * that a viewport change without a repaint still cannot show two navs.
  */
 export function SettingsMobileMenu() {
+  const t = useMessages('settings');
   const { mobile, visit } = useStoreState(settingsNavStore) as NavState;
   const [query, setQuery] = useFilterQuery(visit);
   const groups = mobile || [];
@@ -368,7 +373,7 @@ export function SettingsMobileMenu() {
                   data-settings-sign-out=""
                   className={MENU_ROW}
                   titleClassName={SIGN_OUT_TITLE}
-                  title="Sign out"
+                  title={t('settings:nav.filter.signOut')}
                   chevron={false}
                   onClick={() => signOut(setQuery)}
                 />

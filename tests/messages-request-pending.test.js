@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -179,12 +180,15 @@ test('an unanswered direct request is named by its requester in the row and the 
   // B5: named as senderName names it; in a direct message, bare (#4655).
   assert.match(header, /active\.kind === 'direct' && person \? senderName\(person, \{ bare: true \}\)/);
   // The sender's own side of a request says it is pending too.
-  assert.match(header, /active\.awaitingAcceptance \? 'Request pending' : 'Direct message'/);
+  assert.equal(message('messages:header.subtitle.requestPending'), 'Request pending');
+  assert.equal(message('messages:header.subtitle.direct'), 'Direct message');
+  assert.match(header, /active\.awaitingAcceptance \? t\('messages:header\.subtitle\.requestPending'\) : t\('messages:header\.subtitle\.direct'\)/);
 });
 
 test('the phone bar over an unanswered request names its requester too', () => {
   const STORE = read('frontend/src/features/messages/store.ts');
-  assert.match(STORE, /: state\.route\.agent \? 'Messages' : chromeTitle\(state\.active\)\)/);
+  assert.equal(message('messages:store.header.messages'), 'Messages');
+  assert.match(STORE, /: state\.route\.agent \? t\('messages:store\.header\.messages'\) : chromeTitle\(state\.active\)\)/);
   const helper = STORE.slice(STORE.indexOf('function chromeTitle('));
   assert.match(helper, /active\.kind === 'direct' && active\.membershipStatus === 'invited' && active\.requester\?\.username\)\s*\{\s*return active\.requester\.username;/);
 });

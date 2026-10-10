@@ -32,6 +32,8 @@
 
 import { useSyncExternalStore } from 'react';
 
+import { t } from '../../../lib/i18n/runtime';
+
 export type InviteOffer = {
   /** The link's token. Null for the `?shot=invite-join` capture, which follows nothing. */
   token: string | null;
@@ -103,16 +105,19 @@ export function useInviteOffer(slug: string): InviteOffer | null {
  */
 export function invitedByLine(offer: Pick<InviteOffer, 'inviter' | 'inviterName' | 'inviterMadeIt' | 'building'>): string {
   if (offer.inviterMadeIt && offer.inviterName) {
-    return `${offer.inviterName} ${offer.building ? 'is making' : 'made'} it and invited you`;
+    return offer.building
+      ? t('project:invite.from.isMaking', { name: offer.inviterName })
+      : t('project:invite.from.made', { name: offer.inviterName });
   }
-  return offer.inviter ? `@${offer.inviter} invited you` : 'You were invited';
+  return offer.inviter ? t('project:invite.from.invited', { username: offer.inviter }) : t('project:invite.from.unnamed');
 }
 
+/** Why a link no longer works, by the server's reason: message ids, read when the toast is shown. */
 const DEAD: Record<string, string> = {
-  expired: 'That invite link has expired.',
-  revoked: 'That invite link was turned off.',
-  used_up: 'That invite link has been used as many times as it allows.',
-  unknown: 'That invite link does not work.',
+  expired: 'project:invite.dead.expired',
+  revoked: 'project:invite.dead.revoked',
+  used_up: 'project:invite.dead.usedUp',
+  unknown: 'project:invite.dead.unknown',
 };
 
 export type InviteJoin = {
@@ -137,7 +142,7 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
   const w = window as any;
   const toast = (msg: string, error = false) => w.PlatformUI?.toast?.(msg, error ? { error: true } : undefined);
   if (!offer.token) {
-    toast('This is a preview of an invite, so nothing was joined.');
+    toast(t('project:invite.previewOnly'));
     return FAILED;
   }
   let res: Response;
@@ -150,7 +155,7 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
     });
     res = w.UsernameFirstRun?.publicRetry ? await w.UsernameFirstRun.publicRetry(redeem) : await redeem();
   } catch {
-    toast('Could not join. Try again.', true);
+    toast(t('project:invite.joinFailed'), true);
     return FAILED;
   }
   if (res.status === 401) {
@@ -160,11 +165,11 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
   const result = await res.json().catch(() => ({}));
   if (result.reason === 'username_required') {
     // "Not now": the offer stays, for when they have one.
-    toast(result.error || 'Pick a username first.', true);
+    toast(result.error || t('project:invite.usernameFirst'), true);
     return FAILED;
   }
   if (!res.ok || !result.ok || !result.slug) {
-    toast(DEAD[result.reason] || 'Could not join. Try again.', true);
+    toast(DEAD[result.reason] ? t(DEAD[result.reason]) : t('project:invite.joinFailed'), true);
     if (!result.reason) return FAILED;
     // A link that died meanwhile is not this page's to offer any more: the
     // hero's own Join is still there.
@@ -179,6 +184,6 @@ export async function joinByInvite(offer: InviteSource): Promise<InviteJoin> {
   if (result.status === 'joined') w.HomePanels?.ensureLoaded?.({ force: true });
   void Promise.resolve(w.Home?.load?.()).catch(() => {});
   if (result.newAccount === true && offer.welcome?.(true, result.slug)) return { outcome: 'welcomed', slug: result.slug };
-  toast("You're in.");
+  toast(t('project:invite.joined'));
   return { outcome: 'joined', slug: result.slug };
 }

@@ -15,6 +15,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
+// The outbox words a failed send through the language runtime's global;
+// give it the real English one.
+globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
+
 const MODULE_PATH = require.resolve('../public/js/feedback-queue.js');
 
 function load() {

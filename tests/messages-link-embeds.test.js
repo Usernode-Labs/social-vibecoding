@@ -20,6 +20,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -240,6 +241,10 @@ test('Share to… is wired: the dialog, its sends, and the card menus that open 
   const appView = read('public/js/app-view.js');
   const share = appView.slice(appView.indexOf('  _shareCardToMessages(reference) {'));
   assert.match(share.slice(0, 600), /const dialog = window\.UsernodeReact\?\.dialogs\?\.shareTo;\s*if \(dialog\) return dialog\.open\(card\);/);
-  assert.equal((appView.match(/label: 'Share to…',/g) || []).length, 2, 'the issue and proposal ⋯ menus');
+  // Both ⋯ menus read their label from the catalog, each its own entry.
+  assert.equal((appView.match(/label: PlatformI18n\.t\('changes:proposal\.menu\.share'\),/g) || []).length, 1, 'the proposal ⋯ menu');
+  assert.equal(message('changes:proposal.menu.share'), 'Share to…');
+  assert.equal((appView.match(/label: PlatformI18n\.t\('changes:issue\.menu\.share'\),/g) || []).length, 1, 'the issue ⋯ menu');
+  assert.equal(message('changes:issue.menu.share'), 'Share to…');
   assert.doesNotMatch(appView, /'Share to Messages'/);
 });

@@ -24,6 +24,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
@@ -373,8 +374,10 @@ test('the two formerly-public sections stay reachable for non-admins', () => {
   assert.match(head, /if \(!isAdmin && !publicMode\)/,
     'a non-admin on any non-public section still bails');
   assert.match(head, /App\.navigateHome\(\)/, 'and lands on home');
-  assert.match(fn.slice(0, 4000), /publicMode \? 'Platform status' : 'Admin & moderation'/,
+  assert.match(fn.slice(0, 4000), /publicMode\s+\? PlatformI18n\.t\('shell:title\.platformStatus'\)\s+: PlatformI18n\.t\('shell:title\.admin'\)/,
     'public mode retitles the header');
+  assert.equal(message('shell:title.platformStatus'), 'Platform status');
+  assert.equal(message('shell:title.admin'), 'Admin & moderation');
 });
 
 test('section switches replace, never push, history', () => {

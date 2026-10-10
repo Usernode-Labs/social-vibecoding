@@ -938,12 +938,21 @@ async function listRepoFiles(owner, repo, ref) {
     const { data } = await octokit.rest.git.getTree({ owner, repo, tree_sha: ref || 'HEAD', recursive: 'true' });
     const files = (data.tree || [])
       .filter((entry) => entry.type === 'blob')
-      .map((entry) => ({ path: entry.path, size: entry.size || 0 }));
+      .map((entry) => ({ path: entry.path, size: entry.size || 0, sha: entry.sha }));
     return { files, truncated: data.truncated === true };
   } catch (err) {
     if (err.status === 404 || err.status === 409) return null;
     throw err;
   }
+}
+
+// One blob's decoded text, by its sha (listRepoFiles gives each file's). The
+// contents API stops returning a file's bytes at 1 MB; the blob API does not,
+// which is what a large generated file needs (services/language-sync-runner.js).
+async function getBlobContent(owner, repo, sha) {
+  const octokit = await getReadOctokit(owner);
+  const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: sha });
+  return Buffer.from(data.content || '', data.encoding || 'base64').toString('utf-8');
 }
 
 // `fromBranch` (default 'main') lets callers fork off an arbitrary existing
@@ -2851,6 +2860,7 @@ module.exports = {
   createRootCommit,
   getFileContent,
   listRepoFiles,
+  getBlobContent,
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,

@@ -88,6 +88,10 @@
        that fixes the background. */
     html { background-color: #f4f2e4; color-scheme: light; }
     html.dark { background-color: #0b0d1b; color-scheme: dark; }
+    /* Held while this device's language loads (the script after the theme
+       block). The ground above still paints, so the wait reads as the page
+       loading, not as a blank screen. */
+    html.language-pending body { visibility: hidden; }
     /* The first-session hold (the script after the theme block): the page
        ground above, and nothing else, until the shell draws its first
        signed-in screen. Inline for the same reason as the ground. */
@@ -222,6 +226,25 @@
       apply();
 
       return { get, set, apply, onChange };
+    }());
+  </script>
+  <script>
+    // Language first paint (frontend/locales/README.md). The document is
+    // prerendered in English, and another language is applied after
+    // hydration, once its pack has loaded. When this device last showed
+    // Homeroom in another language, hold the page until then rather than
+    // flash the English: lib/i18n/core.ts writes the key on every switch and
+    // lifts the hold the moment a language is on screen. The hold lifts
+    // itself after three seconds whatever happens, so a slow or failed pack
+    // costs a moment of English, never the page.
+    (function () {
+      try {
+        var shown = localStorage.getItem('homeroom:language:shown');
+        if (!shown || shown === 'en') return;
+        var root = document.documentElement;
+        root.classList.add('language-pending');
+        setTimeout(function () { root.classList.remove('language-pending'); }, 3000);
+      } catch (e) { /* storage blocked: nothing remembered, nothing held */ }
     }());
   </script>
   <script>

@@ -21,6 +21,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { loadTsx, FRONTEND } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const RealReact = require(require.resolve('react', { paths: [FRONTEND] }));
 
@@ -64,7 +65,13 @@ const textOf = (el) => walk(el.props.children).text.join('');
 function mount(fetchImpl) {
   const store = createHookStore();
   const mod = loadTsx('frontend/src/features/settings/delete-account.tsx', {
-    stubs: { react: store.React, './facade.js': { ensureSettings: async () => null } },
+    // The component is called outside React's renderer, so it gets the English
+    // text directly rather than through the hook's context.
+    stubs: {
+      react: store.React,
+      './facade.js': { ensureSettings: async () => null },
+      '../../lib/i18n/react': { useMessages: () => englishPlatformI18n().t },
+    },
   });
   const calls = [];
   global.fetch = async (url, opts) => { calls.push(url); return fetchImpl(url, opts); };

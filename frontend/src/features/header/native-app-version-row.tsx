@@ -22,6 +22,7 @@
 import { type ReactNode } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { useMessages } from '../../lib/i18n/react';
 import { nativeAppVersionStore } from './native-app-version-store';
 
 /**
@@ -43,10 +44,11 @@ const ROW = {
 
 export function NativeAppVersionRow(): ReactNode {
   const { value } = useStoreState(nativeAppVersionStore);
+  const t = useMessages('wallet');
   return (
     <div id="drawer-row-native-app-version" className={value ? ROW.shown : ROW.hidden}>
       <span className="drawer-ver-label">
-        Mobile app version
+        {t('wallet:appVersion.label')}
       </span>
       {/* A text child, never `dangerouslySetInnerHTML`: this string comes from
           the native runtime, and the module it replaces used `textContent` for

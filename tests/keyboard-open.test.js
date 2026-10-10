@@ -41,6 +41,7 @@
 // numbers below are the iPhone 17 Pro's 874pt screen with a 336pt keyboard.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -597,11 +598,22 @@ test('every button labelled Send in the shell keeps focus (a new composer is cau
     if (d.isDirectory()) return rel.endsWith('/admin') ? [] : walk(rel);
     return /\.(tsx|jsx)$/.test(d.name) ? [rel] : [];
   });
+  assert.equal(message('messages:composer.send'), 'Send message');
+  assert.equal(message('project:feedThread.reply.send'), 'Send reply');
+  assert.equal(message('project:hub.composer.send'), 'Send');
   let seen = 0;
   for (const file of walk('frontend/src')) {
     const src = read(file);
-    for (let at = src.indexOf('aria-label="Send'); at >= 0; at = src.indexOf('aria-label="Send', at + 1)) {
-      const tag = openingTagAt(src, at, file);
+    // A Send is labelled in the source, or by a catalog entry whose English
+    // starts with "Send" (aria-label={t('chat:group.composer.send')}).
+    const labelled = /aria-label=(?:"Send|\{t\('([a-z]+:[A-Za-z0-9.]+)'\)\})/g;
+    for (let found = labelled.exec(src); found; found = labelled.exec(src)) {
+      if (found[1]) {
+        let english = '';
+        try { english = message(found[1]); } catch { /* an id from another reader */ }
+        if (!english.startsWith('Send')) continue;
+      }
+      const tag = openingTagAt(src, found.index, file);
       seen += 1;
       // The dev session's Send carries it in the shared props pinned above.
       assert.ok(KEEPS_FOCUS.test(tag) || /\{\.\.\.common\}/.test(tag), `${file}: ${tag.slice(0, 80)}`);

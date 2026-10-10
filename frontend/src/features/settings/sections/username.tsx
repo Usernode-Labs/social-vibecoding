@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
+import { useMessages } from '../../../lib/i18n/react';
 
 /**
  * Change username — POST /api/me/username.
@@ -24,17 +25,18 @@ import { PasswordInput } from '@/components/ui/password-input';
  * validation.
  */
 export function UsernameSection() {
+  const t = useMessages('settings');
   return (
     <div data-settings-section="username" className="hidden">
       <div id="change-username-section">
-        <SectionHeading title="Username">
-          Your @handle is how you sign in and the address of your public builder page.
+        <SectionHeading title={t('settings:username.title')}>
+          {t('settings:username.intro')}
         </SectionHeading>
 
         <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           {/* Filled by Settings._syncUsername() from the session user. */}
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex items-center gap-2 text-[17px]">
-            <span className="text-zinc-500 dark:text-zinc-400">Current</span>
+            <span className="text-zinc-500 dark:text-zinc-400">{t('settings:username.current')}</span>
             <span id="cu-current" className="ml-auto font-medium text-zinc-900 dark:text-zinc-100">—</span>
           </div>
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
@@ -44,7 +46,7 @@ export function UsernameSection() {
               autoComplete="off"
               autoCapitalize="off"
               spellCheck={false}
-              placeholder="New username"
+              placeholder={t('settings:username.newPlaceholder')}
               box="card"
               ring="bare"
               hint="dim"
@@ -54,7 +56,7 @@ export function UsernameSection() {
             <PasswordInput
               id="cu-password"
               autoComplete="current-password"
-              placeholder="Current password"
+              placeholder={t('settings:username.passwordPlaceholder')}
               box="card"
               ring="bare"
               hint="dim"
@@ -63,14 +65,11 @@ export function UsernameSection() {
         </div>
 
         <Button id="cu-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3">
-          Change username
+          {t('settings:username.submit')}
         </Button>
 
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
-          Letters, numbers and underscores, 3–32 characters, so people can still
-          @mention you. Your old handle is kept reserved for you rather than
-          released, so links and mentions that used it keep pointing at you and
-          nobody else can take it. You can change your username again after 30 days.
+          {t('settings:username.rules')}
         </p>
 
         <StatusLine id="cu-status" />

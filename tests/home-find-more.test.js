@@ -28,6 +28,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const { installPanelsStore } = require('./helpers/home-grid-store');
 const { renderComponent } = require('./lib/render-tsx');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 // The panel RENDERERS moved to frontend/src/features/home/panels/*.tsx when
 // the three sections became React (#1191); home-panels.js keeps the data and
 // the view models. Assertions about markup read the components, assertions
@@ -70,6 +71,7 @@ function makePanels({ canCreate = true, featured = [] } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home-panels.js imports its view-model store; ./helpers/home-modules strips
   // the line so the source runs as classic script text, and this supplies the
@@ -117,6 +119,7 @@ function makeHome({ search = '', canCreateApps = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
   // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
@@ -452,7 +455,8 @@ test('the Discover widget swaps its tile row for a note, never an empty box', ()
   // category is empty rather than when the curated half is.
   assert.match(src, /tiles\.length \?/);
   assert.doesNotMatch(src, /view\.featured\.length \?/);
-  assert.match(src, /Nothing to discover right now/);
+  assert.match(src, /\{t\('home:discover\.empty\.title'\)\}/);
+  assert.equal(message('home:discover.empty.title'), 'Nothing to discover right now');
   // The browse control always renders: it is THE discovery path, so it must
   // not depend on curation existing. It lives in the SECTION HEADING now, not
   // in the card at all — see the block test below — so it does not even
@@ -564,8 +568,9 @@ test('the apps grid is four columns at every width, two rows by default', () => 
   assert.match(HOME_SRC, /chromeStore\.set\(\{\s*moreCount: count \|\| 0,/);
   assert.match(
     read('frontend/src/features/home/apps-more.tsx'),
-    /`Show all \$\{moreCount\} apps`/
+    /\{t\('home:grid\.showAll', \{ count: moreCount \}\)\}/
   );
+  assert.equal(message('home:grid.showAll', { count: 9 }), 'Show all 9 apps');
   assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
     'the expander has a host outside #app-list');
 });
@@ -733,7 +738,8 @@ test('Create an app is the launcher grid\'s trailing tile, for every account', (
 test('a viewer with no quota can open the dialog to inspect it', () => {
   // The compact locked state carries the shared hint in its tooltip;
   // tapping opens the detailed used-of-limit row.
-  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'View your app allowance or request more slots\.'/);
+  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'home:create\.disabledHint'/);
+  assert.equal(message('home:create.disabledHint'), 'View your app allowance or request more slots.');
   const btn = TILE_SRC.slice(TILE_SRC.indexOf('onClick={'));
   assert.match(btn, /App\?\.showCreateModal\?\.\(\)/,
     'both enabled and locked tiles open the create modal');

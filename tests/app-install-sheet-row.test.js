@@ -33,6 +33,7 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { installAppCard } = require('./helpers/app-card');
 const { installGridStore } = require('./helpers/home-grid-store');
 const { HOME_RAW, HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -155,6 +156,7 @@ function makeHomeEnv(installHost) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   installAppCard(sandbox);
   installGridStore(sandbox);

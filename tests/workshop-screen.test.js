@@ -38,6 +38,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderComponent, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 const { tokenize } = require('./helpers/html-tokens');
 
 const ROOT = path.join(__dirname, '..');
@@ -512,7 +513,10 @@ test('rows go most recently active first; undated ones last, in the server\'s or
 
 test('groupRows: three sections in order, empty ones left out, an unknown audience read as open', () => {
   const { groupRows, SECTIONS, SECTION_LIMIT } = loadTsx('frontend/src/features/workshop/index.tsx');
+  // A section's label is a message id; the words are what the English catalog holds for it.
   assert.deepEqual(SECTIONS.map((s) => [s.key, s.label]),
+    [['open', 'communities:sections.open.label'], ['invited', 'communities:sections.invited.label'], ['solo', 'communities:sections.solo.label']]);
+  assert.deepEqual(SECTIONS.map((s) => [s.key, message(s.label)]),
     [['open', 'Public communities'], ['invited', 'Private communities'], ['solo', 'Just you']]);
   assert.equal(SECTION_LIMIT, 3, 'three most recent, then "Show N more"');
   const out = groupRows([
@@ -674,7 +678,8 @@ test('#communities is a route of its own, and #workshop still lands there', () =
     'restoreFromHash resolves both, so an old bookmark and a cold boot land here');
   assert.match(appJs, /navigateToWorkshop\(\) \{/);
   assert.match(appJs, /_exitWorkshop\(\) \{[\s\S]*?App\._inWorkshop = false;/);
-  assert.match(appJs, /App\.setHeaderTitle\('Communities'\)/);
+  assert.match(appJs, /App\.setHeaderTitle\(PlatformI18n\.t\('shell:title\.communities'\)\)/);
+  assert.equal(message('shell:title.communities'), 'Communities');
   // THE DOOR IS A TAB (#2718), the middle one of five since the rename: the
   // screen is Communities to the people who use it, and keeps its key.
   const html = read('public/index.html');
@@ -931,7 +936,11 @@ test('the Needs you row names the communities waiting on you, and the tabs are g
   assert.match(src, /data-workshop-needs-open=""/);
   // #3526: the title counts the votes not yet swiped past; with none new it
   // says how many were skipped, since the row is still the way to them.
-  assert.match(src, /title=\{totals\.needs > 0\s*\? `\$\{totals\.needs\} \$\{totals\.needs === 1 \? 'vote' : 'votes'\} waiting on you`\s*: `\$\{totals\.owed\} \$\{totals\.owed === 1 \? 'vote' : 'votes'\} you skipped`\}/);
+  assert.match(src, /title=\{totals\.needs > 0\s*\? t\('communities:needsYou\.waiting', \{ count: totals\.needs \}\)\s*: t\('communities:needsYou\.skipped', \{ count: totals\.owed \}\)\}/);
+  assert.deepEqual([1, 2].map((count) => message('communities:needsYou.waiting', { count })),
+    ['1 vote waiting on you', '2 votes waiting on you']);
+  assert.deepEqual([1, 2].map((count) => message('communities:needsYou.skipped', { count })),
+    ['1 vote you skipped', '2 votes you skipped']);
   assert.match(src, /onClick=\{\(\) => workshopController\.setTab\('needs'\)\}/, 'the row opens the feed');
   assert.match(src, /data-workshop-needs-back=""/, 'and the feed has a way back');
   assert.doesNotMatch(src, /—'|'[^'\n]*—[^'\n]*'/, 'no em dash in the screen\'s copy');
@@ -1056,12 +1065,15 @@ test('By category: Topics, then Other categories, each topic with a door to its 
   const src = read(WS);
   // Two headings, and only when the project has topics: one without draws
   // its categories as it always did.
-  assert.match(src, /\{themes\.some\(\(t\) => t\.topic\) \? \(\s*<SectionHeader className="pt-3" data-ws-themes-head="topics">Topics<\/SectionHeader>/);
-  assert.match(src, /themes\.some\(\(x\) => x\.topic\) && !t\.topic && \(i === 0 \|\| themes\[i - 1\]\.topic\) \? \(\s*<SectionHeader className="pt-3" data-ws-themes-head="other">Other categories<\/SectionHeader>/);
+  assert.match(src, /\{themes\.some\(\(theme\) => theme\.topic\) \? \(\s*<SectionHeader className="pt-3" data-ws-themes-head="topics">\{t\('project:allItems\.themes\.topics'\)\}<\/SectionHeader>/);
+  assert.equal(message('project:allItems.themes.topics'), 'Topics');
+  assert.match(src, /themes\.some\(\(x\) => x\.topic\) && !theme\.topic && \(i === 0 \|\| themes\[i - 1\]\.topic\) \? \(\s*<SectionHeader className="pt-3" data-ws-themes-head="other">\{t\('project:allItems\.themes\.other'\)\}<\/SectionHeader>/);
+  assert.equal(message('project:allItems.themes.other'), 'Other categories');
   // A topic card's foot is "Discuss in #name ›": an anchor with the channel's
   // own address, which opens it on the page and leaves the card shut.
   assert.match(src, /className="dev-ws-link dev-ws-topic-link"\s*data-ws-topic-channel=\{theme\.topic\.handle\}\s*href=\{placeHref\(slug, channelPlace\(theme\.topic\.handle\)\)\}/);
-  assert.match(src, /\{`Discuss in #\$\{theme\.topic\.handle\} ›`\}/);
+  assert.match(src, /\{t\('project:allItems\.theme\.discuss', \{ channel: theme\.topic\.handle \}\)\}/);
+  assert.equal(message('project:allItems.theme.discuss', { channel: 'onboarding' }), 'Discuss in #onboarding ›');
   assert.match(src, /e\.stopPropagation\(\);/);
 });
 

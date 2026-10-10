@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -166,6 +167,7 @@ function loadNotifications({ welcome } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   sandbox.agoStamp = agoStamp;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.runInContext(NOTIF_SRC, sandbox);
   const N = sandbox.Notifications;
   N._renderBadge = () => {};
@@ -190,11 +192,18 @@ test('4. a group\'s invite is to join it, with the maker\'s note and how many ar
   ];
   N._renderInvites();
   const [join, build, approver] = JSON.parse(JSON.stringify(state.invites));
-  assert.deepEqual([join.who, join.verb, join.appName, join.note, join.members],
-    ['@alex_t1005', 'invited you to join', 'Page Turners', 'Come read with us!', '2 people are in it']);
-  assert.deepEqual([build.verb, build.note, build.members], ['invited you to build', '', '1 person is in it'],
+  // The sentence is one catalog message, chosen by what is asked; the row
+  // carries its id with the two names as its parameters.
+  assert.deepEqual([join.who, join.line, join.inviter, join.appName, join.note, join.members],
+    ['@alex_t1005', 'notifications:invite.line.join', 'alex_t1005', 'Page Turners', 'Come read with us!', '2 people are in it']);
+  assert.deepEqual([build.line, build.note, build.members], ['notifications:invite.line.build', '', '1 person is in it'],
     'a project anyone can use but only its invited people build');
-  assert.deepEqual([approver.verb, approver.note, approver.members], ['asked you to help approve changes to', '', '']);
+  assert.deepEqual([approver.line, approver.note, approver.members], ['notifications:invite.line.approve', '', '']);
+  const names = { username: 'alex_t1005', project: 'Page Turners' };
+  assert.equal(message('notifications:invite.line.join', names), '<0>@alex_t1005</0> invited you to join <1>Page Turners</1>');
+  assert.equal(message('notifications:invite.line.build', names), '<0>@alex_t1005</0> invited you to build <1>Page Turners</1>');
+  assert.equal(message('notifications:invite.line.approve', names),
+    '<0>@alex_t1005</0> asked you to help approve changes to <1>Page Turners</1>');
 
   // The history row under Today says the same.
   const row = (detail) => N._rowView({ id: 9, kind: 'collab_invite', detail, readAt: null, createdAt: PENDING.createdAt,

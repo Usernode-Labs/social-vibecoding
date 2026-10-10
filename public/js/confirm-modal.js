@@ -21,10 +21,10 @@
 (function () {
   function show(opts) {
     const {
-      title = 'Are you sure?',
+      title = PlatformI18n.t('shell:confirm.title'),
       message = '',
-      confirmLabel = 'OK',
-      cancelLabel = 'Cancel',
+      confirmLabel = PlatformI18n.t('core:common.ok'),
+      cancelLabel = PlatformI18n.t('core:common.cancel'),
       danger = false,
     } = opts || {};
 

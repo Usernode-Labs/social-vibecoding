@@ -16,6 +16,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -220,7 +221,10 @@ test('the screen ships hidden and empty, one root for all three views', () => {
   assert.doesNotMatch(html, /data-profile-work-group|Loading/, 'nothing but the frame until it is opened');
   assert.equal(mod.workKind('votes'), 'votes');
   assert.equal(mod.workKind('anything'), 'changes');
-  assert.deepEqual(mod.WORK_TITLES, { changes: 'Your changes', requests: 'Your requests', votes: 'Your votes' });
+  // The titles are catalog entries; the table holds their ids.
+  assert.deepEqual(mod.WORK_TITLES,
+    { changes: 'profile:work.changes.title', requests: 'profile:work.requests.title', votes: 'profile:work.votes.title' });
+  assert.deepEqual(Object.values(mod.WORK_TITLES).map((id) => message(id)), ['Your changes', 'Your requests', 'Your votes']);
 });
 
 test('each view draws its own groups; long ones fold; Your requests ends on Suggest an improvement', () => {
@@ -289,7 +293,11 @@ test('the router: three addresses no username can have, one screen, the bar name
   const app = read('public/js/app.js');
   assert.match(app, /PROFILE_WORK: \{\s*proposals: 'changes',\s*'your-changes': 'changes',\s*'your-requests': 'requests',\s*'your-votes': 'votes',\s*\},/);
   assert.match(app, /if \(parts\[0\] === 'profile' && App\.PROFILE_WORK\[parts\[1\]\]\) \{[\s\S]{0,600}?App\.navigateToProfileProposals\(App\.PROFILE_WORK\[parts\[1\]\]\);/);
-  assert.match(app, /App\.setHeaderTitle\(App\.PROFILE_WORK_TITLES\[view\]\);/);
+  // The table holds the three titles' message ids, read when the bar is named.
+  assert.match(app, /App\.setHeaderTitle\(PlatformI18n\.t\(App\.PROFILE_WORK_TITLES\[view\]\)\);/);
+  assert.match(app, /PROFILE_WORK_TITLES: \{\s*changes: 'shell:title\.yourChanges', requests: 'shell:title\.yourRequests', votes: 'shell:title\.yourVotes',\s*\},/);
+  assert.deepEqual(['shell:title.yourChanges', 'shell:title.yourRequests', 'shell:title.yourVotes'].map((id) => message(id)),
+    ['Your changes', 'Your requests', 'Your votes']);
   assert.match(app, /window\.UsernodeReact\?\.profileProposals\?\.open\?\.\(view\);/);
   // The dialog's "See your requests" lands on the view.
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const SEE_MINE_ROUTE = '#profile\/your-requests';/);

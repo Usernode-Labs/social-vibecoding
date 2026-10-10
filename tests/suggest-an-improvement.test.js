@@ -18,6 +18,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -63,23 +64,34 @@ test('no user-facing copy says "Ask for a change" any more', () => {
 
 test('every door to filing a request says Suggest an improvement', () => {
   assert.match(read('frontend/src/features/improve/actions.tsx'),
-    /id="improve-row-feedback"\s+label="Suggest an improvement"/, 'the Homeroom menu\'s one button');
+    /id="improve-row-feedback"\s+label=\{t\('agent:menu\.suggestImprovement'\)\}/, 'the Homeroom menu\'s one button');
+  assert.equal(message('agent:menu.suggestImprovement'), 'Suggest an improvement');
   assert.match(read('frontend/src/features/dialogs/feedback.tsx'),
-    /<h2 className="text-lg font-bold">\s*Suggest an improvement\s*<\/h2>/, 'the dialog it opens, from every way in');
+    /<h2 className="text-lg font-bold">\s*\{t\('dialogs:feedback\.heading'\)\}\s*<\/h2>/);
+  assert.equal(message('dialogs:feedback.heading'), 'Suggest an improvement', 'the dialog it opens, from every way in');
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'),
+    /toast\?\.\(t\('dialogs:feedback\.draftSaved'\)\)/);
+  assert.match(message('dialogs:feedback.draftSaved'),
     /Reopen Suggest an improvement to finish it\./, 'the rescued-draft toast names it');
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(row, /data-plus="issue"[\s\S]{0,200}title="Suggest an improvement"/, 'the hub\'s ⋯ leads with it');
-  assert.match(row, /'Suggest an improvement, import a PR or manage this app'/, 'and the ⋯ says so to a screen reader');
+  assert.match(row, /data-plus="issue"[\s\S]{0,200}title=\{t\('project:menu\.suggest\.title'\)\}/, 'the hub\'s ⋯ leads with it');
+  assert.equal(message('project:menu.suggest.title'), 'Suggest an improvement');
+  assert.match(row, /: t\('project:menu\.button\.manage'\);/, 'and the ⋯ says so to a screen reader');
+  assert.equal(message('project:menu.button.manage'), 'Suggest an improvement, import a PR or manage this app');
   const mine = read('frontend/src/features/profile/my-proposals.tsx');
-  assert.match(mine, /data-profile-work-ask=""[\s\S]{0,200}>\s*Suggest an improvement\s*<\/Button>/, 'Your requests ends on it');
-  assert.match(mine, /requests: 'You have not suggested an improvement yet\.'/, 'and says so when it is empty');
+  assert.match(mine, /data-profile-work-ask=""[\s\S]{0,200}>\s*\{t\('profile:work\.requests\.suggest'\)\}\s*<\/Button>/);
+  assert.equal(message('profile:work.requests.suggest'), 'Suggest an improvement', 'Your requests ends on it');
+  assert.match(mine, /requests: 'profile:work\.requests\.empty'/);
+  assert.equal(message('profile:work.requests.empty'), 'You have not suggested an improvement yet.', 'and says so when it is empty');
   assert.match(read('frontend/src/features/home/tour/tour-steps.ts'),
-    /id: 'menu-actions',\s*title: 'Suggest an improvement',/, 'the tour names the button by its words');
+    /id: 'menu-actions',\s*title: 'onboarding:tour\.step\.menuActions\.title',/, 'the tour names the button by its words');
+  assert.equal(require('./lib/platform-i18n').message('onboarding:tour.step.menuActions.title'), 'Suggest an improvement');
   assert.match(read('frontend/src/features/messages/index.tsx'),
-    /hint: 'Make an app or suggest an improvement'/, 'Messages\' new-chat menu');
+    /hint: 'messages:inbox\.new\.bot\.hint'/, 'Messages\' new-chat menu');
+  assert.equal(message('messages:inbox.new.bot.hint'), 'Make an app or suggest an improvement');
   assert.match(read('frontend/src/features/dev-board/workshop/hub-cards.tsx'),
-    /\{' to suggest an improvement\.'\}/, 'the hub\'s Your work, with nothing in progress');
+    /<RichMessage\s+id="project:hub\.work\.emptyMenu"/, 'the hub\'s Your work, with nothing in progress');
+  assert.equal(message('project:hub.work.emptyMenu'), 'Nothing in progress. Press <0>⋯</0> to suggest an improvement.');
   assert.match(read('src/services/homeroom-bot-dm.js'),
     /tell me here or tap Suggest an improvement on its page\./, 'the bot\'s hello to somebody who joined');
 });
@@ -97,6 +109,7 @@ test('Ask for changes on a built change is a different action, and keeps its wor
   // It revises a change Homeroom bot already built (the viewer's chat with
   // the change attached), where Suggest an improvement files a new request.
   // #4455: a row of the change page's ⋯.
-  assert.match(read('public/js/app-view.js'), /label: 'Ask for changes', icon: 'generate',/);
+  assert.match(read('public/js/app-view.js'), /label: PlatformI18n\.t\('changes:page\.menu\.askForChanges'\), icon: 'generate',/);
+  assert.equal(require('./lib/platform-i18n').message('changes:page.menu.askForChanges'), 'Ask for changes');
   assert.match(read('src/services/homeroom-bot-dm.js'), /open it below and tap Ask for changes\./);
 });

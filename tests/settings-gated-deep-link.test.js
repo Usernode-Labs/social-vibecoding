@@ -22,6 +22,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { englishPlatformI18n } = require('./lib/platform-i18n');
+
 const settingsJs = fs.readFileSync(
   path.join(__dirname, '..', 'frontend/src/features/settings/settings.js'), 'utf8');
 
@@ -55,7 +57,8 @@ function makeSettings({ nodeHidden = true, hash = '#settings/usernode' } = {}) {
   const location = { hash };
   const methods = ['_visibleSections', '_pageKey', '_visiblePages', '_notePendingSection', '_renderNavIfOpen']
     .map((n) => sliceMethod(settingsJs, n)).join(',\n');
-  const Settings = new Function('document', 'location', `
+  // _visiblePages() translates the registry's label ids where it reads them.
+  const Settings = new Function('document', 'location', 'tr', `
     const Settings = {
       ${block.trim()}
       _open: true,
@@ -67,7 +70,7 @@ function makeSettings({ nodeHidden = true, hash = '#settings/usernode' } = {}) {
       ${methods}
     };
     return Settings;
-  `)(document, location);
+  `)(document, location, englishPlatformI18n().t);
   return { Settings, node, location };
 }
 

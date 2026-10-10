@@ -57,6 +57,8 @@ import type { ReactNode } from 'react';
 
 import { FoldMarkIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../../lib/i18n/react';
+
 import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
 import { FeedThread } from './feed-thread';
 import type { ActionSpec, BadgeSpec, DevCardModel, ListRow, StatusPillState } from './model';
@@ -229,10 +231,11 @@ export function RowBand({ card, trailing, chips: withChips = true }: {
  * stretch when the card mounts.
  */
 export function FoldMark({ open, onClick }: { open: boolean; onClick?: () => void }): ReactNode {
+  const t = useMessages('project');
   const glyph = <FoldMarkIcon aria-hidden="true" />;
   if (!open) return <span className="dev-fold-mark" aria-hidden="true">{glyph}</span>;
   return (
-    <button type="button" className="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label="Fold the card" onClick={onClick}>
+    <button type="button" className="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label={t('project:card.fold.fold')} onClick={onClick}>
       {glyph}
     </button>
   );
@@ -253,6 +256,7 @@ export function FoldMark({ open, onClick }: { open: boolean; onClick?: () => voi
 export function FoldedRow({
   row, open, onToggle,
 }: { row: CardRow; open: boolean; onToggle: () => void }): ReactNode {
+  const t = useMessages('project');
   const c = row.card;
   // The vote control belongs to the ROW, on every row that has one — not just
   // the ones in the vote strip. It used to ride in the dense card's status
@@ -304,8 +308,8 @@ export function FoldedRow({
         {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
         <span className="dev-ws-row-title">
           {c.title.text}
-          {row.fresh ? <span className="dev-ws-new">new</span> : null}
-          {row.placing ? <span className="dev-ws-placing" title="Being placed into a category">placing…</span> : null}
+          {row.fresh ? <span className="dev-ws-new">{t('project:card.fold.new')}</span> : null}
+          {row.placing ? <span className="dev-ws-placing" title={t('project:card.fold.placingTitle')}>{t('project:card.fold.placing')}</span> : null}
         </span>
       </span>
       {/* The card's own meta line, node for node: number · author · when,
@@ -369,6 +373,7 @@ export function UnfoldedRow({
   // for a session, a merged change and a governance item, so those already
   // went to the page rather than answering a tap with nothing. They were the
   // exception; this is the rule now.
+  const t = useMessages('project');
   const href = openHref(slug, row.card);
   const session = sessionHref(slug, row.card);
   // ── Where the toggle sits ──────────────────────────────────────────
@@ -404,7 +409,7 @@ export function UnfoldedRow({
   // here, and the button that folds the card.
   const card: DevCardModel = { ...row.card, rail: { ...row.card.rail, chevron: false } };
   const openBtn = placement && href
-    ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>Open card</a>
+    ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>{t('project:card.fold.openCard')}</a>
     : undefined;
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
@@ -422,7 +427,7 @@ export function UnfoldedRow({
         // way out. The page link itself rides the pill (#1886) — this is the
         // one destination the pill does not cover.
         <div className="dev-ws-sheet-actions">
-          <a href={session} className="dev-ws-link" data-ws-open-session={row.key}>Open session ›</a>
+          <a href={session} className="dev-ws-link" data-ws-open-session={row.key}>{t('project:card.fold.openSession')}</a>
         </div>
       ) : null}
     </div>

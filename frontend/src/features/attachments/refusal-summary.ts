@@ -1,3 +1,5 @@
+import { t } from '../../lib/i18n/runtime';
+
 /**
  * The line a composer shows when a drop or a pick left files out (#4065): the
  * first reason, in the composer's own words, then how many others went with
@@ -7,6 +9,5 @@
  */
 export function refusalSummary(firstReason: string, moreCount: number): string {
   if (!moreCount || moreCount < 1) return firstReason;
-  const more = moreCount === 1 ? '1 more file wasn’t attached.' : `${moreCount} more files weren’t attached.`;
-  return `${firstReason} ${more}`;
+  return t('messages:attachments.refusedMore', { reason: firstReason, count: moreCount });
 }

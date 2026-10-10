@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -257,11 +258,16 @@ test('the sheet draws Agent chats after mount only, and only when the store says
 
 test('a newcomer still has every other door to building it themselves', () => {
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
-  assert.match(row, /data-plus="new-change"[\s\S]{0,300}title="Build it now"[\s\S]{0,200}Improve\.startSession\(\)/, 'the hub\'s ⋯');
+  assert.match(row, /data-plus="new-change"[\s\S]{0,300}title=\{t\('project:menu\.build\.title'\)\}[\s\S]{0,200}Improve\.startSession\(\)/, 'the hub\'s ⋯');
+  assert.equal(message('project:menu.build.title'), 'Build it now');
   const view = read('public/js/app-view.js');
-  assert.match(view, /label: 'Build it now',\s*title: 'Start an agent session on this request',\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
+  assert.match(view, /label: PlatformI18n\.t\('changes:issue\.action\.buildNow'\),\s*title: PlatformI18n\.t\('changes:issue\.action\.buildNowTitle'\),\s*act: \{ fn: 'chooseIssueWork', args: \[n\] \}/, 'a request\'s own');
+  assert.equal(message('changes:issue.action.buildNow'), 'Build it now');
+  assert.equal(message('changes:issue.action.buildNowTitle'), 'Start an agent session on this request');
+  assert.equal(message('messages:inbox.new.agent.label'), 'Build it now');
+  assert.equal(message('messages:inbox.new.agent.hint'), 'Plan and build a change with a coding agent');
   assert.match(read('frontend/src/features/messages/index.tsx'),
-    /\{ key: 'agent', label: 'Build it now', hint: 'Plan and build a change with a coding agent' \}/, 'Messages\' new chat');
+    /\{ key: 'agent', label: 'messages:inbox\.new\.agent\.label', hint: 'messages:inbox\.new\.agent\.hint' \}/, 'Messages\' new chat');
   // The tour no longer points a newcomer at the menu's row.
   assert.doesNotMatch(read('frontend/src/features/home/tour/tour-steps.ts'), /tap Build it now/);
   // Nor do the Workshop's notes: they name the hub's ⋯.

@@ -1394,6 +1394,79 @@ Respond with JSON: {"summary": "..."}.`;
   return { summary, usage: resp.usage, model: served };
 }
 
+// ── The translation step's transport ──────────────────────────────────
+// services/language-sync.js builds every request's params (its model, its
+// schema, its cached system prompt); this sends them on the platform's key
+// and hands back each answer's text by request id. A proposal's few new
+// messages go one by one; a whole language goes as one Message Batch, which
+// costs half as much and may take minutes to hours. Usage is recorded like
+// any platform call (a batch's at the list price, so it reads high).
+
+function catalogAnswer(message) {
+  const text = (message?.content || []).filter((block) => block.type === 'text').map((block) => block.text).join('');
+  const usage = message?.usage || null;
+  if (message?.stop_reason === 'refusal') return { error: 'refusal', usage };
+  if (message?.stop_reason === 'max_tokens') return { error: 'max_tokens', text, usage };
+  return { text, usage };
+}
+
+async function translateCatalogDirect(requests, { concurrency = 4, telemetryContext } = {}) {
+  if (!client) throw new Error('LLM not initialized');
+  const answers = new Map();
+  let next = 0;
+  const lane = async () => {
+    while (next < requests.length) {
+      const request = requests[next++];
+      try {
+        const response = await createMessageWithTelemetry({
+          activeClient: client,
+          params: request.params,
+          telemetryContext,
+          defaults: { backend: 'helper', component: 'language_sync' },
+        });
+        answers.set(request.customId, catalogAnswer(response));
+      } catch (err) {
+        answers.set(request.customId, { error: err?.message || 'request failed' });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, requests.length) }, lane));
+  return answers;
+}
+
+async function submitCatalogBatch(requests) {
+  if (!client) throw new Error('LLM not initialized');
+  const batch = await client.messages.batches.create({
+    requests: requests.map((request) => ({ custom_id: request.customId, params: request.params })),
+  });
+  return { id: batch.id, status: batch.processing_status };
+}
+
+async function catalogBatchStatus(id) {
+  if (!client) throw new Error('LLM not initialized');
+  const batch = await client.messages.batches.retrieve(id);
+  return { id: batch.id, status: batch.processing_status, counts: batch.request_counts || null };
+}
+
+async function catalogBatchAnswers(id, { telemetryContext } = {}) {
+  if (!client) throw new Error('LLM not initialized');
+  const context = telemetryBase(telemetryContext, { backend: 'helper', component: 'language_sync' });
+  const answers = new Map();
+  for await (const entry of await client.messages.batches.results(id)) {
+    if (entry?.result?.type === 'succeeded') {
+      const message = entry.result.message;
+      recordAnthropicResponse({
+        context, requestedModel: message?.model, response: message,
+        startedAt: new Date(), durationMs: 0, attemptNumber: 1,
+      });
+      answers.set(entry.custom_id, catalogAnswer(message));
+    } else {
+      answers.set(entry?.custom_id, { error: entry?.result?.type || 'failed' });
+    }
+  }
+  return answers;
+}
+
 // Clamp an estimate phrase to something safe to inline in the dev-chat
 // summary line: single line, trimmed, hard-capped at 90 chars. Pure so
 // tests/ai-progress-estimate.test.js can exercise it directly.
@@ -3342,6 +3415,8 @@ module.exports = {
   detectFallback, sanitizeFallbackContent, fallbackBoundary,
   FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA, PR_METADATA_MODEL,
   generateSinceSummary, SINCE_SUMMARY_VERSION,
+  // The translation step's transport — see services/language-sync.js.
+  translateCatalogDirect, submitCatalogBatch, catalogBatchStatus, catalogBatchAnswers,
   // The helpers' model: GLM 5.3 Flash first, Haiku behind it.
   HELPER_MODEL, HELPER_FALLBACK_MODEL, HELPER_FALLBACK_THINKING, withHelperThinking, HELPER_TIME_LIMIT_MS, helperRoute, helperAnswer, helperMessage,
   SESSION_TITLE_SCHEMA, SHORT_DESCRIPTION_SCHEMA, WORKSHOP_ASK_SCHEMA,

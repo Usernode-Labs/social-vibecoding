@@ -25,6 +25,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
@@ -81,7 +82,8 @@ test('the saved confirmation reads as success, and consumes the draft', () => {
     feedbackJs.indexOf('const saveForLater = async (body)'),
     feedbackJs.indexOf('// Keep the dialog honest while it is open'),
   );
-  assert.match(saveForLater, /Saved on this device. We'll send it as soon as you're back online\./);
+  assert.match(saveForLater, /: t\('dialogs:feedback\.queue\.saved'\);/);
+  assert.equal(message('dialogs:feedback.queue.saved'), "Saved on this device. We'll send it as soon as you're back online.");
   assert.match(saveForLater, /text-emerald-400/, 'the same green a filed issue gets');
   // Same cleanup as a successful submit: the draft is gone, the dialog locks
   // and closes on the shared 1500 ms grace window.
@@ -102,11 +104,17 @@ test('a refused save is explained instead of silently dropped', () => {
 test('the dialog states the offline situation on open, in the words dapp.json checks', () => {
   assert.match(openModal, /refreshQueueState\(\);/);
   // dapp.json /?shot=feedback-offline matches this sentence.
-  assert.match(feedbackJs, /saved on this device and sent automatically/);
+  assert.match(feedbackJs, /if \(offline\) return t\('dialogs:feedback\.queue\.offline'\);/);
+  assert.match(message('dialogs:feedback.queue.offline'), /saved on this device and sent automatically/);
   // dapp.json /?shot=feedback-queued matches this one (singular form).
-  assert.match(feedbackJs, /1 message saved on this device is waiting to send/);
+  assert.match(feedbackJs, /if \(offline && n > 0\) return t\('dialogs:feedback\.queue\.offlineWaiting', \{ count: n \}\);/);
+  assert.match(message('dialogs:feedback.queue.offlineWaiting', { count: 1 }), /1 message saved on this device is waiting to send/);
+  assert.match(message('dialogs:feedback.queue.offlineWaiting', { count: 3 }), /3 messages saved on this device are waiting to send/);
   // The button says what it will do.
-  assert.match(feedbackJs, /feedbackBtn\.textContent = isOfflineNow\(\) \? 'Save for later' : 'Post request'/);
+  assert.match(feedbackJs, /const restingSubmitLabel = \(\) => \(isOfflineNow\(\)\s*\? t\('dialogs:feedback\.submit\.saveForLater'\)\s*: t\('dialogs:feedback\.submit\.post'\)\);/);
+  assert.match(feedbackJs, /if \(!submitBusy\) feedbackBtn\.textContent = restingSubmitLabel\(\);/);
+  assert.deepEqual([message('dialogs:feedback.submit.saveForLater'), message('dialogs:feedback.submit.post')],
+    ['Save for later', 'Post request']);
 });
 
 test('the dialog repaints when connectivity changes under it', () => {
@@ -119,7 +127,10 @@ test('the dialog repaints when connectivity changes under it', () => {
 test('a permanently-refused message is handed back with the words intact', () => {
   assert.match(openModal, /FeedbackQueue\.takeFailed\(\)/);
   assert.match(openModal, /feedbackText\.value = p\.description \|\| '';/);
-  assert.match(openModal, /This message couldn't be sent/);
+  assert.match(openModal, /t\('dialogs:feedback\.queue\.rejectedReason', \{ reason: failed\.lastError \}\)/);
+  assert.match(message('dialogs:feedback.queue.rejectedReason', { reason: 'Description is required' }),
+    /^This message couldn't be sent: Description is required\. Your text is back/);
+  assert.match(message('dialogs:feedback.queue.rejected'), /^This message couldn't be sent: the server rejected it\./);
   // Live text always wins — a returned draft must not overwrite typing.
   assert.match(openModal, /if \(modal\.classList\.contains\('hidden'\) \|\| feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) \{/);
   // #3994: and the record it took goes back rather than being dropped.
@@ -131,12 +142,13 @@ test('a captured screenshot survives a failed upload', () => {
   // away at the exact moment it could not be re-taken cheaply.
   // #3027: per image now — each thumbnail keeps its own bytes.
   const uploadCatch = feedbackJs.slice(
-    feedbackJs.indexOf("shot.stateEl.textContent = 'Uploading…';"),
+    feedbackJs.indexOf("shot.stateEl.textContent = t('dialogs:feedback.screenshot.uploading');"),
     feedbackJs.indexOf('const waitForHiddenDialogPaint'),
   );
   const networkCatch = uploadCatch.slice(uploadCatch.indexOf('} catch {'));
   assert.doesNotMatch(networkCatch, /resetScreenshotState\(\)|removeScreenshot\(shot\)/, 'the blob must be kept for the outbox');
-  assert.match(networkCatch, /Saved with your feedback. It'll upload when you're back online/);
+  assert.match(networkCatch, /shot\.stateEl\.textContent = t\('dialogs:feedback\.screenshot\.savedOffline'\)/);
+  assert.equal(message('dialogs:feedback.screenshot.savedOffline'), "Saved with your feedback. It'll upload when you're back online");
   assert.match(feedbackJs, /const shot = \{ blob, objectUrl: URL\.createObjectURL\(blob\), id: null, uploading: true, pins \};/);
   // Cleared with the rest of the attachment state, and re-uploaded before an
   // online submit so the promise on screen stays true.
@@ -176,7 +188,9 @@ test('the outbox is armed once, and flushed when a session exists', () => {
   assert.match(feedbackJs, /window\.FeedbackQueue\.init\(\{/);
   assert.match(feedbackJs, /onFlushed: \(res\) => \{/);
   // A flush that filed something says so — the user wrote it long ago.
-  assert.match(feedbackJs, /Your saved feedback has been sent\./);
+  assert.match(feedbackJs, /PlatformUI\.toast\(t\('dialogs:feedback\.queue\.flushed', \{ count: n \}\)\)/);
+  assert.equal(message('dialogs:feedback.queue.flushed', { count: 1 }), 'Your saved feedback has been sent.');
+  assert.equal(message('dialogs:feedback.queue.flushed', { count: 2 }), 'Your 2 saved feedback messages have been sent.');
   // And the Dev screen's Open Issues panel refreshes, exactly as a live
   // submit refreshes it.
   const flushed = feedbackJs.slice(feedbackJs.indexOf('onFlushed: (res) => {'), feedbackJs.indexOf('const submitFeedback'));
@@ -301,12 +315,17 @@ test('the two screenshot deep links exist and are display-only', () => {
   const paths = dapp.tests.map((t) => t.path);
   assert.ok(paths.includes('/?shot=feedback-offline'), 'dapp.json checks the offline dialog');
   assert.ok(paths.includes('/?shot=feedback-queued'), 'dapp.json checks the queued state');
+  // The dialog's words live in the catalog now; the controller and the
+  // markup read them from it by id.
+  const catalog = JSON.parse(read('frontend', 'locales', 'en', 'dialogs.json'));
+  const feedbackTexts = Object.entries(catalog)
+    .filter(([key]) => key.startsWith('feedback.'))
+    .map(([, entry]) => entry.text);
   for (const check of dapp.tests.filter((t) => String(t.path).startsWith('/?shot=feedback-'))) {
     if (!check.expectText) continue;
     assert.ok(
-      feedbackJs.includes(check.expectText)
-        || read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx').includes(check.expectText),
-      `dapp.json expects "${check.expectText}" but it is absent from the feedback controller and markup`,
+      feedbackTexts.some((text) => text.includes(check.expectText)),
+      `dapp.json expects "${check.expectText}" but no feedback message in the catalog says it`,
     );
   }
 });

@@ -21,16 +21,20 @@
  * Pure, so the tests drive it with plain objects.
  */
 
+import { t as translate } from '../../../lib/i18n/runtime';
 import type { PlaceChannel, PlacesPayload } from './community-card';
 
 /** Every key the page can be on, places and the pages under them. */
 export type PlaceKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'plan' | `c:${string}`;
 
-/** The three pages at the head of the list, in order. */
+/**
+ * The three pages at the head of the list, in order. `label` is a message id
+ * (frontend/locales/en/project.json), read when the list renders.
+ */
 export const PAGE_PLACES: ReadonlyArray<{ key: 'status' | 'needs' | 'workshop'; label: string }> = [
-  { key: 'status', label: 'Hub' },
-  { key: 'needs', label: 'Needs you' },
-  { key: 'workshop', label: 'Workshop' },
+  { key: 'status', label: 'project:places.list.hub' },
+  { key: 'needs', label: 'project:places.list.needsYou' },
+  { key: 'workshop', label: 'project:places.list.workshop' },
 ];
 
 const PAGE_KEYS = new Set(['status', 'discussion', 'workshop', 'needs', 'all', 'plan']);
@@ -111,10 +115,9 @@ export function mergedInto(places: PlacesPayload | null | undefined, topic: Plac
 
 /** What a place is called on its own bar: the page's name, or the channel's handle. */
 export function placeName(key: PlaceKey): string {
-  if (key === 'status') return 'Hub';
-  if (key === 'needs') return 'Needs you';
-  if (key === 'workshop' || key === 'all') return 'Workshop';
-  if (key === 'plan') return 'Hub';
+  if (key === 'status' || key === 'plan') return translate('project:places.bar.hub');
+  if (key === 'needs') return translate('project:places.bar.needsYou');
+  if (key === 'workshop' || key === 'all') return translate('project:places.bar.workshop');
   return placeHandle(key) || 'general';
 }
 

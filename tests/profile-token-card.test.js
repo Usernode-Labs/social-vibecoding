@@ -25,6 +25,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 
 const { loadTsx } = require('./lib/render-tsx');
 
@@ -62,7 +63,8 @@ test('the card names what the figure is, not only what it is subject to', () => 
     require('node:path').join(__dirname, '..', 'frontend/src/features/leaderboard/your-standing.tsx'),
     'utf8');
   // The allocated card explains the quantity …
-  assert.match(src, /Your share of the season&rsquo;s token pool\./);
+  assert.match(src, /\{t\('leaderboard:standing\.token\.note'\)\}/);
+  assert.match(message('leaderboard:standing.token.note'), /^Your share of the season’s token pool\./);
 });
 
 test('someone with no allocation sees no token card at all (#1825)', () => {
@@ -74,6 +76,7 @@ test('someone with no allocation sees no token card at all (#1825)', () => {
   assert.doesNotMatch(src, /Nothing allocated to you yet/);
   // The two states that DO concern the viewer keep their card.
   const gated = src.slice(src.indexOf('if (token.gated)'), src.indexOf('if (token.empty)'));
-  assert.match(gated, /Token allocation withheld/, 'a terms gate may be hiding an allocation, so it stays');
+  assert.match(gated, /\{t\('leaderboard:standing\.token\.withheld'\)\}/, 'a terms gate may be hiding an allocation, so it stays');
+  assert.equal(message('leaderboard:standing.token.withheld'), 'Token allocation withheld');
   assert.ok(src.indexOf('if (token.gated)') < src.indexOf('if (token.empty)'), 'and is checked first');
 });

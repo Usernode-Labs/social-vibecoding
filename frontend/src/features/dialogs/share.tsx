@@ -48,6 +48,7 @@ import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { ArrowRightIcon, UserGroupIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useDialog } from './use-dialog';
 
 export type ShareAudience = 'members' | 'public';
@@ -66,8 +67,8 @@ export function shareAudience(app: { view_visibility?: unknown; audience?: unkno
 }
 
 export const SHARE_COPY: Readonly<Record<ShareAudience, string>> = Object.freeze({
-  members: 'Only members can open it. Invite people to let them in.',
-  public: 'Anyone with a Homeroom account can open it.',
+  members: 'dialogs:share.audience.members',
+  public: 'dialogs:share.audience.public',
 });
 
 /**
@@ -84,12 +85,13 @@ function openInvitePane(): void {
 }
 
 export function ShareDialog() {
+  const t = useMessages('dialogs');
   const inputRef = useRef<HTMLInputElement>(null);
   const [href, setHref] = useState('');
   // #4405: the project's Homeroom address, shown under the field when the
   // link offered is the project's own custom domain.
   const [alsoAt, setAlsoAt] = useState('');
-  const [copyLabel, setCopyLabel] = useState('Copy');
+  const [copyLabel, setCopyLabel] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [audience, setAudience] = useState<ShareAudience>('members');
   const flashRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Set by "Invite people" and read once the dialog's exit has landed: the
@@ -110,7 +112,7 @@ export function ShareDialog() {
       if (inputRef.current) inputRef.current.value = url;
       setHref(url);
       setAlsoAt(share && raw && share !== raw ? raw.replace(/^https?:\/\//, '') : '');
-      setCopyLabel('Copy');
+      setCopyLabel('idle');
       setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -119,7 +121,7 @@ export function ShareDialog() {
     onClose: () => {
       if (flashRef.current) clearTimeout(flashRef.current);
       flashRef.current = null;
-      setCopyLabel('Copy');
+      setCopyLabel('idle');
       if (inviteNext.current) {
         inviteNext.current = false;
         openInvitePane();
@@ -158,9 +160,9 @@ export function ShareDialog() {
         /* both paths refused — say so on the button */
       }
     }
-    setCopyLabel(ok ? 'Copied!' : 'Copy failed');
+    setCopyLabel(ok ? 'copied' : 'failed');
     if (flashRef.current) clearTimeout(flashRef.current);
-    flashRef.current = setTimeout(() => setCopyLabel('Copy'), 1500);
+    flashRef.current = setTimeout(() => setCopyLabel('idle'), 1500);
   }
 
   return (
@@ -173,16 +175,16 @@ export function ShareDialog() {
         <button
           id="share-close"
           className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
-          aria-label="Close share"
+          aria-label={t('dialogs:share.close')}
           onClick={() => dialog.close()}
         >
           <XIcon className="w-5 h-5" />
         </button>
         <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
-          Share this app
+          {t('dialogs:share.title')}
         </h2>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
-          {SHARE_COPY[audience]}
+          {t(SHARE_COPY[audience])}
         </p>
         <div className="flex gap-2">
           <Input
@@ -192,17 +194,17 @@ export function ShareDialog() {
             readOnly={true}
             width="flex1"
             mono
-            aria-label="Share URL"
+            aria-label={t('dialogs:share.urlLabel')}
           />
           <Button id="share-copy-btn" className="whitespace-nowrap" onClick={copy}>
-            {copyLabel}
+            {copyLabel === 'copied' ? t('dialogs:share.copied') : copyLabel === 'failed' ? t('dialogs:share.copyFailed') : t('core:common.copy')}
           </Button>
         </div>
         <p
           id="share-homeroom-address"
           className={alsoAt ? 'mt-2 text-xs text-zinc-500 dark:text-zinc-400' : 'hidden'}
         >
-          {alsoAt ? `Also at ${alsoAt}` : ''}
+          {alsoAt ? t('dialogs:share.alsoAt', { address: alsoAt }) : ''}
         </p>
         <div className={audience === 'members' ? 'mt-4 flex items-center justify-between gap-3' : 'mt-4 flex justify-end'}>
           {audience === 'members' ? (
@@ -215,7 +217,7 @@ export function ShareDialog() {
               onClick={invite}
             >
               <UserGroupIcon className="w-4 h-4" aria-hidden="true" />
-              Invite people
+              {t('dialogs:share.invite')}
             </Button>
           ) : null}
           <a
@@ -225,7 +227,7 @@ export function ShareDialog() {
             rel="noopener"
             className="text-sm text-violet-700 hover:text-violet-400 transition-colors inline-flex items-center gap-1 dark:text-violet-400"
           >
-            Open in new tab
+            {t('dialogs:share.openInNewTab')}
             <ArrowRightIcon className="w-4 h-4" />
           </a>
         </div>

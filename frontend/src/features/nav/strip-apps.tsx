@@ -37,9 +37,11 @@
 
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
+import { listText } from '../../lib/i18n/runtime';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { LIVE_APP_LABEL, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs } from '../app-frame/live-apps';
+import { liveAppLabel, LiveAppDot, useCurrentAppSlug, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { improveStore } from '../improve/improve-store.js';
 import { navStore } from './nav-store.js';
@@ -122,6 +124,7 @@ function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string, live: bo
 }
 
 export function StripApps() {
+  const t = useMessages('core');
   const ref = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
   const { apps } = useStoreState(recentAppsStore);
@@ -152,7 +155,7 @@ export function StripApps() {
   useHiddenClass(ref, items.length === 0);
 
   return (
-    <div ref={ref} id="platform-strip-apps" className="platform-strip-apps hidden" role="group" aria-label="Recent apps">
+    <div ref={ref} id="platform-strip-apps" className="platform-strip-apps hidden" role="group" aria-label={t('core:stripApps.label')}>
       {items.map((app) => {
         const running = live.includes(app.slug);
         const lit = app.slug === on;
@@ -164,6 +167,9 @@ export function StripApps() {
             href={`/app/${encodeURIComponent(app.slug)}`}
             data-strip-app={app.slug}
             title={app.name}
+            // A kept-alive app says so aloud after its name: two facts, joined
+            // the way the language joins them.
+            aria-label={running ? listText([app.name, liveAppLabel()]) : undefined}
             aria-current={lit ? 'page' : undefined}
             {...(running ? { 'data-live': 'true' } : null)}
             onClick={(event) => onAppClick(event, app.slug, running && !lit)}
@@ -175,7 +181,6 @@ export function StripApps() {
               {running ? <LiveAppDot className="platform-strip-live" /> : null}
             </span>
             <span className="platform-strip-label">{app.name}</span>
-            {running ? <span className="sr-only">{`, ${LIVE_APP_LABEL}`}</span> : null}
           </a>
         );
       })}

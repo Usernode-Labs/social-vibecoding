@@ -32,6 +32,7 @@ const { installGridStore, installPanelsStore, INITIAL_GRID } = require('./helper
 const { installAppCard } = require('./helpers/app-card');
 const { tokenize } = require('./helpers/html-tokens');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const GRID = 'frontend/src/features/home/app-grid.tsx';
 const TILE = 'frontend/src/features/home/create-tile.tsx';
@@ -165,6 +166,7 @@ function makeHome({ search = '', canCreateApps = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   installAppCard(sandbox);
   const gridStore = installGridStore(sandbox);

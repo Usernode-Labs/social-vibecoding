@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const {
   SPANISH, browser, catalogFixture, from, runtimeFor, says, until,
@@ -84,6 +85,31 @@ test('a pack whose bytes do not match the build is refused', async (t) => {
   page.tamper = null;
   assert.equal(await runtime.changeLanguage('es'), true);
   assert.equal(runtime.t('hello', { name: 'Ana' }), 'Hola Ana');
+});
+
+test('the first paint is held while a remembered language loads, and released once it shows', async (t) => {
+  // The head's inline hold (frontend/src/head.html) runs before anything
+  // paints: it reads the language this device last showed and, unless that
+  // was English, hides the body until the runtime has put the language on
+  // screen. It always lets go by itself after three seconds.
+  const head = read('frontend/src/head.html');
+  assert.match(head, /html\.language-pending body \{ visibility: hidden; \}/);
+  const hold = head.slice(head.indexOf("localStorage.getItem('homeroom:language:shown')") - 400);
+  assert.match(hold, /if \(!shown \|\| shown === 'en'\) return;/, 'English, or nothing remembered, is never held');
+  assert.match(hold, /root\.classList\.add\('language-pending'\);\s*setTimeout\(function \(\) \{ root\.classList\.remove\('language-pending'\); \}, 3000\);/);
+  assert.ok(head.indexOf("'homeroom:language:shown'") > head.indexOf('window.Theme'), 'after the theme, which paints the ground');
+
+  const { runtime, page } = setup(t);
+  const classes = new Set(['language-pending']);
+  globalThis.document.documentElement.classList = { remove: (name) => { classes.delete(name); } };
+  page.hold = async () => { assert.ok(classes.has('language-pending'), 'still held while the pack loads'); };
+  await runtime.changeLanguage('es');
+  assert.equal(classes.has('language-pending'), false, 'released once Spanish is on screen');
+  assert.equal(page.storage.get('homeroom:language:shown'), 'es', 'the next load holds for Spanish');
+  classes.add('language-pending');
+  await runtime.changeLanguage('en');
+  assert.equal(classes.has('language-pending'), false);
+  assert.equal(page.storage.get('homeroom:language:shown'), 'en', 'and the one after holds nothing');
 });
 
 test('a change loads, then saves, then switches; a failed save leaves the screen as it was', async (t) => {
@@ -242,6 +268,9 @@ function settingsPage(t, runtime, page) {
 
   const { saveAccountLocale } = loadTsx('frontend/src/lib/i18n/account.ts');
   sandbox.PlatformI18n = {
+    // The status line's own words come from the real English catalog; the
+    // fixture runtime decides which language is chosen and saved.
+    ...englishPlatformI18n(),
     changeLanguage: runtime.changeLanguage, languageName: runtime.languageName, saveAccountLocale,
   };
   const posted = [];
@@ -440,11 +469,11 @@ test('the notice is a React island that says it in the picked language and offer
   assert.match(notice, /useSyncExternalStore\(subscribeNotice, getNotice, \(\) => null\)/,
     'the prerendered document and the hydrating render hold nothing');
   assert.match(notice, /if \(!notice\) return null;/);
-  assert.match(notice, /t\('language\.notice\.showing', \{ language: notice\.name \}\)/);
-  assert.match(notice, /i18n\.getFixedT\('en', 'core'\)\('language\.notice\.switchToEnglish'\)/,
+  assert.match(notice, /t\('core:language\.notice\.showing', \{ language: notice\.name \}\)/);
+  assert.match(notice, /i18n\.getFixedT\('en', 'core'\)\('core:language\.notice\.switchToEnglish'\)/,
     'the way back is readable by someone who cannot read the picked language');
   assert.match(notice, /lang="en"/);
-  assert.match(notice, /aria-label=\{t\('language\.notice\.dismiss'\)\}/);
+  assert.match(notice, /aria-label=\{t\('core:language\.notice\.dismiss'\)\}/);
   const shell = read('frontend/src/Shell.tsx');
   assert.match(shell, /<Island name="LanguageNotice"><LanguageNotice \/><\/Island>/);
   // It stays in view until answered: fixed above the tab bar, where a toast

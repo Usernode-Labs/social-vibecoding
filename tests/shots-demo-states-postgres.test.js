@@ -41,6 +41,8 @@ function loadAppView(user) {
   const sandbox = {
     console,
     relTime: () => 'just now',
+    // The language runtime's global, as the shell publishes it.
+    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
     App: { user, switchTab: () => {} },
     Kudos: { renderButton: () => '', attach: () => {} },
     ConfirmModal: { show: async () => true },

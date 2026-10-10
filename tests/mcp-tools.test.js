@@ -2703,6 +2703,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // The Homeroom bot's first-version configurations (routes/bot-configs.js):
     // the next blind pair to pick. Full platform admins only, like the rest.
     'get_bot_config_pair',
+    // #3659. Which languages people's browsers ask for, and where the
+    // translation step stands. Full platform admins only.
+    'get_browser_languages',
     // #2779. A native change, read the way the change page reads it.
     'get_change',
     // #1433. Read-only, and named `get_` so the shipped allow rules already

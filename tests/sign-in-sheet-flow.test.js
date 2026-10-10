@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -197,15 +198,18 @@ test('the sheet spends the one-time sign-in with a POST, and anything but a spen
   // Spent: "Welcome <address>" over the account step; refused: the prefill and the code.
   assert.match(src, /if \(!spent\) \{ prefill\(\); return; \}/);
   assert.match(src, /setWelcome\(spent\.email\);\s+setNeedsUsername\(spent\.needsUsername\);\s+setSuggestedUsername\(spent\.suggestedUsername\);\s+setCooldownUntil\(0\);\s+setStep\('account'\);/);
-  assert.match(src, /welcome \? `Welcome \$\{welcome\}` : 'Finish your account'/);
+  assert.match(src, /welcome \? t\('auth:signInSheet\.account\.welcome', \{ email: welcome \}\) : t\('auth:signInSheet\.account\.title'\)/);
+  assert.equal(message('auth:signInSheet.account.welcome', { email: 'ada@example.com' }), 'Welcome ada@example.com');
+  assert.equal(message('auth:signInSheet.account.title'), 'Finish your account');
 });
 
 test('the account step\'s password is optional (#4595)', () => {
   const src = read(SHEET);
-  assert.match(src, /data-sign-in-sheet-skip-password=""[^>]*onClick=\{\(\) => \{ void finishAccount\(true\); \}\}>Skip for now<\/button>/);
+  assert.match(src, /data-sign-in-sheet-skip-password=""[^>]*onClick=\{\(\) => \{ void finishAccount\(true\); \}\}>\{t\('auth:signInSheet\.account\.skip'\)\}<\/button>/);
+  assert.equal(message('auth:signInSheet.account.skip'), 'Skip for now');
   // Skipped, or the field empty: no password in the request.
   assert.match(src, /\.\.\.\(password \? \{ password \} : \{\}\),/);
-  assert.match(src, /if \(password && password\.length < 8\) \{ setError\('Password must be at least 8 characters'\); return; \}/);
+  assert.match(src, /if \(password && password\.length < 8\) \{ setError\(translate\('auth:signInSheet\.account\.passwordTooShort'\)\); return; \}/);
   // Asked once (Evan, 10 Oct 2026): no "Password again", and so no
   // confirmation sent; a mistyped one is reset by email. The field shows
   // what was typed on request instead (the shared PasswordInput's toggle).
@@ -294,9 +298,11 @@ test('the password step is the sheet\'s: the link opens it, and Forgot password 
   const src = read(SHEET);
   assert.match(src, /type Step = 'choose' \| 'email' \| 'code' \| 'account' \| 'username' \| 'password' \| 'phone' \| 'phone-code';/);
   assert.match(src, /data-sign-in-sheet-password=""\s+onClick=\{\(e\) => \{ e\.preventDefault\(\); setError\(null\); setDetails\(null\); setStep\('password'\); \}\}/);
-  assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>Username or email<\/label>/);
+  assert.match(src, /<label htmlFor="sign-in-sheet-identifier" className=\{LABEL\}>\{t\('auth:signInSheet\.password\.identifierLabel'\)\}<\/label>/);
+  assert.equal(message('auth:signInSheet.password.identifierLabel'), 'Username or email');
   assert.match(src, /<PasswordInput ref=\{currentPasswordField\} id="sign-in-sheet-current-password" name="password" required autoComplete="current-password"/);
-  assert.match(src, /<a href="#login\/forgot" onClick=\{\(\) => \{ if \(followInvite\) rememberInviteJoin\(\); onClose\(\); \}\} className=\{QUIET\}>Forgot password\?<\/a>/);
+  assert.match(src, /<a href="#login\/forgot" onClick=\{\(\) => \{ if \(followInvite\) rememberInviteJoin\(\); onClose\(\); \}\} className=\{QUIET\}>\{t\('auth:signInSheet\.password\.forgot'\)\}<\/a>/);
+  assert.equal(message('auth:signInSheet.password.forgot'), 'Forgot password?');
   // Join pressed on an invite, then a password: the shell follows the link
   // without asking a second time, as it did from the sign-in screen.
   assert.match(src, /if \(followInvite\) rememberInviteJoin\(\);\s+await finish\('existing'\);/);

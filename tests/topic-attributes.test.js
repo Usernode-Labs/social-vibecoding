@@ -851,7 +851,8 @@ test('category dropdown offers a text box + the app custom block', () => {
   assert.match(fe, /ATTR_CATEGORY_MAX_LEN: 24/, 'FE cap mirrors the service MAX_CATEGORY_LEN');
   assert.match(fe, /buttonId: 'attr-category-add'/, 'the Add button exists');
   assert.match(pop, /maxLength=\{add\.maxLength\}/, 'the component applies that cap');
-  assert.match(fe, /head: 'Custom', divided: true/, 'customs sit under a divided "Custom" heading');
+  assert.match(fe, /head: PlatformI18n\.t\('changes:attributes\.picker\.customHead'\), divided: true/, 'customs sit under a divided "Custom" heading');
+  assert.equal(require('./lib/platform-i18n').message('changes:attributes.picker.customHead'), 'Custom');
   assert.match(pop, /'attr-pop-head attr-pop-head-divided' : 'attr-pop-head'/,
     'and the component draws the rule above it');
   assert.match(fe, /_customCategories\(\)/, 'the custom block reads the app vocabulary');
@@ -929,8 +930,8 @@ test('_categoryMeta resolves custom slugs (label + tint), null only for empty', 
   const body = metaSrc.slice(0, metaSrc.indexOf('\n  // #780: the custom half'));
   const AppView = { CATEGORY_CUSTOM_TINTS: [{ cls: 'c1', hover: 'h1' }, { cls: 'c2', hover: 'h2' }] };
   // eslint-disable-next-line no-new-func
-  const build = new Function('AppView', `return { ${body} };`);
-  Object.assign(AppView, build(AppView));
+  const build = new Function('AppView', 'PlatformI18n', `return { ${body} };`);
+  Object.assign(AppView, build(AppView, require('./lib/platform-i18n').englishPlatformI18n()));
   AppView._appCategories = [{ value: 'dev experience', label: 'Dev Experience', custom: true }];
 
   assert.equal(AppView._categoryMeta('bug').label, 'Bug', 'built-ins keep their fixed label');

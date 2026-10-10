@@ -50,6 +50,7 @@ function makeAppView({ fetchImpl, setTimeoutImpl = setTimeout, clearTimeoutImpl 
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, opened, sandbox };
@@ -572,7 +573,11 @@ test('ready: the wait line, worded for each state of the gate, in the reader\'s 
   assert.equal(theirs({ soon: true, missing: 0 }), 'It goes live in a minute or two.');
   assert.equal(theirs({ missing: 0, goesLiveAt: at(2) }), 'It goes live on Wednesday if nobody objects.');
   assert.equal(AppView._liveDay('not a date', now, 'en-US'), null);
-  assert.equal(AppView._liveDay(at(-1), now, 'en-US'), 'on October 4', 'a day already past is its date');
+  // The day is named, and the message it fills says "on": a day already past is its date.
+  const past = AppView._liveDay(at(-1), now, 'en-US');
+  assert.equal(past.kind, 'date', 'a day already past is its date');
+  assert.equal(past.day, 'October 4');
+  assert.equal(require('./lib/platform-i18n').message('changes:firstVersion.wait.liveDate', { date: past.day }), 'It goes live on October 4 if nobody objects.');
 });
 
 test('ready: Try it opens the change\'s preview on this app; See the change opens its page', () => {

@@ -27,6 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const CONTROLLER_PATH = path.join(
@@ -122,8 +123,9 @@ test('the empty-description branch is the FIRST thing submit does', () => {
 });
 
 test('the copy lives in exactly one place', () => {
-  const hits = CONTROLLER_TEXT.split(MESSAGE).length - 1;
-  assert.equal(hits, 1, `"${MESSAGE}" is written once, in showDescriptionError`);
+  const hits = CONTROLLER_TEXT.split("t('dialogs:feedback.description.required')").length - 1;
+  assert.equal(hits, 1, `"${MESSAGE}" is read once, in showDescriptionError`);
+  assert.equal(message('dialogs:feedback.description.required'), MESSAGE, 'and the catalog holds the words');
 });
 
 test('?shot=feedback-required is a recognised deep link', () => {
@@ -254,6 +256,8 @@ function makeHarness() {
   const fetchCalls = [];
 
   const sandbox = {
+    // The binding the controller's i18n import gives it (the import line is stripped above).
+    t: englishPlatformI18n().t,
     console: { ...console, warn: () => {}, debug: () => {} },
     URLSearchParams,
     location: { search: '', hash: '', pathname: '/' },

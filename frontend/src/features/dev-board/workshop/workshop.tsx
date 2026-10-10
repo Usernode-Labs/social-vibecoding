@@ -64,6 +64,8 @@ import {
 } from '@/components/ui/icons';
 
 import { Html } from '../../../lib/html';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Improve } from '../../improve/improve-controller.js';
@@ -175,13 +177,27 @@ export function pageParent(tab: TabKey): TabKey {
 
 /** A page's own title. A channel is its handle (`#general`, `#onboarding`). */
 export function pageTitle(tab: TabKey): string {
-  if (tab === 'needs') return 'Needs you';
-  if (tab === 'all') return 'All items';
-  if (tab === 'plan') return 'The plan';
+  if (tab === 'needs') return translate('project:page.title.needsYou');
+  if (tab === 'all') return translate('project:page.title.allItems');
+  if (tab === 'plan') return translate('project:page.title.plan');
   const handle = placeHandle(tab);
   if (handle) return `#${handle}`;
-  if (tab === 'status') return 'Hub';
-  return 'Workshop';
+  if (tab === 'status') return translate('project:page.title.hub');
+  return translate('project:page.title.workshop');
+}
+
+/** Short independent facts on one line ("3 involved · 2 underway"), joined as the language on screen joins them. */
+function factsLine(parts: readonly (string | null | undefined | false)[]): string {
+  const said = parts.filter((part): part is string => typeof part === 'string' && part !== '');
+  if (!said.length) return '';
+  return said.reduce((first, second) => translate('project:facts.pair', { first, second }));
+}
+
+/** Whole sentences, one after another, as one short paragraph. */
+function sentences(parts: readonly string[]): string {
+  const said = parts.filter(Boolean);
+  if (!said.length) return '';
+  return said.reduce((first, second) => translate('project:sentences.pair', { first, second }));
 }
 
 /**
@@ -242,6 +258,7 @@ function Lane({
   // conditional; the lane still renders nothing when it holds nothing.
   const collapsible = lane.key === 'shipped';
   const [laneOpen, setLaneOpen] = useState(!collapsible);
+  const t = useMessages('project');
   if (!lane.rows.length && !lane.more) return null;
   const total = lane.rows.length + lane.more;
   const rows = lane.rows.filter((row): row is WorkCardRow => row.t === 'card' && !!row.brief);
@@ -266,7 +283,7 @@ function Lane({
       {laneOpen && rows.length ? (
         <WorkList rows={rows} slug={slug} openKey={openKey} onOpen={onOpen} variant="board" category={false} />
       ) : null}
-      {laneOpen && lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
+      {laneOpen && lane.more ? <div className="dev-ws-more">{t('project:allItems.lane.more', { count: lane.more })}</div> : null}
     </div>
   );
 }
@@ -275,13 +292,14 @@ function Faces({ people }: { people: string[] }): ReactNode {
   const shown = people.slice(0, 4);
   const extra = people.length - shown.length;
   const [open, setOpen] = useState(false);
+  const t = useMessages('project');
   if (!people.length) return null;
   return (
     <span className="dev-ws-faces-wrap">
       <button
         type="button"
         className="dev-ws-faces"
-        aria-label={`Who is involved: ${people.join(', ')}`}
+        aria-label={t('project:allItems.theme.whoInvolved', { people: listText(people) })}
         aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
       >
@@ -314,20 +332,21 @@ function ThemeCard({
   /** #4417: open a topic's channel on this page. */
   onChannel?: (place: TabKey) => void;
 }): ReactNode {
+  const t = useMessages('project');
   const c = theme.counts;
   const openItems = c.open + c.underway + c.review;
   const chips: ReactNode[] = [];
-  if (c.fresh) chips.push(<span key="fresh" className="dev-ws-cnt dev-ws-cnt-fresh"><b>{`+${c.fresh}`}</b> new</span>);
-  if (c.review) chips.push(<span key="review" className="dev-ws-cnt dev-ws-cnt-review"><span className="dev-ws-dot"></span><b>{c.review}</b> in review</span>);
-  if (c.underway) chips.push(<span key="underway" className="dev-ws-cnt dev-ws-cnt-underway"><span className="dev-ws-dot"></span><b>{c.underway}</b> underway</span>);
-  chips.push(<span key="open" className="dev-ws-cnt"><span className="dev-ws-dot"></span><b>{c.open}</b> open</span>);
-  if (c.shipped) chips.push(<span key="shipped" className="dev-ws-cnt dev-ws-cnt-shipped"><span className="dev-ws-dot"></span><b>{c.shipped}</b> live this week</span>);
+  if (c.fresh) chips.push(<span key="fresh" className="dev-ws-cnt dev-ws-cnt-fresh"><RichMessage id="project:allItems.theme.chip.fresh" values={{ count: c.fresh }} components={[<b />]} /></span>);
+  if (c.review) chips.push(<span key="review" className="dev-ws-cnt dev-ws-cnt-review"><span className="dev-ws-dot"></span><RichMessage id="project:allItems.theme.chip.review" values={{ count: c.review }} components={[<b />]} /></span>);
+  if (c.underway) chips.push(<span key="underway" className="dev-ws-cnt dev-ws-cnt-underway"><span className="dev-ws-dot"></span><RichMessage id="project:allItems.theme.chip.underway" values={{ count: c.underway }} components={[<b />]} /></span>);
+  chips.push(<span key="open" className="dev-ws-cnt"><span className="dev-ws-dot"></span><RichMessage id="project:allItems.theme.chip.open" values={{ count: c.open }} components={[<b />]} /></span>);
+  if (c.shipped) chips.push(<span key="shipped" className="dev-ws-cnt dev-ws-cnt-shipped"><span className="dev-ws-dot"></span><RichMessage id="project:allItems.theme.chip.shipped" values={{ count: c.shipped }} components={[<b />]} /></span>);
 
   // `counts` rather than `rows.length`: the lane caps its rows at
   // WORKSHOP_LANE_MAX, so a theme with twelve underway used to report eight.
   const bits: string[] = [];
-  if (c.underway) bits.push(`${c.underway} underway`);
-  if (c.review) bits.push(`${c.review} in review`);
+  if (c.underway) bits.push(t('project:allItems.theme.foot.underway', { count: c.underway }));
+  if (c.review) bits.push(t('project:allItems.theme.foot.review', { count: c.review }));
   const quietDays = theme.lastActive ? Math.floor((Date.now() - theme.lastActive) / 86400000) : null;
   const hidden = theme.lanes.reduce((n, l) => n + l.more, 0);
   // "nobody building yet" said something this cannot know. The condition is
@@ -338,9 +357,15 @@ function ThemeCard({
   // where the theme shipped something this week it can say that instead, which
   // is the same fact with the history the old line was inventing.
   const idle = c.shipped
-    ? `${c.shipped} went live this week, nothing in progress now`
-    : (quietDays != null && quietDays > 14 ? `quiet for ${quietDays} days` : 'nothing in flight right now');
-  const foot = `${theme.people.length} involved · ${bits.length ? bits.join(' · ') : idle}`;
+    ? t('project:allItems.theme.foot.shippedIdle', { count: c.shipped })
+    : (quietDays != null && quietDays > 14
+      ? t('project:allItems.theme.foot.quiet', { count: quietDays })
+      : t('project:allItems.theme.foot.idle'));
+  // Each fact is a whole message; the line joins them.
+  const foot = factsLine([
+    t('project:allItems.theme.foot.involved', { count: theme.people.length }),
+    ...(bits.length ? bits : [idle]),
+  ]);
 
   return (
     <article
@@ -379,8 +404,8 @@ function ThemeCard({
             excluded on purpose — the question the number answers is "how
             much is left in here", and work that landed is not left. */}
         <div className="dev-ws-theme-people">
-          <span className="dev-ws-stat"><b>{theme.people.length}</b>{theme.people.length === 1 ? 'person' : 'people'}</span>
-          <span className="dev-ws-stat"><b>{openItems}</b>{openItems === 1 ? 'item' : 'items'}</span>
+          <span className="dev-ws-stat"><RichMessage id="project:allItems.theme.stat.people" values={{ count: theme.people.length }} components={[<b />]} /></span>
+          <span className="dev-ws-stat"><RichMessage id="project:allItems.theme.stat.items" values={{ count: openItems }} components={[<b />]} /></span>
         </div>
         {theme.saying ? (
           <p className="dev-ws-theme-say">{theme.saying}</p>
@@ -410,7 +435,7 @@ function ThemeCard({
                 }}
                 onKeyDown={(e) => e.stopPropagation()}
               >
-                {`Discuss in #${theme.topic.handle} ›`}
+                {t('project:allItems.theme.discuss', { channel: theme.topic.handle })}
               </a>
             </>
           ) : (
@@ -434,10 +459,20 @@ function ThemeCard({
               than under whichever lane happened to overflow: the filter it
               applies is the theme's, not a lane's. */}
           <div className="dev-ws-theme-more">
-            {hidden ? <span>{`+${hidden} not shown · `}</span> : null}
-            <button type="button" className="dev-ws-link" onClick={() => callAppView('openBoardForTheme', theme.id)}>
-              Open on Board ›
-            </button>
+            {hidden ? (
+              <RichMessage
+                id="project:allItems.theme.hiddenThenOpen"
+                values={{ count: hidden }}
+                components={[
+                  <span />,
+                  <button type="button" className="dev-ws-link" onClick={() => callAppView('openBoardForTheme', theme.id)} />,
+                ]}
+              />
+            ) : (
+              <button type="button" className="dev-ws-link" onClick={() => callAppView('openBoardForTheme', theme.id)}>
+                {t('project:allItems.theme.openOnBoard')}
+              </button>
+            )}
           </div>
         </div>
       ) : null}
@@ -456,16 +491,14 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
   const drafted = meta.discoveredAt ? Date.parse(meta.discoveredAt) : NaN;
   const parts: string[] = [
     Number.isFinite(drafted)
-      ? `Categories were drafted ${relTime(drafted)} and are re-drafted daily, or sooner when a tenth of the board changes.`
-      : 'Categories are drafted from the board and re-drafted daily, or sooner when a tenth of the board changes.',
+      ? translate('project:allItems.categories.draftedAt', { when: relTime(drafted) })
+      : translate('project:allItems.categories.drafted'),
   ];
   const c = meta.coverage;
-  if (c && c.pending) parts.push(`${c.pending} new ${c.pending === 1 ? 'card is' : 'cards are'} being placed.`);
-  if (c && c.unplaced) {
-    parts.push(`${c.unplaced} ${c.unplaced === 1 ? 'card did' : 'cards did'} not fit a category and ${c.unplaced === 1 ? 'waits' : 'wait'} for the next draft.`);
-  }
-  if (meta.lastError) parts.push(`The last attempt failed (${meta.lastError}); it is retried shortly.`);
-  return parts.join(' ');
+  if (c && c.pending) parts.push(translate('project:allItems.categories.pending', { count: c.pending }));
+  if (c && c.unplaced) parts.push(translate('project:allItems.categories.unplaced', { count: c.unplaced }));
+  if (meta.lastError) parts.push(translate('project:allItems.categories.lastError', { error: meta.lastError }));
+  return sentences(parts);
 }
 
 /**
@@ -491,9 +524,9 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
     // The failure that used to be a log line and a day of silence. Naming it
     // here is what turned "could something be up with the summarizer?" from a
     // question about the database into one the page answers.
-    return `The model\u2019s summary could not be written (${meta.digestError}); it is retried within the hour, and this is worked out from the board meanwhile.`;
+    return translate('project:workshop.digest.failed', { error: meta.digestError });
   }
-  return 'Worked out from the board; the model writes one on the next pass.';
+  return translate('project:workshop.digest.derived');
 }
 
 /**
@@ -534,6 +567,17 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * screen it is on. All items has no banner, so there it says the whole
  * thing.
  */
+const EMPTY_PRESS: Record<'hub' | 'away', Record<'collab' | 'plain', Record<'full' | 'short', string>>> = {
+  hub: {
+    collab: { full: 'project:boardEmpty.press.hub.collab.full', short: 'project:boardEmpty.press.hub.collab.short' },
+    plain: { full: 'project:boardEmpty.press.hub.plain.full', short: 'project:boardEmpty.press.hub.plain.short' },
+  },
+  away: {
+    collab: { full: 'project:boardEmpty.press.away.collab.full', short: 'project:boardEmpty.press.away.collab.short' },
+    plain: { full: 'project:boardEmpty.press.away.plain.full', short: 'project:boardEmpty.press.away.plain.short' },
+  },
+};
+
 function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false }: {
   filtered: boolean;
   loadFailed: boolean;
@@ -542,25 +586,22 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
   onHub?: boolean;
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
-  const where = onHub ? '' : ' on the hub';
-  const adds = canCollaborate ? ' to suggest an improvement or import a PR' : ' to suggest an improvement';
-  const start = underStartHere ? '.' : '; to make one yourself, use Build it now there.';
+  const t = useMessages('project');
+  // One whole sentence per case: where the ⋯ is, what it holds for this
+  // viewer, and whether "make one yourself" is said.
+  const press = EMPTY_PRESS[onHub ? 'hub' : 'away'][canCollaborate ? 'collab' : 'plain'][underStartHere ? 'short' : 'full'];
+  const board = readOnly ? t('project:boardEmpty.readOnly') : (
+    <RichMessage id={press} components={[<span className="font-medium text-violet-700 dark:text-violet-400" />]} />
+  );
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       {filtered ? (
-        'Nothing here matches the current search and filters.'
-      ) : (
-        <>
-          {loadFailed ? "Couldn't load open requests right now. " : ''}
-          {readOnly ? 'Nothing on the board yet.' : (
-            <>
-              {'Nothing on the board yet. Press '}
-              <span className="font-medium text-violet-700 dark:text-violet-400">⋯</span>
-              {where + adds + start}
-            </>
-          )}
-        </>
-      )}
+        t('project:boardEmpty.filtered')
+      ) : loadFailed ? (
+        // The sentence about the board follows the one about the load, where
+        // the message puts it.
+        <RichMessage id="project:boardEmpty.loadFailed" components={[<>{board}</>]} />
+      ) : board}
     </div>
   );
 }
@@ -604,13 +645,14 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
  */
 function StartHereBanner(): ReactNode {
   const readOnly = useStoreState(improveStore).readOnly;
+  const t = useMessages('project');
   return (
     <section className="dev-ws-strip" data-ws-start-here="">
       <div className="dev-ws-head">
-        <span className="dev-ws-head-title">Start working on this app</span>
+        <span className="dev-ws-head-title">{t('project:hub.startHere.title')}</span>
       </div>
       <p className="dev-ws-strip-text">
-        Nothing is open and nothing has shipped yet. The first change is yours to start.
+        {t('project:hub.startHere.text')}
       </p>
       {readOnly ? null : (
         <Button
@@ -620,7 +662,7 @@ function StartHereBanner(): ReactNode {
           className="self-start"
           onClick={() => Improve.startSession()}
         >
-          Start a new change
+          {t('project:hub.startHere.start')}
         </Button>
       )}
     </section>
@@ -700,10 +742,12 @@ function useThemeReorderMotion(listRef: { current: HTMLElement | null }, themes:
   return capture;
 }
 
+// `label` is a message id (frontend/locales/en/project.json), read when the
+// chips render.
 const SORTS: { key: SortKey; label: string }[] = [
-  { key: 'people', label: 'By people' },
-  { key: 'activity', label: 'By activity' },
-  { key: 'open', label: 'By open items' },
+  { key: 'people', label: 'project:allItems.sort.people' },
+  { key: 'activity', label: 'project:allItems.sort.activity' },
+  { key: 'open', label: 'project:allItems.sort.open' },
 ];
 
 type Dash = NonNullable<DevWorkshopView['dashboard']>;
@@ -724,14 +768,14 @@ function pace(d: Dash): string {
   //
   // With a partial page the honest sentence is the floor and nothing else.
   if (d.partial) {
-    if (!n) return 'Nothing has landed this week.';
-    return `At least ${n} ${n === 1 ? 'change' : 'changes'} landed this week.`;
+    if (!n) return translate('project:workshop.pace.nonePartial');
+    return translate('project:workshop.pace.atLeast', { count: n });
   }
-  if (!n && !p) return 'Nothing has landed in the last fortnight.';
-  if (!p) return `${n} ${n === 1 ? 'change' : 'changes'} landed this week, the first in a fortnight.`;
-  if (n > p) return `${n} landed this week, up from ${p} the week before.`;
-  if (n < p) return `${n} landed this week, down from ${p} the week before.`;
-  return `${n} landed this week, the same as the week before.`;
+  if (!n && !p) return translate('project:workshop.pace.noneFortnight');
+  if (!p) return translate('project:workshop.pace.firstInFortnight', { count: n });
+  if (n > p) return translate('project:workshop.pace.up', { count: n, previous: p });
+  if (n < p) return translate('project:workshop.pace.down', { count: n, previous: p });
+  return translate('project:workshop.pace.same', { count: n });
 }
 
 /**
@@ -790,23 +834,24 @@ function pace(d: Dash): string {
  * the backlog rather than an alarm, so both stay in text ink.
  */
 function DashTiles({ d }: { d: Dash }): ReactNode {
+  const t = useMessages('project');
   const cells: { key: string; n: number; label: string; tone?: string; title?: string }[] = [
-    { key: 'open', n: d.open, label: d.open === 1 ? 'open item' : 'open items' },
-    { key: 'unclaimed', n: d.unclaimed, label: 'nobody on them' },
+    { key: 'open', n: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
+    { key: 'unclaimed', n: d.unclaimed, label: t('project:workshop.dash.unclaimed') },
     {
       key: 'votes',
       n: d.votesWaiting,
-      label: d.votesWaiting === 1 ? 'waiting on a vote' : 'waiting on votes',
+      label: t('project:workshop.dash.votes', { count: d.votesWaiting }),
       tone: d.votesWaiting ? 'warn' : undefined,
     },
     {
       key: 'shipped',
       n: d.shippedWeek,
-      label: 'live this week',
+      label: t('project:workshop.dash.shipped'),
       tone: d.shippedWeek ? 'good' : undefined,
       title: d.partial
-        ? 'At least this many: there is more history than the page loaded.'
-        : 'This calendar week, counted from Monday 00:00 UTC.',
+        ? t('project:workshop.dash.shippedPartial')
+        : t('project:workshop.dash.shippedWeek'),
     },
   ];
   return (
@@ -918,7 +963,7 @@ export function sinceWeeks(
       const live = start >= thisMonday;
       week = {
         key: `week:${start}`,
-        title: live ? 'This week' : '',
+        title: live ? translate('project:since.week.thisWeek') : '',
         startMs: start,
         endMs: live ? nowMs : start + WEEK_MS,
         live,
@@ -969,16 +1014,15 @@ export function sinceSentence(rows: Array<{ brief?: { kind: string; stage: strin
     else if (b.stage === 'vote') votes += 1;
     else other += 1;
   }
-  const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
   const bits = [
-    requests ? n(requests, 'new request', 'new requests') : '',
-    ask ? `${n(ask, 'change', 'changes')} waiting for your vote` : '',
-    votes ? `${n(votes, 'change', 'changes')} up for a vote` : '',
-    live ? `${n(live, 'change', 'changes')} live` : '',
-    proposals ? `${n(proposals, 'proposal', 'proposals')} to vote on` : '',
-    other ? `${n(other, 'change', 'changes')} being made` : '',
+    requests ? translate('project:since.words.requests', { count: requests }) : '',
+    ask ? translate('project:since.words.yourVote', { count: ask }) : '',
+    votes ? translate('project:since.words.upForVote', { count: votes }) : '',
+    live ? translate('project:since.words.live', { count: live }) : '',
+    proposals ? translate('project:since.words.toVoteOn', { count: proposals }) : '',
+    other ? translate('project:since.words.beingMade', { count: other }) : '',
   ].filter(Boolean);
-  return bits.length ? `${bits.join(', ')}.` : '';
+  return bits.length ? translate('project:since.words.line', { facts: listText(bits) }) : '';
 }
 
 /**
@@ -1014,19 +1058,34 @@ function summarise(d: Dash): string {
  */
 function describe(d: Dash): string {
   const parts: string[] = [];
-  const scale = `${d.open} open ${d.open === 1 ? 'item' : 'items'}`
-    + (d.themes ? ` across ${d.themes} ${d.themes === 1 ? 'category' : 'categories'}` : '');
-  parts.push(d.busiest ? `${scale}, most of the movement in ${d.busiest}.` : `${scale}.`);
+  // One whole sentence per shape. A sentence that holds two counts places a
+  // counted phrase for each, so each number picks its own plural form in the
+  // language on screen; nothing here tests a number for "one".
+  if (!d.themes) {
+    parts.push(d.busiest
+      ? translate('project:workshop.describe.openBusiest', { count: d.open, category: d.busiest })
+      : translate('project:workshop.describe.open', { count: d.open }));
+  } else {
+    const across = {
+      open: translate('project:workshop.describe.fact.open', { count: d.open }),
+      categories: translate('project:workshop.describe.fact.categories', { count: d.themes }),
+    };
+    parts.push(d.busiest
+      ? translate('project:workshop.describe.openAcrossBusiest', { ...across, category: d.busiest })
+      : translate('project:workshop.describe.openAcross', across));
+  }
   parts.push(pace(d));
-  const waiting: string[] = [];
-  if (d.votesWaiting) {
-    waiting.push(`${d.votesWaiting} ${d.votesWaiting === 1 ? 'proposal is' : 'proposals are'} waiting on votes`);
+  if (d.votesWaiting && d.unclaimed) {
+    parts.push(translate('project:workshop.describe.votesAndUnclaimed', {
+      votes: translate('project:workshop.describe.fact.votesWaiting', { count: d.votesWaiting }),
+      unclaimed: translate('project:workshop.describe.fact.unclaimed', { count: d.unclaimed }),
+    }));
+  } else if (d.votesWaiting) {
+    parts.push(translate('project:workshop.describe.votesWaiting', { count: d.votesWaiting }));
+  } else if (d.unclaimed) {
+    parts.push(translate('project:workshop.describe.unclaimed', { count: d.unclaimed }));
   }
-  if (d.unclaimed) {
-    waiting.push(`${d.unclaimed} open ${d.unclaimed === 1 ? 'item has nobody on it' : 'items have nobody on them'}`);
-  }
-  if (waiting.length) parts.push(`${waiting.join(' and ').replace(/^./, (c) => c.toUpperCase())}.`);
-  return parts.join(' ');
+  return sentences(parts);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1159,15 +1218,23 @@ function factTone(tone: string | undefined): string {
   }
 }
 
-/** The key legend for an item of this kind: the keys it answers to. */
-function legendFor(kind: QueueRow['kind'] | 'done'): Array<[string[], string]> {
-  const keys: Array<[string[], string]> = [[['↑', '↓'], 'move']];
+/**
+ * The key legend for an item of this kind: the keys it answers to, each a
+ * message id whose text holds the keys as numbered tags and the word after
+ * them ("<0>V</0> vote"), with how many keys it draws.
+ */
+function legendFor(kind: QueueRow['kind'] | 'done'): Array<{ id: string; keys: number }> {
+  const keys: Array<{ id: string; keys: number }> = [{ id: 'project:needsYou.keys.move', keys: 2 }];
   // The end card answers to the move keys alone.
   if (kind === 'done') return keys;
-  if (kind === 'vote') keys.push([['V'], 'vote']);
-  keys.push([['D'], 'description'], [['A'], 'ask'], [['C'], 'comments']);
-  if (kind === 'vote') keys.push([['T'], 'try it']);
-  keys.push([['M'], 'more']);
+  if (kind === 'vote') keys.push({ id: 'project:needsYou.keys.vote', keys: 1 });
+  keys.push(
+    { id: 'project:needsYou.keys.description', keys: 1 },
+    { id: 'project:needsYou.keys.ask', keys: 1 },
+    { id: 'project:needsYou.keys.comments', keys: 1 },
+  );
+  if (kind === 'vote') keys.push({ id: 'project:needsYou.keys.tryIt', keys: 1 });
+  keys.push({ id: 'project:needsYou.keys.more', keys: 1 });
   return keys;
 }
 
@@ -1196,13 +1263,16 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     // The count in the change page's own words: an at-least-N rule's pill
     // reads "1 of 2 approvals" there (AppView.statusPillState), and every
     // rule's count reads the same way here.
-    out.push({ key: 'tally', tone: undefined, text: `${st.yes} of ${st.majority} ${st.majority === 1 ? 'approval' : 'approvals'}` });
-    if (st.label && !/^Vote\b/.test(st.label) && !SAID_ELSEWHERE.has(st.key)) out.push({ key: 'state', tone: st.tone, text: st.label });
+    out.push({ key: 'tally', tone: undefined, text: translate('project:needsYou.fact.approvals', { yes: st.yes, count: st.majority }) });
+    if (st.label && !st.plainVote && !SAID_ELSEWHERE.has(st.key)) out.push({ key: 'state', tone: st.tone, text: st.label });
   } else if (row.kind === 'vote' && row.tally) {
     // The Communities feed's rows (#3488): the counts, without a threshold
     // it has not worked out for each project. A zero says nothing.
     if (voted) out.push({ key: 'voted', tone: voted === 'no' ? 'blocked' : 'ok', text: youAnswered(row, voted) });
-    const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
+    const said = factsLine([
+      row.tally.yes ? translate('project:needsYou.fact.yes', { count: row.tally.yes }) : '',
+      row.tally.no ? translate('project:needsYou.fact.no', { count: row.tally.no }) : '',
+    ]);
     if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
   for (const b of row.card.badges) {
@@ -1224,15 +1294,25 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
 function approves(row: QueueRow): boolean {
   return row.kind === 'vote' && !!(row.yes && row.yes.approve);
 }
-/** The confirmation once the item is answered: "Voted yes", or "Approved" / "Not approved". */
-function answeredWords(row: QueueRow, voted: string): string {
-  if (!approves(row)) return `Voted ${voted}`;
-  return voted === 'yes' ? 'Approved' : 'Not approved';
+/**
+ * The confirmation once the item is answered: "Voted yes", or "Approved" /
+ * "Not approved". `where` is the place that says it: the item's own line,
+ * or the rail's Vote button.
+ */
+function answeredWords(row: QueueRow, voted: string, where: 'item' | 'rail'): string {
+  const yes = voted === 'yes';
+  if (where === 'rail') {
+    if (!approves(row)) return yes ? translate('project:needsYou.rail.votedYes') : translate('project:needsYou.rail.votedNo');
+    return yes ? translate('project:needsYou.rail.approved') : translate('project:needsYou.rail.notApproved');
+  }
+  if (!approves(row)) return yes ? translate('project:needsYou.answered.votedYes') : translate('project:needsYou.answered.votedNo');
+  return yes ? translate('project:needsYou.answered.approved') : translate('project:needsYou.answered.notApproved');
 }
 /** The same, as the facts line says it. */
 function youAnswered(row: QueueRow, voted: string): string {
-  if (!approves(row)) return `You voted ${voted}`;
-  return voted === 'yes' ? 'You approved it' : 'You didn’t approve it';
+  const yes = voted === 'yes';
+  if (!approves(row)) return yes ? translate('project:needsYou.fact.youVotedYes') : translate('project:needsYou.fact.youVotedNo');
+  return yes ? translate('project:needsYou.fact.youApproved') : translate('project:needsYou.fact.youDidNotApprove');
 }
 
 /** The line under the vote question: where the vote stands, and what follows. */
@@ -1262,11 +1342,12 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
   // Yes side's optional line is a note, not a line for the group; the hub's
   // shared read, so the hero and this agree.
   const solo = useCommunity(rowSlug(row, slug || ''))?.audience === 'solo';
+  const t = useMessages('project');
   return (
     <div className="dev-ws-vote-form" data-ws-vote-form="" data-side={side}>
       <VotePicker
-        yes={{ key: 'yes', label: row.yes ? row.yes.label : 'Yes', act: row.yes && row.yes.act ? row.yes.act as ActionRef : undefined }}
-        no={{ key: 'no', label: row.no ? row.no.label : 'No', act: row.no && row.no.act ? row.no.act as ActionRef : undefined }}
+        yes={{ key: 'yes', label: row.yes ? row.yes.label : t('project:needsYou.vote.yes'), tally: row.yes ? row.yes.tally : undefined, act: row.yes && row.yes.act ? row.yes.act as ActionRef : undefined }}
+        no={{ key: 'no', label: row.no ? row.no.label : t('project:needsYou.vote.no'), tally: row.no ? row.no.tally : undefined, act: row.no && row.no.act ? row.no.act as ActionRef : undefined }}
         prior={null}
         side={side}
         line={line}
@@ -1288,13 +1369,14 @@ export function NeedsVoteForm({ row, slug, side, line, boxRef, onSide, onLine, o
 
 /** The vote sheet's line under its question (tallyLine); exported for the render test. */
 export function VoteSub({ row, voted }: { row: QueueRow; voted: string | null }): ReactNode {
+  // Subscribed: tallyLine reads its words as it is called.
+  useMessages('project');
   return <p className="dev-ws-vote-sub">{tallyLine(row, voted)}</p>;
 }
 
-/** "Yes (2/3)" → "2/3": the tally a vote spec's label carries, as the card's picker reads it. */
-function labelTally(a: { label?: string }): string {
-  const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
-  return m ? m[1] : '';
+/** "2/3" beside "Yes (2/3)": the count a vote spec carries on its own, as the card's picker reads it. */
+function labelTally(a: { tally?: string }): string {
+  return a.tally || '';
 }
 
 /**
@@ -1306,17 +1388,26 @@ function labelTally(a: { label?: string }): string {
 function tallyLine(row: QueueRow, voted: string | null): string {
   const st = row.card.pill ? row.card.pill.state : null;
   if (approves(row)) {
-    const said = voted ? `${answeredWords(row, voted)}.` : 'Waiting for your approval.';
-    return st && st.label && !/^Vote\b/.test(st.label) && !SAID_ELSEWHERE.has(st.key) ? `${said} ${st.label}.` : said;
+    // The pill's own word, when it is not the wait itself. It arrives from
+    // AppView.statusPillState already worded, so it is a parameter.
+    const state = st && st.label && !st.plainVote && !SAID_ELSEWHERE.has(st.key) ? st.label : '';
+    if (!voted) {
+      return state ? translate('project:needsYou.voteSub.waitingState', { state }) : translate('project:needsYou.voteSub.waiting');
+    }
+    if (voted === 'yes') {
+      return state ? translate('project:needsYou.voteSub.approvedState', { state }) : translate('project:needsYou.voteSub.approved');
+    }
+    return state ? translate('project:needsYou.voteSub.notApprovedState', { state }) : translate('project:needsYou.voteSub.notApproved');
   }
   if (!st) {
     if (!row.tally) return '';
     const { yes, no } = row.tally;
-    if (!yes && !no) return 'Nobody has voted yet.';
-    return `${yes} yes and ${no} no so far.`;
+    if (!yes && !no) return translate('project:needsYou.voteSub.nobody');
+    return translate('project:needsYou.voteSub.counts', { yes, no });
   }
-  const said = `${st.yes} of ${st.majority} have said yes so far.`;
-  return st.label && !/^Vote\b/.test(st.label) ? `${said} ${st.label}.` : said;
+  return st.label && !st.plainVote
+    ? translate('project:needsYou.voteSub.ofNeededState', { count: st.yes, needed: st.majority, state: st.label })
+    : translate('project:needsYou.voteSub.ofNeeded', { count: st.yes, needed: st.majority });
 }
 
 /* ── The picture: two stills, cropped to what changed ───────────────── */
@@ -1408,6 +1499,7 @@ function BeforeAfter({ v, near, onFull }: {
   near: boolean;
   onFull: (el: HTMLElement) => void;
 }): ReactNode {
+  const t = useMessages('project');
   const viewRef = useRef<HTMLDivElement>(null);
   const [side, setSide] = useState<Side>(v.after ? 'after' : 'before');
   const [geo, setGeo] = useState<Geo | null>(null);
@@ -1462,12 +1554,12 @@ function BeforeAfter({ v, near, onFull }: {
     <div className="dev-ws-media" data-ws-media="">
       <div className="dev-ws-media-bar">
         {v.before && v.after ? (
-          <div className="dev-ws-seg" role="group" aria-label="Before or after">
-            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
-            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
+          <div className="dev-ws-seg" role="group" aria-label={t('project:shots.switch.label')}>
+            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'before'} onClick={() => setSide('before')}>{t('project:shots.switch.before')}</button>
+            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'after'} onClick={() => setSide('after')}>{t('project:shots.switch.after')}</button>
           </div>
         ) : (
-          <span className="dev-ws-seg dev-ws-seg-one">{v.after ? 'After' : 'Before'}</span>
+          <span className="dev-ws-seg dev-ws-seg-one">{v.after ? t('project:shots.only.after') : t('project:shots.only.before')}</span>
         )}
       <button
         type="button"
@@ -1485,7 +1577,7 @@ function BeforeAfter({ v, near, onFull }: {
         data-claim={v.protected ? (v.claim || v.path) : undefined}
         onClick={(e) => onFull(e.currentTarget)}
       >
-        {cropped ? 'Cropped · Full page ↗' : 'Full page ↗'}
+        {cropped ? t('project:shots.fullPageCropped') : t('project:shots.fullPage')}
       </button>
       </div>
       <div className="dev-ws-media-view" ref={viewRef}>
@@ -1493,7 +1585,7 @@ function BeforeAfter({ v, near, onFull }: {
           <img
             className="dev-ws-media-img"
             src={visualSrc(id, v.protected === true)}
-            alt={side === 'after' ? 'After the change' : 'Before the change'}
+            alt={side === 'after' ? t('project:shots.alt.after') : t('project:shots.alt.before')}
             style={style}
             draggable={false}
           />
@@ -1545,6 +1637,7 @@ function ShotsPicture({ v, near, wide }: {
   near: boolean;
   wide: boolean;
 }): ReactNode {
+  const t = useMessages('project');
   const viewRef = useRef<HTMLDivElement>(null);
   const [side, setSide] = useState<Side>('after');
   const [view, setView] = useState({ w: 0, h: 0 });
@@ -1592,7 +1685,7 @@ function ShotsPicture({ v, near, wide }: {
         className={which === 'before' ? 'dev-ws-shot-side dev-ws-shot-before' : 'dev-ws-shot-side dev-ws-shot-after'}
         style={place ? { width: W, height: shot.height, transform: `translate(${place.tx}px, ${place.ty}px) scale(${place.scale})` } : undefined}
       >
-        {near && place ? <img src={shot.url} alt={which === 'after' ? 'After the change' : 'Before the change'} draggable={false} /> : null}
+        {near && place ? <img src={shot.url} alt={which === 'after' ? t('project:shots.alt.after') : t('project:shots.alt.before')} draggable={false} /> : null}
       </span>
     );
   };
@@ -1623,13 +1716,13 @@ function ShotsPicture({ v, near, wide }: {
       </span>
     );
   }) : null);
-  const size = isPhoneScreen(screen) ? 'Phone' : screen.viewport.charAt(0).toUpperCase() + screen.viewport.slice(1);
+  const size = isPhoneScreen(screen) ? t('project:shots.size.phone') : screen.viewport.charAt(0).toUpperCase() + screen.viewport.slice(1);
   return (
     <div className="dev-ws-media dev-ws-media-shots" data-ws-media="" data-ws-shots="" data-side={side}>
       <div className="dev-ws-media-bar">
-        <div className="dev-ws-seg" role="group" aria-label="Before or after">
-          <button type="button" className="dev-ws-seg-btn dev-ws-seg-before" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
-          <button type="button" className="dev-ws-seg-btn dev-ws-seg-after" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
+        <div className="dev-ws-seg" role="group" aria-label={t('project:shots.switch.label')}>
+          <button type="button" className="dev-ws-seg-btn dev-ws-seg-before" aria-pressed={side === 'before'} onClick={() => setSide('before')}>{t('project:shots.switch.before')}</button>
+          <button type="button" className="dev-ws-seg-btn dev-ws-seg-after" aria-pressed={side === 'after'} onClick={() => setSide('after')}>{t('project:shots.switch.after')}</button>
         </div>
         <span className="dev-ws-media-size">{size}</span>
       </div>
@@ -1638,7 +1731,7 @@ function ShotsPicture({ v, near, wide }: {
         ref={viewRef}
         role="button"
         tabIndex={0}
-        aria-label={side === 'after' ? 'Show before the change' : 'Show after the change'}
+        aria-label={side === 'after' ? t('project:shots.flip.toBefore') : t('project:shots.flip.toAfter')}
         onClick={flip}
         onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } }}
       >
@@ -1677,7 +1770,8 @@ function ItemBy({ row }: { row: QueueRow }): ReactNode {
   // account's name and "proposed". Its author arrives as that account's
   // username on both feeds (AppView._botBuilt reads the same).
   const bot = isVote && String(row.who || '').toLowerCase() === 'homeroom_bot';
-  const who = bot ? 'Homeroom bot' : row.who;
+  const t = useMessages('project');
+  const who = bot ? t('project:needsYou.by.botName') : row.who;
   return (
     <p className="dev-ws-item-by">
       {who ? (
@@ -1686,12 +1780,31 @@ function ItemBy({ row }: { row: QueueRow }): ReactNode {
         </span>
       ) : null}
       <span>
+        {/* One whole by-line per shape: who and when are parameters, and the
+            bold runs are the message's numbered tags. */}
         {isVote ? (
-          <>{who ? <b>{who}</b> : 'Proposed'}{row.ago ? ` · ${who ? (bot ? 'made ' : 'proposed ') : ''}${row.ago}` : ''}</>
+          who ? (
+            row.ago
+              ? <RichMessage id={bot ? 'project:needsYou.by.made' : 'project:needsYou.by.proposed'} values={{ name: who, when: row.ago }} components={[<b />]} />
+              : <b>{who}</b>
+          ) : (row.ago ? t('project:needsYou.by.anonymousAgo', { when: row.ago }) : t('project:needsYou.by.anonymous'))
+        ) : row.who ? (
+          row.number != null ? (
+            <RichMessage
+              id={row.ago ? 'project:needsYou.by.filedNumberAgo' : 'project:needsYou.by.filedNumber'}
+              values={{ number: row.number, name: row.who, when: row.ago || '' }}
+              components={[<b />, <b />]}
+            />
+          ) : (
+            <RichMessage
+              id={row.ago ? 'project:needsYou.by.filedAgo' : 'project:needsYou.by.filed'}
+              values={{ name: row.who, when: row.ago || '' }}
+              components={[<b />]}
+            />
+          )
         ) : (
           <>
             {row.number != null ? <b>{`#${row.number}`}</b> : null}
-            {row.who ? <>{row.number != null ? ' · filed by ' : 'Filed by '}<b>{row.who}</b></> : null}
             {row.ago ? ` · ${row.ago}` : ''}
           </>
         )}
@@ -1745,6 +1858,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   /** Draws the row's project over its by-line, where rows mix projects. */
   renderApp?: (row: QueueRow) => ReactNode;
 }): ReactNode {
+  const t = useMessages('project');
   const isVote = row.kind === 'vote';
   const href = openHref(rowSlug(row, slug), row.card);
   const title = row.card.title.text || row.card.title.title;
@@ -1795,7 +1909,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
         {voted ? (
           <span className="dev-ws-item-done" data-ws-item-done="" data-ws-voted={voted}>
             <CheckIcon className="dev-ws-item-tick" aria-hidden="true" />
-            {`${answeredWords(row, voted)} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
+            {factsLine([answeredWords(row, voted, 'item'), wide ? t('project:needsYou.next.wide') : t('project:needsYou.next.phone')])}
           </span>
         ) : (
           // First-session run-through, 5 Oct 2026: a newcomer read
@@ -1804,9 +1918,9 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
           // says: what it is, and that it waits on you
           // (AppView._summarizeRequirements' group headline).
           <span className="dev-ws-eyebrow">
-            {!isVote ? 'Request'
-              : row.card.attrs && row.card.attrs['data-gov-row'] ? 'Group decision · Waiting for your approval'
-                : 'Change · Waiting for your approval'}
+            {!isVote ? t('project:needsYou.eyebrow.request')
+              : row.card.attrs && row.card.attrs['data-gov-row'] ? t('project:needsYou.eyebrow.groupDecision')
+                : t('project:needsYou.eyebrow.change')}
           </span>
         )}
         {/* #3517: THE WAY BACK, WHERE A PHONE CAN SEE IT. Swiping down was
@@ -1818,7 +1932,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
             on a phone it already stands six buttons tall, and every one
             more is a line less for the title and summary above it. */}
         {onPrev && index > 0 ? (
-          <button type="button" className="dev-ws-item-prev" data-ws-item-prev="" aria-label="Previous item" onClick={onPrev}>
+          <button type="button" className="dev-ws-item-prev" data-ws-item-prev="" aria-label={t('project:needsYou.previousItem')} onClick={onPrev}>
             <ChevronUpIcon className="dev-ws-item-prev-icon" aria-hidden="true" />
           </button>
         ) : null}
@@ -1834,7 +1948,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
         <p className={picture.kind === 'diagram' || picture.kind === 'touches' ? 'dev-ws-item-summary dev-ws-item-summary-short' : 'dev-ws-item-summary'} ref={summaryRef}>{summary}</p>
       ) : (
         <p className="dev-ws-item-summary dev-ws-item-nosummary" ref={summaryRef}>
-          {isVote ? 'No plain-language summary was written for this change.' : 'This request has no description.'}
+          {isVote ? t('project:needsYou.noSummary.change') : t('project:needsYou.noSummary.request')}
         </p>
       )}
       {shots && row.visuals ? <ShotsPicture v={row.visuals} near={near} wide={wide} />
@@ -1854,8 +1968,8 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       {/* The swipe's two hints, last so the item's reading order is
           untouched. Hidden until a drag fades one in (app.css), and
           aria-hidden: the Vote sheet's buttons are the accessible way. */}
-      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">{approves(row) ? 'Approve' : 'Yes'}</span> : null}
-      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">{approves(row) ? 'Don’t approve' : 'No'}</span> : null}
+      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-yes" aria-hidden="true">{approves(row) ? t('project:needsYou.swipe.approve') : t('project:needsYou.swipe.yes')}</span> : null}
+      {swipe ? <span className="dev-ws-swipe-hint dev-ws-swipe-no" aria-hidden="true">{approves(row) ? t('project:needsYou.swipe.dontApprove') : t('project:needsYou.swipe.no')}</span> : null}
     </section>
   );
 });
@@ -1925,11 +2039,6 @@ function shotMatches(target: 'approve' | 'diagram' | 'touches', r: QueueRow): bo
   return target === 'diagram' ? drawn : !drawn && !!readTouches(r.touches);
 }
 
-/** "3 proposals", "1 proposal": a count with its noun. */
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
-
 /**
  * The end of the feed: one card past the last item, and the only place a
  * total appears.
@@ -1972,13 +2081,14 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
   onBack: () => void;
   doneLabel?: string;
 }): ReactNode {
+  const t = useMessages('project');
   const done = Math.max(0, Math.min(total, total - leftVotes));
-  const line = left > 0 ? 'That’s it for now.' : (acted > 0 ? 'That’s it!' : 'You’re all caught up.');
+  const line = left > 0 ? t('project:needsYou.end.forNow') : (acted > 0 ? t('project:needsYou.end.done') : t('project:needsYou.end.caughtUp'));
   const parts: string[] = [];
-  if (acted > 0) parts.push(`You voted on ${plural(acted, 'change', 'changes')} this time.`);
-  if (left > 0) parts.push(`You skipped ${left}. ${left === 1 ? 'It stays' : 'They stay'} above if you change your mind.`);
-  else if (acted > 0) parts.push('Nothing else needs you right now.');
-  else parts.push('Every change you can vote on has your answer, and every open request has somebody on it.');
+  if (acted > 0) parts.push(t('project:needsYou.end.voted', { count: acted }));
+  if (left > 0) parts.push(t('project:needsYou.end.skipped', { count: left }));
+  else if (acted > 0) parts.push(t('project:needsYou.end.nothingElse'));
+  else parts.push(t('project:needsYou.end.allAnswered'));
   return (
     <section
       className="dev-ws-item dev-ws-needs-done"
@@ -1992,16 +2102,16 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
           className="dev-ws-done-ring"
           pct={Math.round((done / total) * 100)}
           label={`${done}/${total}`}
-          title={done === total ? `All ${total} open changes voted on` : `${done} of ${total} open changes voted on`}
+          title={done === total ? t('project:needsYou.end.ringAll', { count: total }) : t('project:needsYou.end.ringSome', { done, count: total })}
           arcClassName={done === total ? 'stroke-emerald-500' : undefined}
         />
       ) : null}
       <p className="dev-ws-needs-done-line">{line}</p>
-      <p className="dev-ws-needs-done-sub">{parts.join(' ')}</p>
-      <button type="button" className="dev-ws-done-cta" onClick={onDone}>{doneLabel || 'See what changed this week'}</button>
+      <p className="dev-ws-needs-done-sub">{sentences(parts)}</p>
+      <button type="button" className="dev-ws-done-cta" onClick={onDone}>{doneLabel || t('project:needsYou.end.seeWeek')}</button>
       {left > 0 ? (
         <button type="button" className="dev-ws-done-back" data-ws-done-back="" onClick={onBack}>
-          Back to the first one you skipped
+          {t('project:needsYou.end.backToSkipped')}
         </button>
       ) : null}
     </section>
@@ -2243,6 +2353,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
   doneLabel?: string;
   renderApp?: (row: QueueRow) => ReactNode;
 }): ReactNode {
+  const t = useMessages('project');
   const scrollRef = useRef<HTMLDivElement>(null);
   // Whether the route asked to open on the end card. Read once, at mount:
   // the URL does not change for the life of the feed, and a state seed is
@@ -2834,7 +2945,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     const prior = threads[key] || [];
     setThreads((cur) => ({
       ...cur,
-      [key]: [...prior, { who: 'you', text: q }, { who: 'ai', text: 'Reading the change…', pending: true }],
+      [key]: [...prior, { who: 'you', text: q }, { who: 'ai', text: t('project:needsYou.ask.reading'), pending: true }],
     }));
     setAsking((cur) => ({ ...cur, [key]: true }));
     setDraft('');
@@ -2874,7 +2985,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
         // and "no model is configured" happened.
         text = (typeof data.error === 'string' && data.error.trim())
           ? data.error.trim()
-          : 'That did not go through. Try asking again.';
+          : t('project:needsYou.ask.failed');
       } else {
         const parsed = await readAskStream(res.body, (sofar) => {
           writeTail({ who: 'ai', text: sofar, pending: true });
@@ -2886,12 +2997,12 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           text = parsed.text.trim();
         } else {
           failed = true;
-          text = 'That did not go through. Try asking again.';
+          text = t('project:needsYou.ask.failed');
         }
       }
     } catch {
       failed = true;
-      text = 'That did not go through. Check your connection and try again.';
+      text = t('project:needsYou.ask.failedOffline');
     }
 
     writeTail({ who: 'ai', text, failed });
@@ -2911,7 +3022,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     <button
       type="submit"
       className="dc-send-btn dc-circle-send dev-ws-ask-send"
-      aria-label="Ask"
+      aria-label={t('project:needsYou.ask.send')}
       disabled={!draft.trim() || !target || inFlight}
       // The field keeps focus through the press (lib/keyboard-open.ts).
       onMouseDown={(event) => event.preventDefault()}
@@ -2927,10 +3038,10 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
    */
   const moveRow = (
     <div className="dev-ws-move" data-ws-move-row="">
-      <button type="button" className="dev-ws-move-btn" data-ws-move="prev" aria-label="Previous" disabled={i <= 0} onClick={() => go(-1)}>
+      <button type="button" className="dev-ws-move-btn" data-ws-move="prev" aria-label={t('project:needsYou.move.previous')} disabled={i <= 0} onClick={() => go(-1)}>
         <ChevronUpIcon className="dev-ws-move-icon" aria-hidden="true" />
       </button>
-      <button type="button" className="dev-ws-move-btn" data-ws-move="next" aria-label="Next" disabled={i >= n} onClick={() => go(1)}>
+      <button type="button" className="dev-ws-move-btn" data-ws-move="next" aria-label={t('project:needsYou.move.next')} disabled={i >= n} onClick={() => go(1)}>
         <ChevronDownIcon className="dev-ws-move-icon" aria-hidden="true" />
       </button>
     </div>
@@ -2982,7 +3093,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       </div>
 
       {row ? (
-        <aside className="dev-ws-rail" data-ws-rail="" aria-label="This item" ref={railRef}>
+        <aside className="dev-ws-rail" data-ws-rail="" aria-label={t('project:needsYou.rail.label')} ref={railRef}>
           {row.kind === 'vote' ? (
             <button
               type="button"
@@ -2995,7 +3106,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               onClick={() => toggleSheet('vote')}
             >
               <span className="dev-ws-rail-ic">{voted ? <CheckIcon aria-hidden="true" /> : <BallotIcon aria-hidden="true" />}</span>
-              <span className="dev-ws-rail-lab">{voted ? answeredWords(row, voted) : (sending[row.key] ? 'Sending…' : (approves(row) ? 'Approve' : 'Vote'))}</span>
+              <span className="dev-ws-rail-lab">{voted ? answeredWords(row, voted, 'rail') : (sending[row.key] ? t('project:needsYou.rail.sending') : (approves(row) ? t('project:needsYou.rail.approve') : t('project:needsYou.rail.vote')))}</span>
               <kbd className="dev-ws-rail-key" aria-hidden="true">V</kbd>
             </button>
           ) : (
@@ -3007,7 +3118,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               onClick={() => answer('yes')}
             >
               <span className="dev-ws-rail-ic"><HandRaisedIcon aria-hidden="true" /></span>
-              <span className="dev-ws-rail-lab">Take it</span>
+              <span className="dev-ws-rail-lab">{t('project:needsYou.rail.take')}</span>
             </button>
           )}
           {/* Everything the card leaves out, the way a short video's words
@@ -3022,7 +3133,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             onClick={() => toggleSheet('description')}
           >
             <span className="dev-ws-rail-ic"><DescriptionIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">Description</span>
+            <span className="dev-ws-rail-lab">{t('project:needsYou.rail.description')}</span>
             <kbd className="dev-ws-rail-key" aria-hidden="true">D</kbd>
           </button>
           <button
@@ -3034,7 +3145,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             onClick={() => toggleSheet('comments')}
           >
             <span className="dev-ws-rail-ic"><ChatBubbleTailIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">{commentCount ? String(commentCount) : 'Comments'}</span>
+            <span className="dev-ws-rail-lab">{commentCount ? String(commentCount) : t('project:needsYou.rail.comments')}</span>
             <kbd className="dev-ws-rail-key" aria-hidden="true">C</kbd>
           </button>
           <button
@@ -3046,7 +3157,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             onClick={() => toggleSheet('ask')}
           >
             <span className="dev-ws-rail-ic"><SparklesIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">Ask</span>
+            <span className="dev-ws-rail-lab">{t('project:needsYou.rail.ask')}</span>
             <kbd className="dev-ws-rail-key" aria-hidden="true">A</kbd>
           </button>
           {row.kind === 'vote' ? (
@@ -3059,7 +3170,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               onClick={tryIt}
             >
               <span className="dev-ws-rail-ic"><PlayIcon aria-hidden="true" /></span>
-              <span className="dev-ws-rail-lab">Try it</span>
+              <span className="dev-ws-rail-lab">{t('project:needsYou.rail.tryIt')}</span>
               <kbd className="dev-ws-rail-key" aria-hidden="true">T</kbd>
             </button>
           ) : null}
@@ -3074,10 +3185,10 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             data-card-menu-open={cardHref || undefined}
             disabled={!menuKey && !cardHref}
             aria-haspopup="true"
-            aria-label="More actions"
+            aria-label={t('project:needsYou.rail.moreActions')}
           >
             <span className="dev-ws-rail-ic"><EllipsisHorizontalIcon aria-hidden="true" /></span>
-            <span className="dev-ws-rail-lab">More</span>
+            <span className="dev-ws-rail-lab">{t('project:needsYou.rail.more')}</span>
             <kbd className="dev-ws-rail-key" aria-hidden="true">M</kbd>
           </button>
           {moveRow}
@@ -3087,7 +3198,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               closes it. */}
           {row.kind === 'vote' && shown === 'vote' ? (
             <div className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask} {...leavingAttr}>
-              <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+              <button type="button" className="dev-ws-scrim" aria-label={t('core:common.close')} onClick={closeSheet} />
               <div className="dev-ws-sheet-card">
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
                 <p className="dev-ws-ask-q">{row.ask}</p>
@@ -3116,12 +3227,12 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
                 ) : (
                   <>
                     <div className="dev-ws-answer-row">
-                      <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>Open to decide</a>
+                      <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>{t('project:needsYou.voteSheet.openToDecide')}</a>
                     </div>
-                    <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
+                    <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>{t('project:needsYou.voteSheet.later')}</button>
                   </>
                 )}
-                <p className="dev-ws-keys-hint" aria-hidden="true">{approves(row) ? 'Y approve · N don’t approve · Enter send · Esc close' : 'Y yes · N no · Enter vote · Esc close'}</p>
+                <p className="dev-ws-keys-hint" aria-hidden="true">{approves(row) ? t('project:needsYou.voteSheet.keysApprove') : t('project:needsYou.voteSheet.keysVote')}</p>
               </div>
             </div>
           ) : null}
@@ -3134,7 +3245,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
            Only once there are rows to go back to: an empty queue has no
            rail, as before. */
         n ? (
-          <aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label="The end of the feed">
+          <aside className="dev-ws-rail dev-ws-rail-end" data-ws-rail="" aria-label={t('project:needsYou.rail.endLabel')}>
             {moveRow}
           </aside>
         ) : null
@@ -3143,14 +3254,14 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
       {/* The keys, listed once, where a keyboard is likely (app.css). Only
           the keys this item answers to: an issue has no vote and nothing
           to try, so those two are left off rather than listed and dead.
-          Each pair is one child with one text run, so the prerender never
-          emits two adjacent text nodes (React #418). */}
+          Each entry is one message: its keys are the numbered tags, and the
+          word after them is one text run, so the prerender never emits two
+          adjacent text nodes (React #418). */}
       {row || n ? (
         <p className="dev-ws-keys" aria-hidden="true">
-          {legendFor(row ? row.kind : 'done').map(([keys, word]) => (
-            <span key={word} className="dev-ws-key">
-              {keys.map((k) => <kbd key={k}>{k}</kbd>)}
-              {` ${word}`}
+          {legendFor(row ? row.kind : 'done').map(({ id, keys }) => (
+            <span key={id} className="dev-ws-key">
+              <RichMessage id={id} components={keys === 2 ? [<kbd />, <kbd />] : [<kbd />]} />
             </span>
           ))}
         </p>
@@ -3161,13 +3272,13 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           composer is the dev session's own (`.dc-card`), as far as this pane
           needs it — see the note on `sendBtn`. */}
       {row && shown === 'ask' ? (
-      <div className="dev-ws-sheet-modal dev-ws-sheet-ask" data-ws-sheet="ask" role="dialog" aria-label="Ask about this item" {...leavingAttr}>
-      <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+      <div className="dev-ws-sheet-modal dev-ws-sheet-ask" data-ws-sheet="ask" role="dialog" aria-label={t('project:needsYou.ask.dialog')} {...leavingAttr}>
+      <button type="button" className="dev-ws-scrim" aria-label={t('core:common.close')} onClick={closeSheet} />
       <section className="dev-ws-ask dev-ws-sheet-card" data-ws-ask="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
         <div className="dev-ws-sheet-head">
-          <span><span className="dev-ws-sheet-title">{row.kind === 'vote' ? 'Ask about this change' : 'Ask about this request'}</span><span className="dev-ws-sheet-sub">private to you</span></span>
-          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>Close</button>
+          <span><span className="dev-ws-sheet-title">{row.kind === 'vote' ? t('project:needsYou.ask.titleChange') : t('project:needsYou.ask.titleRequest')}</span><span className="dev-ws-sheet-sub">{t('project:needsYou.ask.private')}</span></span>
+          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>{t('core:common.close')}</button>
         </div>
         <div className="dev-ws-ask-log" data-ws-ask-log="">
           {engaged ? thread.map((m, k) => (
@@ -3182,7 +3293,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             </p>
           )) : (
             <p className="dev-ws-ask-hint">
-              {target ? 'Ask what this changes, who it affects, or what happens if it goes in. Answered from what the platform knows about it.' : 'There are no details to ask about on this one.'}
+              {target ? t('project:needsYou.ask.hint') : t('project:needsYou.ask.noDetails')}
             </p>
           )}
         </div>
@@ -3190,7 +3301,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           className="dev-ws-ask-composer dc-card"
           onSubmit={(e) => { e.preventDefault(); ask(); }}
         >
-          <label className="sr-only" htmlFor="dev-ws-ask-input">Ask about this change</label>
+          <label className="sr-only" htmlFor="dev-ws-ask-input">{t('project:needsYou.ask.fieldLabel')}</label>
           {/* THE FIELD on a line of its own; the controls row is under it. */}
           <div className="dev-ws-ask-line">
             <input
@@ -3199,9 +3310,9 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
               type="text"
               value={draft}
               placeholder={
-                !target ? 'No details to ask about on this one'
-                  : inFlight ? 'Reading the change…'
-                    : 'Ask a question…'
+                !target ? t('project:needsYou.ask.placeholderNone')
+                  : inFlight ? t('project:needsYou.ask.placeholderReading')
+                    : t('project:needsYou.ask.placeholder')
               }
               disabled={!target || inFlight}
               onChange={(e) => setDraft(e.target.value)}
@@ -3214,7 +3325,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           <div className="dev-ws-ask-row">
             {models.list.length ? (
               <span className="dev-ws-ask-model" data-ws-ask-model="">
-                <label className="sr-only" htmlFor="dev-ws-ask-model-select">Model</label>
+                <label className="sr-only" htmlFor="dev-ws-ask-model-select">{t('project:needsYou.ask.model')}</label>
                 <select
                   id="dev-ws-ask-model-select"
                   className="dc-model-select dc-model-name"
@@ -3240,20 +3351,30 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           slot is the legacy filler's host, pointed at this sheet when it
           opens. */}
       {row && shown === 'comments' ? (
-      <div className="dev-ws-sheet-modal dev-ws-sheet-comments" data-ws-sheet="comments" role="dialog" aria-label="Comments" {...leavingAttr}>
-      <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+      <div className="dev-ws-sheet-modal dev-ws-sheet-comments" data-ws-sheet="comments" role="dialog" aria-label={t('project:needsYou.comments.dialog')} {...leavingAttr}>
+      <button type="button" className="dev-ws-scrim" aria-label={t('core:common.close')} onClick={closeSheet} />
       <section className="dev-ws-sheet-card" data-ws-comments="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
         <div className="dev-ws-sheet-head">
-          <span><span className="dev-ws-sheet-title">{commentCount ? `${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}` : 'Comments'}</span><span className="dev-ws-sheet-sub">{row.kind === 'vote' ? 'on this change' : 'on this request'}</span></span>
-          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>Close</button>
+          {/* The title and its gloss are one message: "3 comments" and "on
+              this change" read as one phrase, so the words stay together. */}
+          <span>
+            <RichMessage
+              id={commentCount
+                ? (row.kind === 'vote' ? 'project:needsYou.comments.countChange' : 'project:needsYou.comments.countRequest')
+                : (row.kind === 'vote' ? 'project:needsYou.comments.titleChange' : 'project:needsYou.comments.titleRequest')}
+              values={commentCount ? { count: commentCount } : {}}
+              components={[<span className="dev-ws-sheet-title" />, <span className="dev-ws-sheet-sub" />]}
+            />
+          </span>
+          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>{t('core:common.close')}</button>
         </div>
         <div className="dev-ws-sheet-body" ref={commentsRef}>
           {row.commentsFor != null ? <div className="dev-feed-comments" data-comments-for={row.commentsFor} /> : null}
           {row.thread ? (
             <FeedThread slug={rowSlug(row, slug)} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
           ) : null}
-          {!row.thread && row.commentsFor == null ? <p className="dev-ws-ask-hint">No comments yet.</p> : null}
+          {!row.thread && row.commentsFor == null ? <p className="dev-ws-ask-hint">{t('project:needsYou.comments.none')}</p> : null}
         </div>
       </section>
       </div>
@@ -3263,13 +3384,13 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           The title, who and when, the facts as chips, the declared changes
           in their own words, and the summary as its own page renders it. */}
       {row && shown === 'description' ? (
-      <div className="dev-ws-sheet-modal dev-ws-sheet-description" data-ws-sheet="description" role="dialog" aria-label="Description" {...leavingAttr}>
-      <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+      <div className="dev-ws-sheet-modal dev-ws-sheet-description" data-ws-sheet="description" role="dialog" aria-label={t('project:needsYou.description.title')} {...leavingAttr}>
+      <button type="button" className="dev-ws-scrim" aria-label={t('core:common.close')} onClick={closeSheet} />
       <section className="dev-ws-sheet-card" data-ws-description="">
         <span className="dev-ws-sheet-handle" aria-hidden="true" />
         <div className="dev-ws-sheet-head">
-          <span><span className="dev-ws-sheet-title">Description</span></span>
-          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>Close</button>
+          <span><span className="dev-ws-sheet-title">{t('project:needsYou.description.title')}</span></span>
+          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>{t('core:common.close')}</button>
         </div>
         <div className="dev-ws-sheet-body">
           <h3 className="dev-ws-desc-title">{row.card.title.text || row.card.title.title}</h3>
@@ -3281,7 +3402,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
           ) : null}
           {descChanges.length ? (
             <div className="dev-ws-desc-part">
-              <h4 className="dev-ws-desc-head">What changes</h4>
+              <h4 className="dev-ws-desc-head">{t('project:needsYou.description.whatChanges')}</h4>
               <ol className="dev-ws-shot-changes dev-ws-desc-changes">
                 {descChanges.map((c) => (
                   <li key={c.n} className="dev-ws-shot-change">
@@ -3293,14 +3414,14 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             </div>
           ) : null}
           <div className="dev-ws-desc-part">
-            <h4 className="dev-ws-desc-head">{row.kind === 'vote' ? 'Summary' : 'The request'}</h4>
+            <h4 className="dev-ws-desc-head">{row.kind === 'vote' ? t('project:needsYou.description.summary') : t('project:needsYou.description.theRequest')}</h4>
             {row.descriptionHtml ? (
               <Html className="dev-ws-desc-body" html={row.descriptionHtml} />
             ) : (
-              <p className="dev-ws-ask-hint">{row.kind === 'vote' ? 'No plain-language summary was written for this change.' : 'This request has no description.'}</p>
+              <p className="dev-ws-ask-hint">{row.kind === 'vote' ? t('project:needsYou.description.noSummary') : t('project:needsYou.description.noDescription')}</p>
             )}
           </div>
-          {cardHref ? <a className="dev-ws-desc-open" href={cardHref}>{row.kind === 'vote' ? 'Open the proposal' : 'Open the request'}</a> : null}
+          {cardHref ? <a className="dev-ws-desc-open" href={cardHref}>{row.kind === 'vote' ? t('project:needsYou.description.openProposal') : t('project:needsYou.description.openRequest')}</a> : null}
         </div>
       </section>
       </div>
@@ -3319,8 +3440,9 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
  * `[data-ws-group]` is what the declared checks and `querySelector` reach for.
  */
 function GroupStrip({ group }: { group: string }): ReactNode {
+  const t = useMessages('project');
   return (
-    <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
+    <div className="dev-ws-group" role="tablist" aria-label={t('project:allItems.group.label')}>
       <button
         type="button"
         role="tab"
@@ -3329,7 +3451,7 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         aria-selected={group === 'category'}
         onClick={() => callAppView('_setWorkshopGroup', 'category')}
       >
-        By category
+        {t('project:allItems.group.category')}
       </button>
       <button
         type="button"
@@ -3339,7 +3461,7 @@ function GroupStrip({ group }: { group: string }): ReactNode {
         aria-selected={group === 'stage'}
         onClick={() => callAppView('_setWorkshopGroup', 'stage')}
       >
-        By stage
+        {t('project:allItems.group.stage')}
       </button>
     </div>
   );
@@ -3708,6 +3830,7 @@ function useWorkshopHostState(
 }
 
 export function DevWorkshop(): ReactNode {
+  const t = useMessages('project');
   const v = useStoreState(devWorkshopStore);
   // THE OPEN APP'S NAME AND ARTWORK, for the hero and the channel below. The
   // same store the header's own tile draws from, so the two cannot disagree
@@ -3935,17 +4058,18 @@ export function DevWorkshop(): ReactNode {
   // holding pen, not one of them — and counted here so the label can agree
   // with itself: it read "1 themes" before, which is the kind of thing a
   // reader trusts a screen slightly less for.
-  const countOfThemes = themes.filter((t) => !t.ungrouped).length;
-  const groupingNote = [
-    `${countOfThemes} ${countOfThemes === 1 ? 'category' : 'categories'}`,
-    v.meta.source === 'category' ? 'grouped by category for now' : '',
-    v.meta.source === 'demo' ? 'staging demo grouping' : '',
+  const countOfThemes = themes.filter((theme) => !theme.ungrouped).length;
+  // Each fact is a whole message; the eyebrow joins them.
+  const groupingNote = factsLine([
+    t('project:allItems.grouping.categories', { count: countOfThemes }),
+    v.meta.source === 'category' ? t('project:allItems.grouping.byCategoryForNow') : '',
+    v.meta.source === 'demo' ? t('project:allItems.grouping.demo') : '',
     v.meta.pending
       ? (v.meta.pendingStage === 'placement'
-        ? 'placing new cards…'
-        : (v.meta.source === 'ai' ? 're-drafting categories…' : 'drafting categories…'))
+        ? t('project:allItems.grouping.placing')
+        : (v.meta.source === 'ai' ? t('project:allItems.grouping.redrafting') : t('project:allItems.grouping.drafting')))
       : '',
-  ].filter(Boolean).join(' · ');
+  ]);
   // Every theme starts SHUT. The first one used to open itself, on the
   // reasoning that a lander whose every theme is closed is a list of
   // headings — but a list of headings is exactly what this screen is for,
@@ -4113,7 +4237,7 @@ export function DevWorkshop(): ReactNode {
     if (v.slug) publishSide(v.slug, sideOpen);
   }, [v.slug, sideOpen]);
 
-  if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
+  if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label={t('project:page.loading')} /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;
@@ -4181,7 +4305,7 @@ export function DevWorkshop(): ReactNode {
   const tray = trayOpen ? (
     <PlacesTray
       id={trayId}
-      label={`${projectName}'s places`}
+      label={t('project:places.tray.name', { project: projectName })}
       onClose={() => { trayNav.current = false; setTrayOpen(false); }}
       returnTo={() => placesBtn.current}
       navigating={() => trayNav.current}
@@ -4421,24 +4545,27 @@ export function DevWorkshop(): ReactNode {
               in it. Every section on this tab wears this now, so the only
               thing that distinguishes them is what they hold. */}
           <div className="dev-ws-head">
-            <span className="dev-ws-head-title">All items</span>
+            <span className="dev-ws-head-title">{t('project:workshop.allItems.title')}</span>
             <button
               type="button"
               className="dev-ws-hub-open dev-ws-head-end un-touch-target"
               data-ws-all-open=""
               onClick={() => openTab('all')}
             >
-              See all
               {/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. It
                   narrows that page alone, so from here it is out of sight,
                   and this dot is what says it is still on. The dot is
-                  decoration; the words join the button's name. */}
+                  decoration; the words join the button's name, in the one
+                  message that holds both. */}
               {v.meta.filtered ? (
-                <>
-                  <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
-                  <span className="sr-only"> (filtered)</span>
-                </>
-              ) : null}
+                <RichMessage
+                  id="project:workshop.allItems.seeAllFiltered"
+                  components={[
+                    <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />,
+                    <span className="sr-only" />,
+                  ]}
+                />
+              ) : t('project:workshop.allItems.seeAll')}
               <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           </div>
@@ -4473,7 +4600,7 @@ export function DevWorkshop(): ReactNode {
                   missing rule and missing dates keep it from reading as one
                   of them. */}
               <div className="dev-ws-lead-head">
-                <span className="dev-ws-lead-title">Open items</span>
+                <span className="dev-ws-lead-title">{t('project:workshop.dash.openItems')}</span>
               </div>
               <p className="dev-ws-open-line" data-ws-open-line="">
                 {v.dashboard.openLine || summarise(v.dashboard)}
@@ -4526,7 +4653,7 @@ export function DevWorkshop(): ReactNode {
       {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <section className="dev-ws-strip" data-ws-mine="">
           <div className="dev-ws-head">
-            <span className="dev-ws-head-title">Your work</span>
+            <span className="dev-ws-head-title">{t('project:workshop.mine.title')}</span>
             {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
           </div>
           <div className="dev-ws-lane" data-ws-lane="mine">
@@ -4538,10 +4665,10 @@ export function DevWorkshop(): ReactNode {
             {!v.mine.rows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
                 {actions.readOnly || startHere
-                  ? 'You have no work going on.'
+                  ? t('project:workshop.mine.empty')
                   : v.mine.bot
-                    ? 'You have no work going on. To change something, tell Homeroom bot, or use Suggest an improvement in the Homeroom menu.'
-                    : 'You have no work going on. Pick up an open item in All items, or press ⋯ on the hub and use Build it now.'}
+                    ? t('project:workshop.mine.emptyBot')
+                    : t('project:workshop.mine.emptyBuild')}
               </p>
             ) : null}
             <WorkList
@@ -4560,7 +4687,7 @@ export function DevWorkshop(): ReactNode {
                 onClick={() => setMineAll(!mineAll)}
               >
                 <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                {mineAll ? 'Show less' : `Show ${v.mine.rows.length - WORKSHOP_WORK_FIRST} more`}
+                {mineAll ? t('project:workshop.mine.showLess') : t('project:workshop.mine.showMore', { count: v.mine.rows.length - WORKSHOP_WORK_FIRST })}
               </button>
             ) : null}
           </div>
@@ -4577,7 +4704,7 @@ export function DevWorkshop(): ReactNode {
       {weeks.length || v.since ? (
         <section className="dev-ws-strip" data-ws-since="">
           <div className="dev-ws-head" data-ws-since-head="">
-            <span className="dev-ws-head-title">{v.since && !outsider ? 'Since your last visit' : 'Recently'}</span>
+            <span className="dev-ws-head-title">{v.since && !outsider ? t('project:since.title.sinceVisit') : t('project:since.title.recently')}</span>
             {v.since && sinceRows.length ? <span className="dev-ws-head-n">{sinceRows.length}</span> : null}
             {v.since ? (
               <button
@@ -4587,7 +4714,7 @@ export function DevWorkshop(): ReactNode {
                 disabled={!sinceRows.length}
                 onClick={clearSince}
               >
-                Clear
+                {t('project:since.clear')}
               </button>
             ) : null}
           </div>
@@ -4598,16 +4725,16 @@ export function DevWorkshop(): ReactNode {
               {sinceRows.length > SINCE_FIRST && !sinceAll ? (
                 <button type="button" className="dev-ws-reveal touch-target-32" data-ws-since-more="" onClick={() => setSinceAll(true)}>
                   <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                  {`Show all ${sinceRows.length}`}
+                  {t('project:since.showAll', { count: sinceRows.length })}
                 </button>
               ) : null}
             </>
           ) : null}
           {v.since && !sinceRows.length ? (
-            <p className="dev-ws-none" data-ws-since-none="">Nothing new since you were last here.</p>
+            <p className="dev-ws-none" data-ws-since-none="">{t('project:since.none')}</p>
           ) : null}
           {!v.since && weeks.length ? (
-            <p className="dev-ws-none" data-ws-since-none="">What happened is in the weeks below.</p>
+            <p className="dev-ws-none" data-ws-since-none="">{t('project:since.inWeeksBelow')}</p>
           ) : null}
         </section>
       ) : null}
@@ -4621,7 +4748,7 @@ export function DevWorkshop(): ReactNode {
       {weeks.length ? (
         <section className="dev-ws-strip" data-ws-weeks="">
           <div className="dev-ws-head">
-            <span className="dev-ws-head-title">Week by week</span>
+            <span className="dev-ws-head-title">{t('project:weeks.title')}</span>
           </div>
           <div className="dev-ws-wlist">
             {weeks.slice(0, weeksShown).map((w) => (
@@ -4636,11 +4763,11 @@ export function DevWorkshop(): ReactNode {
               onClick={() => setWeeksShown(weeksShown + WEEKS_STEP)}
             >
               <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-              Show earlier weeks
+              {t('project:weeks.showEarlier')}
             </button>
           ) : firstWeek ? (
             <p className="dev-ws-week-note" data-ws-week-start="">
-              {`This project started the week of ${weekDate(firstWeek)}.`}
+              {t('project:since.projectStarted', { date: weekDate(firstWeek) })}
             </p>
           ) : null}
         </section>
@@ -4714,7 +4841,7 @@ export function DevWorkshop(): ReactNode {
                 out first (app.css), as the board was reviewed (#4486). */}
             <div className="dev-ws-allbar" data-ws-allbar="">
               <PageBack
-                label="Workshop"
+                label={t('project:page.backToWorkshop')}
                 title={pageTitle(tab)}
                 onBack={() => openTab(pageParent(tab))}
                 eyebrow={false}
@@ -4760,7 +4887,7 @@ export function DevWorkshop(): ReactNode {
           <>
           <div className="dev-ws-sort">
             {groupingNote ? <span className="dev-ws-eyebrow">{groupingNote}</span> : null}
-            <div className="dev-ws-sort-opts" role="group" aria-label="Order categories">
+            <div className="dev-ws-sort-opts" role="group" aria-label={t('project:allItems.sort.label')}>
               {SORTS.map((s) => (
                 <button
                   key={s.key}
@@ -4769,7 +4896,7 @@ export function DevWorkshop(): ReactNode {
                   aria-pressed={sortKey === s.key}
                   onClick={() => { if (s.key !== sortKey) captureThemeTops(); setSortKey(s.key); }}
                 >
-                  {s.label}
+                  {t(s.label)}
                 </button>
               ))}
             </div>
@@ -4781,19 +4908,19 @@ export function DevWorkshop(): ReactNode {
               with no topics draws its categories as it always did, with no
               heading at all. */}
           <div className="dev-ws-themes" ref={themesRef}>
-            {themes.some((t) => t.topic) ? (
-              <SectionHeader className="pt-3" data-ws-themes-head="topics">Topics</SectionHeader>
+            {themes.some((theme) => theme.topic) ? (
+              <SectionHeader className="pt-3" data-ws-themes-head="topics">{t('project:allItems.themes.topics')}</SectionHeader>
             ) : null}
-            {themes.map((t, i) => (
-              <Fragment key={t.id}>
-                {themes.some((x) => x.topic) && !t.topic && (i === 0 || themes[i - 1].topic) ? (
-                  <SectionHeader className="pt-3" data-ws-themes-head="other">Other categories</SectionHeader>
+            {themes.map((theme, i) => (
+              <Fragment key={theme.id}>
+                {themes.some((x) => x.topic) && !theme.topic && (i === 0 || themes[i - 1].topic) ? (
+                  <SectionHeader className="pt-3" data-ws-themes-head="other">{t('project:allItems.themes.other')}</SectionHeader>
                 ) : null}
                 <ThemeCard
-                  theme={t}
+                  theme={theme}
                   slug={slug}
-                  open={isOpen(t.id)}
-                  onToggle={() => toggleTheme(t.id)}
+                  open={isOpen(theme.id)}
+                  onToggle={() => toggleTheme(theme.id)}
                   openKey={sideKey}
                   onOpen={openItem}
                   onChannel={openTab}
@@ -4809,12 +4936,12 @@ export function DevWorkshop(): ReactNode {
             {v.meta.source === 'ai'
               ? aiFootnote(v.meta, !!(v.dashboard && (v.dashboard.cards || v.dashboard.summary)))
               : v.meta.source === 'demo'
-                ? 'Staging demo grouping: in production the categories are drafted by the model from the board.'
+                ? t('project:allItems.categories.demo')
                 : v.meta.pending
-                  ? 'Categories are being drafted from the board now. They replace this grouping when they land.'
+                  ? t('project:allItems.categories.beingDrafted')
                   : v.meta.lastError
-                    ? `The last attempt to draft categories failed (${v.meta.lastError}). Items stay grouped by the categories the group has voted for until the next attempt.`
-                    : 'No AI model is configured, so items are grouped by the categories the group has voted for.'}
+                    ? t('project:allItems.categories.draftFailed', { error: v.meta.lastError })
+                    : t('project:allItems.categories.noModel')}
           </div>
           </>
           )}

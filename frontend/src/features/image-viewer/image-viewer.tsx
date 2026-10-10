@@ -45,6 +45,7 @@ import { createPortal } from 'react-dom';
 
 import { DownloadIcon, XIcon } from '@/components/ui/icons';
 import { pushDismissible } from '../../lib/back-stack';
+import { useMessages } from '../../lib/i18n/react';
 import { isRemoteFile, nativeSaveKnown, saveImage, useCanSaveImage } from './save-image';
 
 /** How far a swipe down has to travel before letting go closes the viewer. */
@@ -156,6 +157,7 @@ export function ImageViewer({ src, alt, onClose }: {
   alt: string;
   onClose: () => void;
 }) {
+  const t = useMessages('messages');
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -213,7 +215,7 @@ export function ImageViewer({ src, alt, onClose }: {
   }, []);
 
   if (typeof document === 'undefined') return null;
-  const name = alt || 'Image';
+  const name = alt || t('messages:imageViewer.imageName');
   // A request's screenshot can live on another site (a GitHub upload); see
   // `isRemoteFile`.
   const remote = isRemoteFile(src);
@@ -286,7 +288,7 @@ export function ImageViewer({ src, alt, onClose }: {
             className={pill}
             data-image-viewer-download=""
           >
-            Open original
+            {t('messages:imageViewer.openOriginal')}
           </a>
         ) : canSave ? (
           <button
@@ -298,14 +300,14 @@ export function ImageViewer({ src, alt, onClose }: {
             onClick={download}
           >
             <DownloadIcon className="w-4 h-4" aria-hidden="true" />
-            {busy ? 'Downloading…' : tapAgain ? 'Tap to save' : 'Download'}
+            {busy ? t('messages:imageViewer.downloading') : tapAgain ? t('messages:imageViewer.tapToSave') : t('messages:imageViewer.download')}
           </button>
         ) : <span aria-hidden="true" />}
         <button
           ref={closeRef}
           type="button"
           className="inline-flex items-center justify-center w-11 h-11 rounded-full bg-white/15 text-white"
-          aria-label="Close"
+          aria-label={t('core:common.close')}
           data-image-viewer-close=""
           onClick={() => onCloseRef.current()}
         >

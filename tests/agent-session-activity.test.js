@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { withStateRead } = require('./lib/agent-session-state-read');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -59,7 +60,7 @@ test('#3028: while a session works, its spinner replaces the row\'s icon rather 
 
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /icon=\{row\.activity\s*\? <AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>\s*: <SparklesIcon \/>\}/);
-  assert.match(sheet, /lead=\{row\.activity\s*\? <span className="sr-only">\{ACTIVITY_LABEL\[row\.activity\]\}<\/span>\s*: null\}/,
+  assert.match(sheet, /lead=\{row\.activity\s*\? <span className="sr-only">\{t\(ACTIVITY_LABEL\[row\.activity\]\)\}<\/span>\s*: null\}/,
     'the icon slot is aria-hidden, so the row still says "Working" or "Finished" in words');
   assert.match(sheet, /<span className="shrink-0 \[&>svg\]:h-5 \[&>svg\]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">/,
     'the slot sizes the spinner like the icon it replaces');
@@ -86,7 +87,9 @@ test('#3076: the finished dot replaces the icon too, in the mark\'s Continue row
   const messages = read('frontend/src/features/messages/index.tsx');
   const mayorRow = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentChatThread('));
   assert.match(mayorRow, /<span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">\s*\{mark\s*\? <AgentActivityIcon activity=\{mark\} className="w-5 h-5" \/>\s*: <SparklesIcon className="w-5 h-5" \/>\}/);
-  assert.match(mayorRow, /\{mark \? <span className="sr-only">\{`, \$\{ACTIVITY_LABEL\[mark\]\.toLowerCase\(\)\}`\}<\/span> : null\}/);
+  assert.equal(message('messages:agent.row.activity.working'), ', working');
+  assert.equal(message('messages:agent.row.activity.done'), ', finished');
+  assert.match(mayorRow, /\{mark \? <span className="sr-only">\{t\(ACTIVITY_SAID\[mark\]\)\}<\/span> : null\}/);
   assert.doesNotMatch(mayorRow, /AgentActivityMark/, 'and no second mark where the unread count goes');
 });
 

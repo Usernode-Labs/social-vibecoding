@@ -389,7 +389,7 @@ test('the dev chat renders the refusal as a card, not as prose', () => {
 test('the Generate-proposal path shows the card instead of a bare toast', () => {
   assert.match(
     APP_VIEW_SRC,
-    /data\.code === 'budget_exceeded'[\s\S]{0,200}_showCreditOptionsModal/,
+    /data\.code === 'budget_exceeded'[\s\S]{0,260}_showCreditOptionsModal/,
     'a budget refusal opens the three-route modal'
   );
 });

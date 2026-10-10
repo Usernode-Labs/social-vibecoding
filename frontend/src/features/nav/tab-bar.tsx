@@ -74,6 +74,8 @@ import {
   UserIcon,
 } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
 import { useCommunityColor } from '../../lib/community-color';
 import { useStoreState } from '../../lib/use-store-state';
@@ -114,10 +116,12 @@ import { schedulePress, type PendingPress } from './tab-press';
  * same row the app menu spelled `#switcher-row-discover` with a
  * <SearchIcon/>, and moving a destination should not also rename its glyph.
  */
+// `label` is a message id (frontend/locales/en/core.json), read when the bar
+// renders so the words follow the language on screen.
 const TABS = [
   {
     key: 'home' as const,
-    label: 'Home',
+    label: 'core:tabs.home',
     // A REAL PATH, not a fragment, and that is deliberate: Home is the only
     // one of the five that is a document address rather than a hash route,
     // so a cmd-click on it opens the launcher in a new tab the way the app
@@ -126,12 +130,12 @@ const TABS = [
     href: '/',
     Icon: HomeIcon,
   },
-  { key: 'discover' as const, label: 'Discover', href: '#apps', Icon: SearchIcon },
-  { key: 'messages' as const, label: 'Messages', href: '#messages', Icon: ChatIcon },
-  { key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon },
+  { key: 'discover' as const, label: 'core:tabs.discover', href: '#apps', Icon: SearchIcon },
+  { key: 'messages' as const, label: 'core:tabs.messages', href: '#messages', Icon: ChatIcon },
+  { key: 'workshop' as const, label: 'core:tabs.communities', href: '#communities', Icon: UserGroupIcon },
   // "Me" is the label only until somebody is signed in: from then on this tab
   // is named after them (#2760) — see tabLabel below.
-  { key: 'me' as const, label: 'Me', href: '#profile', Icon: UserIcon },
+  { key: 'me' as const, label: 'core:tabs.me', href: '#profile', Icon: UserIcon },
 ];
 
 /**
@@ -161,7 +165,7 @@ export function tabLabel(
   label: string,
   viewer: string | null,
 ): { text: string; ariaLabel: string | undefined } {
-  if (key === 'me' && viewer) return { text: viewer, ariaLabel: `${viewer}, your profile` };
+  if (key === 'me' && viewer) return { text: viewer, ariaLabel: translate('core:tabs.meNamed', { username: viewer }) };
   return { text: label, ariaLabel: undefined };
 }
 
@@ -179,7 +183,7 @@ export function tabLabel(
  * the prerender ships it.
  */
 export function communitiesAriaLabel(scoped: { name: string } | null): string | undefined {
-  return scoped ? `Communities, on ${scoped.name}` : undefined;
+  return scoped ? translate('core:tabs.communitiesOn', { community: scoped.name }) : undefined;
 }
 
 /**
@@ -266,9 +270,10 @@ function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
  * hides the quiet unread-channels count beside it: one number per glyph.
  */
 function VotesBadge({ count }: { count: number }) {
+  const t = useMessages();
   if (!(count > 0)) return null;
   return (
-    <span className="platform-tab-votes" aria-label={`${count} ${count === 1 ? 'vote' : 'votes'} waiting on you`}>
+    <span className="platform-tab-votes" aria-label={t('core:tabs.votesWaiting', { count })}>
       {count > 99 ? '99+' : String(count)}
     </span>
   );
@@ -289,10 +294,11 @@ function VotesBadge({ count }: { count: number }) {
  * The TEXT is React's, and it is empty at zero, so the prerender and the
  * first client render agree on an empty hidden span.
  */
-function TabBadge({ count, id = 'platform-tabs-badge', label = 'Unread conversations' }: {
+function TabBadge({ count, id = 'platform-tabs-badge', label }: {
   count: number;
   id?: string;
-  label?: string;
+  /** The accessible name, already in the language on screen. */
+  label: string;
 }) {
   const ref = useRef<HTMLSpanElement | null>(null);
   useHiddenClass(ref, count <= 0);
@@ -744,6 +750,7 @@ function goToTab(key: string, href: string): void {
 
 export function PlatformTabs() {
   const barRef = useRef<HTMLElement | null>(null);
+  const t = useMessages();
   // `true` is what the prerendered document ships: the bar is present and
   // visible, and the routes that hide it (an app, chromeless, the signed-out
   // shell) publish `false` once the router has run.
@@ -880,7 +887,7 @@ export function PlatformTabs() {
         ref={barRef}
         id="platform-tabs"
         className="platform-tabs"
-        aria-label="Sections"
+        aria-label={t('core:tabs.sections')}
         onPointerEnter={enter}
         onPointerLeave={leave}
       >
@@ -923,7 +930,7 @@ export function PlatformTabs() {
           // router's tab, except for the moment between a press and its route
           // landing, when it is the tab pressed (useTabMarker, #3259).
           aria-current={lit === key ? 'page' : undefined}
-          aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, label, viewer).ariaLabel}
+          aria-label={key === 'workshop' ? communitiesAriaLabel(scoped) : tabLabel(key, t(label), viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
           {...(key === 'workshop' ? holdProps : {})}
         >
@@ -956,7 +963,7 @@ export function PlatformTabs() {
                 dissolving this wrapper, so the phone keeps its anchor and a
                 declared check keeps finding it inside the Messages tab.
             */}
-            {key === 'messages' ? <TabBadge count={messages} /> : null}
+            {key === 'messages' ? <TabBadge count={messages} label={t('core:tabs.unreadConversations')} /> : null}
             {/*
                 THE CHANNELS' COUNT, on Communities. A project's channel lives
                 on its hub now, not in Messages, so "something was said in a
@@ -965,11 +972,11 @@ export function PlatformTabs() {
                 Homeroom's). The same quiet grey disc, for the same reason.
             */}
             {key === 'workshop' ? (
-              <TabBadge count={communities} id="platform-tabs-badge-communities" label="Channels with unread messages" />
+              <TabBadge count={communities} id="platform-tabs-badge-communities" label={t('core:tabs.unreadChannels')} />
             ) : null}
             {key === 'workshop' ? <VotesBadge count={votes} /> : null}
           </span>
-          <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
+          <span className="platform-tab-label">{tabLabel(key, t(label), viewer).text}</span>
         </a>,
       ])}
       {/*
@@ -993,8 +1000,8 @@ export function PlatformTabs() {
         id="platform-rail-settings"
         className="platform-rail-settings"
         href="#settings"
-        aria-label="Settings"
-        title="Settings"
+        aria-label={t('core:tabs.settings')}
+        title={t('core:tabs.settings')}
         aria-current={screen === 'settings-screen' ? 'page' : undefined}
       >
         <CogIcon className="platform-rail-settings-glyph" aria-hidden="true" />

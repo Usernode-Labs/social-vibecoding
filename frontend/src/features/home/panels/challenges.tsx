@@ -95,6 +95,7 @@
 
 import { Fragment } from 'react';
 
+import { useMessages } from '../../../lib/i18n/react';
 import { ChallengeCard } from '../../leaderboard/challenge-card';
 import { GroupHeader } from '../../leaderboard/group-header';
 import { LockedChallengesCard } from '../../leaderboard/locked-challenges-card';
@@ -103,6 +104,7 @@ import type { ChallengeGroupView, ChallengesView } from '../panels-store';
 import { PanelFooter, PanelShell, panels } from './ui';
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
+  const t = useMessages('home');
   if (view.locked) {
     // While Getting started gates the season: the one locked card, alone.
     // Inside `.home-panel-rows` like the cards it stands in for, so it keeps
@@ -141,11 +143,11 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
           <button
             type="button"
             className="home-panel-rows home-panel-row flex w-full items-center text-left text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500"
-            title="Go to the Challenges tab on the Leaderboard screen"
-            aria-label="No challenges are running right now. Go to the Challenges tab on the Leaderboard screen"
+            title={t('home:challenges.empty.tip')}
+            aria-label={t('home:challenges.empty.label')}
             onClick={() => panels()?.goToChallenges?.()}
           >
-            No challenges are running right now
+            {t('home:challenges.empty.text')}
           </button>
         </div>
       </PanelShell>

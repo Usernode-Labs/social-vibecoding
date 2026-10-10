@@ -20,7 +20,13 @@
  * Every target is the product's own control or region, found by the
  * selectors the rest of the shell already pins (tests/baselines/
  * shell-markup.json, dapp.json): nothing here draws a picture of the product.
+ *
+ * The words are read from the catalog (frontend/locales/en/onboarding.json)
+ * when a tour's steps are built, never at module load, so they are in the
+ * language on screen; ./index.tsx builds them again when it changes.
  */
+
+import { t as translate } from '../../lib/i18n/runtime';
 
 export type TourScreen = 'home' | 'app' | 'hub' | 'discussion' | 'bot';
 
@@ -148,8 +154,8 @@ export const PLAN_WAITING = '.messages-thread-direct [data-bot-plan="open"]';
  * bot does not always build it, and sometimes brings it to the group as a
  * request instead.
  */
-export const MENU_TEXT = 'Every app has this menu. Tap it.';
-export const SUGGEST_TEXT = 'It doesn\'t vanish into a feedback box: Homeroom bot starts building it for you, or brings it to the group, and you can follow along.';
+export const MENU_TEXT = 'onboarding:firstSession.tour.menu.text';
+export const SUGGEST_TEXT = 'onboarding:firstSession.tour.suggest.text';
 
 /** The menu the Homeroom mark opens (../app-context/app-context-sheet.tsx). */
 export const APP_MENU = '#apps-switcher-sheet';
@@ -159,17 +165,17 @@ function suggestSteps(): TourStep[] {
     {
       screen: 'app',
       target: '#platform-mark-btn',
-      title: 'Suggest an improvement',
-      text: MENU_TEXT,
-      tap: 'Tap the menu',
+      title: translate('onboarding:firstSession.tour.menu.title'),
+      text: translate(MENU_TEXT),
+      tap: translate('onboarding:firstSession.tour.menu.tap'),
     },
     {
       screen: 'app',
       target: '#improve-row-feedback',
       inMenu: true,
       ringed: true,
-      title: 'Suggest an improvement',
-      text: SUGGEST_TEXT,
+      title: translate('onboarding:firstSession.tour.suggest.title'),
+      text: translate(SUGGEST_TEXT),
     },
   ];
 }
@@ -195,7 +201,7 @@ export type TourProject = {
  * what a name ending in s read as (first-session run-through, 5 October 2026).
  */
 export function hubTitle(name: string): string {
-  return `The ${name} hub`;
+  return translate('onboarding:firstSession.tour.hub.title', { community: name });
 }
 
 /**
@@ -214,9 +220,9 @@ function sharedSteps(slug: string, name: string): TourStep[] {
     {
       screen: 'home',
       target: `.app-card[data-slug="${slug}"]`,
-      title: `${name} is on your Home`,
-      text: 'Open it any time from here.',
-      tap: 'Tap it',
+      title: translate('onboarding:firstSession.tour.onHome.title', { app: name }),
+      text: translate('onboarding:firstSession.tour.onHome.text'),
+      tap: translate('onboarding:firstSession.tour.onHome.tap'),
     },
     {
       // `#app-view` holds both halves of the screen, the build's progress
@@ -225,8 +231,8 @@ function sharedSteps(slug: string, name: string): TourStep[] {
       screen: 'app',
       target: '#app-view',
       alongside: SCREEN_HEADER,
-      title: `${name} opens here`,
-      text: 'This is the app your community makes together.',
+      title: translate('onboarding:firstSession.tour.opens.title', { app: name }),
+      text: translate('onboarding:firstSession.tour.opens.text'),
       saysWhereItOpens: true,
       place: 'bottom',
     },
@@ -234,16 +240,16 @@ function sharedSteps(slug: string, name: string): TourStep[] {
     {
       screen: 'app',
       target: '#back-btn',
-      title: '✕ takes you back to Home',
-      text: `Open ${name} again from Home any time.`,
-      tap: 'Tap ✕',
+      title: translate('onboarding:firstSession.tour.back.title'),
+      text: translate('onboarding:firstSession.tour.back.text', { app: name }),
+      tap: translate('onboarding:firstSession.tour.back.tap'),
     },
     {
       screen: 'home',
       target: '#platform-tab-workshop',
-      title: `You can find ${name} here`,
-      text: 'Communities lists every community you\'re in.',
-      tap: 'Tap Communities',
+      title: translate('onboarding:firstSession.tour.communities.title', { community: name }),
+      text: translate('onboarding:firstSession.tour.communities.text'),
+      tap: translate('onboarding:firstSession.tour.communities.tap'),
     },
     {
       // The hub whole: its top bar over it, down to the tab bar.
@@ -252,7 +258,7 @@ function sharedSteps(slug: string, name: string): TourStep[] {
       alongside: SCREEN_HEADER,
       endsAbove: BOTTOM_BARS,
       title: hubTitle(name),
-      text: 'The discussion and the app\'s changes are here.',
+      text: translate('onboarding:firstSession.tour.hub.text'),
       place: 'bottom',
     },
   ];
@@ -269,16 +275,16 @@ export function invitedSteps({ slug, name }: TourProject): TourStep[] {
       // that opens the tray does not open #general itself, so the tour does.
       screen: 'hub',
       target: '[data-places] [data-place="discussion"], [data-places-btn]',
-      title: 'Talk in #general',
-      text: `Everyone in ${name} reads it. It is with the project's other places.`,
-      tap: 'Open #general',
+      title: translate('onboarding:firstSession.tour.general.title'),
+      text: translate('onboarding:firstSession.tour.general.text', { community: name }),
+      tap: translate('onboarding:firstSession.tour.general.tap'),
       opensNext: true,
     },
     {
       screen: 'discussion',
       target: '#gc-messages, #gc-form',
-      title: 'Say hi, or share an idea',
-      text: 'The people using the app decide what goes in.',
+      title: translate('onboarding:firstSession.tour.sayHi.title'),
+      text: translate('onboarding:firstSession.tour.sayHi.text'),
       place: { above: '#gc-form' },
       last: true,
     },
@@ -301,20 +307,20 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
   const [home, app, menu, suggest, close, communities, hub] = sharedSteps(slug, name);
   return [
     home,
-    { ...app, text: 'You and everyone in its community use it, and make it better together.' },
+    { ...app, text: translate('onboarding:firstSession.tour.private.opens.text') },
     menu,
-    { ...suggest, text: `Got an idea for ${name}? Suggest it here. Homeroom bot builds it, or brings it to the group, and you can follow along.` },
+    { ...suggest, text: translate('onboarding:firstSession.tour.private.suggest.text', { app: name }) },
     close,
     communities,
-    { ...hub, text: 'Talk with the group here, and vote on what changes.' },
+    { ...hub, text: translate('onboarding:firstSession.tour.private.hub.text') },
     {
       screen: 'hub',
       target: '#platform-tab-messages',
       ringed: true,
       // What the bot is for, then where it is (#4397); the maker's and "Look
       // around first" tours keep their own card.
-      title: 'Meet Homeroom bot',
-      text: `Tell it what ${name} should do next, and it builds it for the group to try. It's always here in Messages.`,
+      title: translate('onboarding:firstSession.tour.private.bot.title'),
+      text: translate('onboarding:firstSession.tour.private.bot.text', { app: name }),
     },
     {
       // The card's own heading says what it is for ("Make and share your
@@ -322,8 +328,8 @@ export function privateSteps({ slug, name }: TourProject): TourStep[] {
       screen: 'home',
       target: '#home-waitlist-card',
       ringed: true,
-      title: 'Your own apps start here',
-      text: 'Join the waitlist to get your spot.',
+      title: translate('onboarding:firstSession.tour.private.waitlist.title'),
+      text: translate('onboarding:firstSession.tour.private.waitlist.text'),
       last: true,
     },
   ];
@@ -348,9 +354,9 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
     {
       screen: 'hub',
       target: '#platform-tab-messages',
-      title: 'Homeroom bot is in Messages',
-      text: `It makes ${name} with you. You can always find it here.`,
-      tap: 'Tap Messages',
+      title: translate('onboarding:firstSession.tour.maker.bot.title'),
+      text: translate('onboarding:firstSession.tour.maker.bot.text', { app: name }),
+      tap: translate('onboarding:firstSession.tour.maker.bot.tap'),
       opensNext: true,
     },
     {
@@ -364,12 +370,12 @@ export function makerSteps({ slug, name, conversationId }: TourProject): TourSte
       newestBelowCard: { scroller: BOT_CHAT_MESSAGES, rows: 'article.messages-message' },
       // Until a plan waits, nothing on the card says there is one coming:
       // the bot may ask a question first (requests #4391, #4393).
-      title: `Homeroom bot is working on ${name}`,
-      text: 'It\'ll let you know here when there\'s something to look at.',
+      title: translate('onboarding:firstSession.tour.maker.working.title', { app: name }),
+      text: translate('onboarding:firstSession.tour.maker.working.text'),
       instead: {
         when: PLAN_WAITING,
-        title: 'Homeroom bot has a plan for you',
-        text: 'Answer it here: tap Build it, or tell it what to change.',
+        title: translate('onboarding:firstSession.tour.maker.plan.title'),
+        text: translate('onboarding:firstSession.tour.maker.plan.text'),
       },
       place: { below: BOT_CHAT_HEADER },
       last: true,
@@ -392,29 +398,29 @@ export function lookAroundSteps(): TourStep[] {
       target: '#home-create-tile',
       revealWith: '#home-apps-more-btn',
       ringed: true,
-      title: 'Make something any time',
-      text: 'New project starts a community and its app.',
+      title: translate('onboarding:firstSession.tour.look.make.title'),
+      text: translate('onboarding:firstSession.tour.look.make.text'),
     },
     {
       screen: 'home',
       target: '#platform-tab-discover',
       ringed: true,
-      title: 'Find apps in Discover',
-      text: 'Open any app, or join its community.',
+      title: translate('onboarding:firstSession.tour.look.discover.title'),
+      text: translate('onboarding:firstSession.tour.look.discover.text'),
     },
     {
       screen: 'home',
       target: '#platform-tab-workshop',
       ringed: true,
-      title: 'Communities you join show up here',
-      text: 'Each one has its own hub and discussion.',
+      title: translate('onboarding:firstSession.tour.look.communities.title'),
+      text: translate('onboarding:firstSession.tour.look.communities.text'),
     },
     {
       screen: 'home',
       target: '#platform-tab-messages',
       ringed: true,
-      title: 'Homeroom bot is in Messages',
-      text: 'It makes apps with you. You can always find it here.',
+      title: translate('onboarding:firstSession.tour.look.bot.title'),
+      text: translate('onboarding:firstSession.tour.look.bot.text'),
       last: true,
     },
   ];

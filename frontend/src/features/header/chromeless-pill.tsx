@@ -17,6 +17,7 @@
 
 import { useState, type CSSProperties } from 'react';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useVisibility } from '../../lib/visibility-store';
 
 const PILL_STYLE: CSSProperties = {
@@ -44,6 +45,7 @@ export function ChromelessPill() {
   // had no pill in it at all.
   const chromeless = useVisibility('chromeless-pill', false);
   const [hover, setHover] = useState(false);
+  const t = useMessages();
 
   if (!chromeless) return null;
 
@@ -51,7 +53,7 @@ export function ChromelessPill() {
     <a
       id="chromeless-pill"
       href="#"
-      aria-label="Open this app on Homeroom"
+      aria-label={t('core:chromeless.openAppLabel')}
       style={{ ...PILL_STYLE, opacity: hover ? 1 : 0.85 }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -65,7 +67,7 @@ export function ChromelessPill() {
         }
       }}
     >
-      <span>Open in Homeroom</span>
+      <span>{t('core:chromeless.open')}</span>
       <span style={GLYPH_STYLE} aria-hidden="true">
         {'↗'}
       </span>

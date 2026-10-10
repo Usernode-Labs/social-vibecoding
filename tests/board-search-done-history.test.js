@@ -17,6 +17,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const source = fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -53,6 +54,8 @@ function fixture(rows = Array.from({ length: 170 }, (_, i) => row(i + 1))) {
     location: { search: '', hash: '' }, localStorage: { getItem: () => null, setItem() {} },
     addEventListener() {}, alert: () => {},
     relTime: () => 'just now',
+    // The language runtime's global, as the shell publishes it.
+    PlatformI18n: englishPlatformI18n(),
     escapeHtml: s => String(s == null ? '' : s),
     escapeAttr: s => String(s == null ? '' : s),
     document: {

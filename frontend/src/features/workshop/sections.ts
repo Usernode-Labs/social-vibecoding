@@ -14,6 +14,8 @@
  * not, and neither the order nor the grouping reads them.
  */
 
+import { t } from '../../lib/i18n/runtime';
+
 export type Audience = 'open' | 'invited' | 'solo';
 
 /** What the order and the grouping read off a row. */
@@ -29,11 +31,16 @@ export type SectionedRow = {
  * sees. `community` / `audience` are internal: AGENTS.md, "Communities own
  * projects". The glyphs say who else is there — a crowd, a lock (you were let
  * in), one person.
+ *
+ * `label`, `noun` and `count` are message ids
+ * (frontend/locales/en/communities.json), read when a section is drawn:
+ * `count` is the accessible name of the number beside the heading, and takes
+ * the number as `count`.
  */
-export const SECTIONS: ReadonlyArray<{ key: Audience; label: string; noun: string }> = [
-  { key: 'open', label: 'Public communities', noun: 'Public community' },
-  { key: 'invited', label: 'Private communities', noun: 'Private community' },
-  { key: 'solo', label: 'Just you', noun: 'Just you' },
+export const SECTIONS: ReadonlyArray<{ key: Audience; label: string; noun: string; count: string }> = [
+  { key: 'open', label: 'communities:sections.open.label', noun: 'communities:sections.open.noun', count: 'communities:sections.open.count' },
+  { key: 'invited', label: 'communities:sections.invited.label', noun: 'communities:sections.invited.noun', count: 'communities:sections.invited.count' },
+  { key: 'solo', label: 'communities:sections.solo.label', noun: 'communities:sections.solo.noun', count: 'communities:sections.solo.count' },
 ];
 
 /** How many rows a section shows before "Show N more". */
@@ -56,8 +63,8 @@ export function sectionFold(total: number, limit: number): { shown: number; labe
   const shown = Math.min(total, Math.max(SECTION_LIMIT, limit));
   if (total <= SECTION_LIMIT) return { shown: total, label: null, next: SECTION_LIMIT };
   const hidden = total - shown;
-  if (!hidden) return { shown, label: 'Show fewer', next: SECTION_LIMIT };
-  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+  if (!hidden) return { shown, label: t('communities:sections.showFewer'), next: SECTION_LIMIT };
+  return { shown, label: t('communities:sections.showMore', { count: Math.min(hidden, SECTION_STEP) }), next: shown + SECTION_STEP };
 }
 
 /**
@@ -83,8 +90,8 @@ export function sectionFoldFrom(total: number, limit: number, floor: number): { 
   if (total <= floor) return { shown: total, label: null, next: floor };
   const shown = Math.min(total, Math.max(floor, limit));
   const hidden = total - shown;
-  if (!hidden) return { shown, label: 'Show fewer', next: floor };
-  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+  if (!hidden) return { shown, label: t('communities:sections.showFewer'), next: floor };
+  return { shown, label: t('communities:sections.showMore', { count: Math.min(hidden, SECTION_STEP) }), next: shown + SECTION_STEP };
 }
 
 /**
@@ -120,14 +127,16 @@ export function orderRows<T extends SectionedRow>(apps: T[]): T[] {
  * The rows split into the three sections, each in recency order, empty
  * sections left out. An audience the client does not know is read as 'open'
  * — the server's own default — so a row can never fall out of the screen.
+ * `label` and `count` are the section's message ids (see SECTIONS).
  */
-export function groupRows<T extends SectionedRow>(rows: T[]): Array<{ key: Audience; label: string; rows: T[] }> {
+export function groupRows<T extends SectionedRow>(rows: T[]): Array<{ key: Audience; label: string; count: string; rows: T[] }> {
   const known = (a: unknown): Audience => (a === 'invited' || a === 'solo' ? a : 'open');
   const ordered = orderRows(rows);
   return SECTIONS
     .map((section) => ({
       key: section.key,
       label: section.label,
+      count: section.count,
       rows: ordered.filter((row) => known(row.audience) === section.key),
     }))
     .filter((section) => section.rows.length > 0);

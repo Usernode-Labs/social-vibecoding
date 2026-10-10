@@ -79,6 +79,7 @@
 // alone for good.
 'use strict';
 
+import { t as message } from '../../lib/i18n/runtime';
 import { panelsStore } from './panels-store';
 
 const HomePanels = {
@@ -128,7 +129,9 @@ const HomePanels = {
   formatReward(reward) {
     const s = String(reward == null ? '' : reward).trim();
     if (!s) return '';
-    return /^[\d][\d.,]*$/.test(s) ? `${s} pts` : s;
+    if (!/^[\d][\d.,]*$/.test(s)) return s;
+    // The number is shown as it was written; its digits pick the plural form.
+    return message('home:challenges.reward.points', { points: s, count: Number(s.replace(/[.,]/g, '')) || 0 });
   },
 
   // Bar fill, 0-100. A missing/zero/NaN target is 0 (the caller renders no
@@ -240,12 +243,13 @@ const HomePanels = {
     if (!panel) return '';
     const total = Number(panel.total) || 0;
     const done = Number(panel.done) || 0;
-    let line = `${done} of ${total}`;
     const remaining = panel.points_remaining;
     if (typeof remaining === 'number' && Number.isFinite(remaining) && remaining > 0) {
-      line += ` · ${remaining.toLocaleString('en-US')} pts left`;
+      return message('home:challenges.summary.withPointsLeft', {
+        done, total, points: remaining.toLocaleString('en-US'), count: remaining,
+      });
     }
-    return line;
+    return message('home:challenges.summary.progress', { done, total });
   },
 
   // ── Data ───────────────────────────────────────────────────────────
@@ -458,7 +462,7 @@ const HomePanels = {
     // rather than heading the action sheet "Widget".
     const built = data && Array.isArray(data.panels)
       ? data.panels.find((p) => p && p.key === key) : null;
-    return (built && built.title) || 'Widget';
+    return (built && built.title) || message('home:panels.fallbackTitle');
   },
 
   // The widget CONTENT for one key, whether or not the server built a
@@ -526,7 +530,7 @@ const HomePanels = {
       if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
       return {
         key: panel.key,
-        title: panel.title || 'Challenges',
+        title: panel.title || message('home:challenges.fallbackTitle'),
         summary: HomePanels.summaryLine(panel),
         season: null,
         onboardingNote: null,
@@ -552,7 +556,7 @@ const HomePanels = {
     if (empty) {
       return {
         key: panel.key,
-        title: panel.title || 'Challenges',
+        title: panel.title || message('home:challenges.fallbackTitle'),
         summary: null,
         season: null,
         total,
@@ -581,7 +585,7 @@ const HomePanels = {
     const groups = HomePanels.challengeGroups(rows, views, panel, doneFrom);
     return {
       key: panel.key,
-      title: panel.title || 'Challenges',
+      title: panel.title || message('home:challenges.fallbackTitle'),
       // Still computed, and still the one-line form of the same counts
       // the season progress draws — it is the block's accessible summary and what the ⋮
       // menu and the tests read. It is no longer rendered in the section
@@ -595,7 +599,7 @@ const HomePanels = {
       // challenges only), drawn as before: the cards, then the note. Once
       // unlocked there is nothing to say: no note.
       onboardingNote: panel.onboarding && !panel.onboarding.unlocked
-        ? 'Finish Getting started to unlock the rest of the season.'
+        ? message('home:challenges.onboardingNote')
         : null,
       // Always 0 here: a count above 0 is the locked branch above.
       lockedCount: 0,
@@ -646,16 +650,16 @@ const HomePanels = {
   // group's rank while setup is unfinished; groupRankOf moves a finished Get
   // started to the end.
   CHALLENGE_GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
-    WEEKLY: { key: 'week', heading: 'This week', order: 1 },
-    PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
+    ONBOARDING: { key: 'setup', heading: 'home:challenges.group.setup', order: 0 },
+    WEEKLY: { key: 'week', heading: 'home:challenges.group.week', order: 1 },
+    PERSISTENT: { key: 'always', heading: 'home:challenges.group.always', order: 2 },
   },
-  OTHER_GROUP: { key: 'other', heading: 'Season challenges', order: 3 },
+  OTHER_GROUP: { key: 'other', heading: 'home:challenges.group.other', order: 3 },
   // The collapsed block's finished fill (visibleSlots' `doneFrom`), headed
   // after every group that still has something to do (#2490). Home only: the
   // tab draws every card, so a finished card stays in its own group there. No
   // `order`, because no category resolves to it and it never ranks.
-  DONE_GROUP: { key: 'done', heading: 'Done' },
+  DONE_GROUP: { key: 'done', heading: 'home:challenges.group.done' },
 
   // A challenge's group, from its label: the category, trimmed and uppercased.
   groupOf(c) {
@@ -765,12 +769,12 @@ const HomePanels = {
     });
     return runs.map(({ group, views: members }) => {
       let meta = null;
-      if (group.key === 'always') meta = 'no deadline';
+      if (group.key === 'always') meta = message('home:challenges.group.noDeadline');
       else if (group.key !== 'setup' && group.key !== 'done') meta = clockOf(group.key);
       if (group.key !== 'setup') {
         for (const view of members) view.deadline = null;
       }
-      return { key: group.key, heading: group.heading, meta, rows: members };
+      return { key: group.key, heading: message(group.heading), meta, rows: members };
     });
   },
 
@@ -824,7 +828,7 @@ const HomePanels = {
       ? Home.popularApps(Home._apps || []) : [];
     return {
       key: panel.key,
-      title: panel.title || 'Discover',
+      title: panel.title || message('home:discover.fallbackTitle'),
       featured: featured.map((a) => HomePanels.discoverTileView(a)),
       popular: popular.map((a) => HomePanels.discoverTileView(a)),
     };
@@ -929,20 +933,21 @@ const HomePanels = {
     const points = Number(c.earned_points) > 0 ? Number(c.earned_points) : 0;
     let rail;
     if (done) {
-      rail = { state: 'done', stateLabel: 'Done', fill: 1, counted: false };
+      rail = { state: 'done', stateLabel: message('home:challenges.row.done'), fill: 1, counted: false };
     } else if (numeric && target > 1) {
       const count = Math.min(current, target);
-      const unit = c.metric.label ? ` ${c.metric.label}` : '';
       rail = {
         state: count > 0 || points ? 'progress' : 'new',
-        stateLabel: `${count}/${target}${unit}`,
+        stateLabel: c.metric.label
+          ? message('home:challenges.row.countOfUnit', { current: count, target, unit: c.metric.label })
+          : message('home:challenges.row.countOf', { current: count, target }),
         fill: count / target,
         counted: true,
       };
     } else if (points) {
-      rail = { state: 'progress', stateLabel: 'Started', fill: null, counted: false };
+      rail = { state: 'progress', stateLabel: message('home:challenges.row.started'), fill: null, counted: false };
     } else {
-      rail = { state: 'new', stateLabel: 'Not started', fill: 0, counted: false };
+      rail = { state: 'new', stateLabel: message('home:challenges.row.notStarted'), fill: 0, counted: false };
     }
     const eventId = Number(c.season_event_id);
     return {
@@ -977,7 +982,9 @@ const HomePanels = {
       // window). `ends_at` is the challenge's own end, else its event's.
       deadline: done || c.open === false ? null
         : HomePanels.timeLeft(HomePanels.endsOf(c, panel && panel.season && panel.season.ends_at)),
-      earned: done && points ? `Earned ${points.toLocaleString('en-US')} pts` : null,
+      earned: done && points
+        ? message('home:challenges.row.earned', { points: points.toLocaleString('en-US'), count: points })
+        : null,
     };
   },
 
@@ -1025,7 +1032,7 @@ const HomePanels = {
       return {
         done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
         total: t,
-        caption: 'done in First challenges',
+        scope: 'first',
         ...(points ? { points } : {}),
       };
     }
@@ -1034,7 +1041,8 @@ const HomePanels = {
     return {
       done: Math.max(0, Math.min(total, Number(hasAll ? panel.all_done : panel.done) || 0)),
       total,
-      caption: name ? `done in ${name}` : 'done',
+      scope: name ? 'season' : null,
+      name: name || null,
       ...(points ? { points } : {}),
     };
   },
@@ -1052,7 +1060,9 @@ const HomePanels = {
     const ms = ends - Date.now();
     if (ms <= 0) return null;
     const hours = Math.ceil(ms / 3600000);
-    return hours < 24 ? `${hours}h left` : `${Math.ceil(ms / 86400000)}d left`;
+    return hours < 24
+      ? message('home:challenges.timeLeft.hours', { count: hours })
+      : message('home:challenges.timeLeft.days', { count: Math.ceil(ms / 86400000) });
   },
 
   // Real hash navigation (not a router call) so the Challenges screen gets a
@@ -1146,6 +1156,11 @@ if (typeof window !== 'undefined') window.HomePanels = HomePanels;
 // first read, render() would mark the sections settled with nothing in them.
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('sv:session', () => {
+    if (HomePanels._data) HomePanels.render();
+  });
+  // The views pushed to the store hold text, so a language change rebuilds
+  // them from the same payload.
+  document.addEventListener('homeroom:language-changed', () => {
     if (HomePanels._data) HomePanels.render();
   });
 }

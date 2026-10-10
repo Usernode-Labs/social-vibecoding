@@ -1054,22 +1054,17 @@
       };
 
       const panel = el('div', 'px-4 pb-5');
-      panel.appendChild(el('div', 'text-lg font-bold py-3', 'Set up your device'));
+      panel.appendChild(el('div', 'text-lg font-bold py-3',
+        PlatformI18n.t('shell:permissions.title')));
       // iOS: requestPermissions() maps to the notification prompt, and v4
       // turned iOS block production off — so the block-production pitch is
       // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
         isAndroid && producerAsks
-          ? 'Your phone helps run Homeroom: your node can produce blocks ' +
-            'while the app is in the background. For that, Android needs ' +
-            'to wake it at exact slot times and leave it free of battery ' +
-            'optimization. These settings only schedule wake-ups. They ' +
-            'give Homeroom no access to your data.'
+          ? PlatformI18n.t('shell:permissions.intro.androidProducer')
           : isAndroid
-            ? 'Allow notifications so Homeroom can tell you about activity ' +
-              'on your apps and your node.'
-            : 'Allow notifications so Homeroom can alert you about node ' +
-            'and account activity.'));
+            ? PlatformI18n.t('shell:permissions.intro.android')
+            : PlatformI18n.t('shell:permissions.intro.ios')));
 
       const statusRow = (label, ok) => {
         const row = el('div', 'flex items-center gap-2 mt-1 text-sm');
@@ -1079,7 +1074,8 @@
         row.appendChild(el('span', 'ml-auto text-xs ' + (ok
           ? 'text-emerald-700 dark:text-emerald-400'
           : 'text-amber-800 dark:text-amber-400'),
-        ok ? 'Granted' : 'Not granted'));
+        ok ? PlatformI18n.t('shell:permissions.status.granted')
+          : PlatformI18n.t('shell:permissions.status.notGranted')));
         return row;
       };
 
@@ -1101,14 +1097,16 @@
           : !!p.exactAlarmGranted;
         const batteryOk = p.batteryOptDisabled === true;
         body.appendChild(statusRow(
-          isAndroid ? 'Exact alarms' : 'Notifications', alarmOk));
-        if (isAndroid) body.appendChild(statusRow('Battery optimization', batteryOk));
+          isAndroid ? PlatformI18n.t('shell:permissions.row.exactAlarms')
+            : PlatformI18n.t('shell:permissions.row.notifications'), alarmOk));
+        if (isAndroid) body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.battery'), batteryOk));
 
         const btns = el('div', 'mt-4 space-y-2');
         if (!alarmOk) {
           const b = el('button', 'w-full rounded-lg bg-violet-600 ' +
             'hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white',
-          isAndroid ? 'Grant permissions' : 'Allow notifications');
+          isAndroid ? PlatformI18n.t('shell:permissions.action.grant')
+            : PlatformI18n.t('shell:permissions.action.allowNotifications'));
           b.addEventListener('click', async () => {
             interacted = true;
             b.disabled = true;
@@ -1149,7 +1147,7 @@
           const b = el('button', 'w-full rounded-lg border border-zinc-300 ' +
             'dark:border-zinc-700 px-4 py-2 text-sm font-medium ' +
             'text-zinc-700 dark:text-zinc-200',
-          'Open battery settings');
+          PlatformI18n.t('shell:permissions.action.openBatterySettings'));
           b.addEventListener('click', () => {
             interacted = true;
             window.usernode.openBatterySettings().catch(() => {});
@@ -1158,7 +1156,8 @@
         }
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
           'text-zinc-500 dark:text-zinc-400',
-        (alarmOk && (!isAndroid || batteryOk)) ? 'Done' : 'Skip for now');
+        (alarmOk && (!isAndroid || batteryOk)) ? PlatformI18n.t('core:common.done')
+          : PlatformI18n.t('shell:permissions.action.skip'));
         done.addEventListener('click', () => {
           interacted = true;
           if (sheet && sheet.dismiss) sheet.dismiss();
@@ -1190,16 +1189,16 @@
       const renderAndroid = (p) => {
         const missing = androidMissing(p);
         if (notificationsAskable) {
-          body.appendChild(statusRow('Notifications', !missing.notifications));
+          body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.notifications'), !missing.notifications));
         }
         if (producerAsks) {
-          body.appendChild(statusRow('Exact alarms', !missing.alarm));
-          body.appendChild(statusRow('Battery optimization', !missing.battery));
+          body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.exactAlarms'), !missing.alarm));
+          body.appendChild(statusRow(PlatformI18n.t('shell:permissions.row.battery'), !missing.battery));
         }
 
         const btns = el('div', 'mt-4 space-y-2');
         if (missing.notifications && !notificationsAsked) {
-          const b = primaryButton('Allow notifications');
+          const b = primaryButton(PlatformI18n.t('shell:permissions.action.allowNotifications'));
           b.addEventListener('click', async () => {
             interacted = true;
             b.disabled = true;
@@ -1227,20 +1226,17 @@
             renderAndroid(nextPerms);
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Android will ask whether Homeroom may send ' +
-            'you notifications. Tap Allow. You can turn them off any time ' +
-            'in Settings.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.notifications')));
         } else if (missing.notifications) {
-          const b = primaryButton('Open notification settings');
+          const b = primaryButton(PlatformI18n.t('shell:permissions.action.openNotificationSettings'));
           b.addEventListener('click', () => {
             interacted = true;
             window.usernode.openNotificationSettings().catch(() => {});
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Notifications are off for Homeroom. Turn ' +
-            'them on in Android settings, then come back here.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.notificationsOff')));
         } else if (missing.alarm) {
-          const b = primaryButton('Allow exact alarms');
+          const b = primaryButton(PlatformI18n.t('shell:permissions.action.allowExactAlarms'));
           b.addEventListener('click', async () => {
             interacted = true;
             b.disabled = true;
@@ -1258,28 +1254,23 @@
             // when the page is visible again.
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Android opens the "Alarms & reminders" ' +
-            'page. Turn on Allow for Homeroom, then come back here. Your ' +
-            'node only wakes a few minutes before each of its slots.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.exactAlarms')));
         } else if (missing.battery) {
-          const b = primaryButton('Allow background use');
+          const b = primaryButton(PlatformI18n.t('shell:permissions.action.allowBackground'));
           b.addEventListener('click', () => {
             interacted = true;
             window.usernode.openBatterySettings().catch(() => {});
           });
           btns.appendChild(b);
-          btns.appendChild(hint('Android will ask whether Homeroom may ' +
-            'always run in the background, and warn that this can use more ' +
-            'battery. Tap Allow. Your node still sleeps between slots, so ' +
-            'the real impact is small, and you can change it any time in ' +
-            'Settings.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.background')));
         }
 
         if ((missing.alarm || missing.battery) &&
             typeof window.usernode.manageStaking === 'function') {
           const delegate = el('button', 'w-full rounded-lg border ' +
             'border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm ' +
-            'font-medium text-zinc-700 dark:text-zinc-200', 'Delegate instead');
+            'font-medium text-zinc-700 dark:text-zinc-200',
+          PlatformI18n.t('shell:permissions.action.delegate'));
           delegate.addEventListener('click', async () => {
             interacted = true;
             delegate.disabled = true;
@@ -1295,22 +1286,18 @@
               console.warn('[native-chrome] manageStaking failed:', e);
             } finally { delegate.disabled = false; }
           });
-          btns.appendChild(hint('Prefer not to change these settings? ' +
-            'Delegate your stake to the server instead. You still earn ' +
-            'half the block-production points, and you can switch back any ' +
-            'time.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.delegate')));
           btns.appendChild(delegate);
         }
 
         if (productionDeferred) {
-          btns.appendChild(hint('Block production settings (exact alarms ' +
-            'and battery) come later, when you ask to produce blocks in ' +
-            'Settings, Homeroom app.'));
+          btns.appendChild(hint(PlatformI18n.t('shell:permissions.hint.productionDeferred')));
         }
 
         const allDone = !missing.notifications && !missing.alarm && !missing.battery;
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
-          'text-zinc-500 dark:text-zinc-400', allDone ? 'Done' : 'Skip for now');
+          'text-zinc-500 dark:text-zinc-400',
+        allDone ? PlatformI18n.t('core:common.done') : PlatformI18n.t('shell:permissions.action.skip'));
         done.addEventListener('click', () => {
           interacted = true;
           if (sheet && sheet.dismiss) sheet.dismiss();
@@ -1436,8 +1423,10 @@
     // same way).
     _PING_ASK_COPY: {
       'app-building': {
-        title: 'Get a ping when your app is ready?',
-        message: 'Homeroom bot will message you when it’s ready to try.',
+        // Message ids: this table is read before the language runtime
+        // exists, and askForPing reads the words when it asks.
+        title: 'shell:pingAsk.appBuilding.title',
+        message: 'shell:pingAsk.appBuilding.message',
       },
     },
     // Written once "Notify me" has called requestPermissions() on this
@@ -1606,10 +1595,10 @@
         attempt = telemetry && typeof telemetry.attempt === 'function'
           ? telemetry.attempt('push_permission', { screen: 'ping_ask' }) : null;
         const yes = await ui.confirm({
-          title: copy.title,
-          message: copy.message,
-          confirmLabel: 'Notify me',
-          cancelLabel: 'Not now',
+          title: PlatformI18n.t(copy.title),
+          message: PlatformI18n.t(copy.message),
+          confirmLabel: PlatformI18n.t('shell:pingAsk.confirm'),
+          cancelLabel: PlatformI18n.t('shell:pingAsk.notNow'),
         });
         if (!yes) {
           NativeChrome._pingAskDeclined = true;

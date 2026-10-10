@@ -39,6 +39,8 @@
 
 import { useEffect, type RefObject } from 'react';
 
+import { htmlRich, t } from './i18n/runtime';
+
 export interface SpecHtmlDoc {
   /** Both halves were found: draw the tabs. */
   split: boolean;
@@ -227,17 +229,25 @@ function screensHtml(figure: Element, key: string, styles: SpecStyles): string {
     const list = here.map((change) => `<li class="shots-change" data-shots-n="${escapeAttr(change.n)}"><span class="shots-change-n">${escapeText(change.n)}</span>`
       + `<div class="min-w-0 flex-1"><strong class="text-sm leading-snug">${escapeText(change.claim)}</strong>`
       + `${change.steps ? `<div class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${escapeText(change.steps)}</div>` : ''}</div></li>`).join('');
-    const zoomWords = g.focus ? '<span class="shots-close-only"> · close-up</span><span class="shots-whole-only"> · whole screen</span>' : '';
-    const size = g.kind === 'phone' ? 'Phone' : 'Desktop';
+    // One whole line per size, with and without the close-up. The persona is
+    // the spec's own word and is escaped with the rest of the line.
+    const metaValues = { width: g.width, height: g.height, persona };
+    const zoomTags = [
+      (inner: string) => `<span class="shots-close-only">${inner}</span>`,
+      (inner: string) => `<span class="shots-whole-only">${inner}</span>`,
+    ];
+    const meta = g.kind === 'phone'
+      ? (g.focus ? htmlRich('core:spec.screens.metaPhoneZoom', metaValues, zoomTags) : htmlRich('core:spec.screens.metaPhone', metaValues))
+      : (g.focus ? htmlRich('core:spec.screens.metaDesktopZoom', metaValues, zoomTags) : htmlRich('core:spec.screens.metaDesktop', metaValues));
     return {
       viewport: g.kind,
       zoomable: !!g.focus,
-      afterHtml: sideHtml('after', markup, g, `After (planned): ${described}`, styles),
-      beforeHtml: sideHtml('before', markup, g, `Before: ${described}`, styles),
-      afterChip: 'After · planned',
-      beforeChip: 'Before · today',
+      afterHtml: sideHtml('after', markup, g, t('core:spec.screens.afterLabel', { changes: described }), styles),
+      beforeHtml: sideHtml('before', markup, g, t('core:spec.screens.beforeLabel', { changes: described }), styles),
+      afterChip: t('core:spec.screens.afterChip'),
+      beforeChip: t('core:spec.screens.beforeChip'),
       notesHtml: `${list ? `<ol class="shots-changes">${list}</ol>` : ''}`
-        + `<div class="shots-view-meta"><span>${size}, ${g.width} × ${g.height}${zoomWords} · seen as a ${escapeText(persona)}</span></div>`,
+        + `<div class="shots-view-meta"><span>${meta}</span></div>`,
     };
   });
   // Grouped by size, as the card groups them: the Desktop / Phone switch picks

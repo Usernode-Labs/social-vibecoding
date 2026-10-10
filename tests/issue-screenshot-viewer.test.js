@@ -20,6 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent, renderToHtml, createElement } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -195,7 +196,8 @@ test('a screenshot hosted elsewhere opens in a new tab from the viewer rather th
   const src = read(VIEWER);
   // #4055: a same-origin picture's Download became a button that saves it;
   // one hosted elsewhere keeps its link, in a new tab.
-  assert.match(src, /\{remote \? \(\n\s*<a\n\s*href=\{src\}\n\s*target="_blank"\n\s*rel="noopener noreferrer"[\s\S]*?data-image-viewer-download=""\n\s*>\n\s*Open original\n\s*<\/a>/);
+  assert.match(src, /\{remote \? \(\n\s*<a\n\s*href=\{src\}\n\s*target="_blank"\n\s*rel="noopener noreferrer"[\s\S]*?data-image-viewer-download=""\n\s*>\n\s*\{t\('messages:imageViewer\.openOriginal'\)\}\n\s*<\/a>/);
+  assert.equal(message('messages:imageViewer.openOriginal'), 'Open original');
 });
 
 test('the installed app leaves a scope\'s picture links to the viewer', () => {

@@ -19,12 +19,14 @@ import { useRef, type ReactNode } from 'react';
 
 import { ChevronLeftIcon } from '@/components/ui/icons';
 
+import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { visualCompareHandlers, visualCompareStore } from './staging-store.js';
 
 export function VisualCompareOverlay(): ReactNode {
   const state = useStoreState(visualCompareStore);
+  const t = useMessages('devchat');
   const overlayRef = useRef<HTMLDivElement | null>(null);
   useHiddenClass(overlayRef, !state.open);
 
@@ -35,7 +37,7 @@ export function VisualCompareOverlay(): ReactNode {
       className="hidden fixed inset-0 z-50 bg-zinc-950/95 flex flex-col"
       role="dialog"
       aria-modal="true"
-      aria-label="Before / after comparison"
+      aria-label={t('devchat:staging.compare.dialogLabel')}
       data-opened-at={state.openedAt ? String(state.openedAt) : undefined}
       onClick={(event) => {
         // Backdrop only: the overlay root itself, never a child (same test the
@@ -51,7 +53,7 @@ export function VisualCompareOverlay(): ReactNode {
           onClick={() => visualCompareHandlers.onBack?.()}
         >
           <ChevronLeftIcon className="w-4 h-4" />
-          Close
+          {t('core:common.close')}
         </button>
         <span className="flex-1">
         </span>

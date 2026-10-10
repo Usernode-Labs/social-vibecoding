@@ -26,6 +26,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -363,8 +364,10 @@ test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
   assert.ok(/userShare = !isOwner \? \{ kind: 'absent' \}/.test(render),
     'user-share button is owner-only');
   assert.ok(render.includes('isOwner && isLatest && !isEmpty'), 'build hint is owner-only');
-  assert.ok(render.includes('No plan has been shared for this session yet.'), 'non-owner empty copy');
-  assert.ok(render.includes('No plan yet. Ask the AI to draft one.'), 'owner empty copy kept');
+  assert.ok(render.includes("PlatformI18n.t('devchat:spec.empty.viewer')"), 'non-owner empty copy');
+  assert.equal(message('devchat:spec.empty.viewer'), 'No plan has been shared for this session yet.');
+  assert.ok(render.includes("PlatformI18n.t('devchat:spec.empty.owner')"), 'owner empty copy kept');
+  assert.equal(message('devchat:spec.empty.owner'), 'No plan yet. Ask the AI to draft one.');
   // And the component renders nothing at all for an `absent` action.
   const tsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
   assert.ok((tsx.match(/if \(action\.kind === 'absent'\) return null;/g) || []).length === 2,

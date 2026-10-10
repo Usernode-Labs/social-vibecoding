@@ -20,6 +20,7 @@ const READS = [
   'get_bench_studio', 'get_bench_studio_run', 'get_bench_reference_order', 'get_bench_gallery',
   'list_bench_context_packs', 'get_bench_context_pack', 'list_bench_suites', 'get_bench_suite',
   'list_bench_trials', 'get_bench_trial', 'get_homeroom_bot', 'list_recent_shots', 'get_recent_shots',
+  'get_browser_languages',
 ];
 const WRITES = [
   'launch_bench_studio', 'submit_bench_reference', 'rerun_bench_trial', 'cancel_bench_trial', 'keep_bench_trial',

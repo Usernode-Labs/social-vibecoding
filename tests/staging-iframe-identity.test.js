@@ -30,9 +30,11 @@
 const test = require('node:test');
 
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -147,6 +149,7 @@ async function makeHarness() {
   // request for an overlay-owned node was made.
   const asked = [];
   const sandbox = {
+    PlatformI18n: englishPlatformI18n(),
     console: { log() {}, warn() {}, error() {}, debug() {} },
     relTime: () => 'now',
     App: { user: { id: 1 }, currentTab: 'dev' },
@@ -429,10 +432,15 @@ test('`src` is not state, and the store starts from the shipped markup', () => {
   // hydration mismatch, which console.errors and fails proposal checks.
   assert.match(STORE, /open: false,/, 'the overlay ships hidden');
   assert.match(STORE, /loaderVisible: false,/, 'the loader ships hidden');
-  assert.match(STORE, /loaderTitle: 'Opening preview…',/, '#816 neutral default title');
+  // `null` is the shipped wording, which the overlay reads from the catalog.
+  assert.match(STORE, /loaderTitle: null,/, '#816 neutral default title');
+  assert.match(OVERLAY, /\{state\.loaderTitle \?\? t\('devchat:staging\.loader\.opening'\)\}/, '#816 neutral default title');
+  assert.equal(message('devchat:staging.loader.opening'), 'Opening preview…');
   assert.match(STORE, /loaderSub: '',/, 'no sub-line');
   assert.match(STORE, /testPanelHidden: true,/, 'the testing panel ships hidden');
-  assert.match(STORE, /fsBtnText: 'Full screen',/, "#771's shipped label");
+  assert.match(STORE, /fsBtnText: null,/, "#771's shipped label");
+  assert.match(OVERLAY, /\{state\.fsBtnText \?\? t\('devchat:staging\.fullScreen'\)\}/, "#771's shipped label");
+  assert.equal(message('devchat:staging.fullScreen'), 'Full screen');
   assert.match(STORE, /solo: false,/, '#16: the banner ships in its group wording');
   // The bridge's writes are all store writes, except the two src ones.
   const srcWrites = BRIDGE.match(/el\.src = /g) || [];
@@ -526,7 +534,8 @@ test('#1993 React bridge exposes retry state and clears it without replacing the
   h.AppView._mintToken = async () => null;
   await h.AppView.swapToStaging('https://preview.example', null, { verified: true });
   assert.equal(h.store.get().loaderRetry, true);
-  assert.equal(h.store.get().loaderRetryLabel, 'Retry sign-in', '#3413: sign-in keeps its label');
+  assert.equal(h.store.get().loaderRetryLabel, null, '#3413: sign-in keeps its label, the shipped one');
+  assert.equal(message('devchat:staging.loader.retrySignIn'), 'Retry sign-in');
   assert.equal(h.iframe.loads, 0, 'no unauthenticated navigation');
   assert.equal(h.bridge.frame(), h.iframe);
   h.AppView._mintToken = async () => 'retry-token';
@@ -537,7 +546,7 @@ test('#1993 React bridge exposes retry state and clears it without replacing the
   assert.match(h.iframe.src, /token=retry-token&un-theme=dark$/);
   assert.match(OVERLAY, /useHiddenClass\(retryRef, !state\.loaderRetry\)/);
   assert.match(OVERLAY, /stagingHandlers\.onRetry\?\.\(\)/);
-  assert.match(OVERLAY, /\{state\.loaderRetryLabel\}/, '#3413: the button text comes from the store');
+  assert.match(OVERLAY, /\{state\.loaderRetryLabel \?\? t\('devchat:staging\.loader\.retrySignIn'\)\}/, '#3413: the button text comes from the store');
 });
 
 test('#3413 React bridge labels a failed-build retry "Retry preview" and resets it for sign-in', async () => {
@@ -547,5 +556,5 @@ test('#3413 React bridge labels a failed-build retry "Retry preview" and resets 
   assert.equal(h.store.get().loaderRetryLabel, 'Retry preview');
   assert.equal(h.store.get().loaderSub, 'config error');
   h.bridge.setLoader(true, { title: 'Could not sign in to the preview', retry: true });
-  assert.equal(h.store.get().loaderRetryLabel, 'Retry sign-in');
+  assert.equal(h.store.get().loaderRetryLabel, null, 'back to the shipped "Retry sign-in"');
 });

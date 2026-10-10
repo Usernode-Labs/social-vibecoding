@@ -27,6 +27,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { kanbanHtml, workshopHtml } = require('./lib/dev-card-html');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -42,6 +43,8 @@ function makeAppView({ search = '', mySessions = [] } = {}) {
   const store = {};
   const sandbox = {
     console, relTime: () => '2h ago',
+    // app-view.js words its cards through the English runtime.
+    PlatformI18n: englishPlatformI18n(),
     escapeHtml: (s) => String(s == null ? '' : s), escapeAttr: (s) => String(s == null ? '' : s),
     App: { user: { id: 1, username: 'me' }, currentApp: 'demo-app', currentSubTab: 'forum', _appUrl: () => '#x', switchTab: () => {} },
     Kudos: { renderButton: () => '', attach: () => {} },

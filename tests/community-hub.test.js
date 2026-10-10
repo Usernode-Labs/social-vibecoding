@@ -23,6 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createElement, loadTsx, renderToHtml } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -58,12 +59,13 @@ const community = (over = {}) => ({
 });
 
 test('the bar reads Home, Discover, Messages, Communities, you — Messages in the middle', () => {
-  const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '([A-Za-z]+)'/g)].map((m) => [m[1], m[2]]);
+  // A tab's label is a message id; the word is what the English catalog holds for it.
+  const order = [...TABS.matchAll(/\{ key: '([a-z]+)' as const, label: '(core:tabs\.[A-Za-z]+)'/g)].map((m) => [m[1], message(m[2])]);
   assert.deepEqual(order.map((o) => o[0]), ['discover', 'messages', 'workshop', 'me'],
     'after Home, whose entry is written across lines');
   assert.deepEqual(order.find((o) => o[0] === 'workshop'), ['workshop', 'Communities'],
     'the key stays `workshop`; the word is Communities');
-  assert.match(TABS, /key: 'workshop' as const, label: 'Communities', href: '#communities', Icon: UserGroupIcon/);
+  assert.match(TABS, /key: 'workshop' as const, label: 'core:tabs\.communities', href: '#communities', Icon: UserGroupIcon/);
   // The channels' count rides the Communities tab, the conversations' the
   // Messages tab, and the Messages store writes both.
   assert.match(TABS, /key === 'workshop' \? \(\s*<TabBadge count=\{communities\} id="platform-tabs-badge-communities"/);
@@ -83,14 +85,17 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.equal(places.litPlace('all'), 'workshop', 'the Workshop stays lit over All items');
   assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
   // #4417: a channel's page is called by its handle: #general (was
-  // Discussion), and a topic's channel by its own.
-  assert.deepEqual(['needs', 'workshop', 'all', 'discussion', 'c:onboarding'].map(pageTitle),
-    ['Needs you', 'Workshop', 'All items', '#general', '#onboarding']);
+  // Discussion), and a topic's channel by its own. A page's title is what
+  // the English catalog holds for it.
+  assert.deepEqual(['needs', 'workshop', 'all', 'discussion', 'c:onboarding', 'status'].map(pageTitle),
+    ['Needs you', 'Workshop', 'All items', '#general', '#onboarding', 'Hub']);
+  assert.equal(message('project:page.title.hub'), 'Hub');
   // The place bar on every page; All items adds its way back under it, the
   // first thing in its pinned head's one row (#4486), with no eyebrow, and
   // back is the Workshop place.
   assert.ok(!/pageBar/.test(LANDER), 'no back bar of its own');
-  assert.match(LANDER, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}\s+eyebrow=\{false\}/);
+  assert.equal(message('project:page.backToWorkshop'), 'Workshop');
+  assert.match(LANDER, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack\s+label=\{t\('project:page\.backToWorkshop'\)\}\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}\s+eyebrow=\{false\}/);
   assert.match(LANDER, /\{band\}\s*\{tray\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
   // can do, the fortnight), the first version while Homeroom bot builds it
@@ -136,7 +141,8 @@ test('a project page is its places, Hub, Needs you, Workshop and #general, with 
   assert.match(ws, /rows=\{v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
   assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
-  assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
+  assert.equal(message('project:workshop.allItems.title'), 'All items');
+  assert.match(ws, /<span className="dev-ws-head-title">\{t\('project:workshop\.allItems\.title'\)\}<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // All items is the Workshop page's head now, its first section; the
   // approval rules come straight after it. They were the head (#3528), the
   // page's foot for a round (#3487), and the head of All items before that.

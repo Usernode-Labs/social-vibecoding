@@ -31,6 +31,7 @@ const { installAppCard } = require('./helpers/app-card');
 
 const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
 const { installGridStore } = require('./helpers/home-grid-store');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 function makeHome(user) {
   return makeHomeEnv(user).Home;
@@ -78,6 +79,8 @@ function fakeCtx(paints) {
 function makeHomeEnv(user) {
   const sandbox = {
     console,
+    // The build line's words are read from the catalog (#4053).
+    PlatformI18n: englishPlatformI18n(),
     App: { user },
     document: {
       getElementById: () => null,
@@ -120,6 +123,7 @@ function makeHomeEnv(user) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   // home.js's iconTileFor / renderAppPillsHtml delegate to the shared card
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.

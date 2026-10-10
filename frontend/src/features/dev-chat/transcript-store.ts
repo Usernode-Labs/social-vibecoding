@@ -209,7 +209,7 @@ export type TranscriptRow =
     prNumber: number | null;
     title: string;
     /** #3605: the requests this change closes, each opening in Homeroom. */
-    closes: { n: number; verb: 'Closes' | 'Closed' }[];
+    closes: { n: number; closed: boolean }[];
     /** #3605: the session id whose vote page the status opens, once proposed. */
     proposalId: number | null;
     stamp: string;
@@ -241,7 +241,7 @@ export type TranscriptRow =
     live?: boolean;
     /** A user row's attachment strip. */
     attachments?: {
-      kind: 'image' | 'file'; href: string; name: string;
+      kind: 'image' | 'file'; href: string; name: string; unnamed?: boolean;
       download?: boolean; badgeHtml?: string; size?: string;
     }[];
     /** The `[CHAT_ONLY]` raw-output disclosure. */

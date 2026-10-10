@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const gcJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'group-chat.js'), 'utf8');
 
@@ -77,6 +78,8 @@ function load() {
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     App: { user: { id: 1, username: 'evan' } },
     PlatformUI: { attachScreenFx() {} },
+    // The language runtime's global, as the shell publishes it.
+    PlatformI18n: englishPlatformI18n(),
     console,
     fetch: async () => ({ ok: true, json: async () => ({ messages: [] }) }),
     setTimeout, clearTimeout, setInterval, clearInterval,

@@ -16,6 +16,7 @@
  */
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { t } from '../../lib/i18n/runtime';
 
 /** The route names `AuthScreens.show()` accepts, and their screen roots. */
 export const AUTH_SCREEN_IDS: Record<string, string> = {
@@ -37,8 +38,9 @@ export const AUTH_SCREEN_IDS: Record<string, string> = {
  * /api/auth/register and the email-code sign-up's username. The first-run
  * "Choose your username" step says the same thing in its own sentence.
  */
-export const USERNAME_RULE = 'Letters, numbers and underscores, 3 to 32 characters.';
-export const PASSWORD_RULE = 'At least 8 characters.';
+// The words are catalog entries now, one for each place they are said:
+// auth:register.usernameRule and .passwordRule, auth:login.signup.usernameRule,
+// auth:signInSheet.usernamePlaceholder and .providerUsernamePlaceholder.
 
 /**
  * Said next to every field where a new account types its handle (#3575):
@@ -51,7 +53,7 @@ export const PASSWORD_RULE = 'At least 8 characters.';
  * spells the same words; tests/username-first-choice.test.js holds the two
  * copies together.
  */
-export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom.';
+// Catalog entries: auth:register.usernamePublic and auth:login.signup.usernamePublic.
 
 /**
  * The attributes every username field carries, so a phone does not
@@ -60,6 +62,14 @@ export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users
  * capitalised name is still a different name in the register form.
  */
 export const HANDLE_FIELD = { autoCapitalize: 'none', autoCorrect: 'off', spellCheck: false } as const;
+
+/**
+ * What blockedOffline says. Exported so a form can tell this error from any
+ * other and clear it when the connection returns, in whatever language.
+ */
+export function offlineSignInText(): string {
+  return t('auth:offline.signIn');
+}
 
 /** One public app as `/api/public/apps` returns it. */
 export interface PublicApp {
@@ -229,7 +239,7 @@ export function blockedOffline(setError?: (msg: string) => void): boolean {
     noteSignInBegun();
     return false;
   }
-  if (setError) setError("You're offline. Signing in needs a connection.");
+  if (setError) setError(offlineSignInText());
   try {
     legacy().Offline?.nudge();
   } catch {
@@ -265,8 +275,6 @@ export function isNative(): boolean {
   return !!(w.usernode && w.usernode.isNative);
 }
 
-const NATIVE_LOGIN_PREPARATION_MESSAGE =
-  'Secure app session could not be prepared. Force-quit and reopen Homeroom, then try again.';
 const NATIVE_DIAGNOSTIC_RE = /^[a-z][a-z0-9_-]{0,95}$/;
 const BRIDGE_STATES = new Set([
   'ready', 'blocked-frame', 'unsupported', 'inconclusive', 'unattached', 'unknown',
@@ -365,7 +373,7 @@ function nativePreparationDetails(
 export class NativeLoginPreparationError extends Error {
   constructor(
     readonly diagnostic: string | null,
-    message = NATIVE_LOGIN_PREPARATION_MESSAGE,
+    message = t('auth:native.sessionNotPrepared'),
     readonly details: NativeLoginFailureDetails | null = null,
   ) {
     super(message);
@@ -374,7 +382,7 @@ export class NativeLoginPreparationError extends Error {
 }
 
 export function sessionMintFailureMessage(error: unknown): string {
-  return error instanceof NativeLoginPreparationError ? error.message : 'Network error';
+  return error instanceof NativeLoginPreparationError ? error.message : t('auth:session.networkError');
 }
 
 /**
@@ -389,7 +397,7 @@ async function prepareNativeMint(w: LegacyWindow): Promise<void> {
   if (!chrome || typeof chrome.prepareForLogin !== 'function') {
     throw new NativeLoginPreparationError(
       null,
-      'This Homeroom app version must be updated for secure sign-in',
+      t('auth:native.updateRequired'),
     );
   }
   try {
@@ -527,7 +535,7 @@ export async function passwordSignIn(username: string, password: string): Promis
       body: JSON.stringify({ username, password }),
     });
     const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error || 'Login failed', details: null };
+    if (!res.ok) return { ok: false, error: data.error || t('auth:signIn.failed'), details: null };
     return { ok: true };
   } catch (error) {
     return {

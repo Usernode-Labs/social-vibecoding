@@ -105,6 +105,8 @@ import { Chip } from '@/components/ui/chip';
 import { PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { useKeyboardSurface } from '../../lib/keyboard-surface';
 import { mayFocusByCodeNow } from '../auth/sign-in-sheet';
 import { AppAllowance, useAppAllowance } from '../dialogs/app-allowance';
@@ -177,28 +179,28 @@ export function missingAnswer(brief: string, name: string): Missing {
  * its sentence (`finishing`).
  */
 export function neededLine(missing: Missing, brief: string, finishing = false): string | null {
-  if (missing === 'blank') return finishing ? 'Finish the sentence first.' : 'Fill in the blank first.';
-  if (missing === 'brief') return brief.trim() ? 'Say a little more about what it should do.' : 'Say what it should do first.';
-  if (missing === 'name') return 'Give it a name to make it. You can change it later.';
+  if (missing === 'blank') return finishing ? translate('onboarding:firstSession.make.needed.finish') : translate('onboarding:firstSession.make.needed.blank');
+  if (missing === 'brief') return brief.trim() ? translate('onboarding:firstSession.make.needed.briefShort') : translate('onboarding:firstSession.make.needed.brief');
+  if (missing === 'name') return translate('onboarding:firstSession.make.needed.name');
   return null;
 }
 
 /** Over the question: hello on the first session, what this is from Create. */
 export function makeEyebrow(entry: MakeEntry, who: string): string {
-  if (entry === 'create') return 'New project';
-  return who ? `Hi ${who}!` : 'You\'re in!';
+  if (entry === 'create') return translate('onboarding:firstSession.make.eyebrow.create');
+  return who ? translate('onboarding:firstSession.make.eyebrow.hello', { name: who }) : translate('onboarding:firstSession.make.eyebrow.youreIn');
 }
 
 /**
  * Under the description box, quietly, while it still holds the answer the
  * person gave on the waitlist (#4040): it opens on Your own idea with that
- * answer in the box. Gone once they change a word of it.
+ * answer in the box. Gone once they change a word of it. A message id.
  */
-export const WAITLIST_IDEA_LINE = 'Filled in from your waitlist answer.';
+export const WAITLIST_IDEA_LINE = 'onboarding:firstSession.make.waitlistIdea';
 
-/** The import form's heading and line (./import-repo.tsx). */
-export const IMPORT_TITLE = 'Import a GitHub repo';
-export const IMPORT_LINE = 'Bring an app that already exists. Your group builds on it from here.';
+/** The import form's heading and line (./import-repo.tsx), as message ids. */
+export const IMPORT_TITLE = 'onboarding:firstSession.import.title';
+export const IMPORT_LINE = 'onboarding:firstSession.import.line';
 
 /**
  * The screen's root. On the first session it is the whole screen: it
@@ -232,6 +234,7 @@ export function MakeScreen({
    */
   idea?: string | null;
 }) {
+  const t = useMessages('onboarding');
   const waitlistIdea = typeof idea === 'string' && idea.trim() ? idea : null;
   const fromCreate = entry === 'create';
   // At the allowance's limit (or a full server), Make it and Import it are
@@ -396,7 +399,7 @@ export function MakeScreen({
         app?: { slug?: string; name?: string }; homeroomBot?: { conversationId?: unknown };
       };
       if (!reply.ok || !data.app?.slug) {
-        setError(reply.ok ? 'Could not make it. Try again.' : reply.error);
+        setError(reply.ok ? translate('onboarding:firstSession.make.error.notMade') : reply.error);
         return;
       }
       onMade({
@@ -415,9 +418,10 @@ export function MakeScreen({
   }, [busy, templated, said, text, name, template, choice, entry, onMade]);
   const needed = neededLine(missing, text, !!template?.finish);
   // The chips under the sentence: Your own… last, or first for the game.
-  const ownChip = { key: OWN, label: 'Your own…' };
+  const ownChip = { key: OWN, label: 'onboarding:firstSession.make.ownChip' };
   const chips = !template ? [] : template.finish ? [ownChip, ...template.choices] : [...template.choices, ownChip];
-  // The game's box shows an example of the rest: the starter's, or its own.
+  // The game's box shows an example of the rest: the starter's, or its own
+  // (a message id: the box's whole placeholder).
   const boxExample = template ? (choice !== OWN && template.choices.find((c) => c.key === choice)?.example) || template.own.example : '';
 
   // The import, through the same request: a private community, as Make it
@@ -425,7 +429,7 @@ export function MakeScreen({
   const importRepo = useCallback(async ({ repoUrl, name: repoName, manifest }: { repoUrl: string; name: string; manifest: RepoManifest }) => {
     const reply = await postCreateApp({ name: repoName, audience: 'invited', repoUrl, from: entry });
     const data = (reply.ok ? reply.data : {}) as { app?: { slug?: string; name?: string } };
-    if (!reply.ok || !data.app?.slug) return reply.ok ? 'Could not import it. Try again.' : reply.error;
+    if (!reply.ok || !data.app?.slug) return reply.ok ? translate('onboarding:firstSession.import.error.notImported') : reply.error;
     onMade({
       slug: data.app.slug,
       name: data.app.name || repoName,
@@ -464,7 +468,7 @@ export function MakeScreen({
             type="button"
             data-make-close=""
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t('core:common.close')}
             className="absolute bottom-1 left-3 flex h-9 w-9 items-center justify-center rounded-full bg-white text-zinc-500 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-400"
           >
             <XIcon className="h-4 w-4" aria-hidden="true" />
@@ -481,8 +485,8 @@ export function MakeScreen({
             header={(
               <div className="text-center">
                 <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">{makeEyebrow(entry, who)}</p>
-                <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{IMPORT_TITLE}</h1>
-                <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">{IMPORT_LINE}</p>
+                <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{t(IMPORT_TITLE)}</h1>
+                <p className="mt-2.5 text-pretty text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400">{t(IMPORT_LINE)}</p>
               </div>
             )}
             submit={importRepo}
@@ -499,23 +503,23 @@ export function MakeScreen({
             <p className="mt-4 text-[13px] font-semibold uppercase tracking-[0.8px] text-zinc-500 dark:text-zinc-400">
               {makeEyebrow(entry, who)}
             </p>
-            <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">What do you want to make?</h1>
+            <h1 id="first-session-make-title" className="mt-2.5 text-balance text-[30px] font-extrabold leading-[34px]">{t('onboarding:firstSession.make.title')}</h1>
           </div>
-          <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">Start from an idea</p>
-          <div className="grid grid-cols-2 gap-2" role="group" aria-label="Ideas">
-            {TEMPLATES.map((t) => {
-              const on = picked === t;
+          <p className="mt-6 pb-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.make.startFromIdea')}</p>
+          <div className="grid grid-cols-2 gap-2" role="group" aria-label={t('onboarding:firstSession.make.ideasLabel')}>
+            {TEMPLATES.map((example) => {
+              const on = picked === example;
               return (
                 <button
-                  key={t.key}
+                  key={example.key}
                   type="button"
                   aria-pressed={on}
-                  data-first-session-example={t.key}
-                  onClick={() => pickTemplate(t)}
+                  data-first-session-example={example.key}
+                  onClick={() => pickTemplate(example)}
                   className={`${TILE} ${on ? TILE_ON : TILE_OFF}`}
                 >
-                  <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{t.chart ? <TierChart /> : t.emoji}</span>
-                  <span className="text-[15px] font-[650] leading-tight">{t.short}</span>
+                  <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{example.chart ? <TierChart /> : example.emoji}</span>
+                  <span className="text-[15px] font-[650] leading-tight">{t(example.short)}</span>
                 </button>
               );
             })}
@@ -527,7 +531,7 @@ export function MakeScreen({
               className={`${TILE} ${picked === OWN_IDEA ? TILE_ON : TILE_OFF}`}
             >
               <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">💡</span>
-              <span className="text-[15px] font-[650] leading-tight">Your own idea</span>
+              <span className="text-[15px] font-[650] leading-tight">{t('onboarding:firstSession.make.ownIdea')}</span>
             </button>
           </div>
           <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
@@ -535,7 +539,7 @@ export function MakeScreen({
               {templated && template && said ? (
                 <>
                   <div className="flex items-baseline justify-between gap-3">
-                    <span className={LABEL}>What should it do?</span>
+                    <span className={LABEL}>{t('onboarding:firstSession.make.briefLabel')}</span>
                     {template.finish ? null : (
                       <button
                         type="button"
@@ -543,14 +547,14 @@ export function MakeScreen({
                         onClick={writeOut}
                         className="shrink-0 text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400"
                       >
-                        Write it yourself
+                        {t('onboarding:firstSession.make.writeItYourself')}
                       </button>
                     )}
                   </div>
                   <p data-make-sentence={template.key} className="pt-1 text-[17px] leading-7 text-zinc-900 dark:text-zinc-100">
                     {said.head}
                     {template.finish
-                      ? (said.fill ? <><span className={BLANK}>{said.fill}</span>{' …'}</> : null)
+                      ? (said.fill ? <span className={BLANK}>{said.fill}</span> : null)
                       : choice === OWN
                         ? (
                           <input
@@ -561,10 +565,10 @@ export function MakeScreen({
                             enterKeyHint="next"
                             maxLength={60}
                             value={words}
-                            aria-label="Your own words"
+                            aria-label={t('onboarding:firstSession.make.ownWordsLabel')}
                             onChange={(e) => changeWords(e.target.value)}
                             onKeyDown={toName}
-                            placeholder={template.own.example}
+                            placeholder={t(template.own.example)}
                             className={BLANK_FIELD}
                           />
                         )
@@ -575,7 +579,7 @@ export function MakeScreen({
                     <>
                       <label htmlFor="make-words" className="mt-3 flex items-center gap-1.5 text-[13px] font-semibold text-violet-700 dark:text-violet-400">
                         <PencilSquareIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                        Finish it in your own words
+                        {t('onboarding:firstSession.make.finishLabel')}
                       </label>
                       <textarea
                         ref={wordsBoxRef}
@@ -588,12 +592,12 @@ export function MakeScreen({
                         aria-describedby={missing === 'blank' ? 'first-session-brief-needed' : undefined}
                         onChange={(e) => changeWords(e.target.value)}
                         onKeyDown={toName}
-                        placeholder={`For example, ${boxExample}`}
+                        placeholder={t(boxExample)}
                         className={`${WORDS_BOX} ${words.trim() ? WORDS_FILLED : WORDS_EMPTY}`}
                       />
                     </>
                   ) : null}
-                  <div className="mb-1 mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Choices">
+                  <div className="mb-1 mt-3 flex flex-wrap gap-1.5" role="group" aria-label={t('onboarding:firstSession.make.choicesLabel')}>
                     {chips.map((c) => (
                       <Chip
                         key={c.key}
@@ -603,14 +607,14 @@ export function MakeScreen({
                         onClick={() => pickChoice(c.key)}
                         className={choice === c.key ? 'px-3' : `px-3 ${TILE_OFF}`}
                       >
-                        {c.label}
+                        {t(c.label)}
                       </Chip>
                     ))}
                   </div>
                 </>
               ) : (
                 <>
-                  <label htmlFor="first-session-brief" className={LABEL}>What should it do?</label>
+                  <label htmlFor="first-session-brief" className={LABEL}>{t('onboarding:firstSession.make.briefLabel')}</label>
                   <textarea
                     ref={briefRef}
                     id="first-session-brief"
@@ -632,16 +636,16 @@ export function MakeScreen({
                       setMissing(null);
                     }}
                     onKeyDown={toName}
-                    placeholder="A map of our favorite swimming spots…"
+                    placeholder={t('onboarding:firstSession.make.briefPlaceholder')}
                     className={`${INPUT} resize-none leading-[22px]`}
                   />
-                  {waitlistIdea && brief === waitlistIdea ? <p data-make-waitlist-idea="" className={HINT}>{WAITLIST_IDEA_LINE}</p> : null}
+                  {waitlistIdea && brief === waitlistIdea ? <p data-make-waitlist-idea="" className={HINT}>{t(WAITLIST_IDEA_LINE)}</p> : null}
                 </>
               )}
               {missing === 'brief' || missing === 'blank' ? <p id="first-session-brief-needed" role="alert" className={NEEDED}>{needed}</p> : null}
             </div>
             <div className={FIELD}>
-              <label htmlFor="first-session-name" className={LABEL}>What should we call it?</label>
+              <label htmlFor="first-session-name" className={LABEL}>{t('onboarding:firstSession.make.nameLabel')}</label>
               <input
                 ref={nameRef}
                 id="first-session-name"
@@ -657,7 +661,7 @@ export function MakeScreen({
                   setError(null);
                   setMissing(null);
                 }}
-                placeholder="For example, Hiking Tier List"
+                placeholder={t('onboarding:firstSession.make.namePlaceholder')}
                 className={INPUT}
               />
               {missing === 'name' ? <p id="first-session-name-hint" role="alert" className={NEEDED}>{needed}</p> : null}
@@ -675,7 +679,7 @@ export function MakeScreen({
             ink="solidLate"
             className="mt-6 flex items-center justify-center disabled:opacity-50"
           >
-            {busy ? 'Making it…' : 'Make it'}
+            {busy ? t('onboarding:firstSession.make.making') : t('onboarding:firstSession.make.submit')}
           </Button>
           {fromCreate ? (
             // Small, under Make it: the one other way to start a project.
@@ -686,13 +690,15 @@ export function MakeScreen({
                 onClick={() => setMode('import')}
                 className="text-[13px] font-medium text-violet-700 hover:underline dark:text-violet-400"
               >
-                Import from a GitHub repo
+                {t('onboarding:firstSession.make.importLink')}
               </button>
             </p>
           ) : (
             <p className="mt-3 text-center text-[15px] text-zinc-500 dark:text-zinc-400">
-              {'Not sure yet? '}
-              <button type="button" onClick={onLookAround} className="font-medium text-violet-700 hover:underline dark:text-violet-400">Look around first</button>
+              <RichMessage
+                id="onboarding:firstSession.make.lookAround"
+                components={[<button type="button" onClick={onLookAround} className="font-medium text-violet-700 hover:underline dark:text-violet-400" />]}
+              />
             </p>
           )}
         </form>

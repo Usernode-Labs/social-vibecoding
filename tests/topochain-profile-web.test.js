@@ -11,6 +11,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -202,10 +203,12 @@ test('the signed-out render offers a sign-in link, not the connection error', ()
     profileViewTsx.indexOf("view.kind === 'signedOut'"),
     profileViewTsx.indexOf("view.kind === 'error'")
   );
-  assert.match(branch, /Sign in to see your profile/);
+  assert.match(branch, /\{t\('profile:signedOut\.text'\)\}/);
+  assert.match(message('profile:signedOut.text'), /Sign in to see your profile/);
   assert.match(branch, /#login/, 'links to the in-SPA login route');
   // The generic copy must survive for REAL failures.
-  assert.match(profileViewTsx, /Could not load your profile/);
+  assert.match(profileViewTsx, /\{t\('profile:screen.loadFailed'\)\}/);
+  assert.match(message('profile:screen.loadFailed'), /Could not load your profile/);
 });
 
 test('the signed-out branch is checked before the generic error branch', () => {
@@ -276,12 +279,15 @@ test('outbound handle links are scheme-guarded and rel-protected', () => {
   assert.match(profileViewTsx, /rel: 'noopener noreferrer'/);
   assert.match(profilePublicTsx, /target="_blank"/);
   assert.match(profilePublicTsx, /rel="noopener noreferrer"/);
-  assert.match(fn, /Verified GitHub/);
-  assert.match(fn, /Verified X/);
+  assert.match(fn, /t\('profile:social\.github', \{ handle: links\.github \}\)/);
+  assert.match(fn, /t\('profile:social\.x', \{ handle: links\.x \}\)/);
+  assert.equal(message('profile:social.github', { handle: 'evan' }), 'Verified GitHub · evan');
+  assert.equal(message('profile:social.x', { handle: 'evan' }), 'Verified X · @evan');
 });
 
 test('social accounts in Edit profile are proof status, not free-text claims', () => {
-  assert.match(profileSheetTsx, /Verified social accounts/);
+  assert.match(profileSheetTsx, /<Group title=\{t\('profile:edit\.social\.group'\)\}>/);
+  assert.equal(message('profile:edit.social.group'), 'Verified social accounts');
   assert.match(profileSheetTsx, /id="profile-edit-github"/);
   assert.match(profileSheetTsx, /id="profile-edit-x"/);
   assert.match(profileSheetTsx, /#settings\/linked-accounts/);
@@ -382,7 +388,7 @@ test('the form body is the kit inset-grouped list, by the kit rules (#1285)', ()
   const group = sheetCode.slice(sheetCode.indexOf('function Group('));
   assert.match(group, /className="un-group-header"/);
   assert.match(group, /className="un-group"/);
-  const sections = sheetCode.match(/<Group title="/g) || [];
+  const sections = sheetCode.match(/<Group title=\{t\('profile:edit\.[a-z]+\.group'\)\}>/g) || [];
   assert.ok(sections.length >= 4,
     `four labelled sections at least, saw ${sections.length}`);
 
@@ -441,7 +447,8 @@ test('the hidden file input sits OUTSIDE the group (#1285)', () => {
     sheetCode.indexOf('id="profile-edit-file"'),
     sheetCode.indexOf('id="profile-edit-choose"'),
   );
-  assert.match(group, /<Group title="Photo">/,
+  assert.equal(message('profile:edit.photo.group'), 'Photo');
+  assert.match(group, /<Group title=\{t\('profile:edit\.photo\.group'\)\}>/,
     'the file input is declared before the group it feeds, not inside it');
 });
 
@@ -518,7 +525,9 @@ test('Me counts the viewer’s OWN completions, and its changes link out', () =>
   assert.match(shaping, /`#app\/\$\{slug\}\/dev\/proposals\/\$\{id\}`/);
   const screen = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/profile/my-proposals.tsx'), 'utf8');
   assert.match(screen, /as=\{row\.href \? 'a' : 'div'\}\s*href=\{row\.href \|\| undefined\}/);
-  assert.match(screen, /You have not started a change yet\./, 'an empty list says so');
+  assert.match(screen, /changes: 'profile:work\.changes\.empty',/);
+  assert.match(screen, /<p className=\{NOTE\}>\{t\(EMPTY\[kind\]\)\}<\/p>/, 'an empty list says so');
+  assert.equal(message('profile:work.changes.empty'), 'You have not started a change yet.');
 });
 
 test('the stale "organiser flag" comments are gone', () => {

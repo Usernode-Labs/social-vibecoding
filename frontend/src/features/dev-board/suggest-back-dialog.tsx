@@ -20,6 +20,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -64,9 +66,9 @@ export function changeLines(view: Pick<SuggestBackPreview, 'commits' | 'commitCo
   const listed = Array.isArray(view.commits) ? view.commits.filter(Boolean) : [];
   if (listed.length) {
     const more = Math.max(0, (view.commitCount || 0) - listed.length);
-    return more ? [...listed, `and ${more} more`] : listed;
+    return more ? [...listed, translate('project:suggestBack.changes.more', { count: more })] : listed;
   }
-  if (view.fileCount > 0) return [view.fileCount === 1 ? '1 file changed' : `${view.fileCount} files changed`];
+  if (view.fileCount > 0) return [translate('project:suggestBack.changes.files', { count: view.fileCount })];
   return [];
 }
 
@@ -78,6 +80,7 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
   original: { slug: string; name: string };
   onClose: () => void;
 }) {
+  const t = useMessages('project');
   const root = useRef<HTMLDivElement>(null);
   const card = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
@@ -97,13 +100,13 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
         if (controller.signal.aborted) return;
-        if (!res.ok) throw new Error(data.error || 'Could not load your changes. Close this and try again.');
+        if (!res.ok) throw new Error(data.error || t('project:suggestBack.error.loadRetry'));
         setView(data as SuggestBackPreview);
         setLoading(false);
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : 'Could not load your changes.');
+        setError(err instanceof Error ? err.message : t('project:suggestBack.error.load'));
         setLoading(false);
       });
     return () => controller.abort();
@@ -126,13 +129,13 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
       const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || 'Your changes were not sent. Try again.');
+        setError(data.error || t('project:suggestBack.error.notSent'));
         if (data.open?.href) setView((v) => (v ? { ...v, open: data.open, ready: false } : v));
         return;
       }
       setSent({ href: data.href });
     } catch {
-      setError('Network error. Please try again.');
+      setError(t('project:suggestBack.error.network'));
     } finally {
       setBusy(false);
     }
@@ -148,41 +151,44 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
 
   return (
     <div ref={root} className="rounded-2xl bg-white dark:bg-zinc-900 mb-5">
-      <div ref={card} id="suggest-back-dialog" className="flex flex-col px-4 pb-5" aria-label={`Suggest this back to ${name}`}>
-        <h2 className="text-lg font-bold pt-3 pb-2 break-words">{`Suggest this back to ${name}`}</h2>
+      <div ref={card} id="suggest-back-dialog" className="flex flex-col px-4 pb-5" aria-label={t('project:suggestBack.title', { project: name })}>
+        <h2 className="text-lg font-bold pt-3 pb-2 break-words">{t('project:suggestBack.title', { project: name })}</h2>
         {sent ? (
           <p role="status" data-suggest-sent className="text-sm text-zinc-700 dark:text-zinc-300">
-            {`Sent. Your changes are a proposal on ${name} now. `}
-            <a href={sent.href} className={LINK} onClick={onClose}>Open the proposal</a>
+            <RichMessage
+              id="project:suggestBack.sent"
+              values={{ project: name }}
+              components={[<a href={sent.href} className={LINK} onClick={onClose} />]}
+            />
           </p>
         ) : (
           <>
             <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-3">
-              {`Your changes since you remixed go to ${name} as a proposal. Its members try it and vote, like any other change.`}
+              {t('project:suggestBack.intro', { project: name })}
             </p>
             <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3 text-sm text-zinc-700 dark:text-zinc-200">
               {loading ? (
-                <p role="status" className="text-zinc-500 dark:text-zinc-400">Loading your changes…</p>
+                <p role="status" className="text-zinc-500 dark:text-zinc-400">{t('project:suggestBack.loading')}</p>
               ) : lines.length ? (
                 <ul data-suggest-changes className="list-disc pl-5 space-y-1">
                   {lines.map((line, i) => <li key={`${i}:${line}`} className="break-words">{line}</li>)}
                 </ul>
               ) : (
-                <p className="text-zinc-500 dark:text-zinc-400">No changes listed yet.</p>
+                <p className="text-zinc-500 dark:text-zinc-400">{t('project:suggestBack.changes.none')}</p>
               )}
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
-              {`Not sent: ${copyName}’s name, who can see it, its admins or its data.`}
+              {t('project:suggestBack.notSent', { copy: copyName })}
             </p>
             {blocked && reason ? (
               <p role="alert" data-suggest-reason={reason.code} className="text-sm text-zinc-800 dark:text-zinc-200 mt-3">
                 {`${reason.error} `}
                 {askToJoin ? (
                   <a href={`#app/${encodeURIComponent(original.slug)}`} className={LINK} onClick={onClose}>
-                    {`Open ${name}`}
+                    {t('project:suggestBack.openOriginal', { project: name })}
                   </a>
                 ) : null}
-                {openHref ? <a href={openHref} className={LINK} onClick={onClose}>Open the proposal</a> : null}
+                {openHref ? <a href={openHref} className={LINK} onClick={onClose}>{t('project:suggestBack.openProposal')}</a> : null}
               </p>
             ) : null}
             {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mt-3">{error}</p> : null}
@@ -190,11 +196,11 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
         )}
         <div className="flex gap-3 mt-5">
           {sent ? (
-            <Button type="button" className="min-h-[44px] flex-1" onClick={onClose}>Done</Button>
+            <Button type="button" className="min-h-[44px] flex-1" onClick={onClose}>{t('core:common.done')}</Button>
           ) : (
             <>
               <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" disabled={busy} onClick={onClose}>
-                Cancel
+                {t('core:common.cancel')}
               </Button>
               <Button
                 type="button"
@@ -203,7 +209,7 @@ export function SuggestBackDialog({ slug, copyName, original, onClose }: {
                 disabled={loading || busy || blocked}
                 onClick={() => { void send(); }}
               >
-                {busy ? 'Sending…' : `Send to ${name}`}
+                {busy ? t('project:suggestBack.sending') : t('project:suggestBack.send', { project: name })}
               </Button>
             </>
           )}

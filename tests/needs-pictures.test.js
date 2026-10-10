@@ -103,6 +103,8 @@ test('"What it touches" lists the four main areas, dims the empty ones and says 
   assert.match(html, />Server<[\s\S]*?>2 files</);
   assert.doesNotMatch(html, />Docs</, 'an empty minor area is left out');
   assert.match(html, /Nothing on screen changes · drawn from the change’s files/);
+  assert.match(html, /aria-label="What it touches\. Server, 2 files; Tests, 1 file\. Nothing on screen changes\."/,
+    'said aloud as it always was, from whole messages');
 });
 
 test('Mermaid is the vendored copy, loaded on demand under strict settings and cleaned before it is shown', () => {

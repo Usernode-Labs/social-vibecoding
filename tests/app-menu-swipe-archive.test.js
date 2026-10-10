@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx } = require('./lib/render-tsx');
@@ -139,7 +140,8 @@ test('#3515: a refused archive says why in a toast, keeps the row, and reads the
 
 test('#3515: the ⋯ and the swipe share one confirm, so the two cannot drift apart', () => {
   const store = read(STORE);
-  assert.equal((store.match(/title: 'Archive this session\?'/g) || []).length, 1, 'the question is written once');
+  assert.equal((store.match(/title: t\('agent:session\.archive\.title'\)/g) || []).length, 1, 'the question is written once');
+  assert.equal(message('agent:session.archive.title'), 'Archive this session?');
   const current = store.slice(store.indexOf('export async function archiveCurrentSession('), store.indexOf('export async function archiveListedSession('));
   assert.match(current, /const ok = await confirmArchive\(\);/);
   const listedFn = store.slice(store.indexOf('export async function archiveListedSession('), store.indexOf('export async function unarchiveCurrentSession('));
@@ -156,7 +158,7 @@ test('#3515: each Agent sessions row wears the kit\'s swipe, on touch only, with
   assert.ok(row.length > 0, 'SessionRow sits between MenuRow and the sheet');
   assert.match(row, /if \(!el \|\| !ui\?\.isTouch\(\) \|\| !ui\.swipeActions\) return undefined;/,
     'a phone\'s gesture: no swipe for a mouse, and none without the kit');
-  assert.match(row, /ui\.swipeActions\(el, \{\s*actions: \[\{\s*label: 'Archive',\s*destructive: true,/,
+  assert.match(row, /ui\.swipeActions\(el, \{\s*actions: \[\{\s*label: t\('agent:appContext\.agentChats\.archive'\),\s*destructive: true,/,
     'the ⋯\'s word, and the full swipe commits it');
   assert.match(row, /archiveListedSession\(row\.sessionId\)\.then\(\(archived\) => \{\s*if \(!archived\) setRound\(\(n\) => n \+ 1\);/,
     'a Cancel or a refusal renders the row again');

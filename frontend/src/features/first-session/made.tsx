@@ -97,6 +97,8 @@ import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
+import { useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
 import { askForPingWhileBotBuilds } from '../dialogs/ping-ask';
 import type { HomeroomBotPlanQuestion } from '../messages/types';
 
@@ -164,34 +166,34 @@ export function waitingPlan(fv: FirstVersion): WaitingPlan | null {
   };
 }
 
-/** Over the plan's card: it is the one thing on the screen that waits on them. */
-export const PLAN_LABEL = 'Needs you';
+/** Over the plan's card: it is the one thing on the screen that waits on them. A message id, as the labels below are. */
+export const PLAN_LABEL = 'onboarding:firstSession.made.needsYou';
 
 /** The plan's card: that there is one, never what to tap in it (that is the chat's). */
 export function planWaitsLine(name: string): string {
-  return `Homeroom bot has a plan for ${name}`;
+  return translate('onboarding:firstSession.made.planWaits', { app: name });
 }
 
 /** The screen's heading, small, over the thumbnail (which carries the name). */
-export const COMMUNITY_LABEL = 'Your new community';
+export const COMMUNITY_LABEL = 'onboarding:firstSession.made.communityLabel';
 
 /** The one line over the buttons until the link has gone out. */
-export const INVITE_HINT = 'Invite people to use it and help improve it together.';
+export const INVITE_HINT = 'onboarding:firstSession.made.inviteHint';
 
 /** The small caps label over the invite as they will see it, in the sheet. */
-export const PREVIEW_LABEL = 'What they\'ll see';
+export const PREVIEW_LABEL = 'onboarding:firstSession.invite.previewLabel';
 
 /**
  * Under the thumbnail when Homeroom bot does not build the project: it has
  * no build line, so this says who builds it. Nothing is said under the card
  * when the bot builds it; the build line says where it is.
  */
-export const NO_BOT_NOTE = 'Your description is its first request. You or anyone you invite can build it from there.';
+export const NO_BOT_NOTE = 'onboarding:firstSession.made.noBotNote';
 
 /** The line over the buttons once the link has gone out. `tour`: the first session's, which goes on to the tour. */
 export function sharedLine(how: SentHow, tour = true): string {
-  const said = how === 'copied' ? 'Link copied.' : 'Invite shared.';
-  return tour ? `${said} Next, a short tour.` : said;
+  if (how === 'copied') return tour ? translate('onboarding:firstSession.made.sent.copiedTour') : translate('onboarding:firstSession.made.sent.copied');
+  return tour ? translate('onboarding:firstSession.made.sent.sharedTour') : translate('onboarding:firstSession.made.sent.shared');
 }
 
 /**
@@ -211,17 +213,17 @@ export function stalledOf(appStatus: string | null): Stalled {
 export function buildLine(fv: FirstVersion, appStatus: string | null, botBuilds = true, imported = false, readyMade = false): string {
   // Before any step: nothing is built on a setup that stopped.
   const stalled = stalledOf(appStatus);
-  if (stalled === 'failed') return 'Setting it up didn’t finish.';
-  if (stalled === 'needs-secrets') return 'It needs its secrets before it can start.';
+  if (stalled === 'failed') return translate('onboarding:firstSession.made.line.failed');
+  if (stalled === 'needs-secrets') return translate('onboarding:firstSession.made.line.needsSecrets');
   // An import has no first version: it is coming over, then it runs.
-  if (imported) return appStatus === 'running' ? 'Imported. It’s running.' : 'Importing it from GitHub…';
+  if (imported) return appStatus === 'running' ? translate('onboarding:firstSession.made.line.imported') : translate('onboarding:firstSession.made.line.importing');
   // Nor has a ready-made app: it is set up, then it is ready.
-  if (readyMade) return appStatus === 'running' ? 'Ready to use.' : 'Setting it up…';
-  if (fv && fv.ready) return 'Version one is ready to try.';
+  if (readyMade) return appStatus === 'running' ? translate('onboarding:firstSession.made.line.readyToUse') : translate('onboarding:firstSession.made.line.settingUp');
+  if (fv && fv.ready) return translate('onboarding:firstSession.made.line.versionOneReady');
   // The plain card (no sketch) says the build line's words too, never a step count (#4053).
-  if (fv && fv.step && fv.of) return BUILD_LINE_WORDS[buildLineOf(fv.line) || 'planning'];
-  if (appStatus === 'creating') return 'Setting it up…';
-  return botBuilds ? 'Homeroom bot builds it from your description.' : 'Your description is its first request.';
+  if (fv && fv.step && fv.of) return translate(BUILD_LINE_WORDS[buildLineOf(fv.line) || 'planning']);
+  if (appStatus === 'creating') return translate('onboarding:firstSession.made.line.settingUp');
+  return botBuilds ? translate('onboarding:firstSession.made.line.botBuilds') : translate('onboarding:firstSession.made.line.firstRequest');
 }
 
 /**
@@ -255,13 +257,13 @@ export function madeLine(fv: FirstVersion, botBuilds: boolean, live = false, sta
  * While the plan waits, a project that is not sketched says so instead.
  */
 export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalled = null, imported = false, readyMade = false): string {
-  if (stalled === 'failed') return 'Trying again usually clears it. If it stops again, ask an admin.';
-  if (stalled === 'needs-secrets') return 'Set them, and it finishes starting.';
-  if (imported) return 'Its repo says what it does. You and anyone you invite build on it from here.';
-  if (readyMade) return 'It works as it is. You and anyone you invite can change it from there.';
-  if (!botBuilds) return 'You or anyone you invite can build it from there.';
-  if (planWaits) return 'Homeroom bot is waiting for your go-ahead.';
-  return 'Homeroom is making your app. It will message you when the first version is ready to try, or if it has any questions.';
+  if (stalled === 'failed') return translate('onboarding:firstSession.made.note.failed');
+  if (stalled === 'needs-secrets') return translate('onboarding:firstSession.made.note.needsSecrets');
+  if (imported) return translate('onboarding:firstSession.made.note.imported');
+  if (readyMade) return translate('onboarding:firstSession.made.note.readyMade');
+  if (!botBuilds) return translate('onboarding:firstSession.made.note.noBot');
+  if (planWaits) return translate('onboarding:firstSession.made.note.planWaits');
+  return translate('onboarding:firstSession.made.note.making');
 }
 
 /**
@@ -272,12 +274,13 @@ export function buildNote(botBuilds: boolean, planWaits = false, stalled: Stalle
  * chat, messages/bot-question.tsx).
  */
 export function inviteLine(me: string, name: string): string {
-  return me ? `${me} invited you to ${name}` : `You're invited to ${name}`;
+  return me ? translate('onboarding:firstSession.invite.line', { inviter: me, community: name }) : translate('onboarding:firstSession.invite.lineAnonymous', { community: name });
 }
 
 // The note the sheet opens with when the example has none and nothing is
 // kept: sent while the app is still being made, so no "Made us", and no "!" (#4042).
-const NOTE_DEFAULT = 'I\'m making this for us. Join and tell me what it needs.';
+// Read when the sheet opens, so it is written in the language on screen.
+const noteDefault = () => translate('onboarding:firstSession.invite.noteDefault');
 // The link every invite link gets by default (services/community-invites.js
 // DEFAULT_DAYS and DEFAULT_USES): a week, and 25 people. It used to work until
 // it was turned off, for anyone it reached (WP-D), which was safe while the
@@ -305,7 +308,7 @@ function keepNote(slug: string, note: string): void {
 /** The note the sheet opens with: the one kept, else the example's, else the default. */
 export function openingNote(slug: string, example: string | null | undefined): string {
   const kept = keptNote(slug);
-  return kept !== null ? kept : (example || NOTE_DEFAULT);
+  return kept !== null ? kept : (example || noteDefault());
 }
 
 /**
@@ -317,7 +320,7 @@ export function openingNote(slug: string, example: string | null | undefined): s
 export function notePostable(how: SentHow, note: string, example: string | null | undefined): boolean {
   const text = note.trim();
   if (how !== 'shared' || !text) return false;
-  return text !== NOTE_DEFAULT && text !== (example || '').trim();
+  return text !== noteDefault() && text !== (example || '').trim();
 }
 
 /** The newest note on the maker's own live links (GET .../invite-links `links`), or null. */
@@ -369,7 +372,7 @@ export type SentHow = 'shared' | 'copied';
 
 /** The sheet's status once the link has gone out, said the way it went. */
 export function sentStatus(how: SentHow): string {
-  return how === 'shared' ? '✓ Link shared' : 'Link copied. Paste it in your group chat.';
+  return how === 'shared' ? translate('onboarding:firstSession.invite.status.shared') : translate('onboarding:firstSession.invite.status.copied');
 }
 
 /**
@@ -393,7 +396,10 @@ export function InviteSheet({ made, me, onClose, onSent }: {
   /** The link went out, shared or copied. The sheet stays open. */
   onSent: (how: SentHow) => void;
 }) {
-  const [note, setNote] = useState(() => openingNote(made.slug, made.example?.note));
+  const t = useMessages('onboarding');
+  // The example's suggested note (a message id), in the language on screen.
+  const exampleNote = made.example ? translate(made.example.note) : null;
+  const [note, setNote] = useState(() => openingNote(made.slug, exampleNote));
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -445,7 +451,7 @@ export function InviteSheet({ made, me, onClose, onSent }: {
   // The maker's note, as their first message in the group's chat, once,
   // when they shared a note of their own (notePostable).
   const postNote = useCallback(async (how: SentHow) => {
-    if (!notePostable(how, note, made.example?.note)) return;
+    if (!notePostable(how, note, exampleNote)) return;
     const text = note.trim();
     try { if (localStorage.getItem(postedKey(made.slug))) return; } catch { /* post it */ }
     const res = await fetch(`/api/apps/${encodeURIComponent(made.slug)}/messages`, {
@@ -455,7 +461,7 @@ export function InviteSheet({ made, me, onClose, onSent }: {
       body: JSON.stringify({ content: text }),
     }).catch(() => null);
     if (res && res.ok) { try { localStorage.setItem(postedKey(made.slug), '1'); } catch { /* once is best effort */ } }
-  }, [note, made.slug, made.example?.note]);
+  }, [note, made.slug, exampleNote]);
 
   const link = useCallback(async (): Promise<string | null> => {
     if (linkRef.current) return linkRef.current;
@@ -466,7 +472,7 @@ export function InviteSheet({ made, me, onClose, onSent }: {
       body: JSON.stringify({ days: LINK_DAYS, maxUses: LINK_USES, note: note.trim() || null }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.link) { setError(data.error || 'Could not make a link. Try again.'); return null; }
+    if (!res.ok || !data.link) { setError(data.error || translate('onboarding:firstSession.invite.error.noLink')); return null; }
     linkRef.current = `${location.origin}${data.link.path}`;
     return linkRef.current;
   }, [made.slug, note]);
@@ -513,9 +519,9 @@ export function InviteSheet({ made, me, onClose, onSent }: {
         return;
       }
       // Nothing went out, but the link is made: the next press shares it at once.
-      setStatus('Your link is ready. Press Share again to send it.');
+      setStatus(translate('onboarding:firstSession.invite.status.ready'));
     } catch {
-      setError('Could not share the link. Try again.');
+      setError(translate('onboarding:firstSession.invite.error.notShared'));
     } finally {
       setBusy(false);
     }
@@ -531,12 +537,12 @@ export function InviteSheet({ made, me, onClose, onSent }: {
       const ready = linkRef.current;
       const outcome = await copyText(ready ? inviteText(note, ready)
         : link().then((url) => (url ? inviteText(note, url) : null)));
-      if (outcome === 'no-link') { setError((was) => was || 'Could not make a link. Try again.'); return; }
-      if (outcome === 'refused') { setError('Could not copy the link. Try again.'); return; }
+      if (outcome === 'no-link') { setError((was) => was || translate('onboarding:firstSession.invite.error.noLink')); return; }
+      if (outcome === 'refused') { setError(translate('onboarding:firstSession.invite.error.notCopied')); return; }
       setCopied(Date.now());
       await sent('copied');
     } catch {
-      setError('Could not copy the link. Try again.');
+      setError(translate('onboarding:firstSession.invite.error.notCopied'));
     } finally {
       setBusy(false);
     }
@@ -554,12 +560,12 @@ export function InviteSheet({ made, me, onClose, onSent }: {
       >
         <div className="mx-auto h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 md:hidden" aria-hidden="true" />
         <div className="mt-3 flex items-center gap-3">
-          <h2 id="first-session-invite-title" className="min-w-0 flex-1 text-[17px] font-semibold">{`Invite people to ${made.name}`}</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          <h2 id="first-session-invite-title" className="min-w-0 flex-1 text-[17px] font-semibold">{t('onboarding:firstSession.invite.title', { community: made.name })}</h2>
+          <button type="button" onClick={onClose} aria-label={t('core:common.close')} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             <XIcon className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
-        <p data-first-session-invite-label="" className="mt-4 pb-1.5 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{PREVIEW_LABEL}</p>
+        <p data-first-session-invite-label="" className="mt-4 pb-1.5 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(PREVIEW_LABEL)}</p>
         <div className="overflow-hidden rounded-2xl bg-white dark:bg-zinc-800">
           <div className="flex items-center gap-3 p-3">
             <span className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-2xl" aria-hidden="true">{tile}</span>
@@ -570,23 +576,23 @@ export function InviteSheet({ made, me, onClose, onSent }: {
           <div className="px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_var(--app-sheet-line)]">
             <textarea
               id="first-session-note"
-              aria-label="Your note"
+              aria-label={t('onboarding:firstSession.invite.noteLabel')}
               rows={2}
               maxLength={280}
               value={note}
               onChange={(e) => { ownNote.current = true; setNote(e.target.value); keepNote(made.slug, e.target.value); }}
-              placeholder="Add a note"
+              placeholder={t('onboarding:firstSession.invite.notePlaceholder')}
               className="w-full resize-none border-0 bg-transparent p-0 text-[16px] leading-snug placeholder-zinc-500 focus:outline-none"
             />
           </div>
         </div>
-        <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">When you share, your note also goes in the group chat as your first message.</p>
+        <p className="mt-2 text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.invite.noteHint')}</p>
         {/* The main button, then the other way beside it (inviteActions), a
             white pill on the sheet's grey (pillRaised). Not dimmed while
             "✓ Copied" shows: busy then only holds off a second press. */}
         <div className="mt-4 flex gap-2.5">
           {actions.map((action, i) => {
-            const label = action === 'share' ? (i === 0 ? 'Share link' : 'Share…') : copied ? '✓ Copied' : 'Copy link';
+            const label = action === 'share' ? (i === 0 ? t('onboarding:firstSession.invite.shareLink') : t('onboarding:firstSession.invite.shareOther')) : copied ? t('onboarding:firstSession.invite.copied') : t('onboarding:firstSession.invite.copyLink');
             const press = () => { void (action === 'share' ? shareLink() : copyLink()); };
             const main = i === 0;
             return (
@@ -621,10 +627,10 @@ export function InviteSheet({ made, me, onClose, onSent }: {
             ink="neutral"
             className="mt-3 flex items-center justify-center"
           >
-            Done
+            {t('core:common.done')}
           </Button>
         ) : null}
-        <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">Anyone with the link can join for the next 7 days, up to 25 people.</p>
+        <p className="mt-3 text-center text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.invite.limits')}</p>
       </div>
     </div>
   );
@@ -637,16 +643,17 @@ export function InviteSheet({ made, me, onClose, onSent }: {
  * chat. It never says Build it itself.
  */
 export function PlanWaitsCard({ name, onOpenChat }: { name: string; onOpenChat: () => void }) {
+  const t = useMessages('onboarding');
   return (
     <section data-first-session-plan="waiting" aria-labelledby="first-session-plan-label" className="mt-4">
-      <p id="first-session-plan-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{PLAN_LABEL}</p>
+      <p id="first-session-plan-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(PLAN_LABEL)}</p>
       <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-4 pr-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
         <div className="min-w-0 flex-1">
           <p className="text-[15px] font-[650] leading-snug">{planWaitsLine(name)}</p>
-          <p className="text-[13px] text-zinc-500 dark:text-zinc-400">Answer it in your chat, and it starts building.</p>
+          <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('onboarding:firstSession.made.planAnswer')}</p>
         </div>
         <Button type="button" data-first-session-plan-chat="" onClick={onOpenChat} variant="pillAccent" size="sm" ink="solid" className="shrink-0 text-[15px] font-semibold">
-          Go to chat
+          {t('onboarding:firstSession.made.goToChat')}
         </Button>
       </div>
     </section>
@@ -664,13 +671,14 @@ export function SetupStoppedCard({ stalled, busy, onRetry, onSetSecrets }: {
   onRetry: () => void;
   onSetSecrets: () => void;
 }) {
+  const t = useMessages('onboarding');
   const failed = stalled === 'failed';
   return (
     <section data-made-stalled={stalled} aria-labelledby="made-stalled-label" className="mt-4">
-      <p id="made-stalled-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{PLAN_LABEL}</p>
+      <p id="made-stalled-label" className="px-1 pb-1.5 text-[12px] font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t(PLAN_LABEL)}</p>
       <div className="flex items-center gap-3 rounded-[20px] bg-white py-3 pl-4 pr-3 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
         <p className="min-w-0 flex-1 text-[15px] font-[650] leading-snug">
-          {failed ? 'Setup stopped before it was running' : 'It needs secrets to start'}
+          {failed ? t('onboarding:firstSession.made.stalled.failed') : t('onboarding:firstSession.made.stalled.needsSecrets')}
         </p>
         <Button
           type="button"
@@ -682,7 +690,7 @@ export function SetupStoppedCard({ stalled, busy, onRetry, onSetSecrets }: {
           ink="solid"
           className="shrink-0 text-[15px] font-semibold disabled:opacity-60"
         >
-          {failed ? 'Try again' : 'Set secrets'}
+          {failed ? t('core:common.tryAgain') : t('onboarding:firstSession.made.stalled.setSecrets')}
         </Button>
       </div>
     </section>
@@ -695,8 +703,8 @@ export function SetupStoppedCard({ stalled, busy, onRetry, onSetSecrets }: {
  * Create, to the project itself.
  */
 export function continueLabel(entry: MakeEntry, sent: boolean, name: string): string {
-  if (entry === 'create') return sent ? `Go to ${name}` : 'Invite people later';
-  return sent ? 'Start the tour' : 'Invite people later';
+  if (!sent) return translate('onboarding:firstSession.made.inviteLater');
+  return entry === 'create' ? translate('onboarding:firstSession.made.goTo', { community: name }) : translate('onboarding:firstSession.made.startTour');
 }
 
 type Community = { member_count?: number; members?: (Person & { source?: string })[] } | null;
@@ -725,7 +733,7 @@ function useCommunity(slug: string, polling: boolean): Community {
 /** The people row's faces: the community's members (its maker first), else just you. */
 export function peopleOf(community: Community, me: string): Person[] {
   const members = Array.isArray(community?.members) ? community!.members.filter((m) => m && (m.username || m.display_name)) : [];
-  return members.length ? members : [{ username: me || 'you' }];
+  return members.length ? members : [{ username: me || translate('onboarding:firstSession.made.people.you') }];
 }
 
 /** A quiet button: white, under or beside the blue one. */
@@ -748,6 +756,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   /** From Create, with the platform header showing: below it, with no wordmark bar of its own. */
   underHeader?: boolean;
 }) {
+  const t = useMessages('onboarding');
   const [fv, setFv] = useState<FirstVersion>(null);
   const [appStatus, setAppStatus] = useState<string | null>('creating');
   const [inviting, setInviting] = useState(false);
@@ -818,7 +827,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
   // the bot builds nothing, or what a stopped setup or an import needs. The
   // plain card says the build's words and one line about what happens next.
   const note = card
-    ? (stalled || imported ? buildNote(botBuilds, !!plan, stalled, imported) : botBuilds ? null : NO_BOT_NOTE)
+    ? (stalled || imported ? buildNote(botBuilds, !!plan, stalled, imported) : botBuilds ? null : t(NO_BOT_NOTE))
     : buildNote(botBuilds, !!plan, stalled, imported, readyMade);
   const plainLine = buildLine(fv, appStatus, botBuilds, imported, readyMade);
   // Something is under way: the project being set up, or the bot's build
@@ -848,7 +857,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
         <div data-first-session-made-body="" className="flex grow flex-col justify-center gap-4 py-4">
           <div className="flex flex-col items-center gap-2.5 text-center">
             <PeopleRow people={peopleOf(community, me)} />
-            <h1 id="first-session-made-title" className="text-[15px] font-normal leading-5 text-zinc-600 dark:text-zinc-400">{COMMUNITY_LABEL}</h1>
+            <h1 id="first-session-made-title" className="text-[15px] font-normal leading-5 text-zinc-600 dark:text-zinc-400">{t(COMMUNITY_LABEL)}</h1>
           </div>
           {card ? (
             <SketchCard made={made} sketch={sketch} line={line} note={note} />
@@ -874,7 +883,7 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
           {plan && !stalled && fromCreate ? <PlanWaitsCard name={made.name} onOpenChat={() => onOpenChat(plan.conversationId ?? made.conversationId)} /> : null}
         </div>
         <p role="status" data-first-session-hint={sentHow || ''} className="text-center text-[15px] leading-5 text-zinc-500 dark:text-zinc-400">
-          {sentHow ? sharedLine(sentHow, !fromCreate) : INVITE_HINT}
+          {sentHow ? sharedLine(sentHow, !fromCreate) : t(INVITE_HINT)}
         </p>
         <div className="mt-[18px] flex flex-col gap-2.5">
           {/* The buttons keep their places once the link is out: Share again,
@@ -882,11 +891,11 @@ export function MadeScreen({ made, me, onContinue, onOpenChat, entry = 'first-se
               Invite people later was. */}
           {sent ? (
             <button type="button" data-first-session-share-again="" onClick={() => setInviting(true)} className={SECONDARY}>
-              Share again
+              {t('onboarding:firstSession.made.shareAgain')}
             </button>
           ) : (
             <Button type="button" onClick={() => setInviting(true)} layout="full" variant="pillAccent" size="pillLg" ink="solidLate" className="flex items-center justify-center">
-              Share invite
+              {t('onboarding:firstSession.made.shareInvite')}
             </Button>
           )}
           {sent ? (

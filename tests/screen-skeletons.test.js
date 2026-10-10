@@ -35,6 +35,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -210,7 +211,8 @@ const visible = (html) => html.replace(/<div class="sr-only" role="status">[^<]*
 
 test('challenges: the grid stands in for the CARDS, at the card’s own face', () => {
   const src = slot(CHALLENGES, 'function GridSkeleton(', 'function Grid({');
-  assert.match(src, /<SkeletonGroup label="Loading challenges">/, 'one group, one label');
+  assert.match(src, /<SkeletonGroup label=\{t\('leaderboard:challenges\.loading'\)\}>/, 'one group, one label');
+  assert.equal(message('leaderboard:challenges.loading'), 'Loading challenges');
   assert.match(src, /<div className=\{GRID\}>/,
     'the pane’s own grid constant, so the placeholders stand in the columns the cards will');
   assert.match(src, /className=\{CHALLENGE_CARD_FACE\}/,
@@ -235,7 +237,8 @@ test('challenges: the grid stands in for the CARDS, at the card’s own face', (
 
 test('challenges: the participant list stands in for the ENTRY ROW', () => {
   const src = slot(CHALLENGES, 'function EntriesSkeleton(', 'function Entries({');
-  assert.match(src, /<SkeletonGroup label="Loading participants" className="flex flex-col">/,
+  assert.equal(message('leaderboard:challenges.detail.loadingParticipants'), 'Loading participants');
+  assert.match(src, /<SkeletonGroup label=\{t\('leaderboard:challenges\.detail\.loadingParticipants'\)\} className="flex flex-col">/,
     'the list’s own column');
   assert.match(src, /className=\{ENTRY_BOX\}/,
     'at the real row’s box — the 44px minimum, the outdent and the padding');
@@ -252,7 +255,8 @@ test('challenges: the participant list stands in for the ENTRY ROW', () => {
 
 test('challenges: the profile overlay stands in for the PANEL’s three parts', () => {
   const src = slot(CHALLENGES, 'function ProfileSkeleton(', 'function ProfileBody({');
-  assert.match(src, /<SkeletonGroup label="Loading the profile">/);
+  assert.match(src, /<SkeletonGroup label=\{t\('leaderboard:challenges\.profile\.loading'\)\}>/);
+  assert.equal(message('leaderboard:challenges.profile.loading'), 'Loading the profile');
   assert.match(src, /shape="block" className="h-5 w-40 mb-3"/, 'the name');
   assert.match(src, /<div className="grid grid-cols-2 gap-2 mb-4">/,
     'the stat grid’s own two columns and spacing');

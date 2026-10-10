@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { message } = require('./lib/platform-i18n');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -536,8 +537,10 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   assert.match(publicCard, /target="_blank"/);
   assert.match(publicCard, /rel="noopener noreferrer"/);
   assert.match(profileSheet, /#settings\/linked-accounts/);
-  assert.match(profileSheet, /Connect or change social accounts/);
-  assert.match(profileSheet, /Provider verification and public visibility are managed separately/);
+  assert.match(profileSheet, /\{t\('profile:edit\.social\.manage'\)\}/);
+  assert.equal(message('profile:edit.social.manage'), 'Connect or change social accounts');
+  assert.match(profileSheet, /\{t\('profile:edit\.social\.note'\)\}/);
+  assert.match(message('profile:edit.social.note'), /Provider verification and public visibility are managed separately/);
   assert.doesNotMatch(profileSheet, /onChange=\{\(e\) => set(?:Github|X)/);
   assert.match(profileStore, /viewer\.hasPlatformAccess !== false/);
   assert.match(publicCard, /absolute inset-0 w-full h-full object-cover/);

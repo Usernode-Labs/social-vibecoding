@@ -121,6 +121,8 @@ import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { CheckIcon, ChevronRightIcon, LockIcon, LockOpenIcon, PlayIcon, XIcon } from '@/components/ui/icons';
 
+import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as message } from '../../lib/i18n/runtime';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { FRESH } from '../../lib/live-reads';
 import { useVisibility } from '../../lib/visibility-store';
@@ -276,14 +278,19 @@ export const SHOT_MODELS: Record<Shot, GettingStartedModel> = {
 };
 export const SHOT_MODEL = SHOT_MODELS['getting-started'];
 
-function pts(n: number): string {
-  return `${Math.round(n).toLocaleString('en-US')} pts`;
+/** A number of points as it is shown inside a message: "1,500". */
+function pointsFigure(n: number): string {
+  return Math.round(n).toLocaleString('en-US');
 }
 
 /** "1 of 5 done · 500 pts earned"; no points clause while nothing has paid. */
 export function counterText(model: Pick<GettingStartedModel, 'done' | 'total' | 'earned_points'>): string {
   const earned = Number(model.earned_points) || 0;
-  return `${model.done} of ${model.total} done${earned > 0 ? ` · ${pts(earned)} earned` : ''}`;
+  return earned > 0
+    ? message('home:gettingStarted.counter.withPoints', {
+      done: model.done, total: model.total, points: pointsFigure(earned), count: Math.round(earned),
+    })
+    : message('home:gettingStarted.counter.progress', { done: model.done, total: model.total });
 }
 
 /**
@@ -293,18 +300,17 @@ export function counterText(model: Pick<GettingStartedModel, 'done' | 'total' | 
 export function unlockText(model: Pick<GettingStartedModel, 'done' | 'total' | 'unlocks' | 'complete'>): string | null {
   const n = Math.floor(Number(model.unlocks && model.unlocks.count) || 0);
   if (model.complete || n < 1) return null;
-  const what = n === 1 ? '1 more challenge' : `${n} more challenges`;
   const left = model.total - model.done;
-  if (left === 1) return `One more step unlocks ${what}`;
-  if (left === 2) return `Two more steps unlock ${what}`;
-  return `Finish all ${model.total} to unlock ${what}`;
+  if (left === 1) return message('home:gettingStarted.unlock.oneStep', { count: n });
+  if (left === 2) return message('home:gettingStarted.unlock.twoSteps', { count: n });
+  return message('home:gettingStarted.unlock.finishAll', { total: model.total, count: n });
 }
 
 /** The done state's one line: "6 challenges unlocked". */
 export function unlockedLabel(count: number): string | null {
   const n = Math.floor(Number(count) || 0);
   if (n < 1) return null;
-  return n === 1 ? '1 challenge unlocked' : `${n} challenges unlocked`;
+  return message('home:gettingStarted.unlocked', { count: n });
 }
 
 /** The first step not done: the one the card points at. */
@@ -323,13 +329,23 @@ export function nextStepId(model: Pick<GettingStartedModel, 'steps'>): string | 
  */
 export function rewardText(step: Pick<GettingStartedStep, 'kind' | 'done' | 'reward' | 'earned_points'>):
   { text: string; tone: 'reward' | 'earned' | 'quiet' } | null {
-  if (step.kind === 'tour') return { text: 'No points · ticks when you finish or skip it', tone: 'quiet' };
+  if (step.kind === 'tour') return { text: message('home:gettingStarted.reward.tour'), tone: 'quiet' };
   const earned = Number(step.earned_points) || 0;
-  if (step.done) return earned > 0 ? { text: `+${pts(earned)} earned`, tone: 'earned' } : null;
+  if (step.done) return earned > 0
+    ? { text: message('home:gettingStarted.reward.earned', { points: pointsFigure(earned), count: Math.round(earned) }), tone: 'earned' }
+    : null;
   const s = String(step.reward == null ? '' : step.reward).trim();
   if (!s) return null;
-  if (/^[\d][\d.,]*$/.test(s)) return { text: `Earns ${s} pts`, tone: 'reward' };
-  if (/^[\d][\d.,]*\s*(pts?|points?)$/i.test(s)) return { text: `Earns ${s}`, tone: 'reward' };
+  if (/^[\d][\d.,]*$/.test(s)) {
+    // The number is shown as it was written; its digits pick the plural form.
+    return {
+      text: message('home:gettingStarted.reward.earnsPoints', { points: s, count: Number(s.replace(/[.,]/g, '')) || 0 }),
+      tone: 'reward',
+    };
+  }
+  if (/^[\d][\d.,]*\s*(pts?|points?)$/i.test(s)) {
+    return { text: message('home:gettingStarted.reward.earns', { reward: s }), tone: 'reward' };
+  }
   return { text: s, tone: 'reward' };
 }
 
@@ -356,7 +372,6 @@ export interface StepButtonView {
   go: StepGo;
 }
 
-const plural = (n: number) => (n === 1 ? '1 change is' : `${n} changes are`);
 
 /**
  * What does not tick Join, said on its row while it is to do: the
@@ -365,21 +380,24 @@ const plural = (n: number) => (n === 1 ? '1 change is' : `${n} changes are`);
  * (onboarding.js COMMUNITY_JOINED). After the challenge's own task, which is
  * the admin's words.
  */
-export const JOIN_NOTE = 'Homeroom and Just-you projects don’t count.';
+export const JOIN_NOTE = 'home:gettingStarted.join.note';
 
 /** The Join row's line while it is to do: its task, then what does not count. */
 export function joinDetail(detail: string): string {
   const own = String(detail || '').trim();
-  return own ? `${own} ${JOIN_NOTE}` : JOIN_NOTE;
+  return own ? message('home:gettingStarted.join.detailWithNote', { detail: own }) : message(JOIN_NOTE);
 }
 
 // Joined, and still no app to be about (no app on the platform they did not
 // make is open to everyone): the three go to Discover, never a lock.
 const DISCOVER_GO: StepGo = { to: 'hash', href: '#apps' };
-const DISCOVER_BUTTON: StepButtonView = {
-  short: 'Discover', long: 'Find an app on Discover', aria: 'Find an app on Discover', app: null, arrow: true,
-  go: DISCOVER_GO,
-};
+function discoverButton(): StepButtonView {
+  const long = message('home:gettingStarted.step.discover.long');
+  return {
+    short: message('home:gettingStarted.step.discover.short'), long, aria: long, app: null, arrow: true,
+    go: DISCOVER_GO,
+  };
+}
 
 /**
  * What a row says under its title and what its button is, given the
@@ -398,31 +416,39 @@ export function stepView(
     case 'tour':
       return {
         detail: step.detail,
-        button: { short: 'Start', long: 'Take the tour', aria: 'Start the tour', app: null, arrow: false, go: { to: 'tour' } },
+        button: {
+          short: message('home:gettingStarted.step.tour.short'),
+          long: message('home:gettingStarted.step.tour.long'),
+          aria: message('home:gettingStarted.step.tour.aria'),
+          app: null, arrow: false, go: { to: 'tour' },
+        },
       };
     case 'join':
       return {
         detail: joinDetail(step.detail),
         button: {
-          short: 'Join', long: 'Find a community', aria: 'Find a community', app: null, arrow: true,
+          short: message('home:gettingStarted.step.join.short'),
+          long: message('home:gettingStarted.step.join.long'),
+          aria: message('home:gettingStarted.step.join.long'),
+          app: null, arrow: true,
           go: { to: 'hash', href: step.href || '#apps' },
         },
       };
     case 'try':
     case 'vote':
     case 'suggest':
-      if (model.needs_join === true) return { detail: 'Join a community first.', button: null };
+      if (model.needs_join === true) return { detail: message('home:gettingStarted.step.joinFirst'), button: null };
       if (!app) {
         const detail = step.action === 'try'
-          ? `Find an app on Discover and spend ${secs} seconds in it.`
+          ? message('home:gettingStarted.step.try.findApp', { count: secs })
           : step.action === 'vote'
-            ? 'Find an app on Discover and see what people are building.'
-            : 'Find an app on Discover and tell its builders what would make it better.';
-        return { detail, button: DISCOVER_BUTTON };
+            ? message('home:gettingStarted.step.vote.findApp')
+            : message('home:gettingStarted.step.suggest.findApp');
+        return { detail, button: discoverButton() };
       }
       break;
     default: {
-      const label = String(step.cta || '').trim() || 'Open';
+      const label = String(step.cta || '').trim() || message('home:gettingStarted.step.other.open');
       return {
         detail: step.detail,
         button: step.href
@@ -432,33 +458,33 @@ export function stepView(
     }
   }
   if (step.action === 'try') {
-    const long = `Try ${app.name}`;
+    const long = message('home:gettingStarted.step.try.long', { app: app.name });
     return {
-      detail: `Spend ${secs} seconds in ${app.name}.`,
-      button: { short: 'Try', long, aria: long, app, arrow: true, go: { to: 'app', slug: app.slug } },
+      detail: message('home:gettingStarted.step.try.detail', { count: secs, app: app.name }),
+      button: { short: message('home:gettingStarted.step.try.short'), long, aria: long, app, arrow: true, go: { to: 'app', slug: app.slug } },
     };
   }
   if (step.action === 'suggest') {
-    const long = `Suggest a change to ${app.name}`;
+    const long = message('home:gettingStarted.step.suggest.long', { app: app.name });
     return {
-      detail: `Tell ${app.name}’s builders what would make it better.`,
-      button: { short: 'Suggest', long, aria: long, app, arrow: true, go: { to: 'feedback', slug: app.slug } },
+      detail: message('home:gettingStarted.step.suggest.detail', { app: app.name }),
+      button: { short: message('home:gettingStarted.step.suggest.short'), long, aria: long, app, arrow: true, go: { to: 'feedback', slug: app.slug } },
     };
   }
   const vote = model.vote || { kind: 'workshop' as const, app, count: 0 };
   if (vote.kind === 'needs') {
-    const long = `Vote in ${vote.app.name}`;
+    const long = message('home:gettingStarted.step.vote.long', { app: vote.app.name });
     return {
       detail: vote.app.slug === app.slug
-        ? `${plural(vote.count)} waiting in ${app.name}.`
-        : `Nothing in ${app.name} yet; ${plural(vote.count)} waiting in ${vote.app.name}.`,
-      button: { short: 'Vote', long, aria: long, app: vote.app, arrow: true, go: { to: 'needs', slug: vote.app.slug } },
+        ? message('home:gettingStarted.step.vote.waiting', { count: vote.count, app: app.name })
+        : message('home:gettingStarted.step.vote.waitingElsewhere', { count: vote.count, app: app.name, otherApp: vote.app.name }),
+      button: { short: message('home:gettingStarted.step.vote.short'), long, aria: long, app: vote.app, arrow: true, go: { to: 'needs', slug: vote.app.slug } },
     };
   }
-  const long = `See what ${vote.app.name} is building`;
+  const long = message('home:gettingStarted.step.look.long', { app: vote.app.name });
   return {
-    detail: 'Nothing is waiting for approval yet. See what people are building.',
-    button: { short: 'Look', long, aria: long, app: vote.app, arrow: true, go: { to: 'workshop', slug: vote.app.slug } },
+    detail: message('home:gettingStarted.step.look.detail'),
+    button: { short: message('home:gettingStarted.step.look.short'), long, aria: long, app: vote.app, arrow: true, go: { to: 'workshop', slug: vote.app.slug } },
   };
 }
 
@@ -593,6 +619,8 @@ function StepButton({ step, view, next, onGo }: {
 // (features/leaderboard/challenge-card.tsx META_REWARD / META_EARNED), and
 // the row's own muted ink for the tour's line.
 function RewardLine({ step }: { step: GettingStartedStep }) {
+  // Subscribed: rewardText reads its words as it is called.
+  useMessages('home');
   const r = rewardText(step);
   if (!r) return null;
   const tone = r.tone === 'earned'
@@ -627,6 +655,7 @@ function Header({ title, model, onClose, celebrate = false }: {
   title: string; model: GettingStartedModel; onClose: (() => void) | null; celebrate?: boolean;
 }) {
   const earned = Number(model.earned_points) || 0;
+  const t = useMessages('home');
   return (
     <div className="flex items-start gap-3 px-4 pb-3 pt-4">
       <div className="min-w-0 flex-1">
@@ -634,11 +663,11 @@ function Header({ title, model, onClose, celebrate = false }: {
         <div className="mt-0.5 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-getting-started-count="">
           {/* Done, the points read as won: "+1,500 pts" in the earned green. */}
           {celebrate && earned > 0 ? (
-            <>
-              {`${model.done} of ${model.total} done · `}
-              <span className="font-semibold text-emerald-700 dark:text-emerald-400">{`+${pts(earned)}`}</span>
-              {' earned'}
-            </>
+            <RichMessage
+              id="home:gettingStarted.counter.celebrate"
+              values={{ done: model.done, total: model.total, points: pointsFigure(earned), count: Math.round(earned) }}
+              components={[<span className="font-semibold text-emerald-700 dark:text-emerald-400" />]}
+            />
           ) : counterText(model)}
         </div>
       </div>
@@ -646,8 +675,8 @@ function Header({ title, model, onClose, celebrate = false }: {
         <button
           type="button"
           className="-mr-1 -mt-1 flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-500/10 dark:text-zinc-400"
-          aria-label="Close Getting started"
-          title="Close"
+          aria-label={t('home:gettingStarted.close')}
+          title={t('core:common.close')}
           data-getting-started-close=""
           onClick={onClose}
         >
@@ -669,6 +698,8 @@ function StepRow({ step, next, model, onGo }: {
   model: GettingStartedModel;
   onGo: (go: StepGo) => void;
 }): ReactNode {
+  // Subscribed: stepView reads its words as it is called.
+  useMessages('home');
   const view = stepView(step, model);
   return (
     <ListRow
@@ -697,11 +728,12 @@ function StepRow({ step, next, model, onGo }: {
 }
 
 function Progress({ model, onGo }: { model: GettingStartedModel; onGo: (go: StepGo) => void }) {
+  const t = useMessages('home');
   const next = nextStepId(model);
   const foot = unlockText(model);
   return (
     <>
-      <Header title="Getting started" model={model} onClose={null} />
+      <Header title={t('home:gettingStarted.title')} model={model} onClose={null} />
       <Segments model={model} />
       <div className="divide-y divide-[color:var(--app-sheet-line)] pt-1">
         {model.steps.map((step) => (
@@ -724,10 +756,11 @@ function Progress({ model, onGo }: { model: GettingStartedModel; onGo: (go: Step
 function Done({ model, onClose }: { model: GettingStartedModel; onClose: () => void }) {
   // Just the count (version D): the challenges themselves are listed in
   // Home's Challenges section right under the card, and on the Challenges tab.
+  const t = useMessages('home');
   const label = unlockedLabel(model.unlocks.count);
   return (
     <>
-      <Header title="You’re all set" model={model} onClose={onClose} celebrate />
+      <Header title={t('home:gettingStarted.doneTitle')} model={model} onClose={onClose} celebrate />
       <Segments model={model} />
       {label ? (
         <div
@@ -750,7 +783,7 @@ function Done({ model, onClose }: { model: GettingStartedModel; onClose: () => v
           data-getting-started-see=""
           onClick={() => { location.hash = '#leaderboard/challenges'; }}
         >
-          See challenges
+          {t('home:gettingStarted.seeChallenges')}
           <ChevronRightIcon className="-mr-1 h-[15px] w-[15px]" strokeWidth="2.8" aria-hidden="true" />
         </Button>
       </div>
@@ -759,6 +792,7 @@ function Done({ model, onClose }: { model: GettingStartedModel; onClose: () => v
 }
 
 export function GettingStarted() {
+  const t = useMessages('home');
   const rootRef = useRef<HTMLElement | null>(null);
   const [model, setModel] = useState<GettingStartedModel | null>(null);
   const homeVisible = useVisibility('home-screen', true);
@@ -838,7 +872,7 @@ export function GettingStarted() {
   const go = (target: StepGo) => { void followStep(target, { fixture: isShot(shot()) }); };
 
   return (
-    <section ref={rootRef} id="home-getting-started" className="hidden px-3 pb-2 pt-3" aria-label="Getting started">
+    <section ref={rootRef} id="home-getting-started" className="hidden px-3 pb-2 pt-3" aria-label={t('home:gettingStarted.regionLabel')}>
       {model ? (
         <GroupedList
           tone="plane"

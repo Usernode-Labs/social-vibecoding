@@ -29,6 +29,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
 const DEV_CHAT_SRC = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
@@ -79,6 +80,7 @@ function makeDevChat(over = {}) {
       publishBanners: (state) => published.push({ mounted: false, state }),
     },
   };
+  sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(`${CREDIT_OPTIONS_SRC}\n${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -195,14 +197,19 @@ test('the new-change banner appears only past the active-editing stage', () => {
   const { DevChat, view } = makeDevChat();
   for (const [status, expected] of [
     ['active', null], ['paused', null],
-    ['promoted', 'proposed to the group (PR #7)'],
-    ['merging', 'proposed to the group (PR #7)'],
-    ['merged', 'merged (PR #7)'],
+    ['promoted', 'proposed'],
+    ['merging', 'proposed'],
+    ['merged', 'merged'],
   ]) {
     DevChat.currentSession = { ...SESSION, status, pr_number: 7 };
     const got = view().newChange;
-    assert.equal(got ? got.stateLabel : null, expected, status);
+    // The model names which of the banner's two sentences, and the PR; the
+    // component reads the sentence from the catalog.
+    assert.equal(got ? got.state : null, expected, status);
+    if (got) assert.equal(got.prNumber, 7, status);
   }
+  assert.match(message('devchat:banner.newChange.proposed', { number: 7 }), /^This change has been proposed to the group \(PR #7\)\./);
+  assert.match(message('devchat:banner.newChange.merged', { number: 7 }), /^This change has been merged \(PR #7\)\./);
   // No PR yet — nothing to say about bundling work into one.
   DevChat.currentSession = { ...SESSION, status: 'promoted', pr_number: null };
   assert.equal(view().newChange, null);
@@ -360,7 +367,8 @@ test('the three reasons the red banner can appear each state their own remedy', 
   let v = view().credits;
   assert.equal(v.icon, 'person');
   assert.equal(v.lead, 'You\u2019re out of this week\u2019s free AI credits.');
-  assert.equal(v.tail, ' Verify your account to get more: add your phone number, or link GitHub and X.');
+  // A whole sentence; the space before it is the banner's markup.
+  assert.equal(v.tail, 'Verify your account to get more: add your phone number, or link GitHub and X.');
   assert.equal(v.reset, null, 'there is no allowance to reset yet');
 
   DevChat._creditState = () => ({ level: 'unavailable' });
@@ -398,7 +406,7 @@ test('no slug, no link — the banner still renders the rest', () => {
   DevChat.currentSession = { ...SESSION, status: 'promoted', pr_number: 7 };
   const got = view().newChange;
   assert.equal(got.cardHref, null, 'a dead href is worse than no link');
-  assert.match(got.stateLabel, /proposed to the group/, 'the rest of the banner is unaffected');
+  assert.equal(got.state, 'proposed', 'the rest of the banner is unaffected');
 
   const html = bannersHtml({ sync: null, newChange: got, credits: null, creditsLow: null });
   assert.doesNotMatch(html, /dc-open-card-link/);
@@ -408,7 +416,7 @@ test('no slug, no link — the banner still renders the rest', () => {
 test('the link is an anchor to the hash route, not a button', () => {
   const html = bannersHtml({
     sync: null,
-    newChange: { stateLabel: 'proposed to the group (PR #7)', cardHref: '#app/demo-app/dev/changes/7' },
+    newChange: { state: 'proposed', prNumber: 7, cardHref: '#app/demo-app/dev/changes/7' },
     credits: null, creditsLow: null,
   });
   assert.match(html, /<a id="dc-open-card-link" href="#app\/demo-app\/dev\/changes\/7"/);

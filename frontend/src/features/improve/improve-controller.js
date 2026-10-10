@@ -45,6 +45,7 @@ import { iconViewFor } from '../apps/app-card.js';
 import { notificationsSheetStore } from '../notifications/notifications-sheet-store.js';
 import { boardHref, improveStore } from './improve-store.js';
 import { saveShellSnapshot } from '../../lib/shell-snapshot';
+import { t } from '../../lib/i18n/runtime';
 
 /** Sessions whose state means "an AI turn is in flight right now". */
 const BUSY_STATES = new Set(['running', 'starting', 'queued']);
@@ -114,12 +115,12 @@ function awaitsInput(session) {
  * that surface reads this one without relearning it.
  */
 function statusLabel(session) {
-  if (isBusy(session)) return 'Working…';
+  if (isBusy(session)) return t('agent:menu.row.status.working');
   // No 'Paused' (#2779 follow-up): a paused session is the platform's
   // bookkeeping, not a state of the work. It pauses by itself when idle and
   // resumes by itself when opened or messaged, so it reads like any other
   // session that is waiting for its owner.
-  if (awaitsInput(session)) return 'Needs you';
+  if (awaitsInput(session)) return t('agent:menu.row.status.needsYou');
   return null;
 }
 
@@ -159,7 +160,7 @@ function toRow(session, appNameFallback) {
     // sends `session_title` / `pr_title` / `branch_name` and no `title` at
     // all, so every row in the panel read "Untitled session".
     title: session.session_title || session.pr_title || session.branch_name
-      || `Session #${session.id}`,
+      || t('agent:menu.row.sessionFallback', { number: session.id }),
     // A row represents the change, not just its chat. The lifecycle-aware
     // page keeps the context around the workspace and still embeds it. A
     // change an agent session started is worked on in that conversation
@@ -202,7 +203,7 @@ function taskToRow(task, appNameFallback) {
     appSlug: task.app_slug || null,
     appName: task.app_name || appNameFallback || task.app_slug || '',
     icon: iconOf(task, appNameFallback),
-    title: task.title || `Work order #${task.id}`,
+    title: task.title || t('agent:menu.row.workOrderFallback', { number: task.id }),
     href: task.issue_number
       ? `#app/${task.app_slug}/dev/issues/${task.issue_number}`
       : `#app/${task.app_slug}/dev`,
@@ -223,7 +224,7 @@ function taskToRow(task, appNameFallback) {
 function agentLabel(agent) {
   if (agent === 'claude-code') return 'Claude Code';
   if (agent === 'codex') return 'Codex';
-  return 'Handed off';
+  return t('agent:menu.row.status.handedOff');
 }
 
 const Improve = {
@@ -1080,6 +1081,13 @@ const Improve = {
 
 if (typeof window !== 'undefined') {
   window.Improve = Improve;
+}
+
+// The language changed, or this namespace's text arrived: the rows carry
+// their status and fallback titles in words, so build them again from the
+// lists this module already holds.
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('homeroom:language-changed', () => Improve._rebucket());
 }
 
 export { Improve };

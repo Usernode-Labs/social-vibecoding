@@ -35,6 +35,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const SRC = read('public/js/group-chat.js');
@@ -72,6 +73,7 @@ function setup({ pane = null, rows = new Map() } = {}) {
       },
     },
     URLSearchParams, location, Date, Number, JSON, App,
+    PlatformI18n: englishPlatformI18n(),
     AppView: { _stashDiscussionTarget: (slug, t) => stashed.push([slug, JSON.parse(JSON.stringify(t))]) },
     document: {
       visibilityState: 'visible',
@@ -341,7 +343,8 @@ test('a reply in a topic message\'s thread, named by a link, opens that thread b
 test('the topic\'s place mounts #general\'s pane, scoped to the topic, with its reply thread beside it', () => {
   const channel = PD.slice(PD.indexOf('function TopicChannel('));
   // The pane is #general's (AppView.renderGroupChatTab), named for the topic.
-  assert.match(channel, /view\?\.renderGroupChatTab\?\.\(\{[\s\S]*?channel: \{ type: 'category', ref, markers: markersRef\.current \},[\s\S]*?placeholder: `Message #\$\{topic\.handle\}`,/);
+  assert.match(channel, /view\?\.renderGroupChatTab\?\.\(\{[\s\S]*?channel: \{ type: 'category', ref, markers: markersRef\.current \},[\s\S]*?placeholder: t\('project:discussion\.topic\.placeholder', \{ handle: topic\.handle \}\),/);
+  assert.equal(englishPlatformI18n().t('project:discussion.topic.placeholder', { handle: 'ideas' }), 'Message #ideas');
   assert.doesNotMatch(channel, /mountThread/, 'no longer a thread mount: the one thread slot is its reply thread\'s');
   // Held only while the page is the screen on show (one general pane).
   assert.match(channel, /const onShow = screen === 'app-view' && !!tab;/);
