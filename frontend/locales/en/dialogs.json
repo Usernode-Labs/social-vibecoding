@@ -1199,6 +1199,10 @@
     "text": "Members can see it, vote on it and pick it up.",
     "description": "Line under the heading of the \"Suggest an improvement\" dialog. \"it\" is the request being written; to pick it up is to start working on it."
   },
+  "feedback.form.mine": {
+    "text": "See your requests",
+    "description": "Small link under the intro line of the Suggest an improvement form: closes the form and opens the list of this person's own requests on their profile."
+  },
   "feedback.dropLabel": {
     "text": "Drop images or a clip to attach",
     "description": "Shown over the \"Suggest an improvement\" dialog while files are dragged over it. A clip is a short video."

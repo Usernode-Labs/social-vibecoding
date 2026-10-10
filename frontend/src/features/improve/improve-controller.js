@@ -943,9 +943,9 @@ const Improve = {
    *
    * `fromDev` opens it asking where the suggestion goes, with neither "This
    * app" nor "Homeroom" chosen (#2707): a person in an app may well mean the
-   * platform, so the press does not answer that question (#4236). Getting
-   * started's "Suggest a change to <app>" still passes `target: 'app'`,
-   * because that button already named the app.
+   * platform, so the press does not answer that question (#4236). A button
+   * that already names the app may pass `target: 'app'` instead (Home's
+   * Getting started card's Suggest did, until #4635 retired the card).
    */
   giveFeedback() {
     const { slug } = improveStore.get();

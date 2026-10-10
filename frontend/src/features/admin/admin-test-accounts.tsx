@@ -449,7 +449,7 @@ export function CreateCard({ full, max, onCreated }: { full: boolean; max: numbe
       </div>
       <p className={`${AdminUI.muted} mb-4`}>
         A real account for trying Homeroom the way a newcomer does: the sign-in form, the terms, the
-        community picker, the tour and Getting started, with no history. It stays a test account for
+        community picker, the tour and the First challenges, with no history. It stays a test account for
         good. It is left off the leaderboards and the Journey page, and its votes on projects real
         people made are shown but not counted.
       </p>

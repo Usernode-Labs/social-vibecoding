@@ -678,7 +678,7 @@ const WHERE = Object.freeze({
 function systemPrompt({ app, place, tools, today = new Date(), platformRules = null }) {
   const has = (name) => tools.some((t) => t.function.name === name);
   const can = [
-    has('update_change') ? '- Change one of your own changes that is up for a vote when somebody clearly asks for a change to it (update_change): describe the change in your own words, precisely enough for a coding agent. It is queued for the change\'s next update, behind any update running now, and the result says which. Say so, and that updating it resets its approvals. A question about it is not a change: answer it.' : null,
+    has('update_change') ? '- Change one of your own changes that is up for a vote when somebody clearly asks for a change to it (update_change): describe the change in your own words, precisely enough for a coding agent. It is queued for the change\'s next update, behind any update running now, and the result says which. Say so, and that updating it resets its approvals; never say it is done, since it is not made yet. A question about it is not a change: answer it.' : null,
     has('offer_withdraw') ? '- Offer to withdraw your change when the person who asked for its request, or the project\'s owner, wants it dropped (offer_withdraw). Nothing happens until they tap Withdraw it under your reply: say so.' : null,
     has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that.' : null,
     has('offer_close_request') ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it.' : null,
@@ -1082,6 +1082,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   if (ctx.quiet) return { outcome: 'quiet' };
   let text = clip(withoutEmDashes(mayor.cleanReply(ctx.reply?.text || finalText)), MAX_REPLY_CHARS);
   if (text && ctx.checkedProblems?.length) text = mayor.stripClaims(text, ctx.checkedProblems);
+  // A turn that queued a change or made an offer did neither yet.
+  if (text && (ctx.revised || ctx.offer)) text = notDoneYet(text);
   if (!text) {
     // Nothing to say came back. Somebody who wrote to it hears that, once.
     text = 'Sorry, I couldn\'t answer just now. Ask me again in a minute.';
@@ -1216,7 +1218,7 @@ async function updateChange(pool, ctx, args) {
     queued: asked.running
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
       : 'Queued: you start on it now.',
-    next: 'When it is made, you tell them here what changed. Updating it resets its approvals, so the group looks again.',
+    next: 'It is not made yet, so never say it is done. When it is made, you tell them here what changed. Updating it resets its approvals, so the group looks again.',
   };
 }
 
@@ -1438,6 +1440,52 @@ const OUTCOME_FACTS = Object.freeze({
   gone: 'the change was merged or closed before you could make it, so nothing was done',
 });
 
+// How the coding agent talks about its own work, which is nobody else's
+// business: its harness, commits and pushes, branches, and the files it
+// touched. A report of an update is written from that agent's summary and
+// reply, and on 10 October, the voice's first update (change 7630) ended
+// "The harness will commit and push." Push only in that sense: a push
+// notification, or a button somebody pushes, is something people use.
+const INTERNALS_RES = Object.freeze([
+  /\bharness\b/i,
+  /\bgit\b/i,
+  /\bworktrees?\b/i,
+  /\brebas(?:e|ed|ing)\b/i,
+  /\bcommit(?:s|ted|ting)?\b/i,
+  /\b(?:will|to|then|and|I'll|I will|I'd)\s+push\b/i,
+  /\bpush(?:es|ed|ing)?\s+(?:it|this|that|them|to|the change|the update|the fix|my|its|a)\b(?!\s+notifications?)/i,
+  /\b(?:the|this|its|a|my|that) branch(?:es)?\b/i,
+  /(?:^|[\s(`'"])(?:src|frontend|tests?|public|scripts|worker|styles)\/[\w./-]+/,
+  /\b[\w-]+\.(?:js|mjs|cjs|ts|tsx|jsx|css|json|sql|sh|md|html)\b/,
+]);
+
+/**
+ * Pure: `text` less every sentence about the coding agent's own workings
+ * (INTERNALS_RES). Lines and the sentences left keep their order; empty
+ * when nothing is left.
+ */
+function withoutInternals(text) {
+  return String(text || '').split('\n')
+    .map((line) => line.split(/(?<=[.!?])\s+/)
+      .filter((sentence) => !INTERNALS_RES.some((re) => re.test(sentence)))
+      .join(' '))
+    .join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * Pure: a reply from a turn that only queued a change, or only offered
+ * something, does not open by saying it is done (10 October, change 7630:
+ * "Done, @evan: I've queued the update"). Its opening "Done", "All done",
+ * "Finished" or "Completed" becomes "Got it"; the rest stands.
+ */
+function notDoneYet(text) {
+  const m = /^\s*(?:all\s+)?(?:done|finished|completed)\b([\s,.:;!-]*)/i.exec(String(text || ''));
+  if (!m) return text;
+  const rest = String(text).slice(m[0].length);
+  if (!rest) return 'Got it.';
+  return `Got it${/[.!]/.test(m[1]) ? '. ' : ', '}${rest}`;
+}
+
 /** Pure: what a follow-up's result must say, whoever words it. */
 function mustSay(outcome) {
   const lines = [];
@@ -1449,8 +1497,8 @@ function mustSay(outcome) {
 
 /** Pure: what the voice says about a follow-up when its model does not answer. */
 function plainReport(outcome) {
-  const reply = clip(withoutEmDashes(outcome.reply || ''), 1200);
-  const summary = clip(withoutEmDashes(outcome.summary || ''), 600);
+  const reply = clip(withoutEmDashes(withoutInternals(outcome.reply)), 1200);
+  const summary = clip(withoutEmDashes(withoutInternals(outcome.summary)), 600);
   switch (outcome.action) {
     case 'revise':
       return [summary ? `Done: ${summary}` : (reply || 'Done.'), ...mustSay(outcome)].join(' ');
@@ -1521,8 +1569,8 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
     `Change ${session.id}${session.pr_number ? ` (PR #${session.pr_number})` : ''}: "${clip(session.session_title || session.pr_title || session.title, 160)}" on "${app.name || app.slug}".`,
     asked,
     `What came of it: ${OUTCOME_FACTS[outcome.action] || OUTCOME_FACTS.failed}${outcome.action === 'revise' && !outcome.moved ? ' (but nothing changed)' : ''}.`,
-    outcome.summary ? `What changed, in the coding agent's words: ${clip(outcome.summary, 600)}` : null,
-    outcome.reply ? `What the coding agent said: ${clip(outcome.reply, 1500)}` : null,
+    withoutInternals(outcome.summary) ? `What changed, in the coding agent's words: ${clip(withoutInternals(outcome.summary), 600)}` : null,
+    withoutInternals(outcome.reply) ? `What the coding agent said: ${clip(withoutInternals(outcome.reply), 1500)}` : null,
     outcome.why ? `Why it did not work: ${clip(outcome.why, 300)}` : null,
     ...mustSay(outcome).map((l) => `Must say: ${l}`),
   ].filter(Boolean).join('\n');
@@ -1540,7 +1588,9 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
         `You are Homeroom bot, telling the people who asked for a change to your change on "${app.name || app.slug}" what came of it.`,
         'Write one short reply (under 90 words) in the first person, to them, in plain words: what you did or found, and',
         'what happens next. Include every "Must say" line. Say only what the facts below say. No em dashes, no headings,',
-        'never start with "Homeroom bot". Call reply.',
+        'never start with "Homeroom bot".',
+        'Say what changed for the people using the app, in their words. Never mention the harness, commits, pushes,',
+        'branches, files, code, prompts or other internal parts of how it was made, even where the facts do. Call reply.',
       ].join(' '),
     },
     { role: 'user', content: facts },
@@ -1552,7 +1602,8 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
     });
     const call = (res.toolCalls || [])[0];
     const text = call ? String(mayor.parseArgs(call.function?.arguments).text || '') : String(res.content || '');
-    const clean = clip(withoutEmDashes(mayor.cleanReply(text)), MAX_REPLY_CHARS);
+    // What it says of the agent's workings anyway is taken out.
+    const clean = clip(withoutEmDashes(withoutInternals(mayor.cleanReply(text))), MAX_REPLY_CHARS);
     if (!clean) return null;
     // Whatever it left out that it must say is added.
     const missing = mustSay(outcome).filter((line) => !clean.toLowerCase().includes(line.split(',')[0].toLowerCase().slice(0, 20)));
@@ -1731,6 +1782,8 @@ module.exports = {
   decideOffer,
   mustSay,
   plainReport,
+  withoutInternals,
+  notDoneYet,
   reportFollowUp,
   voiceSummary,
   codeOnly,

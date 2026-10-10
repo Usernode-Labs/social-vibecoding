@@ -78,6 +78,7 @@ const { reportAiRoutes } = require('./src/routes/report-ai');
 const { workshopAskRoutes } = require('./src/routes/workshop-ask');
 const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { sinceSummaryRoutes } = require('./src/routes/since-summary');
+const { topicFiguresRoutes } = require('./src/routes/topic-figures');
 const { workshopOverviewRoutes, demoNeedsVoteRoutes } = require('./src/routes/workshop-overview');
 const { appNoticesRoutes } = require('./src/routes/app-notices');
 const { messagesOverviewRoutes } = require('./src/routes/messages-overview');
@@ -710,6 +711,8 @@ app.use(workshopAskRoutes(config));
 app.use(workshopThemesRoutes(config));
 // The hub's since-your-last-visit line (services/since-summary.js).
 app.use(sinceSummaryRoutes(config));
+// The figures a topic's channel shows above its room (services/topic-figures.js).
+app.use(topicFiguresRoutes(config));
 // The top-level Workshop screen's per-app counts (#workshop): one query for
 // every app the viewer can see. Me-scoped like the ordering routes, so it
 // sits behind authMiddleware and refuses an anonymous caller outright.
@@ -1713,6 +1716,8 @@ async function start() {
   // for the entire drain, then exited from under them.
   const server = app.listen(config.port, () => {
     log.info('server', `Listening on :${config.port}`);
+    // The merges into Homeroom this build carries are live now that it serves.
+    require('./src/services/platform-release').recordRunning(getPool(config));
   });
   // Let Envoy retire idle upstream connections at 60s before Node closes them.
   // Keep a 15s margin for transit and timer scheduling; applies to self-previews too.

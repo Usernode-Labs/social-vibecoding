@@ -44,8 +44,7 @@ const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
 
 
 const {
-  loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
-  gateSummary,
+  loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks,
 } = require('../../services/topochain/challenge-onboarding');
 const { isWeekly, weekStartMs } = require('../../services/topochain/challenge-rules');
 
@@ -718,7 +717,7 @@ async function fetchSeasonEventChallengeItems(pool, seasonEventId, opts) {
       ORDER BY c.display_order ASC, c.id ASC`,
     params
   );
-  return visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+  return rows.filter((r) => r.t_id != null)
     .map((r) => {
       const item = buildSeasonChallengeItem(r);
       item.category = challengeCategory(item.challenge_id, item.category, onboarding);
@@ -1320,9 +1319,11 @@ function topochainMobileRoutes(config) {
         rows = await fetchChallengesForSeason(pool, seasonId);
       }
 
+      // The season's First challenges: their ids (for the category) and the
+      // viewer's lifetime progress on them. Since #4635 they hide nothing, so
+      // the list is the whole event or season.
       const onboarding = await loadOnboarding(pool, req.user.id,
         { seasonId: resolvedSeasonId, eventId: seasonEventId });
-      rows = visibleChallenges(rows, onboarding);
       const ids = rows.map((r) => Number(r.id));
       const activityRows = ids.length ? await fetchOwnChallengeActivities(pool, req.user.id, ids) : [];
       const activitiesByChallenge = new Map();
@@ -1408,11 +1409,9 @@ function topochainMobileRoutes(config) {
         });
       }
 
-      // The gate summary only for a viewer it applies to: a new account on
-      // its Getting started list (2026-10-01). Anyone else gets the whole
-      // season and no summary, as for a season with no First challenges.
-      const gate = gateSummary(onboarding);
-      return ok(res, { data: items, ...(gate ? { onboarding: gate } : {}) });
+      // No `onboarding` summary any more (#4635): nothing is gated, and the
+      // app already reads a missing summary as "not gated".
+      return ok(res, { data: items });
     } catch (err) {
       log.error('topochain-mobile', 'GET /challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -1493,7 +1492,6 @@ function topochainMobileRoutes(config) {
           ends_at: iso(season.ends_at),
           is_active: season.is_active,
           events,
-          ...(gateSummary(onboarding) ? { onboarding: onboarding.summary } : {}),
         };
         if (includeChallenges) {
           // "season_challenges ... same shape, from the season-type

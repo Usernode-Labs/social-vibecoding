@@ -1043,6 +1043,10 @@
     "text": "Back to the first one you skipped",
     "description": "Button on the card after the last item of the Needs you feed: scrolls back up to the first item this person passed without answering."
   },
+  "needsYou.end.suggest": {
+    "text": "Suggest an improvement",
+    "description": "Quiet link on the card after the last item of a project's Needs you feed: opens the form for suggesting an improvement to this project."
+  },
   "needsYou.ask.reading": {
     "text": "Reading the change…",
     "description": "Placeholder answer in the Ask sheet of the Needs you feed, shown in the conversation while the AI model is preparing its answer about the item."
@@ -4414,6 +4418,26 @@
   "places.topicHead.aboutThenRequests": {
     "text": "{{about}} · <0>{{requests}}</0>",
     "description": "Line at the top of a topic's chat channel. {{about}} is what the topic is for, as its members wrote it; <0></0> is a link to the requests filed under it, and {{requests}} its words, already worded, for example \"14 requests ›\"."
+  },
+  "places.topicFigures.label": {
+    "text": "This topic's figures",
+    "description": "Accessible name of the card of numbers at the top of a topic's chat channel, such as how long checks take or how often the bot's answers fail."
+  },
+  "places.topicFigures.window_one": {
+    "text": "Last day",
+    "description": "Small heading over the card of numbers at the top of a topic's chat channel: says the numbers cover the last day. Shown in capitals."
+  },
+  "places.topicFigures.window_other": {
+    "text": "Last {{count}} days",
+    "description": "Small heading over the card of numbers at the top of a topic's chat channel: says how many days the numbers cover, for example \"Last 7 days\". {{count}} is that number. Shown in capitals."
+  },
+  "places.topicFigures.whatItMeans": {
+    "text": "What {{label}} means",
+    "description": "Accessible name of the small information button beside one number's name at the top of a topic's chat channel: shows a sentence explaining that number. {{label}} is the number's name, for example \"Reply time\"."
+  },
+  "places.topicFigures.demo": {
+    "text": "Staging demo figures, not real numbers.",
+    "description": "Small line under the card of numbers at the top of a topic's chat channel, shown only on a test copy of Homeroom: says the numbers are made up for testing."
   },
   "topic.request.shots.hideComment": {
     "text": "Hide comment",

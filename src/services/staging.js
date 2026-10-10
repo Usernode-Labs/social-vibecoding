@@ -150,6 +150,13 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
       return owner && repo && fresh?.branch_name ? github.getBranchSha(owner, repo, fresh.branch_name) : null;
     } });
   }
+  // The unit suite needs only the commit, not this preview: start it now,
+  // beside the build, for the checks run that follows to take over
+  // (services/early-unit-suite.js). Detached from any lifecycle operation,
+  // which this build's end would otherwise cancel it with.
+  if (commitHash && commitHash !== 'latest') {
+    lifecycle.detach(() => require('./early-unit-suite').maybeStart(config, { session, app, commitHash }));
+  }
   const key = session.id;
   const current = _stagingBuilds.get(key);
   if (current && commitHash && commitHash !== 'latest' && current.commitHash === commitHash) {

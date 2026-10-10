@@ -63,8 +63,7 @@ const {
 } = require('./helpers');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
 const {
-  loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
-  isLocked, gateSummary, COUNTS_THIS_WEEK_SQL,
+  loadOnboarding, challengeCategory, resolveProgress, loadEventBlocks, COUNTS_THIS_WEEK_SQL,
 } = require('../../services/topochain/challenge-onboarding');
 const { loadRuleFacts, intervalMinutes } = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
@@ -768,9 +767,12 @@ function topochainPublicRoutes(config) {
       // skipping any row whose template join came back empty instead
       // (the FK itself should make this unreachable in practice — see the
       // schema.sql comment on `challenges.challenge_template_id`).
+      //
+      // The season's First challenges (their ids and the viewer's lifetime
+      // progress on them) are ordinary rows of this list for everyone: since
+      // #4635 they gate nothing, so the list is the whole event.
       const onboarding = await loadOnboarding(pool, req.user?.id, { eventId: id });
-      const listed = rows.filter((r) => r.t_id != null);
-      const visible = visibleChallenges(listed, onboarding);
+      const visible = rows.filter((r) => r.t_id != null);
 
       // The viewer's own credit count per challenge.
       //
@@ -861,27 +863,10 @@ function topochainPublicRoutes(config) {
           return item;
         });
 
-      // This list now carries the signed-in viewer's onboarding state. While
-      // the gate is closed it also says how many of THIS event's challenges
-      // it hides and the first few of their names (additive `hidden_count`
-      // and `hidden_names`, the tab's locked placeholder, which names them
-      // the way Home's does); unlocked, the summary is exactly what it was.
-      // Only a new account on its Getting started list is gated at all
-      // (2026-10-01): an existing member and a signed-out visitor get the
-      // whole event and no summary, as for a season with no First challenges.
-      const gate = gateSummary(onboarding);
-      const summary = gate && isLocked(onboarding)
-        ? {
-          ...gate,
-          hidden_count: listed.length - visible.length,
-          hidden_names: listed.filter((r) => !visible.includes(r))
-            // Two, as Home's (home-panels.js HIDDEN_NAMES): what the card's
-            // second line holds on a phone with the count after them.
-            .map((r) => String(r.goal ?? r.t_goal ?? '').trim()).filter(Boolean).slice(0, 2),
-        }
-        : gate;
       res.set('Cache-Control', 'private, no-store');
-      return ok(res, { data, ...(summary ? { onboarding: summary } : {}) });
+      // No `onboarding` summary any more (#4635): nothing is gated, and every
+      // client already reads a missing summary as "not gated".
+      return ok(res, { data });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events/:id/challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');

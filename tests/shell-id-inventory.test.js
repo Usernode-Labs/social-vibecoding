@@ -495,7 +495,10 @@ const ADDED_IDS = {
   // ── #3575: the person chooses the handle, and is told it is public ──
   'reg-username-public': '#3575: "Your username will be public to other users on Homeroom." directly under the register form\'s username field, ahead of #reg-username-hint. Its own element rather than a clause of the hint, because the hint is swapped whole for the server\'s refusal and this sentence has to stay beside the field while the person fixes the name. The input names both lines through aria-describedby. The email sign-up\'s set-password step and the first-run gate say the same sentence beside their fields.',
   // ── Communities, stage 5: the first run ─────────────────────────────
-  'home-getting-started': 'Home\'s Getting started card: the welcome tour and the season\'s First challenges for a new account that came through "What communities do you want to join?", ticked off from their credits (GET /api/me/getting-started; the one list, 2026-10-01). Ships empty and hidden; a React island (features/home/getting-started.tsx).',
+  // #home-getting-started left this map in #4635: every new account gets a
+  // tour, so Home's Getting started card went, and a new account's
+  // First challenges are ordinary cards in Home's Challenges area. It was
+  // only ever an ADDED id, so it simply leaves.
   // ── #1374: per-app notification settings ─────────────────────────
   // One switch per category governs the bell here AND the phone push,
   // because the preference gates whether the notification is CREATED and
@@ -579,6 +582,8 @@ const ADDED_IDS = {
   'feedback-sent-notice': 'The "Thanks! Filed against …" line and any bounty outcome, carried into the sent confirmation (#3186).',
   'feedback-sent-mine': 'Opens the Me screen\'s "Your feedback" list (#profile?feedback) from the sent confirmation (#3186).',
   'feedback-sent-done': 'Dismisses the sent confirmation (#3186).',
+  // ── #4680: the form and the list point at each other ─────────────────
+  'feedback-form-mine': '#4680: the form\'s small "See your requests" link, under the intro line — the same route the two confirmations\' links open (#profile/your-requests), so what is already asked for is one tap away before writing a new one. Not hidden in the prerender, so the server render and the client render agree. Worded by React (t()); the click is ./feedback-controller\'s openMine, the same split as #feedback-sent-mine.',
   'improve-working-dot': 'What was left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse (a small blue corner spinner since the #2779 follow-up), rendered only while a dev session the viewer can see is mid-turn (their own, since the same follow-up). It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact that needs no dismissal. #2718 retired the button and the dot outlived it: it is on the Homeroom mark\'s tile now, which is the control on screen on every route. Top-right, so it cannot hide under the bottom-left outbox dot, which followed it there.',
   'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Homeroom app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────

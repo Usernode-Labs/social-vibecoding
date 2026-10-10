@@ -127,10 +127,10 @@
  *
  * Only when somebody asks (#3240). It used to open by itself on the first
  * sign-in that reached Home, straight after "What communities do you want to
- * join?", and the two screens said the same things back to back. Now the
- * first row of Home's Getting started card, "Take the 1-minute tour"
- * (../getting-started.tsx), and Settings' "Replay the tour" are the ways in,
- * and both ask through ./tour-request.ts. That path ignores whether the
+ * join?", and the two screens said the same things back to back. Settings'
+ * "Replay the tour" is the way in (Home's Getting started card offered it
+ * too, until #4635 retired the card), and it asks through ./tour-request.ts.
+ * That path ignores whether the
  * tour was finished before and waits only for Home to be on screen, which is
  * where every step points. Nothing opens it on the `?shot=`, `?demo=` and
  * `?token=` routes except a press, so the platform's declared checks never
@@ -148,8 +148,8 @@
  * that stands on its own.
  *
  * Finish and Skip record "done" in this browser and on the account
- * (./tour-done.ts), which ticks the card's row. A browser that finished the
- * tour before the account kept the answer copies it there once.
+ * (./tour-done.ts). A browser that finished the tour before the account
+ * kept the answer copies it there once.
  *
  * ── A reload is not a restart ──────────────────────────────────────────
  *
@@ -648,7 +648,7 @@ export function OnboardingTour() {
     return () => { cancelled = true; };
   }, [start]);
 
-  // ── Asked for: Getting started's first row, or Settings' Replay ──────
+  // ── Asked for: Settings' Replay ──────────────────────────────────────
   const request = useTourRequest();
   const seenRequest = useRef(0);
   useEffect(() => {

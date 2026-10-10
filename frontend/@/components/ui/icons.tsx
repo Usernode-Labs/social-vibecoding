@@ -353,12 +353,8 @@ export const LockIcon = stroked(
   'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
 );
 
-// LockIcon with its shackle swung open: something that was locked is not
-// any more (Getting started's "6 challenges unlocked").
-export const LockOpenIcon = stroked(
-  'LockOpenIcon',
-  'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zM8 11V7a4 4 0 017.75-1.4',
-);
+// LockOpenIcon (its shackle swung open) went with the Getting started card's
+// done state, its one user (#4635).
 
 export const KeyIcon = stroked(
   'KeyIcon',

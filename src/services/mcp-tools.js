@@ -7851,7 +7851,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('create_test_account', {
       title: 'Test accounts: make one',
-      description: `Admin only. Make a genuinely new Homeroom account for first-time-user testing and get back its username and a one-time password. Signing in with them through the ordinary sign-in form (web, or the iOS app, which signs in through the same form) gives a real first run: terms, the community picker, the tour and Getting started, with no history. It is let in at once unless platformAccess is false (to test the waiting room). With no username it gets a placeholder and the tester picks a handle in the real first-run step. It is a test account for good: left out of leaderboards, Journey and vote thresholds, its votes on apps real people made are recorded but not counted, and it gets no welcome DM unless welcomeDm is true. Relay the password ONCE, tell the person to sign out on the device first, and retire the account with retire_test_account when testing is done. At most 25 are live at once. Read get_connector_guidance's "test-accounts" section first.`,
+      description: `Admin only. Make a genuinely new Homeroom account for first-time-user testing and get back its username and a one-time password. Signing in with them through the ordinary sign-in form (web, or the iOS app, which signs in through the same form) gives a real first run: terms, the community picker, the tour and the First challenges, with no history. It is let in at once unless platformAccess is false (to test the waiting room). With no username it gets a placeholder and the tester picks a handle in the real first-run step. It is a test account for good: left out of leaderboards, Journey and vote thresholds, its votes on apps real people made are recorded but not counted, and it gets no welcome DM unless welcomeDm is true. Relay the password ONCE, tell the person to sign out on the device first, and retire the account with retire_test_account when testing is done. At most 25 are live at once. Read get_connector_guidance's "test-accounts" section first.`,
       inputSchema: {
         username: z.string().optional().describe('A handle to use, checked like any username. Omit it for a placeholder and the real "choose your username" step.'),
         platformAccess: z.boolean().optional().describe('Let the account in at once (default true). false leaves it in the waiting room.'),
@@ -8017,8 +8017,8 @@ function registerTools(server, ctx) {
           : [
             `Open the email "You're in. Welcome to Homeroom" sent to ${to}.`,
             'If the browser it opens in is signed in to Homeroom, sign out first, or open the link in a private window.',
-            'Tap Create my account. The link signs in once by itself; if it was already used or has expired, Homeroom emails a 6-digit code to the same address instead.',
-            'Choose a username. A password is optional (Skip for now).',
+            'Tap Create my account, then Get started on the welcome page. The link signs in by itself (again, until the account is set up); if it has expired or the account is already set up, Homeroom emails a 6-digit code to the same address instead.',
+            'Choose a username. A password is optional: leave it empty to sign in with an emailed code.',
           ],
         nextStep: outcome[status] || `Could not confirm the email went out (${status}). The delivery log in the admin console shows what happened.`,
       });

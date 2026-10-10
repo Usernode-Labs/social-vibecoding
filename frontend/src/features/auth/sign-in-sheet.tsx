@@ -937,15 +937,18 @@ export function SignInSheet({
     }
   }, [followInvite, finish]);
 
-  // #4595: the password is optional. "Skip for now" (`skip`), or the field
-  // left empty, finishes without one: the account then signs in with an email
-  // code, and can add a password in Settings. It is asked once, with no
-  // "again" field: a mistyped one is reset by email ("Forgot password?").
-  const finishAccount = useCallback(async (skip = false) => {
+  // #4595: the password is optional. The field left empty finishes without
+  // one: the account then signs in with an email code, and can add a
+  // password in Settings. It is asked once, with no "again" field: a
+  // mistyped one is reset by email ("Forgot password?"). There is no "Skip
+  // for now" (Evan, 10 Oct 2026): beside a username that cannot be skipped
+  // it read as skipping the whole step, and "Password (optional)" with
+  // Continue already says it.
+  const finishAccount = useCallback(async () => {
     setError(null);
     const handle = needsUsername ? (usernameField.current?.value || '').trim() : null;
     if (handle === '') { setError(translate('auth:signInSheet.account.usernameMissing')); usernameField.current?.focus({ preventScroll: true }); return; }
-    const password = skip ? '' : passwordField.current?.value || '';
+    const password = passwordField.current?.value || '';
     if (password && password.length < 8) { setError(translate('auth:signInSheet.account.passwordTooShort')); return; }
     if (blockedOffline(setError)) return;
     setBusy(true);
@@ -1318,7 +1321,6 @@ export function SignInSheet({
               </div>
             </div>
             <button type="submit" disabled={busy} className={`${primaryClass} disabled:opacity-60`} {...HOLD_FIELD_FOCUS}>{busy ? t('auth:signInSheet.account.finishing') : t('auth:signInSheet.account.submit')}</button>
-            <button type="button" data-sign-in-sheet-skip-password="" disabled={busy} className={`${QUIET} self-center disabled:opacity-60`} onClick={() => { void finishAccount(true); }}>{t('auth:signInSheet.account.skip')}</button>
           </form>
         ) : null}
 

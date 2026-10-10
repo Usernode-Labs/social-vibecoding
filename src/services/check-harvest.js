@@ -102,6 +102,23 @@ function stillCurrent(session, commitSha) {
   return { current: true, why: '' };
 }
 
+// A run's capture shards, collected, read as one capture Job: their output
+// joined in shard order, as the live run joins it (visuals.runCaptureShards).
+// One shard gone, aborted or past its deadline is the run's state; the run
+// failed only if every shard did.
+function joinCaptures(results) {
+  const list = (results || []).filter(Boolean);
+  if (list.length <= 1) return list[0] || null;
+  const worst = ['gone', 'aborted', 'timeout'].find((state) => list.some((r) => r.state === state));
+  return {
+    state: worst || (list.every((r) => r.state === 'failed') ? 'failed' : 'succeeded'),
+    stdout: list.map((r) => String(r.stdout || '')).join('\n'),
+    stderr: list.map((r) => String(r.stderr || '')).filter(Boolean).join('\n'),
+    partial: list.some((r) => r.partial),
+    partialReason: [...new Set(list.map((r) => r.partialReason).filter(Boolean))].join('; '),
+  };
+}
+
 function describeRow(row, reason) {
   const manifest = row.manifest || {};
   return {
@@ -208,8 +225,10 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
   // the worker namespace's Job slots until their TTL. Detached; the TTL
   // still collects any this misses.
   const releaseJobs = () => {
-    kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId: runId })
-      .catch((err) => log.warn('check-harvest', 'Settled check Jobs not deleted; their TTL will', { ...base, err: err.message }));
+    for (const previewRunId of [runId, manifest.unitRunId].filter(Boolean)) {
+      kubernetes.deleteSettledCheckJobs(config, { sessionId, previewRunId })
+        .catch((err) => log.warn('check-harvest', 'Settled check Jobs not deleted; their TTL will', { ...base, err: err.message }));
+    }
   };
 
   try {
@@ -234,11 +253,22 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     }
 
     const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: runId });
+    // A unit suite the run took over from the preview build runs under its
+    // own run id (services/early-unit-suite.js).
+    if (manifest.unitRunId) {
+      const early = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: manifest.unitRunId });
+      if (early.unitSuite) jobs.unitSuite = early.unitSuite;
+    }
+    const captureJobs = Array.isArray(jobs.captures) ? jobs.captures : (jobs.capture ? [jobs.capture] : []);
     // A deferred verdict on a range with no frontend files launches no
     // capture container at all (visuals: shotsOnly && !media) — its stamp is
     // the whole settlement, and there is nothing on the cluster to find.
     const captureExpected = !(manifest.shotsOnly && !manifest.media);
     if (captureExpected && !jobs.capture) return await redrive(session, 'capture Job not found');
+    // A run split across browser pods needs every shard's output.
+    if (captureExpected && captureJobs.length < (Number(manifest.captureShards) || 1)) {
+      return await redrive(session, 'a capture shard Job not found');
+    }
 
     log.info('check-harvest', 'Adopting an orphaned checks run', {
       ...base, owner: row.owner,
@@ -253,6 +283,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     const trigger = manifest.trigger || 'boot-reconcile';
     const progress = visuals.makeChecksProgressState({
       expected: Number(manifest.testsCount) || 0,
+      shards: captureJobs.length || 1,
       build: manifest.build || null,
       flush: async (snap) => {
         if (controller.signal.aborted) return;
@@ -265,11 +296,11 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null } = {}) 
     let unit = null;
     try {
       [capture, unit] = await Promise.all([
-        jobs.capture ? kubernetes.collectCheckJob(config, {
-          name: jobs.capture.name, kind: 'capture',
+        captureJobs.length ? Promise.all(captureJobs.map((job) => kubernetes.collectCheckJob(config, {
+          name: job.name, kind: 'capture',
           timeoutMs: visuals.RUN_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: visuals.RUN_MAX_BUFFER,
           onStdoutLine: progress.observeCapture, signal: controller.signal,
-        }) : Promise.resolve(null),
+        }))).then(joinCaptures) : Promise.resolve(null),
         jobs.unitSuite ? kubernetes.collectCheckJob(config, {
           name: jobs.unitSuite.name, kind: 'unit-suite',
           timeoutMs: unitSuite.UNIT_SUITE_TIMEOUT_MS + DEADLINE_SLACK_MS, maxBuffer: unitSuite.UNIT_SUITE_MAX_BUFFER,
@@ -639,4 +670,5 @@ module.exports = {
   // Exported for tests.
   stillCurrent,
   loadSession,
+  joinCaptures,
 };
