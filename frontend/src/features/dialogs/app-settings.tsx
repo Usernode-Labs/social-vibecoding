@@ -153,6 +153,10 @@ export function AppSettingsDialog() {
   const armed = !!app?.can_delete && !!app?.name && confirmation === app.name && (!shared || sharedAck);
   const currentAccess = app ? currentAccessMode(app) : 'public';
   const accessChanged = !!app && accessDraft !== currentAccess;
+  // The propose button is off until a different level is picked; with the
+  // repo there and nothing else in the way, say so instead of leaving a
+  // full-strength button that does nothing (#4659).
+  const accessHint = !!app?.repo_url && !accessChanged && !accessBusy && !accessProposalOpen;
 
   async function proposeAccess() {
     if (pending.current || !app?.can_manage || app.self_hosted || !app.repo_url
@@ -175,9 +179,13 @@ export function AppSettingsDialog() {
       let data = await response.json().catch(() => ({}));
       // #4378: making it public needs a verified owner. The verify sheet
       // asks; once a phone is linked the proposal goes again, and Not now
-      // leaves the access as it was.
+      // leaves the access as it was — said in the status line, not left
+      // silent (#4659).
       if (data && data.code === 'identity_required') {
-        if (!(await askToVerifyForPublic())) return;
+        if (!(await askToVerifyForPublic())) {
+          setAccessMessage('Access not changed. Verify your account to make this app public, then propose again.');
+          return;
+        }
         response = await send();
         data = await response.json().catch(() => ({}));
       }
@@ -309,11 +317,14 @@ export function AppSettingsDialog() {
           type="button"
           size="sm"
           className="mt-3"
+          disabledStyle="block"
           disabled={accessBusy || accessProposalOpen || !app?.repo_url || !accessChanged}
+          aria-describedby={accessHint ? 'app-access-hint' : undefined}
           onClick={() => void proposeAccess()}
         >
           {accessBusy ? 'Opening proposal…' : (accessProposalOpen ? 'Proposal open' : 'Propose access change')}
         </Button>
+        {accessHint ? <p id="app-access-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">Pick a different access level above, then propose the change.</p> : null}
       </section>
       {app && !app.can_delete ? <p id="app-delete-blocked" role="status" className="text-sm mb-4">{blockedCopy(app)}</p> : null}
       <section ref={dangerRef} className="hidden border border-red-300 dark:border-red-800 rounded-lg p-4 mb-4">
