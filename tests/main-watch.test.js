@@ -433,14 +433,16 @@ test('afterMerge: nothing runs without a repo, a sha, or the switch on', async (
 
 test('the pause write is the same CASE for every verdict, keyed on the sha it is about', () => {
   // Pinned as source: green clears, red/confirming sets unless an admin
-  // already resumed THIS sha, anything else leaves the column alone. The
+  // already resumed THIS sha, anything else leaves the column alone. A red
+  // of known flakes alone (detail.flakesOnly) is green for the pause. The
   // fake pool cannot evaluate SQL, so the shape is what stands in for it.
   const fs = require('node:fs');
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'main-watch.js'), 'utf8');
   const write = src.slice(src.indexOf('async function writeState'), src.indexOf('async function afterMerge'));
   assert.match(write, /main_check_paused_sha = CASE\s+WHEN \$5::boolean THEN NULL\s+WHEN \$6::boolean AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(\$2::text\) THEN \$2::text\s+ELSE main_check_paused_sha\s+END/);
   assert.match(write, /WHERE id = \$1 AND main_check_sha = \$2::text/);
-  assert.match(write, /state === 'passing', state === 'failing' \|\| state === 'confirming'/);
+  assert.match(write, /const quiet = !!detail && Array\.isArray\(detail\.flakesOnly\) && detail\.flakesOnly\.length > 0;/);
+  assert.match(write, /state === 'passing' \|\| quiet, \(state === 'failing' \|\| state === 'confirming'\) && !quiet/);
 });
 
 // ── resume ───────────────────────────────────────────────────────────────
@@ -626,9 +628,10 @@ test('the schema carries the pause column and the backfill for the derived pause
   const fs = require('node:fs');
   const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
   assert.match(schema, /ALTER TABLE apps ADD COLUMN IF NOT EXISTS main_check_paused_sha VARCHAR\(40\);/);
-  // Idempotent: red, not resumed for that red, and not yet carrying the
+  // Idempotent: red, not resumed for that red, not a red of known flakes
+  // alone (which pauses nothing on purpose), and not yet carrying the
   // column. Runs at every boot without moving anything twice.
-  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\);/);
+  assert.match(schema, /UPDATE apps\s+SET main_check_paused_sha = main_check_sha\s+WHERE main_check_state = 'failing'\s+AND main_check_sha IS NOT NULL\s+AND main_check_paused_sha IS NULL\s+AND lower\(coalesce\(main_check_resumed_sha, ''\)\) <> lower\(main_check_sha\)\s+AND \(main_check_detail -> 'flakesOnly'\) IS NULL;/);
   // The API serializes the column with its siblings.
   const access = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'app-access.js'), 'utf8');
   assert.match(access, /'main_check_resumed_sha', 'main_check_paused_sha',/);

@@ -926,8 +926,10 @@ test('cards from one group are still headed, and the header takes the clock', ()
   const view = HP.challengesView(data().panels[0]);
   assert.equal(view.groups.length, 1);
   const [only] = view.groups;
+  // "23h left" on most nights; in the last hours of a week, the week's end.
+  const clock = weekClock(HP, inHours(23));
   assert.deepEqual({ key: only.key, heading: only.heading, meta: only.meta },
-    { key: 'week', heading: 'This week', meta: '23h left' },
+    { key: 'week', heading: 'This week', meta: clock },
     'the tab heads every group, so Home does too; the clock is the soonest card end');
   assert.equal(only.rows.length, view.rows.length);
   only.rows.forEach((r, i) => assert.equal(r, view.rows[i], 'the same row objects as `rows`'));
@@ -940,7 +942,7 @@ test('cards from one group are still headed, and the header takes the clock', ()
   assert.match(list, />This week<\/span>/, 'a header over a single group');
   assert.ok(list.indexOf('>This week</span>') < list.indexOf('home-challenge-card'), 'before its cards');
   assert.equal((list.match(/\d+[dh] left/g) || []).length, 1, 'one clock, on the header');
-  assert.match(list, />23h left</);
+  assert.ok(list.includes(`>${clock}<`), clock);
 
   // A First challenges block is headed too, with no clock, and its cards keep theirs.
   const setup = HP.challengesView(panel({

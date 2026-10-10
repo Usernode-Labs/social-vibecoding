@@ -100,19 +100,20 @@ const CLONED_SENTINEL = '__UNIT_SUITE_CLONED__';
 // strips this prefix so the reason names `tests/foo.test.js`, the path a fix
 // turn can hand straight back to `node --test`.
 const ROOT_SENTINEL = '__UNIT_SUITE_ROOT__';
-// Printed after a failing `npm test`, above every failing test's TAP block
-// printed again (RUN_SCRIPT). The log the row is read from can come back
-// without its beginning: the kubelet keeps a container's log in files of a
-// fixed size and the API serves only the newest, so a suite whose TAP
-// outgrows one keeps its summary and loses the failures printed before the
-// last rotation. PR #4217's run did (#4265), and so did #4658's: "2 tests
-// failed, but the saved output does not name them", out of 23,439. Printed
-// again at the very end, they are in whatever part of the log survives.
-const FAILURES_SENTINEL = '__UNIT_SUITE_FAILURES__';
-// How much of the failures the end of the log carries: enough for the
-// reason and the excerpts (MAX_UNIT_EXCERPTS), small next to the log.
-const DIGEST_MAX_FAILURES = 50;
-const DIGEST_MAX_BLOCK_LINES = 60;
+// Printed as `<sentinel>=<count>` after a red `npm test`, followed by every
+// failing top-level test's `not ok` line and its YAML block again, read back
+// from a copy of the run's own output. A long run's log can come back
+// without its start: on 9 October 2026 a red main counted its failures and
+// named none, because every `not ok` line had scrolled out of the log the
+// cluster kept. The recap puts them where the log always ends. `count` is
+// how many failing tests the run printed in all, so a reader knows whether
+// the names it holds are all of them (failuresNamedInFull).
+const RECAP_SENTINEL = '__UNIT_SUITE_RECAP__';
+// The recap's bounds: this many failing tests, each with this many lines of
+// its block. node:test prints `location:` third, so a clipped block still
+// says which file the test is in.
+const RECAP_MAX_TESTS = 50;
+const RECAP_MAX_BLOCK_LINES = 60;
 
 function isEnabled() {
   const v = String(process.env.UNIT_SUITE_CHECK_ENABLED ?? '1').trim().toLowerCase();
@@ -164,28 +165,21 @@ const TAP_STRUCTURE = /^\s*(?:not ok\b|ok\b|\.\.\.|#\s|1\.\.\d+)/;
 // (`blockLines`, `before`) for the per-test excerpts (#3978); the grouped
 // reason below reads only name and file, so its shape never moves.
 //
-// The failures printed again under FAILURES_SENTINEL are read too, after
-// the run's own: a test whose own lines survived is kept as the run printed
-// it (with the stdout before it), and one whose lines went with the start
-// of the log is named from the copy.
+// The recap (RECAP_SENTINEL) repeats failures the output may already hold.
+// A test it names that was seen before it is the same failure and is not
+// counted twice; one it alone names is a failure whose line the log lost,
+// and it carries no stdout of its own (the recap prints none).
 function failingTestsWithExcerpts(lines) {
   const rootLine = lines.find((l) => l.startsWith(`${ROOT_SENTINEL}=`));
   const root = rootLine ? rootLine.slice(ROOT_SENTINEL.length + 1).trim().replace(/\/+$/, '') : null;
-  const at = lines.indexOf(FAILURES_SENTINEL);
-  if (at === -1) return failingTestsIn(lines, root);
-  const own = failingTestsIn(lines.slice(0, at), root);
-  const key = (f) => `${f.file}\u0000${f.name}`;
-  const seen = new Set(own.map(key));
-  const again = failingTestsIn(lines.slice(at + 1), root).filter((f) => !seen.has(key(f)));
-  return [...own, ...again];
-}
-
-function failingTestsIn(lines, root) {
+  const recapAt = recapIndex(lines);
+  const seen = new Map();
   const out = [];
   for (let i = 0; i < lines.length; i += 1) {
     const m = /^not ok\b\s*\d*\s*(?:-\s*)?(.*)$/.exec(lines[i]);
     if (!m) continue;
     if (/\s#\s*(SKIP|TODO)\b/i.test(` ${m[1]}`)) continue;
+    const inRecap = recapAt !== -1 && i > recapAt;
     let file = null;
     const blockLines = [];
     if (i + 1 < lines.length && lines[i + 1].trim() === '---') {
@@ -201,16 +195,55 @@ function failingTestsIn(lines, root) {
     // skipped, TAP structure and the container script's markers end the
     // walk — they are the runner's, not the test's.
     const before = [];
-    for (let j = i - 1; j >= 0 && before.length < MAX_EXCERPT_PRECEDING_LINES; j -= 1) {
+    for (let j = i - 1; !inRecap && j >= 0 && before.length < MAX_EXCERPT_PRECEDING_LINES; j -= 1) {
       const l = lines[j];
       if (!l.trim()) continue;
       if (/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l.trim())) break;
       if (TAP_STRUCTURE.test(l)) break;
       before.unshift(l.trim());
     }
-    out.push({ name: m[1].trim() || '(unnamed test)', file, blockLines, before });
+    const name = m[1].trim() || '(unnamed test)';
+    const key = `${file || ''}\u0000${name}`;
+    if (inRecap && seen.get(key) > 0) {
+      seen.set(key, seen.get(key) - 1);
+      continue;
+    }
+    if (!inRecap) seen.set(key, (seen.get(key) || 0) + 1);
+    out.push({ name, file, blockLines, before });
   }
   return out;
+}
+
+// The line the recap opens with, or -1 when the output has none (a green
+// run, or an older script).
+function recapIndex(lines) {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (lines[i].startsWith(`${RECAP_SENTINEL}=`)) return i;
+  }
+  return -1;
+}
+
+// How many failing tests the run printed, by the recap's count; null when
+// the output carries no recap.
+function recapCount(lines) {
+  const at = recapIndex(lines);
+  if (at === -1) return null;
+  const n = parseInt(lines[at].slice(RECAP_SENTINEL.length + 1), 10);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+// Do the names parsed from this output cover EVERY failing test? main-watch
+// lets a red pass without pausing merges only when each failing test is a
+// known flake, and a list missing one could be missing the real failure.
+// Yes when the recap counted no more failures than it could print and all
+// of them were read; without a recap (an older script), only when the log
+// kept both its start (the workspace line) and its end (the summary).
+function failuresNamedInFull(lines, failures) {
+  const count = recapCount(lines);
+  if (count !== null) return count > 0 && count <= RECAP_MAX_TESTS && failures.length >= count;
+  return failures.length > 0
+    && lines.some((l) => l.startsWith(`${ROOT_SENTINEL}=`))
+    && summaryCounter(lines, 'fail') !== null;
 }
 
 function failingTests(lines) {
@@ -412,9 +445,38 @@ function failureDetailFromLines(lines, { timedOut = false } = {}) {
     const tail = lines.map((l) => l.trim())
       .filter((l) => l && !/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l))
       .slice(-MAX_TAIL_LINES);
+    const headline = buildErrorLine(lines);
+    if (headline && !tail.some((l) => l.includes(headline))) parts.push(headline);
     parts.push(...tail);
   }
   return parts.join(' | ').slice(0, FAILURE_DETAIL_MAX);
+}
+
+// The line that says what broke, when no test did. On 8 October 2026 two
+// proposals that each added the same icon export merged one after the
+// other, and the next `npm test` stopped in its pretest build at
+// `icons.tsx:…: ERROR: Multiple exports with the same name …`. The reason
+// kept only the last lines of output, a stack and npm's own complaint, so
+// the board named no culprit and an admin resumed merges into a main that
+// could not build. The first line of the most telling kind leads instead:
+// a bundler's ERROR, then a TypeScript error, then a thrown Error. npm's
+// lines and stack frames are never it.
+const BUILD_ERROR_PATTERNS = [
+  /\[ERROR\]\s+\S|(?:^|:\s*)ERROR:\s+\S/,
+  /\berror TS\d+:/,
+  /^(?:[A-Z][A-Za-z]*)?Error(?:\s*\[[A-Z0-9_]+\])?:\s+\S/,
+];
+const BUILD_ERROR_LINE_MAX = 300;
+function buildErrorLine(lines) {
+  const candidates = lines.map((l) => l.trim()).filter((l) => l
+    && !/^__UNIT_SUITE_[A-Z_]+__(=|$)/.test(l)
+    && !/^npm (?:ERR!|error|warn)\b/i.test(l)
+    && !/^at\s/.test(l));
+  for (const re of BUILD_ERROR_PATTERNS) {
+    const hit = candidates.find((l) => re.test(l));
+    if (hit) return plainText(hit, BUILD_ERROR_LINE_MAX) || null;
+  }
+  return null;
 }
 
 function failureDetail(stdout, stderr, { timedOut = false } = {}) {
@@ -425,12 +487,21 @@ function failureDetail(stdout, stderr, { timedOut = false } = {}) {
 // One parse pass over a failed run's output yields both readers' answers:
 // the grouped reason (byte-for-byte what failureDetail always returned) and
 // the per-test excerpts beside it (#3978).
+//
+// `named` is the failing tests themselves, for main-watch: up to
+// MAX_NAMED_FAILURES `{ file, test }` and whether they are all of them.
+const MAX_NAMED_FAILURES = 50;
 function failureOutcomeParts(stdout, stderr, { timedOut = false } = {}) {
   const out = `${String(stdout || '')}\n${String(stderr || '')}`;
   const lines = out.split('\n');
+  const failures = failingTests(lines);
   return {
     reason: failureDetailFromLines(lines, { timedOut }),
     ...unitFailureDetails(lines),
+    named: {
+      tests: failures.slice(0, MAX_NAMED_FAILURES).map((f) => ({ file: f.file, test: clipName(f.name) })),
+      complete: !timedOut && failures.length <= MAX_NAMED_FAILURES && failuresNamedInFull(lines, failures),
+    },
   };
 }
 
@@ -779,23 +850,30 @@ if node -e "const p=require('./package.json');process.exit(p.scripts?.['lint:sql
   export SQL_CHECK_CONNECTION_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres
   npm run lint:sql
 fi
-# The suite's output is kept, and when it fails every failing top-level
-# test's TAP block is printed again at the very end, where a log that lost
-# its beginning still holds it (FAILURES_SENTINEL). The exit code is npm's.
+# A copy of the run's own output, so a red run can print its failures again
+# at the end (${RECAP_SENTINEL}): the log the cluster keeps of a long run
+# can lose its start. The exit code stays npm test's.
+TEST_LOG="$WS/.unit-suite-test.log"
 set +e
-npm test 2>&1 | tee /tmp/unit-suite-test.log
-status=\${PIPESTATUS[0]}
+npm test | tee "$TEST_LOG"
+TEST_STATUS=\${PIPESTATUS[0]}
 set -e
-if [ "$status" -ne 0 ]; then
-  echo "${FAILURES_SENTINEL}"
+if [ "$TEST_STATUS" -ne 0 ]; then
   echo "${ROOT_SENTINEL}=$(pwd -P)"
-  awk -v max=${DIGEST_MAX_FAILURES} -v lines=${DIGEST_MAX_BLOCK_LINES} '
-    /^not ok/ && !/#[[:blank:]]*(SKIP|TODO|skip|todo)/ { if (shown >= max) exit; shown++; print; block = 1; n = 0; next }
-    block && /^[[:blank:]]/ { if (n < lines) print; n++; if ($0 ~ /^[[:blank:]]*[.][.][.][[:blank:]]*$/) block = 0; next }
-    { block = 0 }
-  ' /tmp/unit-suite-test.log || true
+  awk -v max=${RECAP_MAX_TESTS} -v block=${RECAP_MAX_BLOCK_LINES} '
+    /^not ok / {
+      inblk = 0
+      if (toupper($0) ~ /[ \\t]#[ \\t]*(SKIP|TODO)/) next
+      n++; keep = (n <= max); inblk = 1; blk = 0
+      if (keep) out[++k] = $0
+      next
+    }
+    inblk && /^[ \\t]/ { if (keep && blk < block) { out[++k] = $0; blk++ } next }
+    { inblk = 0 }
+    END { print "${RECAP_SENTINEL}=" n + 0; for (i = 1; i <= k; i++) print out[i] }
+  ' "$TEST_LOG" || true
 fi
-exit "$status"
+exit "$TEST_STATUS"
 `;
 
 // Live progress of a run, read off the container's stdout as it streams
@@ -809,22 +887,21 @@ exit "$status"
 // of it touches the verdict, which stays the exit code.
 function makeUnitSuiteTracker(expected = null) {
   let phase = 'cloning';
-  // The failures printed again after the run (FAILURES_SENTINEL) were
-  // counted once already.
-  let repeating = false;
   let passed = 0;
   let failed = 0;
   let skipped = 0;
   let summary = null;
+  let recap = false;
   const total = Number.isInteger(expected) && expected > 0 ? expected : null;
   return {
     // Returns true when the line changed the state.
     feed(line) {
       const l = String(line || '');
-      if (l === FAILURES_SENTINEL) { repeating = true; return false; }
-      if (repeating) return false;
       if (l === CLONED_SENTINEL) { phase = 'installing'; return true; }
       if (l === SETUP_DONE_SENTINEL) { phase = 'running'; return true; }
+      // The recap repeats failures already counted.
+      if (l.startsWith(`${RECAP_SENTINEL}=`)) { recap = true; return false; }
+      if (recap) return false;
       const m = /^\s*(not ok|ok)\b(.*)$/.exec(l);
       if (m) {
         if (phase !== 'running') phase = 'running';
@@ -1089,6 +1166,10 @@ function shapeOutcome({ passed, reason, graduated, summary, unitDetails = null, 
     },
     history: neverRan ? null : { checkKey, name: UNIT_CHECK_NAME, path: UNIT_CHECK_PATH, passed },
     ...(neverRan ? { notRun: notRun.detail } : {}),
+    // The failing tests by name, beside the row rather than in it: only
+    // main-watch reads them (its known-flake rule), and the row is what
+    // every proposal's checks store.
+    ...(!passed && !neverRan && unitDetails && unitDetails.named ? { failingTests: unitDetails.named } : {}),
   };
 }
 
@@ -1152,7 +1233,8 @@ module.exports = {
   SETUP_DONE_SENTINEL,
   CLONED_SENTINEL,
   ROOT_SENTINEL,
-  FAILURES_SENTINEL,
+  RECAP_SENTINEL,
+  RECAP_MAX_TESTS,
   FAILURE_DETAIL_MAX,
   RUN_SCRIPT,
 };
