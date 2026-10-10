@@ -205,6 +205,23 @@ test('the status sentence says who is on it once, and when the claim lapses', ()
   assert.deepEqual(JSON.parse(JSON.stringify(underway.action.act)), { fn: 'openChangeWorkspace', args: [77] });
 });
 
+// #4663: Homeroom bot built this request, its change waits for approval, and
+// the status card still offered "Ask Homeroom bot to build this" — a second
+// build of something already built. The card offers "See the change" instead.
+test('the status card asks the bot no more once its change waits for approval', () => {
+  const av = appView();
+  av._ghIssuesMeta = { homeroomBot: { typicalMinutes: 7 } };
+  const built = av._requestStatusView(issue({
+    addressed_by: { sessionId: 9, state: 'review', prNumber: 12, title: 'Topics' },
+  }));
+  assert.equal(built.stage, 'built');
+  assert.equal(built.lead, 'Nobody is working on this yet.');
+  assert.equal(built.note, 'A change for it is waiting for approval.');
+  assert.equal(built.action.label, 'See the change');
+  assert.equal(built.action.href, '#app/example/dev/changes/12');
+  assert.equal(built.action.act, undefined);
+});
+
 test('⋯ holds the work rows first, then the author\'s edits and the tags', () => {
   const av = appView();
   const row = issue({ myPrSessionId: 77 });
