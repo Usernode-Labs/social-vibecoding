@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Builder reference</title>
+  <link rel="stylesheet" href="/css/builder.css">
+  <script src="/js/builder.js" defer></script>
+</head>
+<body>
+  <header class="b-topbar">
+    <div class="b-topbar-title">
+      <h1>Builder reference</h1>
+      <p>Lost Starways and Escape from Dracula</p>
+    </div>
+    <a id="builder-suggest" class="b-suggest" href="/?shot=feedback">Suggest a change</a>
+  </header>
+
+  <main class="b-main">
+    <!-- The login gate. Shown until the builder password is entered; the
+         reference area below stays hidden behind it. -->
+    <section id="builder-gate" class="b-gate">
+      <h2>Builder login</h2>
+      <p class="b-gate-line">Enter the builder password to open the rooms and items reference for both games.</p>
+      <form id="builder-login-form">
+        <label class="b-label" for="builder-password">Password</label>
+        <input id="builder-password" type="password" autocomplete="off" aria-describedby="builder-gate-error">
+        <button type="submit" class="b-btn b-btn-primary">Enter</button>
+        <p id="builder-gate-error" class="b-error" hidden>That password is not right. Try again.</p>
+      </form>
+    </section>
+
+    <!-- The builder-only reference area. Filled in by builder.js once the
+         gate is passed. -->
+    <section id="builder-area" hidden>
+      <div class="b-toolbar">
+        <div id="builder-tabs" class="b-tabs" role="tablist" aria-label="Game"></div>
+        <div class="b-toolbar-actions">
+          <span id="builder-save-state" class="b-save-state" role="status"></span>
+          <button type="button" id="builder-save" class="b-btn b-btn-quiet">Save changes</button>
+        </div>
+      </div>
+
+      <p id="builder-edit-hint" class="b-hint">Every cell is editable. Changes save to this browser.</p>
+
+      <div class="b-table-block">
+        <h2 id="builder-rooms-heading" class="b-table-heading">Rooms</h2>
+        <div id="builder-rooms" class="b-table-wrap"></div>
+        <button type="button" id="builder-add-room" class="b-btn b-btn-quiet">Add room</button>
+      </div>
+
+      <div class="b-table-block">
+        <h2 id="builder-items-heading" class="b-table-heading">Items</h2>
+        <div id="builder-items" class="b-table-wrap"></div>
+        <button type="button" id="builder-add-item" class="b-btn b-btn-quiet">Add item</button>
+      </div>
+
+      <div class="b-footer">
+        <button type="button" id="builder-reset" class="b-btn b-btn-quiet">Reset to the starter reference</button>
+        <button type="button" id="builder-leave" class="b-btn b-btn-quiet">Leave builder area</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

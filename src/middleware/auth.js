@@ -142,6 +142,14 @@ const PUBLIC_PATHS = [
   // unmatched /reports/ path just falls through to static handling and
   // 404s; no data is reachable without a valid token.
   '/reports/',
+  // The build group's standalone builder reference (public/builder.html).
+  // The page holds no server data — the login gate, the tables and the
+  // saved edits are all client-side (public/js/builder.js, localStorage) —
+  // so there is nothing an anonymous request could reach by being answered
+  // with the file instead of the redirect-to-root, and a declared check
+  // and a tester must both reach it without depending on the session.
+  // Public tier as a static document, like the redirect stubs above.
+  '/builder.html',
 ];
 
 // ── Platform-access gate (onboarding flow alignment) ─────────────────────

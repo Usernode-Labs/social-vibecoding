@@ -328,6 +328,28 @@ export function HomeScreen() {
         <DiscoverSection />
         <ChallengesSection />
         {/*
+            BUILDERS: the build group's own door. The games' reference sheets
+            (rooms, items, what each is for) live on a standalone page so a
+            builder can keep them open beside the app, and this row is how a
+            builder reaches it. It is a real anchor, not a hash route: the
+            page is plain static HTML and has no React half.
+        */}
+        <section id="home-builder-section" className="px-3 pb-1">
+          <SectionHeading>Builders</SectionHeading>
+          <a
+            id="home-builder-login"
+            href="/builder.html"
+            className="block rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 border border-zinc-200/70 dark:border-zinc-800"
+          >
+            <span className="block text-[15px] leading-tight font-[650] text-zinc-900 dark:text-zinc-100">
+              Builder login
+            </span>
+            <span className="block mt-0.5 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400">
+              Edit the rooms and items reference for Lost Starways and Escape from Dracula
+            </span>
+          </a>
+        </section>
+        {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth
             area held one row — an avatar, "Profile", "Your points, settings
             and account" — as the entrance the retired hamburger took away.

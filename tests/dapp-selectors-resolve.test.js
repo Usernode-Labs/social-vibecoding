@@ -235,10 +235,13 @@ test('the self-app hash routes dapp.json targets are the ones visuals.js normali
   // (routes/waitlist-connect.js): its callback answers with its own
   // standalone status page, never index.html.
   // /api/me/staking/context is authenticated JSON from routes/staking.js.
+  // /builder.html is the build group's standalone rooms and items reference
+  // (public/builder.html + public/js/builder.js), served by express.static
+  // like /cli-authorize.html, with no SPA route behind it.
   // The #1551 check intentionally exercises real preview configuration.
   const STANDALONE = ['/cli/authorize', '/usernode-native/', '/dashboard', '/admin-features',
     '/status', '/node-status', '/debug', '/gallery', '/reports/', '/api/public/',
-    '/waitlist/connect/', '/api/me/staking/context'];
+    '/waitlist/connect/', '/api/me/staking/context', '/builder.html'];
 
   const unroutable = [];
   for (const t of declared) {
