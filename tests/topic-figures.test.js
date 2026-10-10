@@ -497,6 +497,17 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
   }
   await pool.query(`INSERT INTO homeroom_bot_dm_turns (user_id, cost_usd, created_at) VALUES ($1, 0.04, $2)`, [person, ago(90)]);
 
+  // The bot's builds for the project: a live one that cost $1.20 and became
+  // its one merged proposal, and a shadow one ($5) that could never merge.
+  const botRun = (mode, issue, read, build) => pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cost_usd, build_cost_usd, created_at)
+     VALUES ($1, $2, $3, 'ready', $4, $5, $6)`,
+    [project.id, issue, mode, read, build, ago(300)],
+  );
+  await botRun('live', 11, 0.02, 1.18);
+  await botRun('shadow', 12, 0.03, 4.97);
+  await pool.query(`INSERT INTO chat_sessions (app_id, user_id, status, merged_at) VALUES ($1, $2, 'merged', $3)`, [project.id, bot, ago(60)]);
+
   // Let in from the waitlist two days ago: ten people, three of whom made
   // an account. Not counted: an admin's three test releases, a team
   // address, a test account, and an account left out of the Journey; any
@@ -595,6 +606,8 @@ test('topic figures against the full schema', { timeout: 120000 }, async (t) => 
       'per 100 replies: the DM for Homeroom; the project\'s 10 cents over three replies');
     assert.deepEqual(sidesOf(got['bot.reply-time']), [['homeroom', 'empty', 'None yet', ''], ['others', 'ok', '12 s', '']]);
     assert.equal(got['bot.merged'].state, 'empty');
+    assert.deepEqual(sidesOf(got['bot.merged-cost']), [['homeroom', 'empty', 'None yet', ''], ['others', 'ok', '$1.20', '']],
+      'a shadow build could never become a proposal, so no merge pays for it');
   });
 
   await t.test('onboarding: people let in from the waitlist who made an account, real people only, rounded', async () => {

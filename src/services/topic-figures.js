@@ -228,11 +228,15 @@ const BOT_PROPOSALS_SQL = `
             FROM timed WHERE promoted_at >= filed_at)::float8 AS median_secs`;
 
 // What the bot spent reading, planning and building in the window, and the
-// proposals of its that merged in it.
+// proposals of its that merged in it. Only its live runs: a shadow run
+// (homeroom_bot_runs.mode 'shadow', the bot building for a project it does
+// not propose to yet) can never become a proposal, so counting it charged
+// each merge for builds that had no way to merge.
 const BOT_SPEND_SQL = `
   SELECT (SELECT COALESCE(SUM(COALESCE(r.cost_usd, 0) + COALESCE(r.build_cost_usd, 0)), 0)
             FROM homeroom_bot_runs r
-           WHERE r.created_at >= $1::timestamptz AND r.created_at < $2::timestamptz
+           WHERE r.mode = 'live'
+             AND r.created_at >= $1::timestamptz AND r.created_at < $2::timestamptz
              AND ($3::boolean OR (r.app_id = ANY($4::int[])) = $5::boolean))::float8 AS spent,
          (SELECT COUNT(*)
             FROM chat_sessions cs
@@ -569,7 +573,7 @@ const FIGURES = Object.freeze({
   },
   'bot.merged-cost': {
     source: 'botSpend', kind: 'usd', covers: 'split', group: 'builds', column: 'cost', label: 'Cost per merged proposal',
-    tip: 'Everything the bot spent reading, planning and building, divided by its proposals that were merged. Builds that weren’t merged count too, so it is more than one build costs.',
+    tip: 'Everything the bot spent reading, planning and building, divided by its proposals that were merged. Builds that weren’t merged count too, so it is more than one build costs. Practice builds it makes without proposing them (its shadow mode) are left out.',
     target: { atMost: 5 },
     measure: (r) => ({ value: int(r.merged) ? (num(r.spent) || 0) / int(r.merged) : null, n: int(r.merged) }),
   },
